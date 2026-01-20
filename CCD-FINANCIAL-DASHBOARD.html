@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCD Financial Dashboard v1.2.0</title>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    
+    <!-- Shared File Helper (inline for standalone compatibility) -->
+    <script>
+    const CCDSharedFiles = (function() {
+        const SHARED_DB_NAME = 'ccd-shared-files';
+        const SHARED_DB_VERSION = 1;
+        const SHARED_STORE_NAME = 'file-handles';
+        let db = null;
+        
+        async function initDB() {
+            if (db) return db;
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(SHARED_DB_NAME, SHARED_DB_VERSION);
+                request.onerror = () => resolve(null);
+                request.onsuccess = () => { db = request.result; resolve(db); };
+                request.onupgradeneeded = (e) => {
+                    const database = e.target.result;
+                    if (!database.objectStoreNames.contains(SHARED_STORE_NAME)) {
+                        database.createObjectStore(SHARED_STORE_NAME);
+                    }
+                };
+            });
+        }
+        
+        async function getHandle(key) {
+            try {
+                await initDB();
+                if (!db) return null;
+                return new Promise((resolve) => {
+                    const tx = db.transaction([SHARED_STORE_NAME], 'readonly');
+                    const store = tx.objectStore(SHARED_STORE_NAME);
+                    const request = store.get(key);
+                    request.onsuccess = async () => {
+                        const handle = request.result;
+                        if (!handle) { resolve(null); return; }
+                        try {
+                            const perm = await handle.queryPermission({ mode: 'readwrite' });
+                            resolve(perm === 'granted' ? handle : null);
+                        } catch (e) { resolve(null); }
+                    };
+                    request.onerror = () => resolve(null);
+                });
+            } catch (e) { return null; }
+        }
+        
+        return {
+            getMasterJson: () => getHandle('masterJson'),
+            getSyncData: () => getHandle('syncData'),
+            getConfigFile: () => getHandle('configFile'),
+            getOneDriveFolder: () => getHandle('oneDriveFolder')
+        };
+    })();
+    </script>
+    
+    <style>
+        :root {
+            --bg-primary: #1a1d21;
+            --bg-secondary: #23272e;
+            --bg-card: #2a2f38;
+            --bg-hover: #343a45;
+            --text-primary: #e8eaed;
+            --text-secondary: #9aa0a6;
+            --text-muted: #6b7280;
+            --border-color: #3d4450;
+            --accent-blue: #4a9eff;
+            --accent-green: #34d399;
+            --accent-red: #f87171;
+            --accent-yellow: #fbbf24;
+            --accent-purple: #a78bfa;
+            --shadow: 0 4px 6px -1px rgba(0,0,0,0.3);
+            --radius: 8px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-primary); color: var(--text-primary); line-height: 1.5; min-height: 100vh; }
+        .header { background: linear-gradient(135deg, var(--bg-secondary) 0%, #1e3a5f 100%); border-bottom: 1px solid var(--accent-blue); padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 100; }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .logo { font-size: 22px; font-weight: 700; color: var(--accent-blue); display: flex; align-items: center; gap: 10px; }
+        .logo span { color: var(--text-secondary); font-weight: 400; }
+        .version-badge { background: var(--accent-green); color: #1a1d21; padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .btn { padding: 8px 16px; border-radius: var(--radius); font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; }
+        .btn-primary { background: var(--accent-blue); color: white; }
+        .btn-primary:hover { background: #3d8ce8; transform: translateY(-1px); }
+        .btn-secondary { background: var(--bg-card); color: var(--text-primary); border: 1px solid var(--border-color); }
+        .btn-secondary:hover { background: var(--bg-hover); }
+        .btn-success { background: var(--accent-green); color: #1a1d21; }
+        .main-container { display: flex; min-height: calc(100vh - 65px); }
+        .sidebar { width: 260px; background: var(--bg-secondary); border-right: 1px solid var(--border-color); padding: 20px 0; flex-shrink: 0; }
+        .sidebar-section { margin-bottom: 24px; }
+        .sidebar-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); padding: 0 20px; margin-bottom: 8px; }
+        .nav-item { display: flex; align-items: center; gap: 12px; padding: 12px 20px; color: var(--text-secondary); cursor: pointer; transition: all 0.2s; border-left: 3px solid transparent; }
+        .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .nav-item.active { background: rgba(74, 158, 255, 0.1); color: var(--accent-blue); border-left-color: var(--accent-blue); }
+        .nav-item .icon { font-size: 18px; width: 24px; text-align: center; }
+        .data-sources { background: var(--bg-card); margin: 0 12px; border-radius: var(--radius); padding: 12px; }
+        .data-source { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 6px; margin-bottom: 4px; }
+        .data-source:last-child { margin-bottom: 0; }
+        .data-source .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
+        .data-source .status-dot.connected { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+        .data-source .name { font-size: 13px; flex: 1; }
+        .data-source .count { font-size: 11px; color: var(--text-muted); }
+        .content { flex: 1; padding: 24px; overflow-y: auto; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 16px; }
+        .page-title { font-size: 24px; font-weight: 600; }
+        .page-subtitle { color: var(--text-secondary); font-size: 14px; margin-top: 4px; }
+        .card { background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border-color); margin-bottom: 20px; }
+        .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .card-title { font-size: 16px; font-weight: 600; }
+        .card-body { padding: 20px; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .summary-card { background: var(--bg-card); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border-color); }
+        .summary-card .label { font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .summary-card .value { font-size: 28px; font-weight: 700; }
+        .summary-card .value.positive { color: var(--accent-green); }
+        .summary-card .value.negative { color: var(--accent-red); }
+        .summary-card .trend { font-size: 12px; margin-top: 8px; color: var(--text-muted); }
+        .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .data-table th { text-align: left; padding: 12px 16px; background: var(--bg-secondary); color: var(--text-secondary); font-weight: 600; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); }
+        .data-table td { padding: 12px 16px; border-bottom: 1px solid var(--border-color); }
+        .data-table tbody tr:hover { background: var(--bg-hover); }
+        .data-table .text-right { text-align: right; }
+        .data-table .text-center { text-align: center; }
+        .data-table .mono { font-family: 'Consolas', monospace; }
+        .filters-bar { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-bottom: 20px; padding: 16px; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border-color); }
+        .filter-group { display: flex; flex-direction: column; gap: 4px; }
+        .filter-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
+        .filter-select, .filter-input { background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; padding: 8px 12px; color: var(--text-primary); font-size: 13px; min-width: 150px; }
+        .filter-select:focus, .filter-input:focus { outline: none; border-color: var(--accent-blue); }
+        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+        .status-badge.success { background: rgba(52, 211, 153, 0.2); color: var(--accent-green); }
+        .status-badge.warning { background: rgba(251, 191, 36, 0.2); color: var(--accent-yellow); }
+        .status-badge.error { background: rgba(248, 113, 113, 0.2); color: var(--accent-red); }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: var(--bg-card); border-radius: 12px; width: 95%; max-width: 600px; max-height: 90vh; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+        .modal-header { padding: 20px 24px; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; }
+        .modal-title { font-size: 18px; font-weight: 600; }
+        .modal-close { background: none; border: none; color: var(--text-secondary); font-size: 24px; cursor: pointer; }
+        .modal-close:hover { color: var(--text-primary); }
+        .modal-body { padding: 24px; max-height: 60vh; overflow-y: auto; }
+        .modal-footer { padding: 16px 24px; background: var(--bg-secondary); border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 12px; }
+        .file-connection-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+        .file-card { background: var(--bg-secondary); border-radius: var(--radius); padding: 16px; border: 1px solid var(--border-color); }
+        .file-card .file-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .file-card .file-icon { font-size: 24px; }
+        .file-card .file-name { font-weight: 600; font-size: 14px; }
+        .file-card .file-status { font-size: 12px; color: var(--text-muted); }
+        .file-card .file-status.connected { color: var(--accent-green); }
+        .file-card .file-actions { display: flex; gap: 8px; }
+        .file-card .btn { flex: 1; justify-content: center; }
+        .toast-container { position: fixed; top: 80px; right: 20px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; }
+        .toast { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius); padding: 12px 20px; min-width: 300px; box-shadow: var(--shadow); animation: slideIn 0.3s ease-out; }
+        .toast.success { border-left: 4px solid var(--accent-green); }
+        .toast.error { border-left: 4px solid var(--accent-red); }
+        .toast.warning { border-left: 4px solid var(--accent-yellow); }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .page-section { display: none; }
+        .page-section.active { display: block; }
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-secondary); }
+        .empty-state .icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+        .empty-state h3 { font-size: 18px; margin-bottom: 8px; color: var(--text-primary); }
+    </style>
+    <!-- Security Scripts -->
+    <script src="CCD-AUDIT-LOG.js"></script>
+    <script src="CCD-AUTH-MANAGER.js"></script>
+    <script src="CCD-ENCRYPTION-MANAGER.js"></script>
+    <script src="CCD-DATA-PROTECTION.js"></script>
+    <script src="CCD-THREAT-DETECTION.js"></script>
+    <script src="CCD-BACKUP-ENCRYPTION.js"></script>
+    <script src="CCD-SECURITY-WRAPPER.js"></script>
+    <script src="CCD-API-CONFIG.js"></script>
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <div class="logo"><span style="font-size:28px">📊</span> CCD Financial <span>Dashboard</span></div>
+            <span class="version-badge">v1.1.0</span>
+        </div>
+        <div class="header-right">
+            <button class="btn btn-secondary" onclick="openDataSourcesModal()">📁 Data Sources</button>
+            <button class="btn btn-primary" onclick="refreshAllData()">🔄 Refresh</button>
+        </div>
+    </header>
+    
+    <div class="main-container">
+        <aside class="sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-title">Reports</div>
+                <div class="nav-item active" onclick="showPage('overview', this)"><span class="icon">📈</span><span>Overview</span></div>
+                <div class="nav-item" onclick="showPage('wayfair-pnl', this)"><span class="icon">🟣</span><span>Wayfair P&L</span></div>
+                <div class="nav-item" onclick="showPage('wix-pnl', this)"><span class="icon">🔵</span><span>Wix P&L</span></div>
+                <div class="nav-item" onclick="showPage('shipping', this)"><span class="icon">📦</span><span>Shipping Analysis</span></div>
+            </div>
+            <div class="sidebar-section">
+                <div class="sidebar-title">Data Sources</div>
+                <div class="data-sources">
+                    <div class="data-source"><span class="status-dot" id="dot-inventory"></span><span class="name">Inventory</span><span class="count" id="count-inventory">--</span></div>
+                    <div class="data-source"><span class="status-dot" id="dot-wayfair"></span><span class="name">Wayfair</span><span class="count" id="count-wayfair">--</span></div>
+                    <div class="data-source"><span class="status-dot" id="dot-wix"></span><span class="name">Wix</span><span class="count" id="count-wix">--</span></div>
+                    <div class="data-source"><span class="status-dot" id="dot-shippo"></span><span class="name">Shippo</span><span class="count" id="count-shippo">--</span></div>
+                </div>
+            </div>
+            <div class="sidebar-section" style="padding: 0 12px;"><button class="btn btn-secondary" style="width: 100%;" onclick="openDataSourcesModal()">🔗 Connect Files</button></div>
+        </aside>
+        
+        <main class="content">
+            <!-- Overview Page -->
+            <section id="page-overview" class="page-section active">
+                <div class="page-header">
+                    <div><h1 class="page-title">Financial Overview</h1><p class="page-subtitle">Cross-channel performance summary</p></div>
+                    <select class="filter-select" id="overviewPeriod" onchange="updateOverview()">
+                        <option value="30">Last 30 Days</option>
+                        <option value="60">Last 60 Days</option>
+                        <option value="90">Last 90 Days</option>
+                        <option value="365">Last 12 Months</option>
+                    </select>
+                </div>
+                <div class="summary-grid">
+                    <div class="summary-card"><div class="label">Total Revenue</div><div class="value positive" id="totalRevenue">$0.00</div><div class="trend" id="revenueTrend">--</div></div>
+                    <div class="summary-card"><div class="label">Total Fees</div><div class="value negative" id="totalFees">$0.00</div><div class="trend" id="feesTrend">--</div></div>
+                    <div class="summary-card"><div class="label">Net Earnings</div><div class="value positive" id="netEarnings">$0.00</div><div class="trend" id="earningsTrend">--</div></div>
+                    <div class="summary-card"><div class="label">Shipping Costs</div><div class="value" id="shippingCosts">$0.00</div><div class="trend" id="shippingTrend">--</div></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h2 class="card-title">Channel Breakdown</h2></div>
+                    <div class="card-body" style="padding:0;">
+                        <table class="data-table"><thead><tr><th>Channel</th><th class="text-right">Orders</th><th class="text-right">Gross</th><th class="text-right">Fees</th><th class="text-right">Net</th></tr></thead>
+                        <tbody id="channelBreakdownBody"><tr><td colspan="5" class="text-center" style="padding:40px;color:var(--text-muted);">Connect data sources to view breakdown</td></tr></tbody></table>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Wayfair P&L Page -->
+            <section id="page-wayfair-pnl" class="page-section">
+                <div class="page-header">
+                    <div><h1 class="page-title">Wayfair P&L Report</h1><p class="page-subtitle">Profit and loss analysis</p></div>
+                    <div style="display:flex;gap:12px;"><button class="btn btn-secondary" onclick="exportWayfairCSV()">📥 Export CSV</button></div>
+                </div>
+                <div class="filters-bar">
+                    <div class="filter-group"><label class="filter-label">Month</label><select class="filter-select" id="wayfairMonth" onchange="updateWayfairPnl()"><option value="">All Time</option></select></div>
+                </div>
+                <div class="summary-grid" id="wayfairSummary"></div>
+                <div class="card">
+                    <div class="card-header"><h2 class="card-title">Order Details</h2><span id="wayfairCount" style="color:var(--text-secondary);font-size:13px;">0 orders</span></div>
+                    <div class="card-body" style="padding:0;max-height:500px;overflow-y:auto;">
+                        <table class="data-table"><thead style="position:sticky;top:0;z-index:10;"><tr><th>Date</th><th>PO #</th><th>SKU</th><th class="text-right">Gross</th><th class="text-right">Fees (16%)</th><th class="text-right">Net</th></tr></thead>
+                        <tbody id="wayfairBody"><tr><td colspan="6" class="text-center" style="padding:40px;color:var(--text-muted);">Connect Wayfair data to view report</td></tr></tbody></table>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Wix P&L Page -->
+            <section id="page-wix-pnl" class="page-section">
+                <div class="page-header">
+                    <div><h1 class="page-title">Wix P&L Report</h1><p class="page-subtitle">Profit and loss analysis</p></div>
+                    <div style="display:flex;gap:12px;"><button class="btn btn-secondary" onclick="exportWixCSV()">📥 Export CSV</button></div>
+                </div>
+                <div class="filters-bar">
+                    <div class="filter-group"><label class="filter-label">Month</label><select class="filter-select" id="wixMonth" onchange="updateWixPnl()"><option value="">All Time</option></select></div>
+                </div>
+                <div class="summary-grid" id="wixSummary"></div>
+                <div class="card">
+                    <div class="card-header"><h2 class="card-title">Order Details</h2><span id="wixCount" style="color:var(--text-secondary);font-size:13px;">0 orders</span></div>
+                    <div class="card-body" style="padding:0;max-height:500px;overflow-y:auto;">
+                        <table class="data-table"><thead style="position:sticky;top:0;z-index:10;"><tr><th>Date</th><th>Order #</th><th>Customer</th><th class="text-right">Subtotal</th><th class="text-right">Fees (3.3%)</th><th class="text-right">Net</th></tr></thead>
+                        <tbody id="wixBody"><tr><td colspan="6" class="text-center" style="padding:40px;color:var(--text-muted);">Connect Wix data to view report</td></tr></tbody></table>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- Shipping Analysis Page -->
+            <section id="page-shipping" class="page-section">
+                <div class="page-header">
+                    <div><h1 class="page-title">Shipping Analysis</h1><p class="page-subtitle">Shipping cost breakdown</p></div>
+                </div>
+                <div class="filters-bar">
+                    <div class="filter-group"><label class="filter-label">Period</label><select class="filter-select" id="shippingPeriod" onchange="updateShipping()"><option value="30">Last 30 Days</option><option value="60">Last 60 Days</option><option value="90">Last 90 Days</option></select></div>
+                </div>
+                <div class="summary-grid" id="shippingSummary"></div>
+                <div class="card">
+                    <div class="card-header"><h2 class="card-title">Carrier Breakdown</h2></div>
+                    <div class="card-body" style="padding:0;">
+                        <table class="data-table"><thead><tr><th>Carrier</th><th class="text-right">Shipments</th><th class="text-right">Total Cost</th><th class="text-right">Avg Cost</th></tr></thead>
+                        <tbody id="carrierBody"><tr><td colspan="4" class="text-center" style="padding:40px;color:var(--text-muted);">Connect Shippo data to view analysis</td></tr></tbody></table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    
+    <!-- Data Sources Modal -->
+    <div class="modal-overlay" id="dataSourcesModal">
+        <div class="modal" style="max-width:700px;">
+            <div class="modal-header"><h2 class="modal-title">📁 Connect Data Sources</h2><button class="modal-close" onclick="closeDataSourcesModal()">&times;</button></div>
+            <div class="modal-body">
+                <p style="color:var(--text-secondary);margin-bottom:20px;">Connect to your shared JSON files on OneDrive. These are the same files used by the Inventory app.</p>
+                
+                <!-- Sync Data File (Primary - v23.1.0) -->
+                <div style="margin-bottom:20px;padding:16px;background:linear-gradient(135deg,rgba(74,158,255,0.1),rgba(139,92,246,0.1));border-radius:8px;border:1px solid var(--accent-blue);">
+                    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+                        <span style="font-size:24px;">🔄</span>
+                        <div style="flex:1;">
+                            <div style="font-weight:600;color:var(--text-primary);">Sync Data File (Recommended)</div>
+                            <div style="font-size:12px;color:var(--text-secondary);" id="status-syncdata">Not connected</div>
+                        </div>
+                        <button class="btn btn-primary" onclick="connectSyncDataFile()">Connect</button>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted);">Connect to <code>ccd-sync-data.json</code> to load Wayfair, Wix, and Etsy orders in one step. This is the primary data source used by Sync Hub.</div>
+                </div>
+                
+                <div style="text-align:center;color:var(--text-muted);margin:16px 0;font-size:12px;">— OR connect individual cache files —</div>
+                
+                <div class="file-connection-grid">
+                    <div class="file-card"><div class="file-header"><span class="file-icon">📦</span><div><div class="file-name">Inventory</div><div class="file-status" id="status-inventory">Not connected</div></div></div><div class="file-actions"><button class="btn btn-secondary" onclick="connectFile('inventory')">Connect</button></div></div>
+                    <div class="file-card"><div class="file-header"><span class="file-icon">🟣</span><div><div class="file-name">Wayfair Cache</div><div class="file-status" id="status-wayfair">Not connected</div></div></div><div class="file-actions"><button class="btn btn-secondary" onclick="connectFile('wayfair')">Connect</button></div></div>
+                    <div class="file-card"><div class="file-header"><span class="file-icon">🔵</span><div><div class="file-name">Wix Cache</div><div class="file-status" id="status-wix">Not connected</div></div></div><div class="file-actions"><button class="btn btn-secondary" onclick="connectFile('wix')">Connect</button></div></div>
+                    <div class="file-card"><div class="file-header"><span class="file-icon">📬</span><div><div class="file-name">Shippo Cache</div><div class="file-status" id="status-shippo">Not connected</div></div></div><div class="file-actions"><button class="btn btn-secondary" onclick="connectFile('shippo')">Connect</button></div></div>
+                </div>
+            </div>
+            <div class="modal-footer"><button class="btn btn-success" onclick="reconnectAllFiles()">🔄 Reconnect All</button><button class="btn btn-secondary" onclick="closeDataSourcesModal()">Close</button></div>
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+    
+    <script>
+    // Data Storage
+    let inventoryData = [];
+    let wayfairData = { orders: [], payments: [] };
+    let wixData = { orders: [] };
+    let shippoData = { transactions: [] };
+    let etsyData = { orders: [] };
+    let fileHandles = { inventory: null, wayfair: null, wix: null, shippo: null, syncdata: null };
+    
+    // IndexedDB
+    const DB_NAME = 'CCDFinancialDashboard';
+    let db = null;
+    
+    document.addEventListener('DOMContentLoaded', async () => {
+        await initDB();
+        await restoreFileHandles();
+        
+        // Fallback: Try to load from localStorage if no file handles connected
+        loadFromLocalStorage();
+        
+        updateIndicators();
+        console.log('📊 CCD Financial Dashboard v1.1.0 ready');
+    });
+    
+    /**
+     * Load data from localStorage as fallback (shared with Inventory app)
+     */
+    function loadFromLocalStorage() {
+        // Inventory
+        if (inventoryData.length === 0) {
+            try {
+                const inv = localStorage.getItem('ccd_inventory_data') || localStorage.getItem('inventoryData');
+                if (inv) {
+                    const data = JSON.parse(inv);
+                    inventoryData = Array.isArray(data) ? data : (data.inventory || data.items || []);
+                    if (inventoryData.length > 0) console.log('✅ Loaded inventory from localStorage:', inventoryData.length);
+                }
+            } catch (e) { console.warn('Could not load inventory from localStorage'); }
+        }
+        
+        // Wayfair
+        if (wayfairData.orders.length === 0) {
+            try {
+                const wf = localStorage.getItem('ccd_wayfair_cache');
+                if (wf) {
+                    const data = JSON.parse(wf);
+                    if (Array.isArray(data)) {
+                        wayfairData = { orders: data, payments: [] };
+                    } else {
+                        wayfairData = { orders: data.orders || [], payments: data.payments || [] };
+                    }
+                    if (wayfairData.orders.length > 0) console.log('✅ Loaded wayfair from localStorage:', wayfairData.orders.length);
+                }
+            } catch (e) { console.warn('Could not load wayfair from localStorage'); }
+        }
+        
+        // Wix
+        if (wixData.orders.length === 0) {
+            try {
+                const wx = localStorage.getItem('ccd_wix_cache');
+                if (wx) {
+                    const data = JSON.parse(wx);
+                    wixData = Array.isArray(data) ? { orders: data } : { orders: data.orders || [] };
+                    if (wixData.orders.length > 0) console.log('✅ Loaded wix from localStorage:', wixData.orders.length);
+                }
+            } catch (e) { console.warn('Could not load wix from localStorage'); }
+        }
+        
+        // Shippo
+        if (shippoData.transactions.length === 0) {
+            try {
+                const sh = localStorage.getItem('ccd_shippo_cache');
+                if (sh) {
+                    const data = JSON.parse(sh);
+                    shippoData = Array.isArray(data) ? { transactions: data } : { transactions: data.transactions || [] };
+                    if (shippoData.transactions.length > 0) console.log('✅ Loaded shippo from localStorage:', shippoData.transactions.length);
+                }
+            } catch (e) { console.warn('Could not load shippo from localStorage'); }
+        }
+    }
+    
+    async function initDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, 1);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => { db = request.result; resolve(db); };
+            request.onupgradeneeded = (e) => {
+                const database = e.target.result;
+                if (!database.objectStoreNames.contains('fileHandles')) {
+                    database.createObjectStore('fileHandles', { keyPath: 'id' });
+                }
+            };
+        });
+    }
+    
+    async function storeHandle(id, handle) {
+        if (!db) return;
+        return new Promise((resolve) => {
+            const tx = db.transaction('fileHandles', 'readwrite');
+            tx.objectStore('fileHandles').put({ id, handle, ts: Date.now() });
+            tx.oncomplete = resolve;
+        });
+    }
+    
+    async function getHandle(id) {
+        if (!db) return null;
+        return new Promise((resolve) => {
+            const tx = db.transaction('fileHandles', 'readonly');
+            const req = tx.objectStore('fileHandles').get(id);
+            req.onsuccess = () => resolve(req.result?.handle || null);
+        });
+    }
+    
+    async function restoreFileHandles() {
+        // v1.2.0: Check Command Center shared files first
+        if (typeof CCDSharedFiles !== 'undefined') {
+            // Try to get sync data from shared files
+            const sharedSyncData = await CCDSharedFiles.getSyncData();
+            if (sharedSyncData) {
+                fileHandles.syncdata = sharedSyncData;
+                await loadSyncDataFile();
+                console.log('[Financial] Connected to Sync Data via Command Center');
+            }
+            
+            // Try to get master for inventory
+            const sharedMaster = await CCDSharedFiles.getMasterJson();
+            if (sharedMaster) {
+                fileHandles.inventory = sharedMaster;
+                await loadFileData('inventory');
+                console.log('[Financial] Connected to Master JSON via Command Center');
+            }
+        }
+        
+        // Fall back: Restore individual file handles from own storage
+        for (const type of ['inventory', 'wayfair', 'wix', 'shippo']) {
+            if (fileHandles[type]) continue; // Skip if already connected via shared
+            try {
+                const handle = await getHandle(type);
+                if (handle) {
+                    const perm = await handle.queryPermission({ mode: 'read' });
+                    if (perm === 'granted') {
+                        fileHandles[type] = handle;
+                        await loadFileData(type);
+                    }
+                }
+            } catch (e) { console.warn(`Could not restore ${type}:`, e); }
+        }
+        
+        // Restore sync data file handle if not already connected
+        if (!fileHandles.syncdata) {
+            try {
+                const handle = await getHandle('syncdata');
+                if (handle) {
+                    const perm = await handle.queryPermission({ mode: 'read' });
+                    if (perm === 'granted') {
+                        fileHandles.syncdata = handle;
+                        await loadSyncDataFile();
+                    }
+                }
+            } catch (e) { console.warn('Could not restore syncdata:', e); }
+        }
+    }
+    
+    async function connectFile(type) {
+        try {
+            const [handle] = await window.showOpenFilePicker({ types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }] });
+            fileHandles[type] = handle;
+            await storeHandle(type, handle);
+            await loadFileData(type);
+            updateIndicators();
+            showToast(`✅ ${type} connected`, 'success');
+        } catch (e) {
+            if (e.name !== 'AbortError') showToast(`❌ Failed to connect ${type}`, 'error');
+        }
+    }
+    
+    async function loadFileData(type) {
+        const handle = fileHandles[type];
+        if (!handle) return;
+        try {
+            const file = await handle.getFile();
+            const data = JSON.parse(await file.text());
+            
+            if (type === 'inventory') inventoryData = Array.isArray(data) ? data : (data.inventory || data.items || []);
+            else if (type === 'wayfair') wayfairData = Array.isArray(data) ? { orders: data, payments: [] } : { orders: data.orders || [], payments: data.payments || [] };
+            else if (type === 'wix') wixData = Array.isArray(data) ? { orders: data } : { orders: data.orders || [] };
+            else if (type === 'shippo') shippoData = Array.isArray(data) ? { transactions: data } : { transactions: data.transactions || [] };
+            
+            console.log(`✅ Loaded ${type}`);
+            updateIndicators();
+            refreshCurrentPage();
+        } catch (e) { console.error(`Error loading ${type}:`, e); }
+    }
+    
+    async function reconnectAllFiles() {
+        let count = 0;
+        for (const type of ['inventory', 'wayfair', 'wix', 'shippo']) {
+            const handle = await getHandle(type);
+            if (handle) {
+                try {
+                    if (await handle.requestPermission({ mode: 'read' }) === 'granted') {
+                        fileHandles[type] = handle;
+                        await loadFileData(type);
+                        count++;
+                    }
+                } catch (e) {}
+            }
+        }
+        updateIndicators();
+        showToast(count > 0 ? `✅ Reconnected ${count} files` : '⚠️ No files to reconnect', count > 0 ? 'success' : 'warning');
+    }
+    
+    async function refreshAllData() {
+        for (const type of ['inventory', 'wayfair', 'wix', 'shippo']) {
+            if (fileHandles[type]) await loadFileData(type);
+        }
+        // Also refresh sync data if connected
+        if (fileHandles.syncdata) await loadSyncDataFile();
+        showToast('✅ Data refreshed', 'success');
+    }
+    
+    /**
+     * Connect to ccd-sync-data.json (v23.1.0)
+     * This is the primary data source that contains Wayfair, Wix, and Etsy orders
+     */
+    async function connectSyncDataFile() {
+        try {
+            const [handle] = await window.showOpenFilePicker({ 
+                types: [{ description: 'Sync Data JSON', accept: { 'application/json': ['.json'] } }] 
+            });
+            fileHandles.syncdata = handle;
+            await storeHandle('syncdata', handle);
+            await loadSyncDataFile();
+            showToast('✅ Sync Data connected - loaded all channel orders', 'success');
+        } catch (e) {
+            if (e.name !== 'AbortError') showToast('❌ Failed to connect Sync Data file', 'error');
+        }
+    }
+    
+    /**
+     * Load data from ccd-sync-data.json
+     * Expected format: { wayfair: { orders: [] }, wix: { orders: [] }, etsy: { orders: [] } }
+     */
+    async function loadSyncDataFile() {
+        const handle = fileHandles.syncdata;
+        if (!handle) return;
+        
+        try {
+            const file = await handle.getFile();
+            const data = JSON.parse(await file.text());
+            
+            // Load Wayfair orders
+            if (data.wayfair) {
+                const wfOrders = data.wayfair.orders || [];
+                if (wfOrders.length > 0) {
+                    wayfairData.orders = wfOrders;
+                    console.log(`✅ Loaded ${wfOrders.length} Wayfair orders from sync data`);
+                }
+            }
+            
+            // Load Wix orders
+            if (data.wix) {
+                const wxOrders = data.wix.orders || [];
+                if (wxOrders.length > 0) {
+                    wixData.orders = wxOrders;
+                    console.log(`✅ Loaded ${wxOrders.length} Wix orders from sync data`);
+                }
+            }
+            
+            // Load Etsy orders
+            if (data.etsy) {
+                const etOrders = data.etsy.orders || [];
+                if (etOrders.length > 0) {
+                    etsyData.orders = etOrders;
+                    console.log(`✅ Loaded ${etOrders.length} Etsy orders from sync data`);
+                }
+            }
+            
+            // Update status indicator
+            const statusEl = document.getElementById('status-syncdata');
+            if (statusEl) {
+                const total = (wayfairData.orders?.length || 0) + (wixData.orders?.length || 0) + (etsyData.orders?.length || 0);
+                statusEl.textContent = `✅ Connected (${total} orders)`;
+                statusEl.style.color = 'var(--accent-green)';
+            }
+            
+            updateIndicators();
+            refreshCurrentPage();
+        } catch (e) {
+            console.error('Error loading sync data file:', e);
+            showToast('❌ Error reading sync data file', 'error');
+        }
+    }
+    
+    function updateIndicators() {
+        const update = (id, data, label) => {
+            const dot = document.getElementById(`dot-${id}`);
+            const count = document.getElementById(`count-${id}`);
+            const status = document.getElementById(`status-${id}`);
+            const len = Array.isArray(data) ? data.length : (data.orders?.length || data.transactions?.length || 0);
+            if (len > 0) {
+                dot?.classList.add('connected');
+                if (count) count.textContent = `${len} ${label}`;
+                if (status) { status.textContent = `✅ ${len} ${label}`; status.classList.add('connected'); }
+            } else {
+                dot?.classList.remove('connected');
+                if (count) count.textContent = '--';
+            }
+        };
+        update('inventory', inventoryData, 'items');
+        update('wayfair', wayfairData.orders, 'orders');
+        update('wix', wixData.orders, 'orders');
+        update('shippo', shippoData.transactions, 'txns');
+    }
+    
+    // Navigation
+    let currentPage = 'overview';
+    function showPage(pageId, el) {
+        currentPage = pageId;
+        document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+        el?.classList.add('active');
+        document.querySelectorAll('.page-section').forEach(p => p.classList.remove('active'));
+        document.getElementById(`page-${pageId}`)?.classList.add('active');
+        refreshCurrentPage();
+    }
+    
+    function refreshCurrentPage() {
+        if (currentPage === 'overview') updateOverview();
+        else if (currentPage === 'wayfair-pnl') { populateMonths('wayfair'); updateWayfairPnl(); }
+        else if (currentPage === 'wix-pnl') { populateMonths('wix'); updateWixPnl(); }
+        else if (currentPage === 'shipping') updateShipping();
+    }
+    
+    // Overview
+    function updateOverview() {
+        const days = parseInt(document.getElementById('overviewPeriod').value) || 30;
+        const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+        
+        let wfGross = 0, wfNet = 0, wfCount = 0;
+        wayfairData.orders.forEach(o => {
+            if (new Date(o.orderDate || o.createdDate) >= cutoff) {
+                wfCount++;
+                const g = parseFloat(o.productAmount || o.total || 0);
+                wfGross += g; wfNet += g * 0.84;
+            }
+        });
+        
+        let wxGross = 0, wxNet = 0, wxCount = 0;
+        wixData.orders.forEach(o => {
+            if (new Date(o.orderDate || o.createdDate) >= cutoff) {
+                wxCount++;
+                const g = parseFloat(o.total || o.subtotal || 0);
+                wxGross += g; wxNet += g * 0.967;
+            }
+        });
+        
+        let shipCost = 0, shipCount = 0;
+        shippoData.transactions.forEach(t => {
+            if (new Date(t.createdAt || t.date) >= cutoff) {
+                shipCount++;
+                shipCost += parseFloat(t.rate || t.amount || 0);
+            }
+        });
+        
+        const totalRev = wfGross + wxGross;
+        const totalFees = (wfGross * 0.16) + (wxGross * 0.033);
+        const netEarn = wfNet + wxNet;
+        
+        document.getElementById('totalRevenue').textContent = '$' + totalRev.toFixed(2);
+        document.getElementById('totalFees').textContent = '$' + totalFees.toFixed(2);
+        document.getElementById('netEarnings').textContent = '$' + netEarn.toFixed(2);
+        document.getElementById('shippingCosts').textContent = '$' + shipCost.toFixed(2);
+        document.getElementById('feesTrend').textContent = totalRev > 0 ? (totalFees/totalRev*100).toFixed(1) + '% of revenue' : '--';
+        document.getElementById('earningsTrend').textContent = totalRev > 0 ? (netEarn/totalRev*100).toFixed(1) + '% margin' : '--';
+        document.getElementById('shippingTrend').textContent = shipCount > 0 ? '$' + (shipCost/shipCount).toFixed(2) + ' avg' : '--';
+        
+        const tbody = document.getElementById('channelBreakdownBody');
+        if (wfCount === 0 && wxCount === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-center" style="padding:40px;color:var(--text-muted);">Connect data sources</td></tr>';
+            return;
+        }
+        let html = '';
+        if (wfCount > 0) html += `<tr><td style="color:#7b2d8e;font-weight:600;">🟣 Wayfair</td><td class="text-right">${wfCount}</td><td class="text-right mono">$${wfGross.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-red);">$${(wfGross*0.16).toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-green);">$${wfNet.toFixed(2)}</td></tr>`;
+        if (wxCount > 0) html += `<tr><td style="color:#0C6EFC;font-weight:600;">🔵 Wix</td><td class="text-right">${wxCount}</td><td class="text-right mono">$${wxGross.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-red);">$${(wxGross*0.033).toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-green);">$${wxNet.toFixed(2)}</td></tr>`;
+        html += `<tr style="font-weight:600;background:var(--bg-secondary);"><td>Total</td><td class="text-right">${wfCount+wxCount}</td><td class="text-right mono">$${totalRev.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-red);">$${totalFees.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-green);">$${netEarn.toFixed(2)}</td></tr>`;
+        tbody.innerHTML = html;
+    }
+    
+    function populateMonths(type) {
+        const select = document.getElementById(type === 'wayfair' ? 'wayfairMonth' : 'wixMonth');
+        const orders = type === 'wayfair' ? wayfairData.orders : wixData.orders;
+        const months = new Set();
+        orders.forEach(o => { const d = o.orderDate || o.createdDate; if (d) months.add(d.substring(0,7)); });
+        select.innerHTML = '<option value="">All Time</option>';
+        Array.from(months).sort().reverse().forEach(m => select.innerHTML += `<option value="${m}">${formatMonth(m)}</option>`);
+    }
+    
+    function updateWayfairPnl() {
+        const month = document.getElementById('wayfairMonth').value;
+        let orders = wayfairData.orders;
+        if (month) orders = orders.filter(o => (o.orderDate || o.createdDate || '').startsWith(month));
+        
+        let gross = 0, fees = 0, net = 0;
+        const tbody = document.getElementById('wayfairBody');
+        
+        if (orders.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:40px;color:var(--text-muted);">No orders found</td></tr>';
+            document.getElementById('wayfairCount').textContent = '0 orders';
+            document.getElementById('wayfairSummary').innerHTML = '';
+            return;
+        }
+        
+        let html = '';
+        orders.sort((a,b) => (b.orderDate||'').localeCompare(a.orderDate||'')).forEach(o => {
+            const g = parseFloat(o.productAmount || o.total || 0);
+            const f = g * 0.16;
+            const n = g - f;
+            gross += g; fees += f; net += n;
+            html += `<tr><td>${o.orderDate||'--'}</td><td class="mono">${o.poNumber||'--'}</td><td class="mono">${o.sku||'--'}</td><td class="text-right mono">$${g.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-red);">$${f.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-green);">$${n.toFixed(2)}</td></tr>`;
+        });
+        tbody.innerHTML = html;
+        document.getElementById('wayfairCount').textContent = `${orders.length} orders`;
+        document.getElementById('wayfairSummary').innerHTML = `
+            <div class="summary-card"><div class="label">Gross Revenue</div><div class="value">$${gross.toFixed(2)}</div></div>
+            <div class="summary-card"><div class="label">Fees (16%)</div><div class="value negative">$${fees.toFixed(2)}</div></div>
+            <div class="summary-card"><div class="label">Net Revenue</div><div class="value positive">$${net.toFixed(2)}</div></div>`;
+    }
+    
+    function updateWixPnl() {
+        const month = document.getElementById('wixMonth').value;
+        let orders = wixData.orders;
+        if (month) orders = orders.filter(o => (o.orderDate || o.createdDate || '').startsWith(month));
+        
+        let gross = 0, fees = 0, net = 0;
+        const tbody = document.getElementById('wixBody');
+        
+        if (orders.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:40px;color:var(--text-muted);">No orders found</td></tr>';
+            document.getElementById('wixCount').textContent = '0 orders';
+            document.getElementById('wixSummary').innerHTML = '';
+            return;
+        }
+        
+        let html = '';
+        orders.sort((a,b) => (b.orderDate||b.createdDate||'').localeCompare(a.orderDate||a.createdDate||'')).forEach(o => {
+            const g = parseFloat(o.total || o.subtotal || 0);
+            const f = g * 0.033;
+            const n = g - f;
+            gross += g; fees += f; net += n;
+            html += `<tr><td>${o.orderDate||o.createdDate||'--'}</td><td class="mono">${o.orderNumber||o.orderId||'--'}</td><td>${o.customerName||'--'}</td><td class="text-right mono">$${g.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-red);">$${f.toFixed(2)}</td><td class="text-right mono" style="color:var(--accent-green);">$${n.toFixed(2)}</td></tr>`;
+        });
+        tbody.innerHTML = html;
+        document.getElementById('wixCount').textContent = `${orders.length} orders`;
+        document.getElementById('wixSummary').innerHTML = `
+            <div class="summary-card"><div class="label">Gross Revenue</div><div class="value">$${gross.toFixed(2)}</div></div>
+            <div class="summary-card"><div class="label">Fees (3.3%)</div><div class="value negative">$${fees.toFixed(2)}</div></div>
+            <div class="summary-card"><div class="label">Net Revenue</div><div class="value positive">$${net.toFixed(2)}</div></div>`;
+    }
+    
+    function updateShipping() {
+        const days = parseInt(document.getElementById('shippingPeriod').value) || 30;
+        const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+        
+        const carriers = {};
+        let total = 0, count = 0;
+        
+        shippoData.transactions.forEach(t => {
+            if (new Date(t.createdAt || t.date) >= cutoff) {
+                const c = t.carrier || 'Unknown';
+                const cost = parseFloat(t.rate || t.amount || 0);
+                if (!carriers[c]) carriers[c] = { count: 0, cost: 0 };
+                carriers[c].count++; carriers[c].cost += cost;
+                total += cost; count++;
+            }
+        });
+        
+        document.getElementById('shippingSummary').innerHTML = `
+            <div class="summary-card"><div class="label">Shipments</div><div class="value">${count}</div></div>
+            <div class="summary-card"><div class="label">Total Cost</div><div class="value">$${total.toFixed(2)}</div></div>
+            <div class="summary-card"><div class="label">Avg Cost</div><div class="value">${count > 0 ? '$' + (total/count).toFixed(2) : '--'}</div></div>`;
+        
+        const tbody = document.getElementById('carrierBody');
+        if (count === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center" style="padding:40px;color:var(--text-muted);">No shipments found</td></tr>';
+            return;
+        }
+        
+        let html = '';
+        Object.entries(carriers).sort((a,b) => b[1].count - a[1].count).forEach(([c, d]) => {
+            html += `<tr><td><strong>${c}</strong></td><td class="text-right">${d.count}</td><td class="text-right mono">$${d.cost.toFixed(2)}</td><td class="text-right mono">$${(d.cost/d.count).toFixed(2)}</td></tr>`;
+        });
+        tbody.innerHTML = html;
+    }
+    
+    // Modals
+    function openDataSourcesModal() { document.getElementById('dataSourcesModal').classList.add('active'); }
+    function closeDataSourcesModal() { document.getElementById('dataSourcesModal').classList.remove('active'); }
+    document.getElementById('dataSourcesModal').addEventListener('click', e => { if (e.target.id === 'dataSourcesModal') closeDataSourcesModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDataSourcesModal(); });
+    
+    // Utils
+    function formatMonth(ym) { if (!ym) return '--'; const [y, m] = ym.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][parseInt(m)-1] + ' ' + y; }
+    function showToast(msg, type = 'info') {
+        const c = document.getElementById('toastContainer');
+        const t = document.createElement('div');
+        t.className = `toast ${type}`;
+        t.textContent = msg;
+        c.appendChild(t);
+        setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, 4000);
+    }
+    
+    // Exports
+    function exportWayfairCSV() {
+        if (wayfairData.orders.length === 0) { showToast('⚠️ No data', 'warning'); return; }
+        let csv = 'Date,PO,SKU,Gross,Fees,Net\n';
+        wayfairData.orders.forEach(o => {
+            const g = parseFloat(o.productAmount || o.total || 0);
+            csv += `${o.orderDate||''},${o.poNumber||''},${o.sku||''},${g.toFixed(2)},${(g*0.16).toFixed(2)},${(g*0.84).toFixed(2)}\n`;
+        });
+        download(csv, 'wayfair-pnl.csv', 'text/csv');
+    }
+    
+    function exportWixCSV() {
+        if (wixData.orders.length === 0) { showToast('⚠️ No data', 'warning'); return; }
+        let csv = 'Date,Order,Customer,Gross,Fees,Net\n';
+        wixData.orders.forEach(o => {
+            const g = parseFloat(o.total || o.subtotal || 0);
+            csv += `${o.orderDate||o.createdDate||''},${o.orderNumber||o.orderId||''},"${(o.customerName||'').replace(/"/g,'""')}",${g.toFixed(2)},${(g*0.033).toFixed(2)},${(g*0.967).toFixed(2)}\n`;
+        });
+        download(csv, 'wix-pnl.csv', 'text/csv');
+    }
+    
+    function download(content, filename, type) {
+        const blob = new Blob([content], { type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+    </script>
+</body>
+</html>

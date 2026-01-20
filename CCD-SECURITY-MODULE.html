@@ -1,0 +1,2189 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+CCD SECURITY MODULE
+================================================================================
+Version: 1.2.0
+Created: December 2025
+Purpose: Security dashboard for audit logs, settings, and system status
+
+FEATURES:
+- View and filter audit logs
+- Configure auto-logout timeout
+- View security status indicators
+- Manual data purge controls
+- Change password (fully functional)
+- Password recovery with master phrase
+- Export audit logs
+
+DEPENDENCIES:
+- CCD-AUDIT-LOG.js (included inline for standalone operation)
+- CCD-AUTH-MANAGER.js (for user authentication)
+
+================================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Country Charm Decor - Security Module</title>
+    <style>
+        :root {
+            --bg-primary: #0f1419;
+            --bg-secondary: #1a2332;
+            --bg-card: #232f3e;
+            --bg-card-hover: #2d3b4e;
+            --bg-input: #1a2332;
+            --text-primary: #e6e9ed;
+            --text-secondary: #8899a6;
+            --text-muted: #5c6d7e;
+            --border-color: #2d3b4e;
+            --accent-gold: #d4a953;
+            --accent-gold-dim: #a68532;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-yellow: #eab308;
+            --accent-purple: #a855f7;
+            --accent-cyan: #06b6d4;
+            --shadow: 0 4px 20px rgba(0,0,0,0.4);
+            --radius: 12px;
+            --radius-sm: 8px;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+        
+        /* ============================================
+           HEADER
+           ============================================ */
+        .header {
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%);
+            border-bottom: 1px solid var(--accent-gold-dim);
+            padding: 20px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .brand-icon {
+            font-size: 36px;
+        }
+        
+        .brand-text h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--accent-gold);
+            letter-spacing: 0.5px;
+        }
+        
+        .brand-text .subtitle {
+            font-size: 13px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+        
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        /* ============================================
+           BUTTONS
+           ============================================ */
+        .btn {
+            padding: 10px 20px;
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: var(--accent-gold);
+            color: #1a1a1a;
+        }
+        
+        .btn-primary:hover {
+            background: var(--accent-gold-dim);
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--bg-card-hover);
+        }
+        
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        /* ============================================
+           MAIN CONTAINER
+           ============================================ */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 32px;
+        }
+        
+        /* ============================================
+           TABS
+           ============================================ */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 24px;
+            background: var(--bg-card);
+            padding: 4px;
+            border-radius: var(--radius);
+            width: fit-content;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            border-radius: var(--radius-sm);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+        }
+        
+        .tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-card-hover);
+        }
+        
+        .tab.active {
+            background: var(--accent-gold);
+            color: #1a1a1a;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* ============================================
+           CARDS
+           ============================================ */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .card-title {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .card-title .icon {
+            font-size: 24px;
+        }
+        
+        /* ============================================
+           STATUS GRID
+           ============================================ */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .status-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .status-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .status-icon.green {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+        }
+        
+        .status-icon.yellow {
+            background: rgba(234, 179, 8, 0.15);
+            color: var(--accent-yellow);
+        }
+        
+        .status-icon.red {
+            background: rgba(239, 68, 68, 0.15);
+            color: var(--accent-red);
+        }
+        
+        .status-icon.blue {
+            background: rgba(59, 130, 246, 0.15);
+            color: var(--accent-blue);
+        }
+        
+        .status-info h4 {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 2px;
+        }
+        
+        .status-info p {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        
+        /* ============================================
+           AUDIT LOG TABLE
+           ============================================ */
+        .log-filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+        }
+        
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .filter-group label {
+            font-size: 11px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .filter-group select,
+        .filter-group input {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 13px;
+            min-width: 140px;
+        }
+        
+        .filter-group select:focus,
+        .filter-group input:focus {
+            outline: none;
+            border-color: var(--accent-gold);
+        }
+        
+        .log-table-container {
+            overflow-x: auto;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+        
+        .log-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .log-table th {
+            position: sticky;
+            top: 0;
+            background: var(--bg-card);
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            color: var(--text-secondary);
+            border-bottom: 2px solid var(--border-color);
+            white-space: nowrap;
+        }
+        
+        .log-table td {
+            padding: 10px 16px;
+            border-bottom: 1px solid var(--border-color);
+            white-space: nowrap;
+        }
+        
+        .log-table tr:hover {
+            background: var(--bg-secondary);
+        }
+        
+        .log-table .type-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .type-badge.login { background: rgba(34, 197, 94, 0.15); color: var(--accent-green); }
+        .type-badge.logout { background: rgba(107, 114, 128, 0.15); color: var(--text-secondary); }
+        .type-badge.login_failed { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .type-badge.security { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .type-badge.blocked { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .type-badge.update { background: rgba(59, 130, 246, 0.15); color: var(--accent-blue); }
+        .type-badge.create { background: rgba(34, 197, 94, 0.15); color: var(--accent-green); }
+        .type-badge.delete { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .type-badge.sync { background: rgba(168, 85, 247, 0.15); color: var(--accent-purple); }
+        .type-badge.export { background: rgba(234, 179, 8, 0.15); color: var(--accent-yellow); }
+        .type-badge.import { background: rgba(6, 182, 212, 0.15); color: var(--accent-cyan); }
+        .type-badge.api_call { background: rgba(107, 114, 128, 0.1); color: var(--text-secondary); }
+        .type-badge.error { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .type-badge.backup { background: rgba(59, 130, 246, 0.15); color: var(--accent-blue); }
+        .type-badge.settings_change { background: rgba(234, 179, 8, 0.15); color: var(--accent-yellow); }
+        
+        .log-details {
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: var(--text-muted);
+            font-family: monospace;
+            font-size: 11px;
+        }
+        
+        .log-empty {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+        
+        .log-count {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+        
+        /* ============================================
+           SETTINGS FORMS
+           ============================================ */
+        .settings-section {
+            margin-bottom: 32px;
+        }
+        
+        .settings-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            margin-bottom: 12px;
+        }
+        
+        .setting-info h4 {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+        }
+        
+        .setting-info p {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .setting-control {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .setting-control select,
+        .setting-control input[type="number"] {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 14px;
+            width: 120px;
+        }
+        
+        /* ============================================
+           DATA RETENTION
+           ============================================ */
+        .retention-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .retention-stat {
+            background: var(--bg-secondary);
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            text-align: center;
+        }
+        
+        .retention-stat .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent-gold);
+        }
+        
+        .retention-stat .label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .purge-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 16px;
+        }
+        
+        /* ============================================
+           MODAL
+           ============================================ */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+        
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+        
+        .modal {
+            background: var(--bg-card);
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
+            width: 100%;
+            max-width: 420px;
+            box-shadow: var(--shadow);
+            transform: scale(0.9);
+            transition: transform 0.3s;
+        }
+        
+        .modal-overlay.active .modal {
+            transform: scale(1);
+        }
+        
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .modal-header h3 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+        
+        .modal-body {
+            padding: 24px;
+        }
+        
+        .modal-footer {
+            padding: 16px 24px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 14px;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border-color);
+            background: var(--bg-input);
+            color: var(--text-primary);
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-gold);
+        }
+        
+        .form-group .password-wrapper {
+            position: relative;
+        }
+        
+        .form-group .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .form-group .toggle-password:hover {
+            color: var(--text-primary);
+        }
+        
+        .password-requirements {
+            margin-top: 12px;
+            padding: 12px;
+            background: var(--bg-secondary);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+        }
+        
+        .password-requirements p {
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+        
+        .requirement {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        
+        .requirement.met {
+            color: var(--accent-green);
+        }
+        
+        .requirement .icon {
+            width: 16px;
+            text-align: center;
+        }
+        
+        /* ============================================
+           USER SESSION DISPLAY
+           ============================================ */
+        .session-card {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 20px;
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%);
+            border-radius: var(--radius);
+            border: 1px solid var(--border-color);
+        }
+        
+        .session-avatar {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: var(--accent-gold);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a1a1a;
+        }
+        
+        .session-info h3 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .session-info p {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        
+        .session-meta {
+            margin-left: auto;
+            text-align: right;
+        }
+        
+        .session-meta .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+        }
+        
+        .session-meta .status::before {
+            content: '';
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+        }
+        
+        /* ============================================
+           TOAST NOTIFICATIONS
+           ============================================ */
+        .toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 1000;
+        }
+        
+        .toast {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 12px 20px;
+            margin-top: 8px;
+            box-shadow: var(--shadow);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease;
+            max-width: 350px;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        .toast.success { border-left: 4px solid var(--accent-green); }
+        .toast.error { border-left: 4px solid var(--accent-red); }
+        .toast.info { border-left: 4px solid var(--accent-blue); }
+        .toast.warning { border-left: 4px solid var(--accent-yellow); }
+        
+        /* ============================================
+           RESPONSIVE
+           ============================================ */
+        @media (max-width: 768px) {
+            .header {
+                flex-direction: column;
+                gap: 16px;
+                text-align: center;
+            }
+            
+            .container {
+                padding: 20px;
+            }
+            
+            .tabs {
+                width: 100%;
+                overflow-x: auto;
+            }
+            
+            .log-filters {
+                flex-direction: column;
+            }
+            
+            .filter-group {
+                width: 100%;
+            }
+            
+            .filter-group select,
+            .filter-group input {
+                width: 100%;
+            }
+            
+            .setting-row {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            
+            .session-card {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .session-meta {
+                margin-left: 0;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="brand">
+            <span class="brand-icon">🔒</span>
+            <div class="brand-text">
+                <h1>Country Charm Decor</h1>
+                <span class="subtitle">Security Module v1.0.0</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="window.location.href='CCD-COMMAND-CENTER.html'">
+                ← Back to Command Center
+            </button>
+        </div>
+    </header>
+    
+    <!-- Main Content -->
+    <div class="container">
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="overview">Overview</button>
+            <button class="tab" data-tab="logs">Audit Logs</button>
+            <button class="tab" data-tab="settings">Settings</button>
+            <button class="tab" data-tab="retention">Data Retention</button>
+        </div>
+        
+        <!-- ============================================
+             TAB: OVERVIEW
+             ============================================ -->
+        <div id="tab-overview" class="tab-content active">
+            <!-- User Session -->
+            <div class="card">
+                <div class="session-card">
+                    <div class="session-avatar" id="sessionAvatar">?</div>
+                    <div class="session-info">
+                        <h3 id="sessionUser">Not Logged In</h3>
+                        <p id="sessionDetails">Authentication required</p>
+                    </div>
+                    <div class="session-meta">
+                        <span class="status" id="sessionStatus">Unknown</span>
+                        <p style="font-size: 12px; color: var(--text-muted); margin-top: 8px;" id="sessionTime"></p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Security Status -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><span class="icon">🛡️</span> Security Status</h2>
+                </div>
+                <div class="status-grid">
+                    <div class="status-card">
+                        <div class="status-icon green" id="statusAuthIcon">✓</div>
+                        <div class="status-info">
+                            <h4>Authentication</h4>
+                            <p id="statusAuthText">Phase S2 Pending</p>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-icon green" id="statusEncryptIcon">✓</div>
+                        <div class="status-info">
+                            <h4>Encryption</h4>
+                            <p id="statusEncryptText">Phase S4 Pending</p>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-icon green" id="statusProxyIcon">✓</div>
+                        <div class="status-info">
+                            <h4>Proxy Security</h4>
+                            <p id="statusProxyText">Phase S3 Pending</p>
+                        </div>
+                    </div>
+                    <div class="status-card">
+                        <div class="status-icon green" id="statusTier1Icon">✓</div>
+                        <div class="status-info">
+                            <h4>Tier 1 Blocking</h4>
+                            <p id="statusTier1Text">Phase S4 Pending</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Recent Activity -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><span class="icon">📋</span> Recent Activity</h2>
+                    <button class="btn btn-sm btn-secondary" onclick="switchTab('logs')">View All Logs</button>
+                </div>
+                <div class="log-table-container" style="max-height: 300px;">
+                    <table class="log-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>App</th>
+                                <th>Type</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recentLogsBody">
+                            <tr><td colspan="4" class="log-empty">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Quick Stats -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><span class="icon">📊</span> Log Statistics</h2>
+                </div>
+                <div class="retention-stats">
+                    <div class="retention-stat">
+                        <div class="value" id="statTotalLogs">0</div>
+                        <div class="label">Total Logs</div>
+                    </div>
+                    <div class="retention-stat">
+                        <div class="value" id="statSecurityEvents">0</div>
+                        <div class="label">Security Events</div>
+                    </div>
+                    <div class="retention-stat">
+                        <div class="value" id="statTodayLogs">0</div>
+                        <div class="label">Today's Activity</div>
+                    </div>
+                    <div class="retention-stat">
+                        <div class="value" id="statOldestLog">-</div>
+                        <div class="label">Oldest Log</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================
+             TAB: AUDIT LOGS
+             ============================================ -->
+        <div id="tab-logs" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><span class="icon">📜</span> Audit Log Viewer</h2>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn btn-sm btn-secondary" onclick="CCDAuditLog.exportToCSV()">📥 Export CSV</button>
+                        <button class="btn btn-sm btn-secondary" onclick="CCDAuditLog.exportToJSON()">📥 Export JSON</button>
+                    </div>
+                </div>
+                
+                <!-- Filters -->
+                <div class="log-filters">
+                    <div class="filter-group">
+                        <label>App</label>
+                        <select id="filterApp" onchange="applyLogFilters()">
+                            <option value="">All Apps</option>
+                            <option value="auth">Authentication</option>
+                            <option value="security">Security</option>
+                            <option value="inventory">Inventory</option>
+                            <option value="financial">Financial</option>
+                            <option value="wayfair">Wayfair</option>
+                            <option value="synchub">Sync Hub</option>
+                            <option value="command">Command Center</option>
+                            <option value="proxy">Proxy</option>
+                            <option value="system">System</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Type</label>
+                        <select id="filterType" onchange="applyLogFilters()">
+                            <option value="">All Types</option>
+                            <option value="LOGIN">Login</option>
+                            <option value="LOGOUT">Logout</option>
+                            <option value="LOGIN_FAILED">Login Failed</option>
+                            <option value="SECURITY">Security</option>
+                            <option value="BLOCKED">Blocked</option>
+                            <option value="CREATE">Create</option>
+                            <option value="UPDATE">Update</option>
+                            <option value="DELETE">Delete</option>
+                            <option value="SYNC">Sync</option>
+                            <option value="EXPORT">Export</option>
+                            <option value="IMPORT">Import</option>
+                            <option value="API_CALL">API Call</option>
+                            <option value="ERROR">Error</option>
+                            <option value="BACKUP">Backup</option>
+                            <option value="SETTINGS_CHANGE">Settings</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label>Start Date</label>
+                        <input type="date" id="filterStartDate" onchange="applyLogFilters()">
+                    </div>
+                    <div class="filter-group">
+                        <label>End Date</label>
+                        <input type="date" id="filterEndDate" onchange="applyLogFilters()">
+                    </div>
+                    <div class="filter-group">
+                        <label>Search</label>
+                        <input type="text" id="filterSearch" placeholder="Search actions..." oninput="applyLogFilters()">
+                    </div>
+                    <div class="filter-group" style="justify-content: flex-end;">
+                        <label>&nbsp;</label>
+                        <button class="btn btn-sm btn-secondary" onclick="clearLogFilters()">Clear Filters</button>
+                    </div>
+                </div>
+                
+                <!-- Log Count -->
+                <div class="log-count" id="logCount">Showing 0 logs</div>
+                
+                <!-- Log Table -->
+                <div class="log-table-container">
+                    <table class="log-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>App</th>
+                                <th>Type</th>
+                                <th>User</th>
+                                <th>Action</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fullLogsBody">
+                            <tr><td colspan="6" class="log-empty">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================
+             TAB: SETTINGS
+             ============================================ -->
+        <div id="tab-settings" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><span class="icon">⚙️</span> Security Settings</h2>
+                </div>
+                
+                <!-- Session Settings -->
+                <div class="settings-section">
+                    <h3>Session Management</h3>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Auto-Logout Timeout</h4>
+                            <p>Automatically lock the session after inactivity</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="settingAutoLogout" onchange="saveSettings()">
+                                <option value="15">15 minutes</option>
+                                <option value="30" selected>30 minutes</option>
+                                <option value="60">1 hour</option>
+                                <option value="120">2 hours</option>
+                                <option value="240">4 hours</option>
+                                <option value="0">Never</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Max Login Attempts</h4>
+                            <p>Lock account after this many failed attempts</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="settingMaxAttempts" onchange="saveSettings()">
+                                <option value="3">3 attempts</option>
+                                <option value="5" selected>5 attempts</option>
+                                <option value="10">10 attempts</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Lockout Duration</h4>
+                            <p>How long to lock account after max failed attempts</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="settingLockoutMinutes" onchange="saveSettings()">
+                                <option value="5">5 minutes</option>
+                                <option value="15" selected>15 minutes</option>
+                                <option value="30">30 minutes</option>
+                                <option value="60">1 hour</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Logging Settings -->
+                <div class="settings-section">
+                    <h3>Audit Logging</h3>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Log Retention</h4>
+                            <p>How long to keep audit log entries</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="settingLogRetention" onchange="saveSettings()">
+                                <option value="90">90 days</option>
+                                <option value="180">180 days</option>
+                                <option value="365" selected>1 year</option>
+                                <option value="730">2 years</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Max Log Entries</h4>
+                            <p>Maximum number of logs to store</p>
+                        </div>
+                        <div class="setting-control">
+                            <select id="settingMaxLogs" onchange="saveSettings()">
+                                <option value="5000">5,000</option>
+                                <option value="10000" selected>10,000</option>
+                                <option value="25000">25,000</option>
+                                <option value="50000">50,000</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Password Management -->
+                <div class="settings-section">
+                    <h3>Password Management</h3>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Change Password</h4>
+                            <p>Update your account password</p>
+                        </div>
+                        <div class="setting-control">
+                            <button class="btn btn-sm btn-primary" onclick="showChangePasswordModal()">
+                                🔑 Change Password
+                            </button>
+                        </div>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
+                            <h4>Password Recovery</h4>
+                            <p>Reset a password using the master recovery phrase</p>
+                        </div>
+                        <div class="setting-control">
+                            <button class="btn btn-sm btn-secondary" onclick="showRecoveryModal()">
+                                🔓 Reset Password
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- ============================================
+             TAB: DATA RETENTION
+             ============================================ -->
+        <div id="tab-retention" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title"><span class="icon">🗄️</span> Data Retention Management</h2>
+                </div>
+                
+                <!-- Retention Stats -->
+                <div class="retention-stats">
+                    <div class="retention-stat">
+                        <div class="value" id="retentionAuditLogs">0</div>
+                        <div class="label">Audit Logs</div>
+                    </div>
+                    <div class="retention-stat">
+                        <div class="value" id="retentionShippoRecords">0</div>
+                        <div class="label">Shippo Records</div>
+                    </div>
+                    <div class="retention-stat">
+                        <div class="value" id="retentionWayfairOrders">0</div>
+                        <div class="label">Wayfair Orders</div>
+                    </div>
+                    <div class="retention-stat">
+                        <div class="value" id="retentionWixOrders">0</div>
+                        <div class="label">Wix Orders</div>
+                    </div>
+                </div>
+                
+                <!-- Audit Log Purge -->
+                <div class="settings-section">
+                    <h3>Audit Log Purge</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                        Remove old audit log entries. Logs are retained for security compliance.
+                    </p>
+                    <div class="purge-options">
+                        <button class="btn btn-secondary" onclick="purgeAuditLogs(365)">
+                            Keep Last Year
+                        </button>
+                        <button class="btn btn-secondary" onclick="purgeAuditLogs(180)">
+                            Keep Last 6 Months
+                        </button>
+                        <button class="btn btn-secondary" onclick="purgeAuditLogs(90)">
+                            Keep Last 90 Days
+                        </button>
+                        <button class="btn btn-danger" onclick="purgeAuditLogs(0)">
+                            Clear All Logs
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Customer Data Purge (Phase S4 Preview) -->
+                <div class="settings-section">
+                    <h3>Customer Data Purge (PII)</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                        Remove customer personal information older than 90 days. This includes names, 
+                        addresses, and contact information from order caches.
+                    </p>
+                    <div style="padding: 20px; background: var(--bg-secondary); border-radius: var(--radius-sm); text-align: center; color: var(--text-muted);">
+                        <p>🔒 Available in Phase S4 (Data Protection)</p>
+                        <p style="font-size: 12px; margin-top: 8px;">PII encryption and auto-purge coming soon</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Password Change Modal -->
+    <div class="modal-overlay" id="passwordModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>🔑 Change Password</h3>
+                <button class="modal-close" onclick="closePasswordModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Current Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="currentPassword" placeholder="Enter current password">
+                        <button class="toggle-password" onclick="togglePassword('currentPassword', this)">👁</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>New Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="newPassword" placeholder="Enter new password" oninput="checkPasswordRequirements()">
+                        <button class="toggle-password" onclick="togglePassword('newPassword', this)">👁</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Confirm New Password</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="confirmPassword" placeholder="Confirm new password" oninput="checkPasswordRequirements()">
+                        <button class="toggle-password" onclick="togglePassword('confirmPassword', this)">👁</button>
+                    </div>
+                </div>
+                <div class="password-requirements">
+                    <p>Password Requirements:</p>
+                    <div class="requirement" id="reqLength"><span class="icon">○</span> At least 8 characters</div>
+                    <div class="requirement" id="reqUpper"><span class="icon">○</span> One uppercase letter</div>
+                    <div class="requirement" id="reqLower"><span class="icon">○</span> One lowercase letter</div>
+                    <div class="requirement" id="reqNumber"><span class="icon">○</span> One number</div>
+                    <div class="requirement" id="reqMatch"><span class="icon">○</span> Passwords match</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closePasswordModal()">Cancel</button>
+                <button class="btn btn-primary" id="btnChangePassword" onclick="changePassword()" disabled>Update Password</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Password Recovery Modal -->
+    <div class="modal-overlay" id="recoveryModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>🔓 Password Recovery</h3>
+                <button class="modal-close" onclick="closeRecoveryModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <!-- Step 1: Enter Recovery Phrase -->
+                <div id="recoveryStep1">
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                        Enter the master recovery phrase to reset a password.
+                    </p>
+                    <div class="form-group">
+                        <label>Recovery Phrase</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="recoveryPhrase" placeholder="Enter recovery phrase">
+                            <button class="toggle-password" onclick="togglePassword('recoveryPhrase', this)">👁</button>
+                        </div>
+                    </div>
+                    <div id="recoveryError" style="color: var(--accent-red); font-size: 13px; margin-bottom: 16px; display: none;"></div>
+                </div>
+                
+                <!-- Step 2: Select Account & Reset -->
+                <div id="recoveryStep2" style="display: none;">
+                    <p style="color: var(--accent-green); margin-bottom: 20px;">
+                        ✓ Recovery phrase verified
+                    </p>
+                    <div class="form-group">
+                        <label>Select Account to Reset</label>
+                        <select id="recoveryAccount" onchange="checkRecoveryRequirements()" style="width: 100%; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); background: var(--bg-input); color: var(--text-primary); font-size: 14px;">
+                            <option value="">-- Select Account --</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>New Password</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="recoveryNewPassword" placeholder="Enter new password" oninput="checkRecoveryRequirements()">
+                            <button class="toggle-password" onclick="togglePassword('recoveryNewPassword', this)">👁</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Confirm New Password</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="recoveryConfirmPassword" placeholder="Confirm new password" oninput="checkRecoveryRequirements()">
+                            <button class="toggle-password" onclick="togglePassword('recoveryConfirmPassword', this)">👁</button>
+                        </div>
+                    </div>
+                    <div class="password-requirements">
+                        <p>Password Requirements:</p>
+                        <div class="requirement" id="recReqLength"><span class="icon">○</span> At least 8 characters</div>
+                        <div class="requirement" id="recReqUpper"><span class="icon">○</span> One uppercase letter</div>
+                        <div class="requirement" id="recReqLower"><span class="icon">○</span> One lowercase letter</div>
+                        <div class="requirement" id="recReqNumber"><span class="icon">○</span> One number</div>
+                        <div class="requirement" id="recReqMatch"><span class="icon">○</span> Passwords match</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeRecoveryModal()">Cancel</button>
+                <button class="btn btn-primary" id="btnVerifyRecovery" onclick="verifyRecoveryPhrase()">Verify Phrase</button>
+                <button class="btn btn-primary" id="btnResetPassword" onclick="resetPassword()" style="display: none;" disabled>Reset Password</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- ============================================
+         INLINE AUDIT LOG LIBRARY
+         (For standalone operation without external JS file)
+         ============================================ -->
+    <script>
+        // Include CCDAuditLog inline for standalone operation
+        // In production, this can be loaded from CCD-AUDIT-LOG.js
+        
+        const CCDAuditLog = {
+            LOG_KEY: 'ccd_audit_logs',
+            MAX_LOGS: 10000,
+            RETENTION_DAYS: 365,
+            
+            TYPES: {
+                LOGIN: 'LOGIN', LOGOUT: 'LOGOUT', LOGIN_FAILED: 'LOGIN_FAILED',
+                PASSWORD_CHANGE: 'PASSWORD_CHANGE', SESSION_TIMEOUT: 'SESSION_TIMEOUT',
+                SESSION_LOCK: 'SESSION_LOCK', SESSION_UNLOCK: 'SESSION_UNLOCK',
+                VIEW: 'VIEW', CREATE: 'CREATE', UPDATE: 'UPDATE', DELETE: 'DELETE',
+                EXPORT: 'EXPORT', IMPORT: 'IMPORT', SYNC: 'SYNC', SYNC_START: 'SYNC_START',
+                SYNC_COMPLETE: 'SYNC_COMPLETE', SYNC_ERROR: 'SYNC_ERROR',
+                API_CALL: 'API_CALL', API_ERROR: 'API_ERROR', API_RATE_LIMIT: 'API_RATE_LIMIT',
+                SECURITY: 'SECURITY', BLOCKED: 'BLOCKED', TIER1_DETECTED: 'TIER1_DETECTED',
+                ENCRYPTION: 'ENCRYPTION', BACKUP: 'BACKUP', RESTORE: 'RESTORE',
+                PURGE: 'PURGE', SETTINGS_CHANGE: 'SETTINGS_CHANGE', ERROR: 'ERROR',
+                MODULE_OPEN: 'MODULE_OPEN', MODULE_CLOSE: 'MODULE_CLOSE'
+            },
+            
+            APPS: {
+                AUTH: 'auth', SECURITY: 'security', INVENTORY: 'inventory',
+                FINANCIAL: 'financial', WAYFAIR: 'wayfair', SYNCHUB: 'synchub',
+                COMMAND: 'command', PROXY: 'proxy', SYSTEM: 'system'
+            },
+            
+            log: function(app, type, action, details = {}) {
+                try {
+                    const logs = this.getLogs();
+                    const entry = {
+                        id: Date.now().toString(36) + '-' + Math.random().toString(36).substr(2, 9),
+                        timestamp: new Date().toISOString(),
+                        app: app,
+                        type: type,
+                        action: action,
+                        user: this.getCurrentUser(),
+                        details: details,
+                        userAgent: (navigator.userAgent || 'unknown').substr(0, 150)
+                    };
+                    logs.unshift(entry);
+                    if (logs.length > this.MAX_LOGS) logs.length = this.MAX_LOGS;
+                    localStorage.setItem(this.LOG_KEY, JSON.stringify(logs));
+                    return entry;
+                } catch (e) {
+                    console.error('CCDAuditLog.log error:', e);
+                    return null;
+                }
+            },
+            
+            getLogs: function() {
+                try {
+                    return JSON.parse(localStorage.getItem(this.LOG_KEY) || '[]');
+                } catch (e) { return []; }
+            },
+            
+            getFiltered: function(filters = {}) {
+                let logs = this.getLogs();
+                if (filters.app) logs = logs.filter(l => l.app === filters.app);
+                if (filters.type) logs = logs.filter(l => l.type === filters.type);
+                if (filters.user) logs = logs.filter(l => l.user === filters.user);
+                if (filters.startDate) {
+                    const start = new Date(filters.startDate);
+                    logs = logs.filter(l => new Date(l.timestamp) >= start);
+                }
+                if (filters.endDate) {
+                    const end = new Date(filters.endDate);
+                    end.setHours(23, 59, 59, 999);
+                    logs = logs.filter(l => new Date(l.timestamp) <= end);
+                }
+                if (filters.search) {
+                    const s = filters.search.toLowerCase();
+                    logs = logs.filter(l => l.action.toLowerCase().includes(s) || 
+                        JSON.stringify(l.details).toLowerCase().includes(s));
+                }
+                if (filters.limit && filters.limit > 0) logs = logs.slice(0, filters.limit);
+                return logs;
+            },
+            
+            getStats: function() {
+                const logs = this.getLogs();
+                if (logs.length === 0) return { totalLogs: 0, oldestLog: null, newestLog: null, byApp: {}, byType: {}, byUser: {} };
+                const byApp = {}, byType = {}, byUser = {};
+                logs.forEach(log => {
+                    byApp[log.app] = (byApp[log.app] || 0) + 1;
+                    byType[log.type] = (byType[log.type] || 0) + 1;
+                    byUser[log.user] = (byUser[log.user] || 0) + 1;
+                });
+                return { totalLogs: logs.length, oldestLog: logs[logs.length - 1]?.timestamp, newestLog: logs[0]?.timestamp, byApp, byType, byUser };
+            },
+            
+            getCurrentUser: function() {
+                try {
+                    const session = localStorage.getItem('ccd_session');
+                    if (session) {
+                        const p = JSON.parse(session);
+                        if (p.username) return p.username;
+                        if (p.displayName) return p.displayName;
+                    }
+                    return localStorage.getItem('ccdUsername') || 'anonymous';
+                } catch (e) { return 'anonymous'; }
+            },
+            
+            purgeOld: function(daysToKeep) {
+                const cutoff = new Date();
+                cutoff.setDate(cutoff.getDate() - daysToKeep);
+                let logs = this.getLogs();
+                const originalCount = logs.length;
+                logs = logs.filter(l => new Date(l.timestamp) >= cutoff);
+                localStorage.setItem(this.LOG_KEY, JSON.stringify(logs));
+                return { removed: originalCount - logs.length, remaining: logs.length };
+            },
+            
+            exportToJSON: function() {
+                const logs = this.getLogs();
+                const data = { exportDate: new Date().toISOString(), totalLogs: logs.length, logs };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ccd-audit-logs-${new Date().toISOString().split('T')[0]}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                this.log('security', 'EXPORT', `Exported ${logs.length} audit log entries`);
+            },
+            
+            exportToCSV: function() {
+                const logs = this.getLogs();
+                const headers = ['Timestamp', 'App', 'Type', 'User', 'Action', 'Details'];
+                const rows = logs.map(log => [
+                    log.timestamp, log.app, log.type, log.user,
+                    `"${(log.action || '').replace(/"/g, '""')}"`,
+                    `"${JSON.stringify(log.details || {}).replace(/"/g, '""')}"`
+                ]);
+                const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ccd-audit-logs-${new Date().toISOString().split('T')[0]}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                this.log('security', 'EXPORT', `Exported ${logs.length} audit log entries to CSV`);
+            }
+        };
+        
+        window.CCDAuditLog = CCDAuditLog;
+    </script>
+
+    <!-- ============================================
+         MAIN APPLICATION SCRIPT
+         ============================================ -->
+    <script>
+        // ============================================
+        // SETTINGS STORAGE
+        // ============================================
+        
+        const SETTINGS_KEY = 'ccd_security_settings';
+        
+        const defaultSettings = {
+            autoLogoutMinutes: 30,
+            maxLoginAttempts: 5,
+            lockoutMinutes: 15,
+            logRetentionDays: 365,
+            maxLogs: 10000
+        };
+        
+        function getSettings() {
+            try {
+                const stored = localStorage.getItem(SETTINGS_KEY);
+                return stored ? { ...defaultSettings, ...JSON.parse(stored) } : defaultSettings;
+            } catch (e) {
+                return defaultSettings;
+            }
+        }
+        
+        function saveSettings() {
+            const settings = {
+                autoLogoutMinutes: parseInt(document.getElementById('settingAutoLogout').value),
+                maxLoginAttempts: parseInt(document.getElementById('settingMaxAttempts').value),
+                lockoutMinutes: parseInt(document.getElementById('settingLockoutMinutes').value),
+                logRetentionDays: parseInt(document.getElementById('settingLogRetention').value),
+                maxLogs: parseInt(document.getElementById('settingMaxLogs').value)
+            };
+            
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+            
+            // Update CCDAuditLog settings
+            CCDAuditLog.MAX_LOGS = settings.maxLogs;
+            CCDAuditLog.RETENTION_DAYS = settings.logRetentionDays;
+            
+            // Log the change
+            CCDAuditLog.log('security', CCDAuditLog.TYPES.SETTINGS_CHANGE, 'Security settings updated', settings);
+            
+            showToast('Settings saved', 'success');
+        }
+        
+        function loadSettings() {
+            const settings = getSettings();
+            document.getElementById('settingAutoLogout').value = settings.autoLogoutMinutes;
+            document.getElementById('settingMaxAttempts').value = settings.maxLoginAttempts;
+            document.getElementById('settingLockoutMinutes').value = settings.lockoutMinutes;
+            document.getElementById('settingLogRetention').value = settings.logRetentionDays;
+            document.getElementById('settingMaxLogs').value = settings.maxLogs;
+        }
+        
+        // ============================================
+        // TAB NAVIGATION
+        // ============================================
+        
+        function switchTab(tabId) {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.tab === tabId);
+            });
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.toggle('active', content.id === `tab-${tabId}`);
+            });
+            
+            // Refresh content for specific tabs
+            if (tabId === 'logs') {
+                applyLogFilters();
+            } else if (tabId === 'overview') {
+                refreshOverview();
+            } else if (tabId === 'retention') {
+                refreshRetentionStats();
+            }
+        }
+        
+        // Tab click handlers
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+        });
+        
+        // ============================================
+        // AUDIT LOG DISPLAY
+        // ============================================
+        
+        function renderLogTable(logs, targetId) {
+            const tbody = document.getElementById(targetId);
+            
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="log-empty">No logs found</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = logs.map(log => {
+                const date = new Date(log.timestamp);
+                const timeStr = date.toLocaleString();
+                const typeClass = log.type.toLowerCase().replace('_', '_');
+                const details = log.details ? JSON.stringify(log.details) : '';
+                
+                return `
+                    <tr>
+                        <td>${timeStr}</td>
+                        <td>${log.app || '-'}</td>
+                        <td><span class="type-badge ${typeClass}">${log.type}</span></td>
+                        <td>${log.user || 'anonymous'}</td>
+                        <td>${log.action || '-'}</td>
+                        <td class="log-details" title="${details}">${details || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        function renderRecentLogs(logs) {
+            const tbody = document.getElementById('recentLogsBody');
+            
+            if (!logs || logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" class="log-empty">No recent activity</td></tr>';
+                return;
+            }
+            
+            tbody.innerHTML = logs.slice(0, 10).map(log => {
+                const date = new Date(log.timestamp);
+                const timeStr = date.toLocaleTimeString();
+                const typeClass = log.type.toLowerCase();
+                
+                return `
+                    <tr>
+                        <td>${timeStr}</td>
+                        <td>${log.app || '-'}</td>
+                        <td><span class="type-badge ${typeClass}">${log.type}</span></td>
+                        <td>${log.action || '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        function applyLogFilters() {
+            const filters = {
+                app: document.getElementById('filterApp').value,
+                type: document.getElementById('filterType').value,
+                startDate: document.getElementById('filterStartDate').value,
+                endDate: document.getElementById('filterEndDate').value,
+                search: document.getElementById('filterSearch').value
+            };
+            
+            const logs = CCDAuditLog.getFiltered(filters);
+            renderLogTable(logs, 'fullLogsBody');
+            document.getElementById('logCount').textContent = `Showing ${logs.length} logs`;
+        }
+        
+        function clearLogFilters() {
+            document.getElementById('filterApp').value = '';
+            document.getElementById('filterType').value = '';
+            document.getElementById('filterStartDate').value = '';
+            document.getElementById('filterEndDate').value = '';
+            document.getElementById('filterSearch').value = '';
+            applyLogFilters();
+        }
+        
+        // ============================================
+        // OVERVIEW DISPLAY
+        // ============================================
+        
+        function refreshOverview() {
+            // Update session info
+            updateSessionDisplay();
+            
+            // Update recent logs
+            const recentLogs = CCDAuditLog.getLogs().slice(0, 10);
+            renderRecentLogs(recentLogs);
+            
+            // Update stats
+            updateLogStats();
+            
+            // Update security status
+            updateSecurityStatus();
+        }
+        
+        function updateSessionDisplay() {
+            const username = CCDAuditLog.getCurrentUser();
+            const avatar = document.getElementById('sessionAvatar');
+            const userEl = document.getElementById('sessionUser');
+            const detailsEl = document.getElementById('sessionDetails');
+            const statusEl = document.getElementById('sessionStatus');
+            const timeEl = document.getElementById('sessionTime');
+            
+            if (username && username !== 'anonymous') {
+                avatar.textContent = username.charAt(0).toUpperCase();
+                userEl.textContent = username.charAt(0).toUpperCase() + username.slice(1);
+                detailsEl.textContent = 'Active session';
+                statusEl.textContent = 'Logged In';
+                statusEl.style.background = 'rgba(34, 197, 94, 0.15)';
+                statusEl.style.color = 'var(--accent-green)';
+            } else {
+                avatar.textContent = '?';
+                userEl.textContent = 'Not Logged In';
+                detailsEl.textContent = 'Authentication system pending (Phase S2)';
+                statusEl.textContent = 'No Session';
+                statusEl.style.background = 'rgba(107, 114, 128, 0.15)';
+                statusEl.style.color = 'var(--text-secondary)';
+            }
+            
+            // Show current time
+            timeEl.textContent = new Date().toLocaleString();
+        }
+        
+        function updateLogStats() {
+            const stats = CCDAuditLog.getStats();
+            const logs = CCDAuditLog.getLogs();
+            
+            // Total logs
+            document.getElementById('statTotalLogs').textContent = stats.totalLogs.toLocaleString();
+            
+            // Security events
+            const securityTypes = ['LOGIN', 'LOGOUT', 'LOGIN_FAILED', 'SECURITY', 'BLOCKED'];
+            const securityCount = Object.entries(stats.byType)
+                .filter(([type]) => securityTypes.includes(type))
+                .reduce((sum, [, count]) => sum + count, 0);
+            document.getElementById('statSecurityEvents').textContent = securityCount.toLocaleString();
+            
+            // Today's logs
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayCount = logs.filter(l => new Date(l.timestamp) >= today).length;
+            document.getElementById('statTodayLogs').textContent = todayCount.toLocaleString();
+            
+            // Oldest log
+            if (stats.oldestLog) {
+                const oldestDate = new Date(stats.oldestLog);
+                const daysAgo = Math.floor((Date.now() - oldestDate.getTime()) / (1000 * 60 * 60 * 24));
+                document.getElementById('statOldestLog').textContent = `${daysAgo}d`;
+            } else {
+                document.getElementById('statOldestLog').textContent = '-';
+            }
+        }
+        
+        function updateSecurityStatus() {
+            // Phase S1 (Logging) - Active
+            // Phase S2 (Authentication) - Active
+            // Phase S3 (Proxy Security) - Active
+            // Other phases pending
+            
+            // Authentication - Active (Phase S2 Complete)
+            document.getElementById('statusAuthText').textContent = 'Active';
+            document.getElementById('statusAuthIcon').className = 'status-icon green';
+            document.getElementById('statusAuthIcon').textContent = '✓';
+            
+            // Encryption - Phase S4 Pending
+            document.getElementById('statusEncryptText').textContent = 'Phase S4 Pending';
+            document.getElementById('statusEncryptIcon').className = 'status-icon yellow';
+            document.getElementById('statusEncryptIcon').textContent = '⏳';
+            
+            // Proxy Security - Active (Phase S3 Complete)
+            document.getElementById('statusProxyText').textContent = 'Active';
+            document.getElementById('statusProxyIcon').className = 'status-icon green';
+            document.getElementById('statusProxyIcon').textContent = '✓';
+            
+            // Tier 1 Blocking - Phase S4 Pending
+            document.getElementById('statusTier1Text').textContent = 'Phase S4 Pending';
+            document.getElementById('statusTier1Icon').className = 'status-icon yellow';
+            document.getElementById('statusTier1Icon').textContent = '⏳';
+        }
+        
+        // ============================================
+        // DATA RETENTION
+        // ============================================
+        
+        function refreshRetentionStats() {
+            // Audit logs count
+            document.getElementById('retentionAuditLogs').textContent = 
+                CCDAuditLog.getLogs().length.toLocaleString();
+            
+            // Shippo records
+            try {
+                const shippo = JSON.parse(localStorage.getItem('ccd_shippo_cache') || '{}');
+                const count = shippo.transactions?.length || 0;
+                document.getElementById('retentionShippoRecords').textContent = count.toLocaleString();
+            } catch (e) {
+                document.getElementById('retentionShippoRecords').textContent = '0';
+            }
+            
+            // Wayfair orders
+            try {
+                const wayfair = JSON.parse(localStorage.getItem('ccd_wayfair_cache') || '{}');
+                const count = wayfair.orders?.length || 0;
+                document.getElementById('retentionWayfairOrders').textContent = count.toLocaleString();
+            } catch (e) {
+                document.getElementById('retentionWayfairOrders').textContent = '0';
+            }
+            
+            // Wix orders
+            try {
+                const wix = JSON.parse(localStorage.getItem('ccd_wix_cache') || '{}');
+                const count = wix.orders?.length || 0;
+                document.getElementById('retentionWixOrders').textContent = count.toLocaleString();
+            } catch (e) {
+                document.getElementById('retentionWixOrders').textContent = '0';
+            }
+        }
+        
+        function purgeAuditLogs(daysToKeep) {
+            const logs = CCDAuditLog.getLogs();
+            
+            if (daysToKeep === 0) {
+                if (!confirm('⚠️ Are you sure you want to delete ALL audit logs?\n\nThis action cannot be undone.')) {
+                    return;
+                }
+                localStorage.removeItem(CCDAuditLog.LOG_KEY);
+                showToast(`Cleared all ${logs.length} audit logs`, 'warning');
+            } else {
+                if (!confirm(`Remove audit logs older than ${daysToKeep} days?`)) {
+                    return;
+                }
+                const result = CCDAuditLog.purgeOld(daysToKeep);
+                showToast(`Removed ${result.removed} old logs, ${result.remaining} remaining`, 'success');
+            }
+            
+            refreshRetentionStats();
+            refreshOverview();
+        }
+        
+        // ============================================
+        // UTILITIES
+        // ============================================
+        
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            
+            const icons = { success: '✓', error: '✗', info: 'ℹ', warning: '⚠' };
+            toast.innerHTML = `<span>${icons[type] || 'ℹ'}</span><span>${message}</span>`;
+            
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100%)';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+        
+        function showChangePasswordModal() {
+            // Check if user is logged in
+            const username = CCDAuditLog.getCurrentUser();
+            if (!username || username === 'anonymous') {
+                showToast('You must be logged in to change your password', 'warning');
+                return;
+            }
+            
+            // Clear form fields
+            document.getElementById('currentPassword').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmPassword').value = '';
+            
+            // Reset requirements display
+            checkPasswordRequirements();
+            
+            // Show modal
+            document.getElementById('passwordModal').classList.add('active');
+        }
+        
+        function closePasswordModal() {
+            document.getElementById('passwordModal').classList.remove('active');
+        }
+        
+        function togglePassword(fieldId, btn) {
+            const field = document.getElementById(fieldId);
+            if (field.type === 'password') {
+                field.type = 'text';
+                btn.textContent = '🔒';
+            } else {
+                field.type = 'password';
+                btn.textContent = '👁';
+            }
+        }
+        
+        function checkPasswordRequirements() {
+            const newPwd = document.getElementById('newPassword').value;
+            const confirmPwd = document.getElementById('confirmPassword').value;
+            
+            const requirements = {
+                length: newPwd.length >= 8,
+                upper: /[A-Z]/.test(newPwd),
+                lower: /[a-z]/.test(newPwd),
+                number: /[0-9]/.test(newPwd),
+                match: newPwd === confirmPwd && newPwd.length > 0
+            };
+            
+            // Update UI
+            updateRequirement('reqLength', requirements.length);
+            updateRequirement('reqUpper', requirements.upper);
+            updateRequirement('reqLower', requirements.lower);
+            updateRequirement('reqNumber', requirements.number);
+            updateRequirement('reqMatch', requirements.match);
+            
+            // Enable/disable button
+            const allMet = Object.values(requirements).every(v => v);
+            document.getElementById('btnChangePassword').disabled = !allMet;
+            
+            return allMet;
+        }
+        
+        function updateRequirement(id, met) {
+            const el = document.getElementById(id);
+            if (met) {
+                el.classList.add('met');
+                el.querySelector('.icon').textContent = '✓';
+            } else {
+                el.classList.remove('met');
+                el.querySelector('.icon').textContent = '○';
+            }
+        }
+        
+        function changePassword() {
+            const currentPwd = document.getElementById('currentPassword').value;
+            const newPwd = document.getElementById('newPassword').value;
+            const confirmPwd = document.getElementById('confirmPassword').value;
+            
+            // Validate current password is provided
+            if (!currentPwd) {
+                showToast('Please enter your current password', 'warning');
+                return;
+            }
+            
+            // Verify requirements are met
+            if (!checkPasswordRequirements()) {
+                showToast('Please meet all password requirements', 'warning');
+                return;
+            }
+            
+            // Get current username
+            const username = CCDAuditLog.getCurrentUser();
+            
+            // Get stored users from localStorage
+            const usersKey = 'ccd_auth_users';
+            let users = {};
+            try {
+                users = JSON.parse(localStorage.getItem(usersKey) || '{}');
+            } catch (e) {
+                showToast('Error accessing user data', 'error');
+                return;
+            }
+            
+            // Find and verify the user
+            const userLower = username.toLowerCase();
+            if (!users[userLower]) {
+                showToast('User not found', 'error');
+                return;
+            }
+            
+            // Verify current password (using simple hash comparison)
+            const storedHash = users[userLower].passwordHash;
+            const currentHash = simpleHash(currentPwd);
+            
+            if (storedHash !== currentHash) {
+                showToast('Current password is incorrect', 'error');
+                CCDAuditLog.log('auth', CCDAuditLog.TYPES.SECURITY, 'Password change failed - wrong current password', { username });
+                return;
+            }
+            
+            // Update password
+            users[userLower].passwordHash = simpleHash(newPwd);
+            users[userLower].lastPasswordChange = new Date().toISOString();
+            
+            // Save back to localStorage
+            localStorage.setItem(usersKey, JSON.stringify(users));
+            
+            // Log the password change
+            CCDAuditLog.log('auth', CCDAuditLog.TYPES.PASSWORD_CHANGE, 'Password changed successfully', { username });
+            
+            // Close modal and show success
+            closePasswordModal();
+            showToast('Password changed successfully', 'success');
+        }
+        
+        // Simple hash function (matching the one used in CCD-AUTH-MANAGER)
+        function simpleHash(str) {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash = hash & hash;
+            }
+            return 'h_' + Math.abs(hash).toString(36);
+        }
+        
+        // ============================================
+        // PASSWORD RECOVERY
+        // ============================================
+        
+        // Master recovery phrase hash (G0aT3491)
+        const RECOVERY_PHRASE_HASH = 'h_1mkfw0lm';
+        
+        function showRecoveryModal() {
+            // Reset to step 1
+            document.getElementById('recoveryStep1').style.display = 'block';
+            document.getElementById('recoveryStep2').style.display = 'none';
+            document.getElementById('btnVerifyRecovery').style.display = 'inline-flex';
+            document.getElementById('btnResetPassword').style.display = 'none';
+            
+            // Clear fields
+            document.getElementById('recoveryPhrase').value = '';
+            document.getElementById('recoveryNewPassword').value = '';
+            document.getElementById('recoveryConfirmPassword').value = '';
+            document.getElementById('recoveryError').style.display = 'none';
+            
+            // Show modal
+            document.getElementById('recoveryModal').classList.add('active');
+        }
+        
+        function closeRecoveryModal() {
+            document.getElementById('recoveryModal').classList.remove('active');
+        }
+        
+        function verifyRecoveryPhrase() {
+            const phrase = document.getElementById('recoveryPhrase').value;
+            const phraseHash = simpleHash(phrase);
+            
+            if (phraseHash !== RECOVERY_PHRASE_HASH) {
+                document.getElementById('recoveryError').textContent = 'Invalid recovery phrase. Please try again.';
+                document.getElementById('recoveryError').style.display = 'block';
+                CCDAuditLog.log('security', CCDAuditLog.TYPES.SECURITY, 'Failed recovery phrase attempt');
+                return;
+            }
+            
+            // Phrase verified - populate account dropdown
+            const usersKey = 'ccd_auth_users';
+            let users = {};
+            try {
+                users = JSON.parse(localStorage.getItem(usersKey) || '{}');
+            } catch (e) {
+                showToast('Error accessing user data', 'error');
+                return;
+            }
+            
+            const select = document.getElementById('recoveryAccount');
+            select.innerHTML = '<option value="">-- Select Account --</option>';
+            
+            for (const username in users) {
+                const option = document.createElement('option');
+                option.value = username;
+                option.textContent = username.charAt(0).toUpperCase() + username.slice(1);
+                select.appendChild(option);
+            }
+            
+            // Show step 2
+            document.getElementById('recoveryStep1').style.display = 'none';
+            document.getElementById('recoveryStep2').style.display = 'block';
+            document.getElementById('btnVerifyRecovery').style.display = 'none';
+            document.getElementById('btnResetPassword').style.display = 'inline-flex';
+            
+            // Reset requirements
+            checkRecoveryRequirements();
+            
+            CCDAuditLog.log('security', CCDAuditLog.TYPES.SECURITY, 'Recovery phrase verified successfully');
+        }
+        
+        function checkRecoveryRequirements() {
+            const newPwd = document.getElementById('recoveryNewPassword').value;
+            const confirmPwd = document.getElementById('recoveryConfirmPassword').value;
+            const account = document.getElementById('recoveryAccount').value;
+            
+            const requirements = {
+                length: newPwd.length >= 8,
+                upper: /[A-Z]/.test(newPwd),
+                lower: /[a-z]/.test(newPwd),
+                number: /[0-9]/.test(newPwd),
+                match: newPwd === confirmPwd && newPwd.length > 0
+            };
+            
+            // Update UI
+            updateRecoveryRequirement('recReqLength', requirements.length);
+            updateRecoveryRequirement('recReqUpper', requirements.upper);
+            updateRecoveryRequirement('recReqLower', requirements.lower);
+            updateRecoveryRequirement('recReqNumber', requirements.number);
+            updateRecoveryRequirement('recReqMatch', requirements.match);
+            
+            // Enable/disable button (also require account selection)
+            const allMet = Object.values(requirements).every(v => v) && account;
+            document.getElementById('btnResetPassword').disabled = !allMet;
+            
+            return allMet;
+        }
+        
+        function updateRecoveryRequirement(id, met) {
+            const el = document.getElementById(id);
+            if (met) {
+                el.classList.add('met');
+                el.querySelector('.icon').textContent = '✓';
+            } else {
+                el.classList.remove('met');
+                el.querySelector('.icon').textContent = '○';
+            }
+        }
+        
+        function resetPassword() {
+            const account = document.getElementById('recoveryAccount').value;
+            const newPwd = document.getElementById('recoveryNewPassword').value;
+            
+            if (!account) {
+                showToast('Please select an account', 'warning');
+                return;
+            }
+            
+            if (!checkRecoveryRequirements()) {
+                showToast('Please meet all password requirements', 'warning');
+                return;
+            }
+            
+            // Get stored users
+            const usersKey = 'ccd_auth_users';
+            let users = {};
+            try {
+                users = JSON.parse(localStorage.getItem(usersKey) || '{}');
+            } catch (e) {
+                showToast('Error accessing user data', 'error');
+                return;
+            }
+            
+            if (!users[account]) {
+                showToast('Account not found', 'error');
+                return;
+            }
+            
+            // Update password
+            users[account].passwordHash = simpleHash(newPwd);
+            users[account].lastPasswordChange = new Date().toISOString();
+            users[account].passwordResetBy = 'recovery';
+            
+            // Clear any lockout
+            if (users[account].lockedUntil) {
+                delete users[account].lockedUntil;
+                users[account].failedAttempts = 0;
+            }
+            
+            // Save back
+            localStorage.setItem(usersKey, JSON.stringify(users));
+            
+            // Log the reset
+            const displayName = account.charAt(0).toUpperCase() + account.slice(1);
+            CCDAuditLog.log('security', CCDAuditLog.TYPES.PASSWORD_CHANGE, `Password reset via recovery for ${displayName}`, { account });
+            
+            // Close modal and show success
+            closeRecoveryModal();
+            showToast(`Password reset successfully for ${displayName}`, 'success');
+        }
+        
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        
+        function init() {
+            console.log('CCD Security Module initializing...');
+            
+            // Load settings
+            loadSettings();
+            
+            // Log module open
+            CCDAuditLog.log('security', CCDAuditLog.TYPES.MODULE_OPEN, 'Security Module opened');
+            
+            // Refresh all displays
+            refreshOverview();
+            refreshRetentionStats();
+            
+            console.log('CCD Security Module ready');
+        }
+        
+        // Start
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
