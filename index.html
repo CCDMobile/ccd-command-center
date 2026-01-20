@@ -759,33 +759,54 @@ DEPLOYMENT:
                 return false;
             }
             
-            document.getElementById('configStatValue').textContent = 'Loading...';
+            document.getElementById('configStatValue').textContent = 'Searching...';
             
             try {
-                const response = await fetch(
-                    `https://graph.microsoft.com/v1.0/me/drive/root:${CONFIG_PATH}:/content`,
+                // Search for the file by name across the entire drive
+                console.log('[CONFIG] Searching for ccd-system-CONFIG.json...');
+                const searchResponse = await fetch(
+                    `https://graph.microsoft.com/v1.0/me/drive/root/search(q='ccd-system-CONFIG.json')`,
                     { headers: { 'Authorization': `Bearer ${token}` } }
                 );
                 
-                if (!response.ok) {
-                    if (response.status === 404) {
-                        document.getElementById('configStatValue').textContent = 'Not Found';
-                        document.getElementById('configHealthDot').className = 'health-card-status error';
-                        document.getElementById('configHealthValue').textContent = '!';
-                        document.getElementById('configHealthLabel').textContent = 'File not found';
-                        showToast('CONFIG file not found at: ' + CONFIG_PATH, 'warning');
-                        return false;
-                    }
-                    throw new Error(`HTTP ${response.status}`);
+                if (!searchResponse.ok) {
+                    throw new Error(`Search failed: HTTP ${searchResponse.status}`);
                 }
                 
-                configData = await response.json();
+                const searchData = await searchResponse.json();
+                console.log('[CONFIG] Search results:', searchData);
+                
+                if (!searchData.value || searchData.value.length === 0) {
+                    document.getElementById('configStatValue').textContent = 'Not Found';
+                    document.getElementById('configHealthDot').className = 'health-card-status error';
+                    document.getElementById('configHealthValue').textContent = '!';
+                    document.getElementById('configHealthLabel').textContent = 'File not found in search';
+                    showToast('CONFIG file not found in OneDrive. Please check the filename.', 'error');
+                    return false;
+                }
+                
+                // Get the first match
+                const fileItem = searchData.value[0];
+                console.log('[CONFIG] Found file:', fileItem.name, 'at path:', fileItem.parentReference.path);
+                
+                // Download the file content using the download URL
+                const contentResponse = await fetch(
+                    `https://graph.microsoft.com/v1.0/me/drive/items/${fileItem.id}/content`,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+                
+                if (!contentResponse.ok) {
+                    throw new Error(`Download failed: HTTP ${contentResponse.status}`);
+                }
+                
+                configData = await contentResponse.json();
                 
                 if (!configData._metadata || !configData.settings) {
                     throw new Error('Invalid CONFIG format');
                 }
                 
                 console.log('[CONFIG] Loaded from OneDrive, version:', configData._metadata.version);
+                console.log('[CONFIG] File path:', fileItem.parentReference.path + '/' + fileItem.name);
                 
                 // Apply settings to localStorage
                 const count = applySettingsToLocalStorage(configData.settings);
