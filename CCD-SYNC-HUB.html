@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.9.1 • Build: 2026-01-20 18:35</span>
+                <span>CCD Sync Hub v3.9.2 • Build: 2026-01-20 20:05</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -294,10 +294,9 @@
             </nav>
         </div>
         <div class="header-right">
-            <button class="btn btn-secondary btn-sm" onclick="window.location.href='./'">← Command Center</button>
             <span id="autoSyncStatus" style="font-size: 0.85rem; color: var(--text-dim);"></span>
             <button class="btn btn-secondary btn-sm" onclick="refreshData()">🔄 Refresh</button>
-            <button class="btn btn-secondary btn-sm" onclick="window.open('./CCD-CHANNEL-MANAGER.html', '_blank')">📦 Channel Manager</button>
+            <button class="btn btn-secondary btn-sm" onclick="window.open('CCD-CHANNEL-MANAGER.html', '_blank')">📦 Channel Manager</button>
         </div>
     </header>
 
@@ -2413,11 +2412,14 @@
         try {
             const handle = await loadFileHandle('configFile');
             if (!handle) {
-                console.log('[Config] No saved config file handle');
+                console.log('[Config] No saved config file handle - first time setup required');
                 return false;
             }
             
+            console.log('[Config] Found saved file handle, checking permission...');
             const permission = await handle.queryPermission({ mode: 'readwrite' });
+            console.log('[Config] Permission status:', permission);
+            
             if (permission === 'granted') {
                 configFileHandle = handle;
                 await loadConfigFile();
@@ -2425,25 +2427,42 @@
                 updateConfigStatus(true);
                 startConfigReloadInterval();
                 startSharedHeartbeat();
-                console.log('[Config] Auto-reconnected successfully');
+                console.log('[Config] ✅ Auto-reconnected successfully');
                 addLog('Config file restored - Shared Mode active', 'success');
                 return true;
-            } else {
-                // Need to request permission
-                const newPermission = await handle.requestPermission({ mode: 'readwrite' });
-                if (newPermission === 'granted') {
-                    configFileHandle = handle;
-                    await loadConfigFile();
-                    isSharedMode = true;
-                    updateConfigStatus(true);
-                    startConfigReloadInterval();
-                    startSharedHeartbeat();
-                    addLog('Config file permission re-granted - Shared Mode active', 'success');
-                    return true;
+            } else if (permission === 'prompt') {
+                // Need to request permission - show user-friendly message
+                console.log('[Config] Permission needed - requesting...');
+                addLog('⚠️ Config file permission needed - click to grant', 'warning');
+                
+                try {
+                    const newPermission = await handle.requestPermission({ mode: 'readwrite' });
+                    if (newPermission === 'granted') {
+                        configFileHandle = handle;
+                        await loadConfigFile();
+                        isSharedMode = true;
+                        updateConfigStatus(true);
+                        startConfigReloadInterval();
+                        startSharedHeartbeat();
+                        console.log('[Config] ✅ Permission granted - reconnected');
+                        addLog('Config file permission re-granted - Shared Mode active', 'success');
+                        return true;
+                    } else {
+                        console.log('[Config] ❌ Permission denied by user');
+                        addLog('Config file permission denied - please reconnect manually', 'error');
+                    }
+                } catch (permErr) {
+                    console.error('[Config] ❌ Permission request failed:', permErr);
+                    addLog('Config file permission request failed - please reconnect manually', 'error');
                 }
+            } else {
+                // Permission denied
+                console.log('[Config] ❌ Permission denied - manual reconnect required');
+                addLog('Config file permission denied - please reconnect manually', 'error');
             }
         } catch (e) {
-            console.log('[Config] Auto-reconnect failed:', e.message);
+            console.error('[Config] ❌ Auto-reconnect error:', e);
+            addLog('Config auto-reconnect failed: ' + e.message, 'error');
         }
         return false;
     }
@@ -2821,7 +2840,7 @@
                 if (sharedHandle) {
                     masterJsonFileHandle = sharedHandle;
                     await loadMasterJson();
-                    console.log('[Master JSON] Connected via Command Center shared files');
+                    console.log('[Master JSON] ✅ Connected via Command Center shared files');
                     toast('Master JSON connected (shared)', 'success');
                     return true;
                 }
@@ -2830,28 +2849,55 @@
             // Fall back to own stored handle
             const handle = await loadFileHandle('masterJson');
             if (!handle) {
-                console.log('[Master JSON] No saved file handle');
+                console.log('[Master JSON] No saved file handle - first time setup required');
                 return false;
             }
             
+            console.log('[Master JSON] Found saved file handle, checking permission...');
             // Check/request permission
             const permission = await handle.queryPermission({ mode: 'readwrite' });
+            console.log('[Master JSON] Permission status:', permission);
+            
             if (permission === 'granted') {
                 masterJsonFileHandle = handle;
                 await loadMasterJson();
-                console.log('[Master JSON] Auto-reconnected successfully');
+                console.log('[Master JSON] ✅ Auto-reconnected successfully');
+                toast('Master JSON auto-connected', 'success');
                 return true;
+            } else if (permission === 'prompt') {
+                // Try to request permission automatically
+                console.log('[Master JSON] Permission needed - requesting...');
+                try {
+                    const newPermission = await handle.requestPermission({ mode: 'readwrite' });
+                    if (newPermission === 'granted') {
+                        masterJsonFileHandle = handle;
+                        await loadMasterJson();
+                        console.log('[Master JSON] ✅ Permission granted - reconnected');
+                        toast('Master JSON reconnected', 'success');
+                        return true;
+                    } else {
+                        console.log('[Master JSON] ❌ Permission denied');
+                        showMasterJsonReconnectBanner(handle.name);
+                        masterJsonFileHandle = handle;
+                        return false;
+                    }
+                } catch (permErr) {
+                    console.error('[Master JSON] ❌ Permission request failed:', permErr);
+                    showMasterJsonReconnectBanner(handle.name);
+                    masterJsonFileHandle = handle;
+                    return false;
+                }
             } else {
-                // Need to request permission - show UI hint
-                console.log('[Master JSON] Permission needed - user must click to reconnect');
+                // Permission denied - show banner
+                console.log('[Master JSON] ❌ Permission denied - user must click to reconnect');
                 localStorage.setItem('ccd_master_json_pending', handle.name);
                 showMasterJsonReconnectBanner(handle.name);
-                // Store handle for later use when user clicks
                 masterJsonFileHandle = handle;
                 return false;
             }
         } catch (e) {
-            console.log('[Master JSON] Auto-reconnect failed:', e.message);
+            console.error('[Master JSON] ❌ Auto-reconnect error:', e);
+            toast('Master JSON auto-reconnect failed: ' + e.message, 'error');
             return false;
         }
     }
@@ -3953,20 +3999,6 @@
      * Auto-test all connections on startup (silent - no toasts)
      */
     async function autoTestAllConnections() {
-        // ✅ v3.9.1: Check if settings exist before auto-testing
-        const hasSettings = state.settings.etsyProxyUrl || 
-                           state.settings.wixProxyUrl || 
-                           state.settings.wayfairProxyUrl ||
-                           state.settings.shippoProxyUrl ||
-                           state.settings.syncHubProxyUrl;
-        
-        if (!hasSettings) {
-            console.log('[Init] No settings loaded from localStorage or CONFIG');
-            console.log('[Init] 💡 First time setup: Load CONFIG from Command Center');
-            toast('⚠️ First time setup: Open Command Center to load settings', 'warning', 10000);
-            return;
-        }
-        
         console.log('[Init] Auto-testing all connections...');
         
         // Test each channel in parallel

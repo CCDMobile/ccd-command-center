@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Channel Manager v2.3.1 - localStorage Fix • Build: 2026-01-20 18:35</title>
+    <title>CCD Channel Manager v2.3 - Shared File Support</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -301,7 +301,7 @@
 <body>
     <header class="header">
         <div class="header-left">
-            <div class="logo"><div class="logo-icon">&#128225;</div><span>Channel Manager v2.3.1 • Build: 2026-01-20 18:35</span></div>
+            <div class="logo"><div class="logo-icon">&#128225;</div><span>Channel Manager v2.3.2 • Build: 2026-01-20 20:10</span></div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
                 <button class="nav-btn" data-view="products" onclick="switchView('products')">📦 Products</button>
@@ -312,11 +312,10 @@
             </nav>
         </div>
         <div class="header-right">
-            <button class="btn btn-secondary" onclick="window.location.href='./'">← Command Center</button>
             <span class="env-badge sandbox" id="wayfairEnvBadge">🧪 Sandbox</span>
             <button class="btn btn-secondary" onclick="refreshData()">&#8635; Refresh</button>
             <button class="btn btn-primary" onclick="openProductEditor('create')">+ Create Listing</button>
-            <button class="btn btn-secondary" onclick="window.location.href='./CCD-INVENTORY-SYSTEM.html'">&#8592; Inventory</button>
+            <button class="btn btn-secondary" onclick="openInventory()">&#8592; Inventory</button>
         </div>
     </header>
     
@@ -2193,28 +2192,52 @@
                 if (sharedHandle) {
                     masterFileHandle = sharedHandle;
                     await loadFromMasterFile();
-                    console.log('[Master] Connected via Command Center shared files');
+                    console.log('[Master] ✅ Connected via Command Center shared files');
                     return true;
                 }
             }
             
             // Fall back to own stored handle
             const handle = await loadMasterFileHandle();
-            if (!handle) return false;
-            
-            // Verify permission
-            const permission = await handle.queryPermission({ mode: 'read' });
-            if (permission !== 'granted') {
-                const newPerm = await handle.requestPermission({ mode: 'read' });
-                if (newPerm !== 'granted') return false;
+            if (!handle) {
+                console.log('[Master] No saved file handle - first time setup required');
+                return false;
             }
             
-            masterFileHandle = handle;
-            await loadFromMasterFile();
-            return true;
+            console.log('[Master] Found saved file handle, checking permission...');
+            // Verify permission
+            const permission = await handle.queryPermission({ mode: 'read' });
+            console.log('[Master] Permission status:', permission);
+            
+            if (permission === 'granted') {
+                masterFileHandle = handle;
+                await loadFromMasterFile();
+                console.log('[Master] ✅ Auto-reconnected successfully');
+                return true;
+            } else if (permission === 'prompt') {
+                console.log('[Master] Permission needed - requesting...');
+                try {
+                    const newPerm = await handle.requestPermission({ mode: 'read' });
+                    if (newPerm === 'granted') {
+                        masterFileHandle = handle;
+                        await loadFromMasterFile();
+                        console.log('[Master] ✅ Permission granted - reconnected');
+                        return true;
+                    } else {
+                        console.log('[Master] ❌ Permission denied by user');
+                        return false;
+                    }
+                } catch (permErr) {
+                    console.error('[Master] ❌ Permission request failed:', permErr);
+                    return false;
+                }
+            } else {
+                console.log('[Master] ❌ Permission denied - manual reconnect required');
+                return false;
+            }
             
         } catch (error) {
-            console.log('Auto-reconnect failed:', error.message);
+            console.error('[Master] ❌ Auto-reconnect error:', error);
             return false;
         }
     }
@@ -2223,27 +2246,44 @@
         try {
             const handle = await loadOneDriveFolderHandle();
             if (!handle) {
-                console.log('No OneDrive folder handle saved');
+                console.log('[OneDrive] No folder handle saved - first time setup required');
                 return false;
             }
             
+            console.log('[OneDrive] Found saved folder handle, checking permission...');
             // Verify permission
             const permission = await handle.queryPermission({ mode: 'read' });
-            if (permission !== 'granted') {
-                const newPerm = await handle.requestPermission({ mode: 'read' });
-                if (newPerm !== 'granted') {
-                    console.log('OneDrive folder permission denied');
+            console.log('[OneDrive] Permission status:', permission);
+            
+            if (permission === 'granted') {
+                oneDriveFolderHandle = handle;
+                updateOneDriveStatus();
+                console.log('[OneDrive] ✅ Auto-reconnected to folder:', handle.name);
+                return true;
+            } else if (permission === 'prompt') {
+                console.log('[OneDrive] Permission needed - requesting...');
+                try {
+                    const newPerm = await handle.requestPermission({ mode: 'read' });
+                    if (newPerm === 'granted') {
+                        oneDriveFolderHandle = handle;
+                        updateOneDriveStatus();
+                        console.log('[OneDrive] ✅ Permission granted - reconnected to:', handle.name);
+                        return true;
+                    } else {
+                        console.log('[OneDrive] ❌ Permission denied by user');
+                        return false;
+                    }
+                } catch (permErr) {
+                    console.error('[OneDrive] ❌ Permission request failed:', permErr);
                     return false;
                 }
+            } else {
+                console.log('[OneDrive] ❌ Permission denied - manual reconnect required');
+                return false;
             }
             
-            oneDriveFolderHandle = handle;
-            console.log('✅ Auto-reconnected to OneDrive folder:', handle.name);
-            updateOneDriveStatus();
-            return true;
-            
         } catch (error) {
-            console.log('OneDrive folder auto-reconnect failed:', error.message);
+            console.error('[OneDrive] ❌ Auto-reconnect error:', error);
             return false;
         }
     }
@@ -2501,22 +2541,10 @@
     }
     
     function loadSettings() {
-        // ✅ v2.3.1: Read from flat keys written by Command Center FIRST
-        state.settings.etsyProxyUrl = localStorage.getItem('etsyProxyUrl') || state.settings.etsyProxyUrl;
-        state.settings.wixProxyUrl = localStorage.getItem('wixProxyUrl') || state.settings.wixProxyUrl;
-        state.settings.wayfairProxyUrl = localStorage.getItem('wayfairProxyUrl') || state.settings.wayfairProxyUrl;
-        state.settings.shippoProxyUrl = localStorage.getItem('shippoProxyUrl') || state.settings.shippoProxyUrl;
-        state.settings.ccdApiKey = localStorage.getItem('ccdApiKey') || state.settings.ccdApiKey;
-        state.settings.etsyApiKey = localStorage.getItem('etsyApiKey') || state.settings.etsyApiKey;
-        state.settings.wayfairApiKey = localStorage.getItem('wayfairApiKey') || state.settings.wayfairApiKey;
-        
-        // Fallback to old nested object format (backward compatibility)
         const s = localStorage.getItem('ccd_channel_manager_settings');
         if (s) Object.assign(state.settings, JSON.parse(s));
         const inv = localStorage.getItem('ccdInventorySettings');
         if (inv) { const i = JSON.parse(inv); if (i.etsyProxyUrl) state.settings.etsyProxyUrl = i.etsyProxyUrl; }
-        
-        // Update form fields
         document.getElementById('etsyProxyUrl').value = state.settings.etsyProxyUrl || '';
         document.getElementById('etsyShopId').value = state.settings.etsyShopId || '';
         document.getElementById('etsyApiKey').value = state.settings.etsyApiKey || '';

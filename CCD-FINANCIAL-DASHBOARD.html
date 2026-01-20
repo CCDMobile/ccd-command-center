@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Financial Dashboard v1.2.0</title>
+    <title>CCD Financial Dashboard v1.2.1</title>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -353,7 +353,7 @@
         loadFromLocalStorage();
         
         updateIndicators();
-        console.log('📊 CCD Financial Dashboard v1.1.0 ready');
+        console.log('📊 CCD Financial Dashboard v1.2.1 • Build: 2026-01-20 20:15 ready');
     });
     
     /**
@@ -453,7 +453,7 @@
             if (sharedSyncData) {
                 fileHandles.syncdata = sharedSyncData;
                 await loadSyncDataFile();
-                console.log('[Financial] Connected to Sync Data via Command Center');
+                console.log('[Financial] ✅ Connected to Sync Data via Command Center');
             }
             
             // Try to get master for inventory
@@ -461,7 +461,7 @@
             if (sharedMaster) {
                 fileHandles.inventory = sharedMaster;
                 await loadFileData('inventory');
-                console.log('[Financial] Connected to Master JSON via Command Center');
+                console.log('[Financial] ✅ Connected to Master JSON via Command Center');
             }
         }
         
@@ -470,14 +470,39 @@
             if (fileHandles[type]) continue; // Skip if already connected via shared
             try {
                 const handle = await getHandle(type);
-                if (handle) {
-                    const perm = await handle.queryPermission({ mode: 'read' });
-                    if (perm === 'granted') {
-                        fileHandles[type] = handle;
-                        await loadFileData(type);
-                    }
+                if (!handle) {
+                    console.log(`[Financial] No saved ${type} file handle`);
+                    continue;
                 }
-            } catch (e) { console.warn(`Could not restore ${type}:`, e); }
+                
+                console.log(`[Financial] Found saved ${type} file handle, checking permission...`);
+                const perm = await handle.queryPermission({ mode: 'read' });
+                console.log(`[Financial] ${type} permission status:`, perm);
+                
+                if (perm === 'granted') {
+                    fileHandles[type] = handle;
+                    await loadFileData(type);
+                    console.log(`[Financial] ✅ ${type} auto-reconnected`);
+                } else if (perm === 'prompt') {
+                    console.log(`[Financial] ${type} permission needed - requesting...`);
+                    try {
+                        const newPerm = await handle.requestPermission({ mode: 'read' });
+                        if (newPerm === 'granted') {
+                            fileHandles[type] = handle;
+                            await loadFileData(type);
+                            console.log(`[Financial] ✅ ${type} permission granted - reconnected`);
+                        } else {
+                            console.log(`[Financial] ❌ ${type} permission denied`);
+                        }
+                    } catch (permErr) {
+                        console.error(`[Financial] ❌ ${type} permission request failed:`, permErr);
+                    }
+                } else {
+                    console.log(`[Financial] ❌ ${type} permission denied - manual reconnect required`);
+                }
+            } catch (e) { 
+                console.error(`[Financial] ❌ Could not restore ${type}:`, e);
+            }
         }
         
         // Restore sync data file handle if not already connected
@@ -485,13 +510,35 @@
             try {
                 const handle = await getHandle('syncdata');
                 if (handle) {
+                    console.log('[Financial] Found saved syncdata file handle, checking permission...');
                     const perm = await handle.queryPermission({ mode: 'read' });
+                    console.log('[Financial] syncdata permission status:', perm);
+                    
                     if (perm === 'granted') {
                         fileHandles.syncdata = handle;
                         await loadSyncDataFile();
+                        console.log('[Financial] ✅ syncdata auto-reconnected');
+                    } else if (perm === 'prompt') {
+                        console.log('[Financial] syncdata permission needed - requesting...');
+                        try {
+                            const newPerm = await handle.requestPermission({ mode: 'read' });
+                            if (newPerm === 'granted') {
+                                fileHandles.syncdata = handle;
+                                await loadSyncDataFile();
+                                console.log('[Financial] ✅ syncdata permission granted - reconnected');
+                            } else {
+                                console.log('[Financial] ❌ syncdata permission denied');
+                            }
+                        } catch (permErr) {
+                            console.error('[Financial] ❌ syncdata permission request failed:', permErr);
+                        }
+                    } else {
+                        console.log('[Financial] ❌ syncdata permission denied - manual reconnect required');
                     }
                 }
-            } catch (e) { console.warn('Could not restore syncdata:', e); }
+            } catch (e) { 
+                console.error('[Financial] ❌ Could not restore syncdata:', e);
+            }
         }
     }
     
