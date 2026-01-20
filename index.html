@@ -1,0 +1,991 @@
+<!DOCTYPE html>
+<!--
+================================================================================
+CCD COMMAND CENTER - VERSION HISTORY
+================================================================================
+
+v3.0 (January 2026) - GitHub Pages + MSAL Integration
+------------------------------------------------------------------------
+MAJOR FEATURES:
+- Hosted on GitHub Pages for proper MSAL authentication
+- Loads CONFIG from OneDrive API, applies settings to localStorage
+- All desktop apps read settings from localStorage
+- Automatic token refresh via MSAL
+
+DEPLOYMENT:
+- GitHub Pages: https://[username].github.io/ccd-command-center/
+- Azure App: CCD Background Services (b9e5c2d9-3041-4c83-b794-37312fbb93a5)
+
+================================================================================
+-->
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Country Charm Decor - Command Center v3.0</title>
+    
+    <!-- MSAL Library -->
+    <script src="https://alcdn.msauth.net/browser/2.38.1/js/msal-browser.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #0f1419;
+            --bg-secondary: #1a2332;
+            --bg-card: #232f3e;
+            --bg-card-hover: #2d3b4e;
+            --text-primary: #e6e9ed;
+            --text-secondary: #8899a6;
+            --text-muted: #5c6d7e;
+            --border-color: #2d3b4e;
+            --accent-gold: #d4a953;
+            --accent-gold-dim: #a68532;
+            --accent-green: #22c55e;
+            --accent-red: #ef4444;
+            --accent-blue: #3b82f6;
+            --accent-yellow: #eab308;
+            --accent-purple: #a855f7;
+            --accent-cyan: #06b6d4;
+            --accent-orange: #f56400;
+            --shadow: 0 4px 20px rgba(0,0,0,0.4);
+            --radius: 12px;
+        }
+        
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-card) 100%);
+            border-bottom: 1px solid var(--accent-gold-dim);
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .brand { display: flex; align-items: center; gap: 16px; }
+        .brand-icon { font-size: 36px; }
+        .brand-text h1 { font-size: 22px; font-weight: 600; color: var(--accent-gold); }
+        .subtitle { font-size: 13px; color: var(--text-secondary); }
+        
+        .header-status { display: flex; align-items: center; gap: 16px; }
+        
+        .system-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: var(--bg-card);
+            border-radius: 20px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        
+        .status-indicator.healthy { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+        .status-indicator.warning { background: var(--accent-yellow); }
+        .status-indicator.error { background: var(--accent-red); }
+        
+        .status-text { font-size: 13px; color: var(--text-secondary); }
+        .status-text strong { color: var(--text-primary); }
+        
+        .user-menu { display: flex; align-items: center; gap: 12px; }
+        .user-avatar {
+            width: 36px; height: 36px; border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-dim) 100%);
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 600; font-size: 14px;
+        }
+        
+        .container { max-width: 1400px; margin: 0 auto; padding: 24px 32px; }
+        
+        .section-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        
+        /* OneDrive Panel */
+        .onedrive-panel {
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(59, 130, 246, 0.1) 100%);
+            border: 2px solid var(--accent-blue);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .onedrive-panel.connected {
+            border-color: var(--accent-green);
+            background: linear-gradient(135deg, var(--bg-card) 0%, rgba(34, 197, 94, 0.1) 100%);
+        }
+        
+        .onedrive-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .onedrive-header h2 { font-size: 18px; display: flex; align-items: center; gap: 10px; }
+        
+        .onedrive-info {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-top: 16px;
+        }
+        
+        .onedrive-stat {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .onedrive-stat.loaded { border-color: var(--accent-green); }
+        
+        .onedrive-stat-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
+        .onedrive-stat-value { font-size: 18px; font-weight: 600; margin-top: 4px; }
+        .onedrive-stat-value.success { color: var(--accent-green); }
+        
+        /* Buttons */
+        .btn {
+            padding: 10px 18px;
+            border-radius: 8px;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-gold) 0%, var(--accent-gold-dim) 100%);
+            color: #1a1a1a;
+        }
+        
+        .btn-secondary {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+        
+        .btn-success { background: var(--accent-green); color: white; }
+        .btn-blue { background: var(--accent-blue); color: white; }
+        
+        .btn:hover { transform: translateY(-1px); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        
+        .btn-sm { padding: 6px 12px; font-size: 12px; }
+        .btn-lg { padding: 14px 28px; font-size: 16px; }
+        
+        /* Quick Actions */
+        .quick-actions {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+            flex-wrap: wrap;
+        }
+        
+        .quick-action-btn {
+            padding: 12px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: all 0.2s;
+        }
+        
+        .quick-action-btn:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-gold-dim);
+        }
+        
+        .quick-action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        /* Health Grid */
+        .health-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .health-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 20px;
+        }
+        
+        .health-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .health-card-title { font-size: 13px; color: var(--text-muted); text-transform: uppercase; }
+        
+        .health-card-status { width: 10px; height: 10px; border-radius: 50%; }
+        .health-card-status.ok { background: var(--accent-green); }
+        .health-card-status.warning { background: var(--accent-yellow); }
+        .health-card-status.error { background: var(--accent-red); }
+        
+        .health-card-value { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+        .health-card-label { font-size: 13px; color: var(--text-secondary); }
+        
+        /* Modules Grid */
+        .modules-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .module-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius);
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: inherit;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .module-card:hover {
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow);
+        }
+        
+        .module-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 3px;
+            background: var(--card-accent, var(--accent-gold));
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        
+        .module-card:hover::before { opacity: 1; }
+        
+        .module-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; }
+        .module-icon { font-size: 28px; }
+        
+        .module-badge {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .module-badge.ready { background: rgba(34, 197, 94, 0.15); color: var(--accent-green); }
+        .module-badge.new { background: rgba(59, 130, 246, 0.15); color: var(--accent-blue); }
+        .module-badge.offline { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); }
+        .module-badge.local { background: rgba(234, 179, 8, 0.15); color: var(--accent-yellow); }
+        
+        .module-title { font-size: 16px; font-weight: 600; margin-bottom: 2px; }
+        .module-version { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+        .module-desc { font-size: 12px; color: var(--text-secondary); }
+        
+        /* Info Box */
+        .info-box {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid var(--accent-blue);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .info-box h3 { font-size: 14px; margin-bottom: 8px; color: var(--accent-blue); }
+        .info-box p { font-size: 13px; color: var(--text-secondary); margin: 0; }
+        .info-box code { background: var(--bg-secondary); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+        
+        /* Toast */
+        .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 1000; }
+        
+        .toast {
+            display: flex; align-items: center; gap: 10px;
+            padding: 14px 20px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            box-shadow: var(--shadow);
+            margin-top: 10px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .toast.success { border-left: 3px solid var(--accent-green); }
+        .toast.error { border-left: 3px solid var(--accent-red); }
+        .toast.warning { border-left: 3px solid var(--accent-yellow); }
+        .toast.info { border-left: 3px solid var(--accent-blue); }
+        
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        
+        @media (max-width: 1200px) {
+            .modules-grid { grid-template-columns: repeat(2, 1fr); }
+            .health-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        
+        @media (max-width: 768px) {
+            .modules-grid { grid-template-columns: 1fr; }
+            .health-grid { grid-template-columns: repeat(2, 1fr); }
+            .onedrive-info { grid-template-columns: 1fr; }
+            .header { padding: 12px 16px; flex-direction: column; gap: 12px; }
+            .container { padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="brand">
+            <span class="brand-icon">🏡</span>
+            <div class="brand-text">
+                <h1>Country Charm Decor</h1>
+                <span class="subtitle">Command Center v3.0</span>
+            </div>
+        </div>
+        <div class="header-status">
+            <div class="system-status">
+                <span class="status-indicator" id="systemHealthDot"></span>
+                <span class="status-text"><strong>System:</strong> <span id="systemHealthText">Initializing...</span></span>
+            </div>
+            <div class="user-menu">
+                <div class="user-avatar" id="headerAvatar">?</div>
+                <span id="headerUserName" style="font-size: 14px;">Not signed in</span>
+            </div>
+        </div>
+    </header>
+    
+    <div class="container">
+        <!-- OneDrive Connection Panel -->
+        <div class="onedrive-panel" id="onedrivePanel">
+            <div class="onedrive-header">
+                <h2>☁️ OneDrive Connection</h2>
+                <div id="onedriveActions">
+                    <button class="btn btn-blue btn-lg" id="btnSignIn" onclick="signIn()">
+                        🔑 Sign in to OneDrive
+                    </button>
+                </div>
+            </div>
+            <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                Sign in to load your settings from OneDrive. Settings will be shared with all desktop apps.
+            </p>
+            
+            <div class="onedrive-info" id="onedriveInfo" style="display: none;">
+                <div class="onedrive-stat" id="configStat">
+                    <div class="onedrive-stat-label">CONFIG File</div>
+                    <div class="onedrive-stat-value" id="configStatValue">--</div>
+                </div>
+                <div class="onedrive-stat" id="settingsStat">
+                    <div class="onedrive-stat-label">Settings Loaded</div>
+                    <div class="onedrive-stat-value" id="settingsStatValue">--</div>
+                </div>
+                <div class="onedrive-stat" id="tokenStat">
+                    <div class="onedrive-stat-label">Token Status</div>
+                    <div class="onedrive-stat-value" id="tokenStatValue">--</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Info Box -->
+        <div class="info-box">
+            <h3>📁 How to Open Desktop Apps</h3>
+            <p>Desktop apps (Inventory System, Sync Hub, etc.) run from your local files. After signing in here, open them directly from your computer. They will automatically use the settings loaded from OneDrive.</p>
+        </div>
+        
+        <!-- Quick Actions -->
+        <div class="section-title">⚡ Quick Actions</div>
+        <div class="quick-actions">
+            <button class="quick-action-btn" onclick="reloadConfig()" id="btnReloadConfig" disabled>
+                <span>⚙️</span><span>Reload CONFIG</span>
+            </button>
+            <button class="quick-action-btn" onclick="clearSettings()">
+                <span>🗑️</span><span>Clear Local Settings</span>
+            </button>
+            <button class="quick-action-btn" onclick="signOut()" id="btnSignOut">
+                <span>🚪</span><span>Sign Out</span>
+            </button>
+        </div>
+        
+        <!-- System Health -->
+        <div class="section-title">📊 System Status</div>
+        <div class="health-grid">
+            <div class="health-card">
+                <div class="health-card-header">
+                    <span class="health-card-title">OneDrive</span>
+                    <span class="health-card-status" id="onedriveHealthDot"></span>
+                </div>
+                <div class="health-card-value" id="onedriveHealthValue">--</div>
+                <div class="health-card-label" id="onedriveHealthLabel">Not connected</div>
+            </div>
+            
+            <div class="health-card">
+                <div class="health-card-header">
+                    <span class="health-card-title">Config</span>
+                    <span class="health-card-status" id="configHealthDot"></span>
+                </div>
+                <div class="health-card-value" id="configHealthValue">--</div>
+                <div class="health-card-label" id="configHealthLabel">Not loaded</div>
+            </div>
+            
+            <div class="health-card">
+                <div class="health-card-header">
+                    <span class="health-card-title">Settings</span>
+                    <span class="health-card-status" id="settingsHealthDot"></span>
+                </div>
+                <div class="health-card-value" id="settingsHealthValue">--</div>
+                <div class="health-card-label" id="settingsHealthLabel">In localStorage</div>
+            </div>
+            
+            <div class="health-card">
+                <div class="health-card-header">
+                    <span class="health-card-title">Token</span>
+                    <span class="health-card-status" id="tokenHealthDot"></span>
+                </div>
+                <div class="health-card-value" id="tokenHealthValue">--</div>
+                <div class="health-card-label" id="tokenHealthLabel">Expiration</div>
+            </div>
+        </div>
+        
+        <!-- Desktop Apps Reference -->
+        <div class="section-title">🧩 Desktop Apps (Open from Local Files)</div>
+        <div class="modules-grid">
+            <div class="module-card" style="--card-accent: var(--accent-blue); cursor: default;">
+                <div class="module-header">
+                    <span class="module-icon">📦</span>
+                    <span class="module-badge local">Local</span>
+                </div>
+                <div class="module-title">Inventory System</div>
+                <div class="module-version">v23.2.4</div>
+                <div class="module-desc">Open CCD-INVENTORY-SYSTEM.html from your computer</div>
+            </div>
+            
+            <div class="module-card" style="--card-accent: var(--accent-yellow); cursor: default;">
+                <div class="module-header">
+                    <span class="module-icon">🔄</span>
+                    <span class="module-badge local">Local</span>
+                </div>
+                <div class="module-title">Sync Hub</div>
+                <div class="module-version">v4.0.1</div>
+                <div class="module-desc">Open CCD-SYNC-HUB.html from your computer</div>
+            </div>
+            
+            <div class="module-card" style="--card-accent: var(--accent-purple); cursor: default;">
+                <div class="module-header">
+                    <span class="module-icon">🛒</span>
+                    <span class="module-badge local">Local</span>
+                </div>
+                <div class="module-title">Channel Manager</div>
+                <div class="module-version">v2.3</div>
+                <div class="module-desc">Open CCD-CHANNEL-MANAGER.html from your computer</div>
+            </div>
+            
+            <div class="module-card" style="--card-accent: var(--accent-green); cursor: default;">
+                <div class="module-header">
+                    <span class="module-icon">💰</span>
+                    <span class="module-badge local">Local</span>
+                </div>
+                <div class="module-title">Financial Dashboard</div>
+                <div class="module-version">v1.1.0</div>
+                <div class="module-desc">Open CCD-FINANCIAL-DASHBOARD.html from your computer</div>
+            </div>
+            
+            <a class="module-card" href="https://pbjc3.github.io/ccd-mobile/" target="_blank" style="--card-accent: var(--accent-orange);">
+                <div class="module-header">
+                    <span class="module-icon">📱</span>
+                    <span class="module-badge new">Web</span>
+                </div>
+                <div class="module-title">Mobile App</div>
+                <div class="module-version">v2.5.4</div>
+                <div class="module-desc">Click to open Mobile App</div>
+            </a>
+            
+            <div class="module-card" style="--card-accent: var(--accent-gold); cursor: default;">
+                <div class="module-header">
+                    <span class="module-icon">📋</span>
+                    <span class="module-badge local">Local</span>
+                </div>
+                <div class="module-title">Activity Log</div>
+                <div class="module-version">v1.0</div>
+                <div class="module-desc">Open CCD-ACTIVITY-LOG.html from your computer</div>
+            </div>
+        </div>
+        
+        <!-- Settings Preview -->
+        <div class="section-title">⚙️ Loaded Settings</div>
+        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: var(--radius); padding: 20px;">
+            <div id="settingsPreview" style="font-family: monospace; font-size: 12px; color: var(--text-secondary);">
+                Sign in to OneDrive to load settings...
+            </div>
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // ============================================================
+        // CCD COMMAND CENTER v3.0 - GitHub Pages Edition
+        // ============================================================
+        
+        // Azure App Configuration - CCD Background Services
+        const CLIENT_ID = 'b9e5c2d9-3041-4c83-b794-37312fbb93a5';
+        const REDIRECT_URI = window.location.origin + window.location.pathname;
+        const SCOPES = ['Files.ReadWrite', 'User.Read', 'offline_access'];
+        
+        // OneDrive path to CONFIG file
+        const CONFIG_PATH = '/Country Charm/ccd-system-CONFIG.json';
+        
+        // State
+        let msalInstance = null;
+        let accessToken = null;
+        let currentAccount = null;
+        let configData = null;
+        
+        // ============================================================
+        // MSAL INITIALIZATION
+        // ============================================================
+        
+        async function initializeMsal() {
+            const msalConfig = {
+                auth: {
+                    clientId: CLIENT_ID,
+                    authority: 'https://login.microsoftonline.com/common',
+                    redirectUri: REDIRECT_URI,
+                    navigateToLoginRequestUrl: true
+                },
+                cache: {
+                    cacheLocation: 'localStorage',
+                    storeAuthStateInCookie: true
+                },
+                system: {
+                    allowNativeBroker: false,
+                    windowHashTimeout: 60000,
+                    iframeHashTimeout: 10000
+                }
+            };
+            
+            msalInstance = new msal.PublicClientApplication(msalConfig);
+            await msalInstance.initialize();
+            
+            console.log('[MSAL] Initialized with redirect URI:', REDIRECT_URI);
+            
+            // Handle redirect response
+            try {
+                const response = await msalInstance.handleRedirectPromise();
+                if (response) {
+                    accessToken = response.accessToken;
+                    currentAccount = response.account;
+                    localStorage.setItem('ccd_access_token', accessToken);
+                    localStorage.setItem('ccd_token_expiration', response.expiresOn.getTime().toString());
+                    
+                    console.log('[MSAL] Login successful via redirect:', currentAccount.username);
+                    history.replaceState(null, '', window.location.pathname);
+                    
+                    await onSignInSuccess();
+                    return;
+                }
+            } catch (err) {
+                console.error('[MSAL] Redirect error:', err);
+                showToast('Sign in error: ' + err.message, 'error');
+            }
+            
+            // Check for existing session
+            const accounts = msalInstance.getAllAccounts();
+            if (accounts.length > 0) {
+                currentAccount = accounts[0];
+                console.log('[MSAL] Found existing account:', currentAccount.username);
+                
+                // Try silent token acquisition
+                try {
+                    const silentResponse = await msalInstance.acquireTokenSilent({
+                        scopes: SCOPES,
+                        account: currentAccount
+                    });
+                    
+                    accessToken = silentResponse.accessToken;
+                    localStorage.setItem('ccd_access_token', accessToken);
+                    localStorage.setItem('ccd_token_expiration', silentResponse.expiresOn.getTime().toString());
+                    
+                    console.log('[MSAL] Silent token acquired');
+                    await onSignInSuccess();
+                    return;
+                } catch (silentErr) {
+                    console.log('[MSAL] Silent acquisition failed, need interactive:', silentErr.message);
+                }
+            }
+            
+            // Not signed in
+            updateUINotSignedIn();
+            checkExistingSettings();
+        }
+        
+        async function signIn() {
+            try {
+                document.getElementById('btnSignIn').disabled = true;
+                document.getElementById('btnSignIn').innerHTML = '⏳ Signing in...';
+                
+                await msalInstance.loginRedirect({
+                    scopes: SCOPES,
+                    prompt: 'select_account'
+                });
+            } catch (err) {
+                console.error('[MSAL] Login error:', err);
+                showToast('Sign in failed: ' + err.message, 'error');
+                document.getElementById('btnSignIn').disabled = false;
+                document.getElementById('btnSignIn').innerHTML = '🔑 Sign in to OneDrive';
+            }
+        }
+        
+        async function signOut() {
+            if (confirm('Sign out? Your local settings will be preserved.')) {
+                if (msalInstance && currentAccount) {
+                    await msalInstance.logoutRedirect({
+                        account: currentAccount,
+                        postLogoutRedirectUri: REDIRECT_URI
+                    });
+                }
+            }
+        }
+        
+        async function getValidToken() {
+            if (!msalInstance || !currentAccount) return null;
+            
+            try {
+                const response = await msalInstance.acquireTokenSilent({
+                    scopes: SCOPES,
+                    account: currentAccount
+                });
+                
+                accessToken = response.accessToken;
+                localStorage.setItem('ccd_access_token', accessToken);
+                localStorage.setItem('ccd_token_expiration', response.expiresOn.getTime().toString());
+                
+                updateTokenDisplay();
+                return accessToken;
+            } catch (err) {
+                console.error('[MSAL] Token refresh failed:', err);
+                showToast('Session expired. Please sign in again.', 'warning');
+                return null;
+            }
+        }
+        
+        async function onSignInSuccess() {
+            // Update UI
+            document.getElementById('onedrivePanel').className = 'onedrive-panel connected';
+            document.getElementById('btnSignIn').innerHTML = '✓ Connected';
+            document.getElementById('btnSignIn').disabled = true;
+            document.getElementById('btnSignIn').className = 'btn btn-success btn-lg';
+            document.getElementById('onedriveInfo').style.display = 'grid';
+            
+            document.getElementById('headerUserName').textContent = currentAccount.name || currentAccount.username;
+            document.getElementById('headerAvatar').textContent = (currentAccount.name || currentAccount.username).charAt(0).toUpperCase();
+            
+            document.getElementById('onedriveHealthDot').className = 'health-card-status ok';
+            document.getElementById('onedriveHealthValue').textContent = '✓';
+            document.getElementById('onedriveHealthLabel').textContent = 'Connected';
+            
+            document.getElementById('btnReloadConfig').disabled = false;
+            
+            updateTokenDisplay();
+            
+            // Load CONFIG from OneDrive
+            await loadConfigFromOneDrive();
+            
+            updateSystemHealth();
+        }
+        
+        function updateUINotSignedIn() {
+            document.getElementById('systemHealthDot').className = 'status-indicator warning';
+            document.getElementById('systemHealthText').textContent = 'Sign in to load settings';
+            
+            document.getElementById('onedriveHealthDot').className = 'health-card-status error';
+            document.getElementById('onedriveHealthValue').textContent = '—';
+            document.getElementById('onedriveHealthLabel').textContent = 'Not connected';
+        }
+        
+        function updateTokenDisplay() {
+            const expiration = parseInt(localStorage.getItem('ccd_token_expiration') || '0');
+            const minutesLeft = Math.max(0, Math.floor((expiration - Date.now()) / 60000));
+            
+            document.getElementById('tokenStatValue').textContent = minutesLeft > 0 ? `${minutesLeft}m` : 'Expired';
+            document.getElementById('tokenStat').className = 'onedrive-stat' + (minutesLeft > 5 ? ' loaded' : '');
+            
+            document.getElementById('tokenHealthDot').className = 'health-card-status ' + (minutesLeft > 5 ? 'ok' : minutesLeft > 0 ? 'warning' : 'error');
+            document.getElementById('tokenHealthValue').textContent = minutesLeft > 0 ? `${minutesLeft}m` : '—';
+            document.getElementById('tokenHealthLabel').textContent = minutesLeft > 0 ? 'Until refresh' : 'Needs refresh';
+        }
+        
+        // ============================================================
+        // OneDrive CONFIG Loading
+        // ============================================================
+        
+        async function loadConfigFromOneDrive() {
+            const token = await getValidToken();
+            if (!token) {
+                showToast('Could not get valid token', 'error');
+                return false;
+            }
+            
+            document.getElementById('configStatValue').textContent = 'Loading...';
+            
+            try {
+                const response = await fetch(
+                    `https://graph.microsoft.com/v1.0/me/drive/root:${CONFIG_PATH}:/content`,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                );
+                
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        document.getElementById('configStatValue').textContent = 'Not Found';
+                        document.getElementById('configHealthDot').className = 'health-card-status error';
+                        document.getElementById('configHealthValue').textContent = '!';
+                        document.getElementById('configHealthLabel').textContent = 'File not found';
+                        showToast('CONFIG file not found at: ' + CONFIG_PATH, 'warning');
+                        return false;
+                    }
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                configData = await response.json();
+                
+                if (!configData._metadata || !configData.settings) {
+                    throw new Error('Invalid CONFIG format');
+                }
+                
+                console.log('[CONFIG] Loaded from OneDrive, version:', configData._metadata.version);
+                
+                // Apply settings to localStorage
+                const count = applySettingsToLocalStorage(configData.settings);
+                
+                // Update UI
+                document.getElementById('configStatValue').textContent = '✓ v' + configData._metadata.version;
+                document.getElementById('configStat').className = 'onedrive-stat loaded';
+                document.getElementById('settingsStatValue').textContent = count;
+                document.getElementById('settingsStat').className = 'onedrive-stat loaded';
+                
+                document.getElementById('configHealthDot').className = 'health-card-status ok';
+                document.getElementById('configHealthValue').textContent = 'v' + configData._metadata.version;
+                document.getElementById('configHealthLabel').textContent = 'Loaded';
+                
+                showToast(`Loaded ${count} settings from OneDrive`, 'success');
+                displaySettings();
+                return true;
+                
+            } catch (err) {
+                console.error('[CONFIG] Load error:', err);
+                document.getElementById('configStatValue').textContent = 'Error';
+                document.getElementById('configHealthDot').className = 'health-card-status error';
+                document.getElementById('configHealthValue').textContent = '!';
+                document.getElementById('configHealthLabel').textContent = err.message;
+                showToast('Failed to load CONFIG: ' + err.message, 'error');
+                return false;
+            }
+        }
+        
+        function applySettingsToLocalStorage(settings) {
+            const mappings = [
+                { sources: ['proxyUrls.etsy', 'etsyProxyUrl'], local: 'etsyProxyUrl' },
+                { sources: ['proxyUrls.wix', 'wixProxyUrl'], local: 'wixProxyUrl' },
+                { sources: ['proxyUrls.wayfair', 'wayfairProxyUrl'], local: 'wayfairProxyUrl' },
+                { sources: ['proxyUrls.shippo', 'shippoProxyUrl'], local: 'shippoProxyUrl' },
+                { sources: ['proxyUrls.syncHub', 'syncHubProxyUrl'], local: 'syncHubUrl' },
+                { sources: ['ccdApiKey'], local: 'ccdApiKey' },
+                { sources: ['etsyApiKey'], local: 'etsyApiKey' },
+                { sources: ['shippoApiKey'], local: 'shippoApiKey' },
+                { sources: ['wayfairApiKey'], local: 'wayfairApiKey' },
+                { sources: ['syncHubApiKey'], local: 'syncHubApiKey' }
+            ];
+            
+            let count = 0;
+            
+            for (const map of mappings) {
+                let value = null;
+                
+                for (const source of map.sources) {
+                    if (source.includes('.')) {
+                        const [obj, key] = source.split('.');
+                        value = settings[obj]?.[key];
+                    } else {
+                        value = settings[source];
+                    }
+                    if (value && value.toString().trim()) break;
+                }
+                
+                if (value && value.toString().trim()) {
+                    localStorage.setItem(map.local, value);
+                    count++;
+                    console.log(`[CONFIG] Applied: ${map.local}`);
+                }
+            }
+            
+            // Mark that settings have been loaded
+            localStorage.setItem('ccd_settings_loaded', 'true');
+            localStorage.setItem('ccd_settings_loaded_at', new Date().toISOString());
+            
+            return count;
+        }
+        
+        async function reloadConfig() {
+            showToast('Reloading CONFIG from OneDrive...', 'info');
+            await loadConfigFromOneDrive();
+        }
+        
+        function clearSettings() {
+            if (confirm('Clear all local settings? You will need to reload from OneDrive.')) {
+                const keys = ['etsyProxyUrl', 'wixProxyUrl', 'wayfairProxyUrl', 'shippoProxyUrl', 'syncHubUrl',
+                             'ccdApiKey', 'etsyApiKey', 'shippoApiKey', 'wayfairApiKey', 'syncHubApiKey',
+                             'ccd_settings_loaded', 'ccd_settings_loaded_at'];
+                keys.forEach(k => localStorage.removeItem(k));
+                showToast('Settings cleared', 'success');
+                displaySettings();
+                updateSystemHealth();
+            }
+        }
+        
+        // ============================================================
+        // UI Helpers
+        // ============================================================
+        
+        function checkExistingSettings() {
+            const settingsLoaded = localStorage.getItem('ccd_settings_loaded') === 'true';
+            const loadedAt = localStorage.getItem('ccd_settings_loaded_at');
+            
+            if (settingsLoaded) {
+                document.getElementById('settingsHealthDot').className = 'health-card-status ok';
+                document.getElementById('settingsHealthValue').textContent = '✓';
+                document.getElementById('settingsHealthLabel').textContent = 'Previously loaded';
+                displaySettings();
+            } else {
+                document.getElementById('settingsHealthDot').className = 'health-card-status error';
+                document.getElementById('settingsHealthValue').textContent = '—';
+                document.getElementById('settingsHealthLabel').textContent = 'Not loaded';
+            }
+        }
+        
+        function displaySettings() {
+            const keys = [
+                { key: 'etsyProxyUrl', label: 'Etsy Proxy' },
+                { key: 'wixProxyUrl', label: 'Wix Proxy' },
+                { key: 'wayfairProxyUrl', label: 'Wayfair Proxy' },
+                { key: 'shippoProxyUrl', label: 'Shippo Proxy' },
+                { key: 'syncHubUrl', label: 'Sync Hub Proxy' },
+                { key: 'ccdApiKey', label: 'CCD API Key' }
+            ];
+            
+            let html = '<table style="width: 100%; border-collapse: collapse;">';
+            let count = 0;
+            
+            for (const item of keys) {
+                const value = localStorage.getItem(item.key);
+                const display = value ? (value.length > 50 ? value.substring(0, 50) + '...' : value) : '<span style="color: var(--accent-red);">Not set</span>';
+                const status = value ? '✓' : '✗';
+                const statusColor = value ? 'var(--accent-green)' : 'var(--accent-red)';
+                
+                html += `<tr style="border-bottom: 1px solid var(--border-color);">
+                    <td style="padding: 8px 0; color: var(--text-muted); width: 120px;">${item.label}</td>
+                    <td style="padding: 8px; color: ${statusColor};">${status}</td>
+                    <td style="padding: 8px 0; word-break: break-all;">${display}</td>
+                </tr>`;
+                
+                if (value) count++;
+            }
+            
+            html += '</table>';
+            
+            document.getElementById('settingsPreview').innerHTML = html;
+            
+            document.getElementById('settingsHealthDot').className = 'health-card-status ' + (count >= 5 ? 'ok' : count > 0 ? 'warning' : 'error');
+            document.getElementById('settingsHealthValue').textContent = count;
+            document.getElementById('settingsHealthLabel').textContent = 'In localStorage';
+        }
+        
+        function updateSystemHealth() {
+            const hasOneDrive = !!accessToken;
+            const hasConfig = !!configData;
+            const hasSettings = localStorage.getItem('ccd_settings_loaded') === 'true';
+            
+            const dot = document.getElementById('systemHealthDot');
+            const text = document.getElementById('systemHealthText');
+            
+            if (hasOneDrive && hasConfig) {
+                dot.className = 'status-indicator healthy';
+                text.textContent = 'All Systems Ready';
+            } else if (hasSettings) {
+                dot.className = 'status-indicator warning';
+                text.textContent = 'Using cached settings';
+            } else {
+                dot.className = 'status-indicator error';
+                text.textContent = 'Sign in required';
+            }
+        }
+        
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = 'toast ' + type;
+            toast.innerHTML = `<span>${message}</span>`;
+            container.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+        
+        // ============================================================
+        // Initialization
+        // ============================================================
+        
+        async function init() {
+            console.log('[Command Center] v3.0 initializing...');
+            console.log('[Command Center] Redirect URI:', window.location.origin + window.location.pathname);
+            
+            await initializeMsal();
+            
+            // Refresh token display periodically
+            setInterval(() => {
+                if (currentAccount) {
+                    updateTokenDisplay();
+                }
+            }, 60000);
+            
+            console.log('[Command Center] v3.0 initialized');
+        }
+        
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
