@@ -1,0 +1,1294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCD Activity Log v1.1</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-dark: #0c1222; --bg-card: #141d2f; --bg-input: #1a2540; --bg-hover: #1e2d4a;
+            --border: #2a3f5f; --text: #e2e8f0; --text-dim: #8892a6; --text-muted: #5a6478;
+            --etsy: #f56400; --etsy-bg: rgba(245,100,0,0.15);
+            --wix: #0061ff; --wix-bg: rgba(0,97,255,0.15);
+            --wayfair: #9333ea; --wayfair-bg: rgba(147,51,234,0.15);
+            --system: #6366f1; --system-bg: rgba(99,102,241,0.15);
+            --success: #22c55e; --success-bg: rgba(34,197,94,0.15);
+            --warning: #eab308; --warning-bg: rgba(234,179,8,0.15);
+            --error: #ef4444; --error-bg: rgba(239,68,68,0.15);
+            --info: #3b82f6; --info-bg: rgba(59,130,246,0.15);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'DM Sans', sans-serif; background: var(--bg-dark); color: var(--text); min-height: 100vh; }
+        
+        /* Header */
+        .header { background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 0 24px; height: 60px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.1rem; }
+        .logo-icon { width: 36px; height: 36px; background: linear-gradient(135deg, #8b5cf6, #6366f1); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .connection-indicator { display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--bg-input); border-radius: 6px; font-size: 0.85rem; }
+        .connection-dot { width: 8px; height: 8px; border-radius: 50%; }
+        .connection-dot.connected { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .connection-dot.disconnected { background: var(--error); }
+        
+        /* Buttons */
+        .btn { padding: 8px 16px; border-radius: 6px; border: none; font-family: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s; }
+        .btn-primary { background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(139,92,246,0.4); }
+        .btn-secondary { background: var(--bg-input); color: var(--text); border: 1px solid var(--border); }
+        .btn-secondary:hover { background: var(--bg-hover); }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover { background: #16a34a; }
+        .btn-danger { background: var(--error); color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-sm { padding: 6px 12px; font-size: 0.8rem; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; }
+        
+        /* Container */
+        .container { max-width: 1600px; margin: 0 auto; padding: 24px; }
+        
+        /* Stats Grid */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+        .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        .stat-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .stat-label { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-icon { font-size: 1.3rem; opacity: 0.7; }
+        .stat-value { font-size: 2rem; font-weight: 700; }
+        .stat-value.success { color: var(--success); }
+        .stat-value.error { color: var(--error); }
+        .stat-value.warning { color: var(--warning); }
+        .stat-subtext { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+        
+        /* Filter Bar */
+        .filter-bar { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+        .filter-row { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+        .filter-group { display: flex; flex-direction: column; gap: 6px; }
+        .filter-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+        .filter-checkboxes { display: flex; flex-wrap: wrap; gap: 8px; }
+        .filter-checkbox { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+        .filter-checkbox:hover { background: var(--bg-hover); }
+        .filter-checkbox.active { border-color: #8b5cf6; background: rgba(139,92,246,0.15); }
+        .filter-checkbox input { display: none; }
+        .filter-checkbox .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .filter-checkbox .dot.order { background: var(--info); }
+        .filter-checkbox .dot.sync { background: var(--success); }
+        .filter-checkbox .dot.inventory { background: var(--warning); }
+        .filter-checkbox .dot.payment { background: #22d3ee; }
+        .filter-checkbox .dot.system { background: var(--system); }
+        .filter-checkbox .dot.error { background: var(--error); }
+        .filter-checkbox .dot.etsy { background: var(--etsy); }
+        .filter-checkbox .dot.wix { background: var(--wix); }
+        .filter-checkbox .dot.wayfair { background: var(--wayfair); }
+        .filter-checkbox .dot.systemchan { background: var(--system); }
+        
+        .filter-input { padding: 8px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.85rem; min-width: 150px; }
+        .filter-input:focus { outline: none; border-color: #8b5cf6; }
+        .filter-input::placeholder { color: var(--text-muted); }
+        .search-input { min-width: 250px; }
+        
+        /* Activity Log Table */
+        .log-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+        .log-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
+        .log-title { font-size: 1.1rem; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+        .log-count { font-size: 0.8rem; color: var(--text-dim); font-weight: 400; }
+        .log-actions { display: flex; gap: 8px; }
+        
+        .log-table-container { max-height: calc(100vh - 420px); overflow-y: auto; }
+        .log-table { width: 100%; border-collapse: collapse; }
+        .log-table th { position: sticky; top: 0; background: var(--bg-input); padding: 12px 16px; text-align: left; font-size: 0.75rem; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border); z-index: 10; }
+        .log-table td { padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.85rem; vertical-align: middle; }
+        .log-table tr:hover { background: var(--bg-hover); }
+        .log-table tr:last-child td { border-bottom: none; }
+        
+        .log-status { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .log-status.success { background: var(--success); }
+        .log-status.error { background: var(--error); }
+        .log-status.warning { background: var(--warning); }
+        .log-status.info { background: var(--info); }
+        
+        .log-category { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+        .log-category.order { background: var(--info-bg); color: var(--info); }
+        .log-category.sync { background: var(--success-bg); color: var(--success); }
+        .log-category.inventory { background: var(--warning-bg); color: var(--warning); }
+        .log-category.payment { background: rgba(34,211,238,0.15); color: #22d3ee; }
+        .log-category.system { background: var(--system-bg); color: var(--system); }
+        .log-category.error { background: var(--error-bg); color: var(--error); }
+        
+        .log-channel { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+        .log-channel.etsy { background: var(--etsy-bg); color: var(--etsy); }
+        .log-channel.wix { background: var(--wix-bg); color: var(--wix); }
+        .log-channel.wayfair { background: var(--wayfair-bg); color: var(--wayfair); }
+        .log-channel.system { background: var(--system-bg); color: var(--system); }
+        
+        .log-summary { max-width: 400px; }
+        .log-time { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
+        .log-device { font-size: 0.75rem; color: var(--text-muted); }
+        
+        .log-details-btn { background: none; border: none; color: var(--info); cursor: pointer; font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; }
+        .log-details-btn:hover { background: var(--info-bg); }
+        
+        /* Empty State */
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+        .empty-state-icon { font-size: 4rem; margin-bottom: 16px; opacity: 0.5; }
+        .empty-state-title { font-size: 1.2rem; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+        .empty-state-text { font-size: 0.9rem; margin-bottom: 20px; }
+        
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; width: 90%; max-width: 600px; max-height: 85vh; overflow: hidden; transform: translateY(20px); transition: transform 0.3s; }
+        .modal-overlay.active .modal { transform: translateY(0); }
+        .modal-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .modal-title { font-size: 1.2rem; font-weight: 700; }
+        .modal-close { width: 32px; height: 32px; border-radius: 6px; border: none; background: var(--bg-input); color: var(--text-dim); cursor: pointer; font-size: 1.2rem; }
+        .modal-close:hover { background: var(--error); color: white; }
+        .modal-body { padding: 20px; overflow-y: auto; max-height: calc(85vh - 140px); }
+        .modal-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+        
+        .detail-row { display: flex; padding: 10px 0; border-bottom: 1px solid var(--border); }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { width: 120px; font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; font-weight: 600; }
+        .detail-value { flex: 1; font-size: 0.9rem; }
+        .detail-value pre { background: var(--bg-input); padding: 12px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+        
+        /* Toast */
+        .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; max-width: 400px; }
+        .toast { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; display: flex; align-items: center; gap: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); animation: slideIn 0.3s ease; }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .toast.success { border-left: 3px solid var(--success); }
+        .toast.error { border-left: 3px solid var(--error); }
+        .toast.warning { border-left: 3px solid var(--warning); }
+        .toast.info { border-left: 3px solid var(--info); }
+        
+        /* Auto-refresh indicator */
+        .auto-refresh { display: flex; align-items: center; gap: 8px; font-size: 0.8rem; color: var(--text-dim); }
+        .auto-refresh-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+        .auto-refresh-toggle input { cursor: pointer; }
+        .refresh-countdown { font-family: 'JetBrains Mono', monospace; color: var(--text-muted); }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-dark); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="logo-icon">📋</div>
+                <span>CCD Activity Log</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="auto-refresh">
+                <label class="auto-refresh-toggle">
+                    <input type="checkbox" id="autoRefreshToggle" checked>
+                    <span>Auto-refresh</span>
+                </label>
+                <span class="refresh-countdown" id="refreshCountdown">30s</span>
+            </div>
+            <div class="connection-indicator" id="connectionIndicator">
+                <div class="connection-dot disconnected" id="connectionDot"></div>
+                <span id="connectionText">Not Connected</span>
+            </div>
+            <button class="btn btn-secondary" onclick="connectFile()">📁 Connect File</button>
+            <button class="btn btn-primary" onclick="refreshLog()" id="refreshBtn">⟳ Refresh</button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-label">Total Entries</span>
+                    <span class="stat-icon">📊</span>
+                </div>
+                <div class="stat-value" id="statTotal">0</div>
+                <div class="stat-subtext" id="statFiltered">Showing all</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-label">Success</span>
+                    <span class="stat-icon">✅</span>
+                </div>
+                <div class="stat-value success" id="statSuccess">0</div>
+                <div class="stat-subtext" id="statSuccessRate">0% success rate</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-label">Errors</span>
+                    <span class="stat-icon">❌</span>
+                </div>
+                <div class="stat-value error" id="statErrors">0</div>
+                <div class="stat-subtext" id="statLastError">No recent errors</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-label">Last Activity</span>
+                    <span class="stat-icon">🕐</span>
+                </div>
+                <div class="stat-value" id="statLastActivity" style="font-size: 1.2rem;">--</div>
+                <div class="stat-subtext" id="statLastActivityAgo">No activity yet</div>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar">
+            <div class="filter-row">
+                <div class="filter-group">
+                    <span class="filter-label">Categories</span>
+                    <div class="filter-checkboxes" id="categoryFilters">
+                        <label class="filter-checkbox active" data-category="order">
+                            <input type="checkbox" checked>
+                            <span class="dot order"></span> Orders
+                        </label>
+                        <label class="filter-checkbox active" data-category="sync">
+                            <input type="checkbox" checked>
+                            <span class="dot sync"></span> Sync
+                        </label>
+                        <label class="filter-checkbox active" data-category="inventory">
+                            <input type="checkbox" checked>
+                            <span class="dot inventory"></span> Inventory
+                        </label>
+                        <label class="filter-checkbox active" data-category="payment">
+                            <input type="checkbox" checked>
+                            <span class="dot payment"></span> Payments
+                        </label>
+                        <label class="filter-checkbox active" data-category="system">
+                            <input type="checkbox" checked>
+                            <span class="dot system"></span> System
+                        </label>
+                        <label class="filter-checkbox active" data-category="error">
+                            <input type="checkbox" checked>
+                            <span class="dot error"></span> Errors
+                        </label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Channels</span>
+                    <div class="filter-checkboxes" id="channelFilters">
+                        <label class="filter-checkbox active" data-channel="wayfair">
+                            <input type="checkbox" checked>
+                            <span class="dot wayfair"></span> Wayfair
+                        </label>
+                        <label class="filter-checkbox active" data-channel="etsy">
+                            <input type="checkbox" checked>
+                            <span class="dot etsy"></span> Etsy
+                        </label>
+                        <label class="filter-checkbox active" data-channel="wix">
+                            <input type="checkbox" checked>
+                            <span class="dot wix"></span> Wix
+                        </label>
+                        <label class="filter-checkbox active" data-channel="system">
+                            <input type="checkbox" checked>
+                            <span class="dot systemchan"></span> System
+                        </label>
+                    </div>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Date Range</span>
+                    <select class="filter-input" id="dateFilter">
+                        <option value="all">All Time</option>
+                        <option value="today">Today</option>
+                        <option value="yesterday">Yesterday</option>
+                        <option value="7days" selected>Last 7 Days</option>
+                        <option value="30days">Last 30 Days</option>
+                        <option value="custom">Custom Range</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Search</span>
+                    <input type="text" class="filter-input search-input" id="searchInput" placeholder="Search SKU, order ID, summary...">
+                </div>
+                <div class="filter-group" style="margin-left: auto;">
+                    <button class="btn btn-secondary btn-sm" onclick="clearFilters()">Clear Filters</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Activity Log Table -->
+        <div class="log-card">
+            <div class="log-header">
+                <div class="log-title">
+                    📋 Activity Log
+                    <span class="log-count" id="logCount">(0 entries)</span>
+                </div>
+                <div class="log-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="loadSampleData()">📝 Load Sample Data</button>
+                    <button class="btn btn-danger btn-sm" onclick="clearActivityLog()">🗑️ Clear Log</button>
+                    <button class="btn btn-secondary btn-sm" onclick="exportCSV()">📄 Export CSV</button>
+                    <button class="btn btn-secondary btn-sm" onclick="exportExcel()">📊 Export Excel</button>
+                </div>
+            </div>
+            <div class="log-table-container" id="logTableContainer">
+                <table class="log-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 30px;"></th>
+                            <th style="width: 150px;">Time</th>
+                            <th style="width: 90px;">Category</th>
+                            <th style="width: 80px;">Channel</th>
+                            <th>Summary</th>
+                            <th style="width: 100px;">Device</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="logTableBody">
+                        <!-- Entries will be rendered here -->
+                    </tbody>
+                </table>
+                <div class="empty-state" id="emptyState" style="display: none;">
+                    <div class="empty-state-icon">📋</div>
+                    <div class="empty-state-title">No Activity Entries</div>
+                    <div class="empty-state-text">Connect your Master JSON file to view activity, or load sample data to test.</div>
+                    <button class="btn btn-primary" onclick="loadSampleData()">Load Sample Data</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Detail Modal -->
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Activity Details</div>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modalBody">
+                <!-- Details will be rendered here -->
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+    // =============================================
+    // STATE
+    // =============================================
+    const state = {
+        fileHandle: null,
+        masterData: null,
+        activityLog: [],
+        filteredLog: [],
+        autoRefresh: true,
+        refreshInterval: null,
+        refreshCountdown: 30,
+        db: null  // IndexedDB reference
+    };
+
+    // =============================================
+    // INDEXEDDB FOR FILE HANDLE PERSISTENCE
+    // =============================================
+    async function initDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open('CCDActivityLog', 1);
+            
+            request.onerror = () => {
+                console.error('❌ [Activity Log] IndexedDB error:', request.error);
+                reject(request.error);
+            };
+            
+            request.onsuccess = () => {
+                state.db = request.result;
+                console.log('✅ [Activity Log] IndexedDB initialized');
+                resolve(state.db);
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains('fileHandles')) {
+                    db.createObjectStore('fileHandles');
+                    console.log('📦 [Activity Log] Created fileHandles store');
+                }
+            };
+        });
+    }
+
+    async function saveFileHandle(handle) {
+        if (!state.db) return;
+        
+        return new Promise((resolve, reject) => {
+            try {
+                const tx = state.db.transaction('fileHandles', 'readwrite');
+                const store = tx.objectStore('fileHandles');
+                const request = store.put(handle, 'masterFile');
+                
+                request.onsuccess = () => {
+                    console.log('💾 [Activity Log] File handle saved to IndexedDB');
+                    resolve();
+                };
+                request.onerror = () => reject(request.error);
+            } catch (err) {
+                console.error('❌ [Activity Log] Save handle error:', err);
+                reject(err);
+            }
+        });
+    }
+
+    async function restoreFileHandleFromDB() {
+        if (!state.db) return null;
+        
+        return new Promise((resolve, reject) => {
+            try {
+                const tx = state.db.transaction('fileHandles', 'readonly');
+                const store = tx.objectStore('fileHandles');
+                const request = store.get('masterFile');
+                
+                request.onsuccess = () => {
+                    const handle = request.result;
+                    if (handle) {
+                        console.log('📦 [Activity Log] Retrieved file handle from IndexedDB');
+                    }
+                    resolve(handle || null);
+                };
+                request.onerror = () => reject(request.error);
+            } catch (err) {
+                console.error('❌ [Activity Log] Restore handle error:', err);
+                resolve(null);
+            }
+        });
+    }
+
+    // =============================================
+    // INITIALIZATION
+    // =============================================
+    async function init() {
+        // Initialize IndexedDB first
+        try {
+            await initDB();
+        } catch (err) {
+            console.warn('⚠️ [Activity Log] IndexedDB unavailable:', err);
+        }
+        
+        setupFilterListeners();
+        setupAutoRefresh();
+        renderLog();
+        updateStats();
+        
+        // Try to restore file handle
+        await tryRestoreFileHandle();
+    }
+
+    // =============================================
+    // FILE SYSTEM ACCESS
+    // =============================================
+    async function connectFile() {
+        try {
+            console.log('🔗 [Activity Log] Opening file picker...');
+            const [handle] = await window.showOpenFilePicker({
+                types: [{
+                    description: 'JSON Files',
+                    accept: { 'application/json': ['.json'] }
+                }]
+            });
+            
+            console.log('✅ [Activity Log] File selected:', handle.name);
+            state.fileHandle = handle;
+            await loadFile();
+            
+            // Save handle to IndexedDB for persistence
+            await saveFileHandle(handle);
+            localStorage.setItem('ccd_activity_file', handle.name);
+            
+            updateConnectionStatus(true);
+            toast('File connected successfully', 'success');
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('❌ [Activity Log] Connect error:', err);
+                toast('Failed to connect file: ' + err.message, 'error');
+            }
+        }
+    }
+
+    async function loadFile() {
+        if (!state.fileHandle) {
+            console.log('❌ [Activity Log] No file handle');
+            return;
+        }
+        
+        try {
+            console.log('📂 [Activity Log] Loading file:', state.fileHandle.name);
+            const file = await state.fileHandle.getFile();
+            const text = await file.text();
+            console.log('📄 [Activity Log] File size:', text.length, 'bytes');
+            
+            state.masterData = JSON.parse(text);
+            console.log('📊 [Activity Log] Parsed JSON. Keys:', Object.keys(state.masterData));
+            
+            // Extract activity log
+            state.activityLog = state.masterData._activityLog || [];
+            console.log('📋 [Activity Log] Found _activityLog entries:', state.activityLog.length);
+            
+            if (state.activityLog.length > 0) {
+                console.log('📋 [Activity Log] First entry:', state.activityLog[0]);
+                console.log('📋 [Activity Log] Last entry:', state.activityLog[state.activityLog.length - 1]);
+            } else {
+                console.log('⚠️ [Activity Log] _activityLog is empty or missing');
+                console.log('📋 [Activity Log] masterData._activityLog:', state.masterData._activityLog);
+            }
+            
+            applyFilters();
+            updateStats();
+            
+        } catch (err) {
+            console.error('❌ [Activity Log] Load error:', err);
+            toast('Failed to load file: ' + err.message, 'error');
+        }
+    }
+
+    async function saveFile() {
+        if (!state.fileHandle || !state.masterData) return;
+        
+        try {
+            const writable = await state.fileHandle.createWritable();
+            state.masterData._activityLog = state.activityLog;
+            await writable.write(JSON.stringify(state.masterData, null, 2));
+            await writable.close();
+            toast('File saved', 'success');
+        } catch (err) {
+            toast('Failed to save: ' + err.message, 'error');
+        }
+    }
+
+    async function tryRestoreFileHandle() {
+        const savedName = localStorage.getItem('ccd_activity_file');
+        
+        if (!savedName) {
+            console.log('📋 [Activity Log] No saved file reference');
+            return;
+        }
+        
+        console.log('🔄 [Activity Log] Attempting to restore file handle for:', savedName);
+        document.getElementById('connectionText').textContent = `Reconnecting: ${savedName}...`;
+        
+        try {
+            const handle = await restoreFileHandleFromDB();
+            
+            if (!handle) {
+                console.log('⚠️ [Activity Log] No handle in IndexedDB');
+                document.getElementById('connectionText').textContent = `Reconnect: ${savedName}`;
+                return;
+            }
+            
+            // Verify it's a valid FileSystemFileHandle
+            if (!(handle instanceof FileSystemFileHandle)) {
+                console.log('⚠️ [Activity Log] Invalid handle type, clearing');
+                localStorage.removeItem('ccd_activity_file');
+                document.getElementById('connectionText').textContent = 'Not Connected';
+                return;
+            }
+            
+            // Check/request permission
+            let permission = 'prompt';
+            try {
+                if (typeof handle.queryPermission === 'function') {
+                    permission = await handle.queryPermission({ mode: 'read' });
+                }
+            } catch (e) {
+                console.log('⚠️ [Activity Log] queryPermission not supported');
+            }
+            
+            if (permission !== 'granted') {
+                permission = await handle.requestPermission({ mode: 'read' });
+            }
+            
+            if (permission === 'granted') {
+                state.fileHandle = handle;
+                await loadFile();
+                updateConnectionStatus(true);
+                console.log('✅ [Activity Log] File handle restored successfully');
+                toast('Reconnected to ' + handle.name, 'success');
+            } else {
+                console.log('⚠️ [Activity Log] Permission denied');
+                document.getElementById('connectionText').textContent = `Reconnect: ${savedName}`;
+            }
+        } catch (err) {
+            console.error('❌ [Activity Log] Restore error:', err);
+            document.getElementById('connectionText').textContent = `Reconnect: ${savedName}`;
+        }
+    }
+
+    function updateConnectionStatus(connected) {
+        const dot = document.getElementById('connectionDot');
+        const text = document.getElementById('connectionText');
+        
+        if (connected) {
+            dot.classList.remove('disconnected');
+            dot.classList.add('connected');
+            text.textContent = state.fileHandle?.name || 'Connected';
+        } else {
+            dot.classList.remove('connected');
+            dot.classList.add('disconnected');
+            text.textContent = 'Not Connected';
+        }
+    }
+
+    // =============================================
+    // ACTIVITY LOG FUNCTIONS
+    // =============================================
+    
+    /**
+     * Add a new activity entry
+     * This is the reference implementation - can be copied to other modules
+     */
+    function logActivity(category, action, channel, summary, details = {}) {
+        const entry = {
+            id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            timestamp: new Date().toISOString(),
+            category: category,
+            action: action,
+            channel: channel,
+            summary: summary,
+            details: details,
+            device: localStorage.getItem('ccd_hostname') || 'Unknown',
+            user: localStorage.getItem('ccdUsername') || 'Unknown'
+        };
+        
+        state.activityLog.unshift(entry);
+        
+        // Keep log at reasonable size (last 5000 entries)
+        if (state.activityLog.length > 5000) {
+            state.activityLog = state.activityLog.slice(0, 5000);
+        }
+        
+        applyFilters();
+        updateStats();
+        
+        return entry;
+    }
+
+    function clearActivityLog() {
+        if (!confirm('Are you sure you want to clear all activity log entries? This cannot be undone.')) {
+            return;
+        }
+        
+        state.activityLog = [];
+        
+        if (state.masterData) {
+            state.masterData._activityLog = [];
+            saveFile();
+        }
+        
+        applyFilters();
+        updateStats();
+        toast('Activity log cleared', 'info');
+    }
+
+    // =============================================
+    // SAMPLE DATA
+    // =============================================
+    function loadSampleData() {
+        const now = Date.now();
+        const hour = 3600000;
+        const day = 86400000;
+        
+        const sampleData = [
+            {
+                id: `act_${now}_x7k2`,
+                timestamp: new Date(now - hour * 0.5).toISOString(),
+                category: 'order',
+                action: 'order_received',
+                channel: 'wayfair',
+                summary: 'Order CS627804955 received - 1 item, $31.83',
+                details: { orderId: 'CS627804955', items: [{ sku: 'CTW460425', qty: 1, price: 31.83 }], customerState: 'FL' },
+                device: 'BACKGROUND-SYNC',
+                user: 'auto'
+            },
+            {
+                id: `act_${now}_m3p9`,
+                timestamp: new Date(now - hour * 0.4).toISOString(),
+                category: 'inventory',
+                action: 'qty_reduced',
+                channel: 'wayfair',
+                summary: 'CTW460425: 10 → 9 (Order CS627804955)',
+                details: { sku: 'CTW460425', productName: 'Galvanized Pole Barn', before: 10, after: 9, reason: 'Order CS627804955' },
+                device: 'PC-OFFICE',
+                user: 'MSmith'
+            },
+            {
+                id: `act_${now}_q1w4`,
+                timestamp: new Date(now - hour * 0.3).toISOString(),
+                category: 'sync',
+                action: 'push_success',
+                channel: 'etsy',
+                summary: 'Pushed CTW460425 qty=9 to Etsy listing 1234567890',
+                details: { sku: 'CTW460425', listingId: '1234567890', quantity: 9, responseTime: 234 },
+                device: 'PC-OFFICE',
+                user: 'auto-push'
+            },
+            {
+                id: `act_${now}_w2e5`,
+                timestamp: new Date(now - hour * 0.25).toISOString(),
+                category: 'sync',
+                action: 'push_success',
+                channel: 'wix',
+                summary: 'Pushed CTW460425 qty=9 to Wix',
+                details: { sku: 'CTW460425', productId: 'wix-prod-123', quantity: 9, responseTime: 189 },
+                device: 'PC-OFFICE',
+                user: 'auto-push'
+            },
+            {
+                id: `act_${now}_e8r2`,
+                timestamp: new Date(now - hour * 0.2).toISOString(),
+                category: 'error',
+                action: 'push_failed',
+                channel: 'wayfair',
+                summary: 'Failed to push CTW460425 to Wayfair: Invalid environment',
+                details: { sku: 'CTW460425', error: 'Invalid environment for application', errorCode: '401', willRetry: false },
+                device: 'PC-OFFICE',
+                user: 'auto-push'
+            },
+            {
+                id: `act_${now - day}_p5k7`,
+                timestamp: new Date(now - day).toISOString(),
+                category: 'payment',
+                action: 'remittance_received',
+                channel: 'wayfair',
+                summary: 'Payment $31.83 received for order CS627804955',
+                details: { orderId: 'CS627804955', grossAmount: 44.76, fees: 12.93, netAmount: 31.83 },
+                device: 'BACKGROUND-SYNC',
+                user: 'email-parser'
+            },
+            {
+                id: `act_${now - day * 2}_sys1`,
+                timestamp: new Date(now - day * 2).toISOString(),
+                category: 'system',
+                action: 'file_connected',
+                channel: 'system',
+                summary: 'Master JSON file connected',
+                details: { filename: 'ccd-inventory-MASTER.json', size: '2.4 MB' },
+                device: 'PC-OFFICE',
+                user: 'MSmith'
+            },
+            {
+                id: `act_${now - day * 3}_ord2`,
+                timestamp: new Date(now - day * 3).toISOString(),
+                category: 'order',
+                action: 'order_received',
+                channel: 'etsy',
+                summary: 'Order #2847561234 received - 2 items, $89.50',
+                details: { orderId: '2847561234', items: [{ sku: '90969', qty: 1, price: 45.00 }, { sku: '91025', qty: 1, price: 44.50 }] },
+                device: 'BACKGROUND-SYNC',
+                user: 'auto'
+            },
+            {
+                id: `act_${now - day * 3}_inv2`,
+                timestamp: new Date(now - day * 3 + hour).toISOString(),
+                category: 'inventory',
+                action: 'qty_adjusted',
+                channel: 'system',
+                summary: '90969: Manual adjustment 15 → 20 (Restock)',
+                details: { sku: '90969', before: 15, after: 20, reason: 'Manual restock', adjustedBy: 'MSmith' },
+                device: 'PC-OFFICE',
+                user: 'MSmith'
+            },
+            {
+                id: `act_${now - day * 5}_sync3`,
+                timestamp: new Date(now - day * 5).toISOString(),
+                category: 'sync',
+                action: 'pull_complete',
+                channel: 'wix',
+                summary: 'Pulled 342 products from Wix',
+                details: { totalProducts: 342, updated: 12, new: 0, responseTime: 4521 },
+                device: 'PC-OFFICE',
+                user: 'MSmith'
+            }
+        ];
+        
+        state.activityLog = sampleData;
+        applyFilters();
+        updateStats();
+        toast('Sample data loaded - 10 entries', 'success');
+    }
+
+    // =============================================
+    // FILTERING
+    // =============================================
+    function setupFilterListeners() {
+        // Category filters
+        document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
+            cb.addEventListener('click', () => {
+                cb.classList.toggle('active');
+                cb.querySelector('input').checked = cb.classList.contains('active');
+                applyFilters();
+            });
+        });
+        
+        // Channel filters
+        document.querySelectorAll('#channelFilters .filter-checkbox').forEach(cb => {
+            cb.addEventListener('click', () => {
+                cb.classList.toggle('active');
+                cb.querySelector('input').checked = cb.classList.contains('active');
+                applyFilters();
+            });
+        });
+        
+        // Date filter
+        document.getElementById('dateFilter').addEventListener('change', applyFilters);
+        
+        // Search filter (debounced)
+        let searchTimeout;
+        document.getElementById('searchInput').addEventListener('input', () => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(applyFilters, 300);
+        });
+    }
+
+    function applyFilters() {
+        const activeCategories = Array.from(document.querySelectorAll('#categoryFilters .filter-checkbox.active'))
+            .map(cb => cb.dataset.category);
+        
+        const activeChannels = Array.from(document.querySelectorAll('#channelFilters .filter-checkbox.active'))
+            .map(cb => cb.dataset.channel);
+        
+        const dateFilter = document.getElementById('dateFilter').value;
+        const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+        
+        // Calculate date range
+        const now = new Date();
+        let startDate = null;
+        
+        switch (dateFilter) {
+            case 'today':
+                startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+                break;
+            case 'yesterday':
+                startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+                break;
+            case '7days':
+                startDate = new Date(now.getTime() - 7 * 86400000);
+                break;
+            case '30days':
+                startDate = new Date(now.getTime() - 30 * 86400000);
+                break;
+        }
+        
+        state.filteredLog = state.activityLog.filter(entry => {
+            // Category filter
+            if (!activeCategories.includes(entry.category)) return false;
+            
+            // Channel filter
+            if (!activeChannels.includes(entry.channel)) return false;
+            
+            // Date filter
+            if (startDate && new Date(entry.timestamp) < startDate) return false;
+            
+            // Search filter
+            if (searchTerm) {
+                const searchable = [
+                    entry.summary,
+                    entry.action,
+                    entry.details?.sku,
+                    entry.details?.orderId,
+                    entry.device,
+                    entry.user
+                ].filter(Boolean).join(' ').toLowerCase();
+                
+                if (!searchable.includes(searchTerm)) return false;
+            }
+            
+            return true;
+        });
+        
+        renderLog();
+        updateStats();
+    }
+
+    function clearFilters() {
+        // Reset all category filters to active
+        document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
+            cb.classList.add('active');
+            cb.querySelector('input').checked = true;
+        });
+        
+        // Reset all channel filters to active
+        document.querySelectorAll('#channelFilters .filter-checkbox').forEach(cb => {
+            cb.classList.add('active');
+            cb.querySelector('input').checked = true;
+        });
+        
+        // Reset date filter
+        document.getElementById('dateFilter').value = '7days';
+        
+        // Clear search
+        document.getElementById('searchInput').value = '';
+        
+        applyFilters();
+    }
+
+    // =============================================
+    // RENDERING
+    // =============================================
+    function renderLog() {
+        const tbody = document.getElementById('logTableBody');
+        const emptyState = document.getElementById('emptyState');
+        const container = document.querySelector('.log-table');
+        
+        if (state.filteredLog.length === 0) {
+            container.style.display = 'none';
+            emptyState.style.display = 'block';
+            return;
+        }
+        
+        container.style.display = 'table';
+        emptyState.style.display = 'none';
+        
+        tbody.innerHTML = state.filteredLog.map(entry => {
+            const date = new Date(entry.timestamp);
+            const timeStr = formatTime(date);
+            const status = getStatusFromAction(entry.action);
+            
+            return `
+                <tr>
+                    <td><span class="log-status ${status}"></span></td>
+                    <td class="log-time">${timeStr}</td>
+                    <td><span class="log-category ${entry.category}">${entry.category}</span></td>
+                    <td><span class="log-channel ${entry.channel}">${entry.channel}</span></td>
+                    <td class="log-summary">${escapeHtml(entry.summary)}</td>
+                    <td class="log-device">${escapeHtml(entry.device || '--')}</td>
+                    <td><button class="log-details-btn" onclick='showDetails(${JSON.stringify(entry).replace(/'/g, "&#39;")})'>Details</button></td>
+                </tr>
+            `;
+        }).join('');
+        
+        document.getElementById('logCount').textContent = `(${state.filteredLog.length} entries)`;
+    }
+
+    function formatTime(date) {
+        const now = new Date();
+        const diffDays = Math.floor((now - date) / 86400000);
+        
+        const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+        
+        if (diffDays === 0) {
+            return `Today ${timeStr}`;
+        } else if (diffDays === 1) {
+            return `Yesterday ${timeStr}`;
+        } else {
+            const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            return `${dateStr} ${timeStr}`;
+        }
+    }
+
+    function getStatusFromAction(action) {
+        if (action.includes('success') || action.includes('complete') || action.includes('received')) {
+            return 'success';
+        } else if (action.includes('failed') || action.includes('error')) {
+            return 'error';
+        } else if (action.includes('warning') || action.includes('skipped')) {
+            return 'warning';
+        }
+        return 'info';
+    }
+
+    function escapeHtml(text) {
+        if (!text) return '';
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // =============================================
+    // STATISTICS
+    // =============================================
+    function updateStats() {
+        const total = state.activityLog.length;
+        const filtered = state.filteredLog.length;
+        const errors = state.activityLog.filter(e => e.category === 'error' || e.action.includes('failed')).length;
+        const success = state.activityLog.filter(e => e.action.includes('success') || e.action.includes('complete') || e.action.includes('received')).length;
+        
+        document.getElementById('statTotal').textContent = total;
+        document.getElementById('statFiltered').textContent = filtered === total ? 'Showing all' : `Showing ${filtered} of ${total}`;
+        
+        document.getElementById('statSuccess').textContent = success;
+        const successRate = total > 0 ? Math.round((success / (success + errors)) * 100) : 0;
+        document.getElementById('statSuccessRate').textContent = `${successRate}% success rate`;
+        
+        document.getElementById('statErrors').textContent = errors;
+        const lastError = state.activityLog.find(e => e.category === 'error' || e.action.includes('failed'));
+        document.getElementById('statLastError').textContent = lastError ? formatTimeAgo(new Date(lastError.timestamp)) : 'No errors';
+        
+        // Last activity
+        if (state.activityLog.length > 0) {
+            const lastEntry = state.activityLog[0];
+            const lastDate = new Date(lastEntry.timestamp);
+            document.getElementById('statLastActivity').textContent = lastDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            document.getElementById('statLastActivityAgo').textContent = formatTimeAgo(lastDate);
+        }
+    }
+
+    function formatTimeAgo(date) {
+        const seconds = Math.floor((new Date() - date) / 1000);
+        
+        if (seconds < 60) return 'Just now';
+        if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+        return `${Math.floor(seconds / 86400)} days ago`;
+    }
+
+    // =============================================
+    // DETAIL MODAL
+    // =============================================
+    function showDetails(entry) {
+        const modal = document.getElementById('detailModal');
+        const body = document.getElementById('modalBody');
+        
+        body.innerHTML = `
+            <div class="detail-row">
+                <div class="detail-label">ID</div>
+                <div class="detail-value" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">${entry.id}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Timestamp</div>
+                <div class="detail-value">${new Date(entry.timestamp).toLocaleString()}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Category</div>
+                <div class="detail-value"><span class="log-category ${entry.category}">${entry.category}</span></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Action</div>
+                <div class="detail-value">${entry.action}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Channel</div>
+                <div class="detail-value"><span class="log-channel ${entry.channel}">${entry.channel}</span></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Summary</div>
+                <div class="detail-value">${escapeHtml(entry.summary)}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Details</div>
+                <div class="detail-value"><pre>${JSON.stringify(entry.details || {}, null, 2)}</pre></div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">Device</div>
+                <div class="detail-value">${escapeHtml(entry.device || '--')}</div>
+            </div>
+            <div class="detail-row">
+                <div class="detail-label">User</div>
+                <div class="detail-value">${escapeHtml(entry.user || '--')}</div>
+            </div>
+        `;
+        
+        modal.classList.add('active');
+    }
+
+    function closeModal() {
+        document.getElementById('detailModal').classList.remove('active');
+    }
+
+    // Close modal on overlay click
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+        if (e.target.classList.contains('modal-overlay')) {
+            closeModal();
+        }
+    });
+
+    // =============================================
+    // EXPORT FUNCTIONS
+    // =============================================
+    function exportCSV() {
+        if (state.filteredLog.length === 0) {
+            toast('No data to export', 'warning');
+            return;
+        }
+        
+        const headers = ['Timestamp', 'Category', 'Action', 'Channel', 'Summary', 'Device', 'User', 'Details'];
+        
+        const rows = state.filteredLog.map(entry => [
+            entry.timestamp,
+            entry.category,
+            entry.action,
+            entry.channel,
+            `"${(entry.summary || '').replace(/"/g, '""')}"`,
+            entry.device || '',
+            entry.user || '',
+            `"${JSON.stringify(entry.details || {}).replace(/"/g, '""')}"`
+        ]);
+        
+        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+        
+        downloadFile(csv, `ccd-activity-log-${formatDateForFilename()}.csv`, 'text/csv');
+        toast(`Exported ${state.filteredLog.length} entries to CSV`, 'success');
+    }
+
+    function exportExcel() {
+        if (state.filteredLog.length === 0) {
+            toast('No data to export', 'warning');
+            return;
+        }
+        
+        // Create simple HTML table that Excel can open
+        let html = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+            <head><meta charset="UTF-8"></head>
+            <body>
+            <table border="1">
+                <tr style="background: #4a5568; color: white; font-weight: bold;">
+                    <th>Timestamp</th>
+                    <th>Category</th>
+                    <th>Action</th>
+                    <th>Channel</th>
+                    <th>Summary</th>
+                    <th>Device</th>
+                    <th>User</th>
+                    <th>Details</th>
+                </tr>
+        `;
+        
+        state.filteredLog.forEach(entry => {
+            html += `
+                <tr>
+                    <td>${new Date(entry.timestamp).toLocaleString()}</td>
+                    <td>${entry.category}</td>
+                    <td>${entry.action}</td>
+                    <td>${entry.channel}</td>
+                    <td>${escapeHtml(entry.summary)}</td>
+                    <td>${escapeHtml(entry.device || '')}</td>
+                    <td>${escapeHtml(entry.user || '')}</td>
+                    <td>${escapeHtml(JSON.stringify(entry.details || {}))}</td>
+                </tr>
+            `;
+        });
+        
+        html += '</table></body></html>';
+        
+        downloadFile(html, `ccd-activity-log-${formatDateForFilename()}.xls`, 'application/vnd.ms-excel');
+        toast(`Exported ${state.filteredLog.length} entries to Excel`, 'success');
+    }
+
+    function downloadFile(content, filename, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function formatDateForFilename() {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    }
+
+    // =============================================
+    // AUTO-REFRESH
+    // =============================================
+    function setupAutoRefresh() {
+        const toggle = document.getElementById('autoRefreshToggle');
+        
+        toggle.addEventListener('change', () => {
+            state.autoRefresh = toggle.checked;
+            if (state.autoRefresh) {
+                startAutoRefresh();
+            } else {
+                stopAutoRefresh();
+            }
+        });
+        
+        startAutoRefresh();
+    }
+
+    function startAutoRefresh() {
+        state.refreshCountdown = 30;
+        updateCountdown();
+        
+        state.refreshInterval = setInterval(() => {
+            state.refreshCountdown--;
+            updateCountdown();
+            
+            if (state.refreshCountdown <= 0) {
+                refreshLog();
+                state.refreshCountdown = 30;
+            }
+        }, 1000);
+    }
+
+    function stopAutoRefresh() {
+        if (state.refreshInterval) {
+            clearInterval(state.refreshInterval);
+            state.refreshInterval = null;
+        }
+        document.getElementById('refreshCountdown').textContent = 'Off';
+    }
+
+    function updateCountdown() {
+        document.getElementById('refreshCountdown').textContent = `${state.refreshCountdown}s`;
+    }
+
+    async function refreshLog() {
+        console.log('🔄 [Activity Log] Refresh requested');
+        if (state.fileHandle) {
+            await loadFile();
+            toast('Log refreshed', 'info');
+        } else {
+            console.log('⚠️ [Activity Log] No file handle for refresh');
+        }
+        state.refreshCountdown = 30;
+    }
+
+    // =============================================
+    // TOAST NOTIFICATIONS
+    // =============================================
+    function toast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        
+        const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+        toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span>${message}</span>`;
+        
+        container.appendChild(toast);
+        
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(100%)';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    // =============================================
+    // KEYBOARD SHORTCUTS
+    // =============================================
+    document.addEventListener('keydown', (e) => {
+        // Escape to close modal
+        if (e.key === 'Escape') {
+            closeModal();
+        }
+        
+        // Ctrl+R to refresh
+        if (e.ctrlKey && e.key === 'r') {
+            e.preventDefault();
+            refreshLog();
+        }
+        
+        // Ctrl+F to focus search
+        if (e.ctrlKey && e.key === 'f') {
+            e.preventDefault();
+            document.getElementById('searchInput').focus();
+        }
+    });
+
+    // =============================================
+    // INITIALIZE
+    // =============================================
+    document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
