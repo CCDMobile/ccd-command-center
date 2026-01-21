@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Channel Manager v2.3 - Shared File Support</title>
+    <title>CCD Channel Manager v3.1.0 - Shared Queue Support</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -1531,21 +1531,111 @@
         set: function(val) { state.orders.wayfair = val; }
     });
     
-    // ===== SYNC HUB INTEGRATION =====
-    // Save queue to localStorage so Sync Hub can process it
-    function saveSyncQueue() {
-        localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.syncQueue));
+    // ===== SYNC HUB INTEGRATION (GAP 1 - v3.1.0) =====
+    // Backward compatible with feature flag: useSharedQueue
+    // Save queue to localStorage (legacy) OR Master JSON _syncQueue (new)
+    
+    /**
+     * Save sync queue with backward compatibility (GAP 1)
+     */
+    async function saveSyncQueue() {
+        const config = await loadConfig();
+        const useSharedQueue = config?.settings?.features?.useSharedQueue ?? false;
+        
+        if (useSharedQueue) {
+            // NEW: Save to Master JSON _syncQueue
+            console.log('[Queue] Saving to Master JSON _syncQueue');
+            
+            if (!masterJsonData) {
+                console.error('[Queue] Master JSON not loaded, cannot save shared queue');
+                return false;
+            }
+            
+            // Ensure _syncQueue exists
+            if (!masterJsonData._syncQueue) {
+                masterJsonData._syncQueue = [];
+            }
+            
+            // Update Master JSON
+            masterJsonData._syncQueue = state.syncQueue;
+            
+            // Save file
+            try {
+                await saveMasterJson({ 
+                    actionDescription: `Queue updated from Channel Manager: ${state.syncQueue.length} items`,
+                    skipLog: true 
+                });
+                console.log('[Queue] ✅ Saved to Master JSON');
+                return true;
+            } catch (error) {
+                console.error('[Queue] Failed to save:', error);
+                return false;
+            }
+            
+        } else {
+            // OLD: Save to localStorage (backward compatible)
+            console.log('[Queue] Saving to localStorage (legacy mode)');
+            localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.syncQueue));
+            console.log('[Queue] ✅ Saved to localStorage');
+            return true;
+        }
     }
     
-    function loadSyncQueue() {
-        const saved = localStorage.getItem('ccd_sync_hub_queue');
-        if (saved) {
-            try {
-                state.syncQueue = JSON.parse(saved);
-            } catch (e) {
-                console.error('Error loading sync queue:', e);
+    /**
+     * Load sync queue with backward compatibility (GAP 1)
+     */
+    async function loadSyncQueue() {
+        const config = await loadConfig();
+        const useSharedQueue = config?.settings?.features?.useSharedQueue ?? false;
+        
+        if (useSharedQueue) {
+            // NEW: Load from Master JSON _syncQueue
+            console.log('[Queue] Loading from Master JSON _syncQueue');
+            
+            if (!masterJsonData) {
+                console.warn('[Queue] Master JSON not loaded, cannot access shared queue');
+                state.syncQueue = [];
+                return;
+            }
+            
+            // Ensure _syncQueue exists
+            if (!masterJsonData._syncQueue) {
+                masterJsonData._syncQueue = [];
+            }
+            
+            // Get queue from Master JSON
+            state.syncQueue = masterJsonData._syncQueue || [];
+            console.log(`[Queue] ✅ Loaded ${state.syncQueue.length} items from Master JSON`);
+            
+        } else {
+            // OLD: Load from localStorage (backward compatible)
+            console.log('[Queue] Loading from localStorage (legacy mode)');
+            const saved = localStorage.getItem('ccd_sync_hub_queue');
+            if (saved) {
+                try {
+                    state.syncQueue = JSON.parse(saved);
+                    console.log(`[Queue] ✅ Loaded ${state.syncQueue.length} items from localStorage`);
+                } catch (e) {
+                    console.error('Error loading sync queue:', e);
+                    state.syncQueue = [];
+                }
+            } else {
+                state.syncQueue = [];
             }
         }
+    }
+    
+    /**
+     * Add item to sync queue (GAP 1)
+     */
+    async function addToSyncQueue(item) {
+        // Add to state
+        state.syncQueue.push(item);
+        
+        // Save (uses appropriate method based on feature flag)
+        await saveSyncQueue();
+        
+        console.log('[Queue] Item added:', item.id || item.product?.sku);
     }
     // ===== END SYNC HUB INTEGRATION =====
     
@@ -2476,7 +2566,7 @@
         openModal('pushModal');
     }
     
-    function executePush() {
+    async function executePush() {
         const p = state.selectedProduct, ch = state.pushTarget;
         const fields = [];
         if (document.getElementById('pushTitle').checked) fields.push('title');
@@ -2488,7 +2578,7 @@
         const action = document.getElementById('pushAction').value;
         if (ch === 'wayfair' && fields.includes('quantity')) pushToWayfairInventory();
         state.syncQueue.push({ id: Date.now(), product: p, channel: ch, fields, action, status: 'pending' });
-        saveSyncQueue(); // Save to localStorage for Sync Hub
+        await saveSyncQueue();
         closeModal('pushModal');
         toast(`Added to ${ch} queue`, 'success');
         
@@ -2502,7 +2592,7 @@
     function selectAllFields() { document.querySelectorAll('.sync-panel-body input[type="checkbox"]').forEach(c => c.checked = true); }
     function previewSync() { const fields = getSyncFields(); let msg = 'Preview:\n'; for (const [f, t] of Object.entries(fields)) if (t.length) msg += `${f} → ${t.join(', ')}\n`; alert(msg || 'No fields selected'); }
     
-    function executeSync() {
+    async function executeSync() {
         const p = state.selectedProduct;
         if (!p) { toast('Select a product', 'error'); return; }
         const fields = getSyncFields();
@@ -2514,7 +2604,7 @@
             }
         }
         if (count) { 
-            saveSyncQueue(); // Save to localStorage for Sync Hub
+            await saveSyncQueue();
             toast(`Added ${count} operations to queue`, 'success'); 
             document.querySelectorAll('.sync-panel-body input[type="checkbox"]').forEach(c => c.checked = false);
             
@@ -2636,7 +2726,7 @@
         }
     }
     
-    function clearQueue() { state.syncQueue = []; saveSyncQueue(); toast('Queue cleared', 'success'); }
+    async function clearQueue() { state.syncQueue = []; await saveSyncQueue(); toast('Queue cleared', 'success'); }
     
     async function processQueue() { 
         if (!state.syncQueue.length) { toast('Queue empty', 'info'); return; }
@@ -4531,7 +4621,7 @@
             state.syncQueue.push(queueItem);
         }
 
-        saveSyncQueue();
+        await saveSyncQueue();
         toast(`Added ${channels.length} push operation${channels.length > 1 ? 's' : ''} to queue`, 'success');
         closeModal('multiChannelPushModal');
         refreshDashboard();

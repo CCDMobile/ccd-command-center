@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.10.1 - Email Notifications</title>
+    <title>CCD Sync Hub v3.1.0 - Shared Queue & Inventory Deduction
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.9.2 • Build: 2026-01-20 20:05</span>
+                <span>CCD Sync Hub v3.1.0 • Build: 2026-01-21 • GAPS 1 & 3 Implemented</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -2937,7 +2937,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.9...');
+            console.log('[Init] Starting CCD Sync Hub v3.1.0...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -2954,7 +2954,12 @@
                 updateConfigStatus(false);
             }
             
-            loadQueue();
+            // Try to auto-reconnect to Master JSON (needed for shared queue)
+            await tryReconnectMasterJson();
+            
+            // Load queue (GAP 1 - now async to support shared queue)
+            await loadQueue();
+            
             loadLog();
             loadProcessedOrders();
             renderQueue();
@@ -2963,9 +2968,6 @@
             
             // Load channel toggle states into UI
             loadChannelToggles();
-            
-            // Try to auto-reconnect to Master JSON
-            await tryReconnectMasterJson();
             
             // Try to auto-reconnect to Sync Data file (v3.9)
             await tryReconnectSyncDataFile();
@@ -2978,8 +2980,8 @@
             }
 
             // Auto-refresh queue every 30 seconds
-            setInterval(() => {
-                loadQueue();
+            setInterval(async () => {
+                await loadQueue();
                 renderQueue();
                 updateStats();
             }, 30000);
@@ -2999,14 +3001,14 @@
             // Load auto-sync settings (v3.9)
             loadAutoSyncSettings();
             
-            console.log('[Init] CCD Sync Hub v3.9 initialized successfully');
-            addLog('CCD Sync Hub v3.9 initialized', 'success');
+            console.log('[Init] CCD Sync Hub v3.1.0 initialized successfully');
+            addLog('CCD Sync Hub v3.1.0 initialized (GAPs 1 & 3)', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && masterJsonData) {
                 logActivity('system', 'sync_hub_started', 'system',
-                    'Sync Hub v3.9 started',
-                    { autoProcess: state.settings.autoProcessEnabled, configConnected: configConnected }
+                    'Sync Hub v3.1.0 started',
+                    { autoProcess: state.settings.autoProcessEnabled, configConnected: configConnected, sharedQueue: configData?.settings?.features?.useSharedQueue ?? false }
                 );
             }
         } catch (error) {
@@ -3424,21 +3426,154 @@
     }
 
     // =============================================
-    // QUEUE MANAGEMENT
+    // QUEUE MANAGEMENT (GAP 1 - v3.1.0)
+    // Backward compatible with feature flag: useSharedQueue
     // =============================================
-    function loadQueue() {
-        const saved = localStorage.getItem('ccd_sync_hub_queue');
-        if (saved) {
-            try {
-                state.queue = JSON.parse(saved);
-            } catch (e) {
+    
+    /**
+     * Load queue with backward compatibility (GAP 1)
+     * Feature Flag: settings.features.useSharedQueue
+     */
+    async function loadQueue() {
+        const config = configData || {};
+        const useSharedQueue = config.settings?.features?.useSharedQueue ?? false;
+        
+        if (useSharedQueue) {
+            // NEW: Load from Master JSON _syncQueue
+            console.log('[Queue] Using shared queue from Master JSON');
+            
+            if (!masterJsonData) {
+                console.warn('[Queue] Master JSON not loaded, cannot access shared queue');
+                state.queue = [];
+                return;
+            }
+            
+            // Ensure _syncQueue exists
+            if (!masterJsonData._syncQueue) {
+                masterJsonData._syncQueue = [];
+                console.log('[Queue] Initialized empty _syncQueue in Master JSON');
+            }
+            
+            // Get queue from Master JSON
+            state.queue = masterJsonData._syncQueue || [];
+            console.log(`[Queue] ✅ Loaded ${state.queue.length} items from Master JSON`);
+            
+        } else {
+            // OLD: Load from localStorage (backward compatible)
+            console.log('[Queue] Using legacy localStorage queue');
+            const saved = localStorage.getItem('ccd_sync_hub_queue');
+            if (saved) {
+                try {
+                    state.queue = JSON.parse(saved);
+                    console.log(`[Queue] ✅ Loaded ${state.queue.length} items from localStorage`);
+                } catch (e) {
+                    console.error('[Queue] Failed to parse localStorage queue:', e);
+                    state.queue = [];
+                }
+            } else {
                 state.queue = [];
             }
         }
     }
 
-    function saveQueue() {
-        localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.queue));
+    /**
+     * Save queue with backward compatibility (GAP 1)
+     */
+    async function saveQueue() {
+        const config = configData || {};
+        const useSharedQueue = config.settings?.features?.useSharedQueue ?? false;
+        
+        if (useSharedQueue) {
+            // NEW: Save to Master JSON
+            console.log('[Queue] Saving to Master JSON');
+            
+            if (!masterJsonData) {
+                console.error('[Queue] Master JSON not loaded, cannot save shared queue');
+                return false;
+            }
+            
+            // Ensure _syncQueue exists
+            if (!masterJsonData._syncQueue) {
+                masterJsonData._syncQueue = [];
+            }
+            
+            // Update Master JSON
+            masterJsonData._syncQueue = state.queue;
+            
+            // Save file
+            try {
+                await saveMasterJson({ 
+                    actionDescription: `Queue updated: ${state.queue.length} items`,
+                    skipLog: true // Don't spam activity log
+                });
+                console.log('[Queue] ✅ Saved to Master JSON');
+                return true;
+            } catch (error) {
+                console.error('[Queue] Failed to save:', error);
+                return false;
+            }
+            
+        } else {
+            // OLD: Save to localStorage
+            console.log('[Queue] Saving to localStorage');
+            localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.queue));
+            console.log('[Queue] ✅ Saved to localStorage');
+            return true;
+        }
+    }
+
+    /**
+     * Add item to queue (GAP 1)
+     */
+    async function addToQueue(item) {
+        // Add to state
+        state.queue.push(item);
+        
+        // Save (uses appropriate method based on feature flag)
+        await saveQueue();
+        
+        // Update UI
+        renderQueue();
+        updateStats();
+        
+        console.log('[Queue] Item added:', item.id || item.product?.sku);
+    }
+
+    /**
+     * Remove item from queue (GAP 1)
+     */
+    async function removeFromQueue(itemId) {
+        // Remove from state
+        state.queue = state.queue.filter(item => item.id !== itemId);
+        
+        // Save
+        await saveQueue();
+        
+        // Update UI
+        renderQueue();
+        updateStats();
+        
+        console.log('[Queue] Item removed:', itemId);
+    }
+
+    /**
+     * Update queue item status (GAP 1)
+     */
+    async function updateQueueItem(itemId, updates) {
+        // Find and update
+        const item = state.queue.find(q => q.id === itemId);
+        if (item) {
+            Object.assign(item, updates);
+            
+            // Save
+            await saveQueue();
+            
+            // Update UI
+            renderQueue();
+            updateStats();
+            
+            console.log('[Queue] Item updated:', itemId);
+        }
     }
 
     function renderQueue() {
@@ -3502,38 +3637,38 @@
         }
     }
 
-    function clearQueue() {
+    async function clearQueue() {
         if (!confirm('Clear entire queue? This cannot be undone.')) return;
         state.queue = [];
-        saveQueue();
+        await saveQueue();
         renderQueue();
         updateStats();
         toast('Queue cleared', 'success');
     }
 
-    function clearCompletedItems() {
+    async function clearCompletedItems() {
         const before = state.queue.length;
         state.queue = state.queue.filter(i => i.status !== 'completed');
         const removed = before - state.queue.length;
-        saveQueue();
+        await saveQueue();
         renderQueue();
         updateStats();
         toast(`Removed ${removed} completed items`, 'success');
     }
 
-    function removeItem(index) {
+    async function removeItem(index) {
         state.queue.splice(index, 1);
-        saveQueue();
+        await saveQueue();
         renderQueue();
         updateStats();
     }
 
-    function retryItem(index) {
+    async function retryItem(index) {
         const item = state.queue[index];
         item.status = 'pending';
         item.error = null;
         item.retryCount = (item.retryCount || 0) + 1;
-        saveQueue();
+        await saveQueue();
         renderQueue();
         updateStats();
         toast('Item queued for retry', 'info');
@@ -3613,7 +3748,7 @@
             }
 
             processed++;
-            saveQueue();
+            await saveQueue();
             renderQueue();
             updateStats();
 
@@ -3653,6 +3788,52 @@
             default:
                 return { success: false, error: 'Unknown channel: ' + channel };
         }
+    }
+
+    // =============================================
+    // INVENTORY DEDUCTION HELPER (GAP 3 - v3.1.0)
+    // Manual deduction helper for special cases
+    // Main deduction logic integrated into processOrder()
+    // =============================================
+    
+    /**
+     * Deduct inventory for a single SKU (manual deduction helper)
+     * Use this for manual adjustments outside of order processing
+     */
+    async function deductInventory(sku, quantity, reason = 'Manual deduction') {
+        if (!masterJsonData) {
+            return { success: false, error: 'Master JSON not loaded' };
+        }
+        
+        const product = masterJsonData.inventory.find(p => p.sku === sku);
+        if (!product) {
+            return { success: false, error: `Product ${sku} not found` };
+        }
+        
+        const oldQty = product.qty || 0;
+        const newQty = Math.max(0, oldQty - quantity);
+        
+        product.qty = newQty;
+        
+        await saveMasterJson({ 
+            actionDescription: `Manual inventory deduction: ${sku} -${quantity}`,
+            skipLog: false 
+        });
+        
+        if (typeof logActivity === 'function') {
+            logActivity('inventory', 'manual_deduction', 'system',
+                `Manually deducted ${quantity} units of ${sku}: ${reason}`,
+                { sku: sku, quantity: quantity, oldQty: oldQty, newQty: newQty, reason: reason }
+            );
+        }
+        
+        return { 
+            success: true, 
+            sku: sku, 
+            oldQty: oldQty, 
+            newQty: newQty, 
+            deducted: quantity 
+        };
     }
 
     // =============================================
@@ -6352,6 +6533,14 @@
             const changes = []; // For change log
             const cascadeQueue = [];
             
+            // ===== GAP 3: INVENTORY DEDUCTION WRAPPER =====
+            // Check if inventory deduction is enabled via feature flag
+            const config = configData || {};
+            const enableDeduction = config.settings?.features?.inventoryDeduction ?? true; // Default TRUE for backward compatibility
+            
+            console.log(`[GAP 3] Processing order ${orderId}`);
+            console.log(`[GAP 3] Inventory deduction: ${enableDeduction ? 'ENABLED' : 'DISABLED'}`);
+            
             // Process each line item
             for (const item of order.items) {
                 const sku = item.sku;
@@ -6365,57 +6554,79 @@
                     continue;
                 }
                 
-                // Calculate new quantity
-                const currentQty = product.warehouseQty || product.qty || product.quantity || 0;
-                const newQty = Math.max(0, currentQty - item.qty);
-                
-                // Check if sold out - send notification
-                if (currentQty > 0 && newQty === 0) {
-                    sendEventNotification(
-                        'inventory.soldout',
-                        `${product.productName || product.title || sku} is now sold out`,
-                        {
-                            sku: sku,
-                            productName: product.productName || product.title || 'Unknown',
-                            previousQty: currentQty,
-                            deductedQty: item.qty
+                // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
+                if (enableDeduction) {
+                    // Calculate new quantity
+                    const currentQty = product.warehouseQty || product.qty || product.quantity || 0;
+                    const newQty = Math.max(0, currentQty - item.qty);
+                    
+                    console.log(`[GAP 3] Deducting ${item.qty} from ${sku}: ${currentQty} → ${newQty}`);
+                    
+                    // Check if sold out - send notification
+                    if (currentQty > 0 && newQty === 0) {
+                        sendEventNotification(
+                            'inventory.soldout',
+                            `${product.productName || product.title || sku} is now sold out`,
+                            {
+                                sku: sku,
+                                productName: product.productName || product.title || 'Unknown',
+                                previousQty: currentQty,
+                                deductedQty: item.qty
+                            }
+                        );
+                    }
+                    
+                    // Update the product
+                    if (product.warehouseQty !== undefined) {
+                        product.warehouseQty = newQty;
+                    } else if (product.qty !== undefined) {
+                        product.qty = newQty;
+                    } else {
+                        product.quantity = newQty;
+                    }
+                    
+                    // v2.1.0: Auto-adjust channel allocations after order
+                    const adjustResult = autoAdjustChannelAllocations(product, order.channel);
+                    if (adjustResult.adjusted) {
+                        addLog(`🔄 Auto-adjusted channels for ${sku}: ${adjustResult.changes.map(c => `${c.channel} ${c.from}→${c.to}`).join(', ')}`, 'info');
+                    }
+                    
+                    updates.push({
+                        sku: sku,
+                        oldQty: currentQty,
+                        newQty: newQty,
+                        deducted: item.qty,
+                        channelAdjustments: adjustResult.changes || []
+                    });
+                    
+                    // Add to change log
+                    changes.push({
+                        changeType: 'order',
+                        sku: sku,
+                        field: 'qty',
+                        before: currentQty,
+                        after: newQty,
+                        reason: `Order ${orderId} from ${order.channel}`,
+                        user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
+                    });
+                    
+                    // Log deduction to activity log
+                    logActivity('inventory', 'order_deduction', order.channel,
+                        `Deducted ${item.qty} units of ${sku} for order ${orderId}`,
+                        { 
+                            sku: sku, 
+                            quantity: item.qty, 
+                            oldQty: currentQty, 
+                            newQty: newQty, 
+                            orderId: orderId,
+                            channel: order.channel 
                         }
                     );
-                }
-                
-                // Update the product
-                if (product.warehouseQty !== undefined) {
-                    product.warehouseQty = newQty;
-                } else if (product.qty !== undefined) {
-                    product.qty = newQty;
                 } else {
-                    product.quantity = newQty;
+                    console.log(`[GAP 3] Skipping deduction for ${sku} (feature disabled)`);
+                    addLog(`⚠️ Inventory deduction disabled - ${sku} not deducted`, 'info');
                 }
-                
-                // v2.1.0: Auto-adjust channel allocations after order
-                const adjustResult = autoAdjustChannelAllocations(product, order.channel);
-                if (adjustResult.adjusted) {
-                    addLog(`🔄 Auto-adjusted channels for ${sku}: ${adjustResult.changes.map(c => `${c.channel} ${c.from}→${c.to}`).join(', ')}`, 'info');
-                }
-                
-                updates.push({
-                    sku: sku,
-                    oldQty: currentQty,
-                    newQty: newQty,
-                    deducted: item.qty,
-                    channelAdjustments: adjustResult.changes || []
-                });
-                
-                // Add to change log
-                changes.push({
-                    changeType: 'order',
-                    sku: sku,
-                    field: 'qty',
-                    before: currentQty,
-                    after: newQty,
-                    reason: `Order ${orderId} from ${order.channel}`,
-                    user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
-                });
+                // ===== END INVENTORY DEDUCTION =====
                 
                 // Queue updates for OTHER channels
                 const sourceChannel = order.channel;
@@ -6565,7 +6776,7 @@
         }
         
         if (cascadeQueue.length > 0) {
-            saveQueue();
+            await saveQueue();
             addLog(`📤 Queued ${cascadeQueue.length} inventory updates to other channels`, 'info');
             
             // Log cascade queued to activity log
@@ -7068,20 +7279,6 @@
         } else {
             addAutoSyncLogEntry('ℹ️ Changes detected but no linked channels to update');
         }
-    }
-    
-    /**
-     * Add item to sync queue (wrapper for existing function)
-     */
-    function addToQueue(item) {
-        item.id = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-        item.status = 'pending';
-        item.addedAt = new Date().toISOString();
-        
-        state.queue.push(item);
-        saveQueue();
-        renderQueue();
-        updateStats();
     }
     
     /**
