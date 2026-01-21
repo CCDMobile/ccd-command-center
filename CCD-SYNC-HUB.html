@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.0.1 - Settings Sharing Fix</title>
+    <title>CCD Sync Hub v3.10.1 - Email Notifications</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -4911,6 +4911,9 @@
             // Analyze the data
             analyzeMasterJson();
             
+            // ====== GAP 9: LOAD PROCESSED ORDER IDS ======
+            loadProcessedOrderIds();
+            
             // Update UI
             updateMasterJsonUI();
             
@@ -5356,6 +5359,17 @@
             console.error('[Master JSON] Save error:', error);
             toast(`Save failed: ${error.message}`, 'error');
             logError(`Master JSON save: ${error.message}`);
+            
+            // Send critical error notification
+            sendEventNotification(
+                'cloud.save.failed',
+                `Failed to save Master JSON: ${error.message}`,
+                {
+                    error: error.message,
+                    timestamp: new Date().toISOString()
+                }
+            );
+            
             return false;
         }
     }
@@ -5931,21 +5945,18 @@
             message = `${productName} (${sku}) - Etsy/Wix display qty is at trigger level.\n\nCurrent: ${currentQty}\nMin: ${parLevel}\n\nConsider adjusting channel allocation.`;
         }
         
-        // Queue email notification if email service is configured
-        if (typeof queueEmailNotification === 'function') {
-            queueEmailNotification({
-                type: 'par_alert',
-                subject: subject,
-                message: message,
-                data: {
-                    sku: sku,
-                    productName: productName,
-                    alertType: alertType,
-                    currentQty: currentQty,
-                    parLevel: parLevel
-                }
-            });
-        }
+        // Send to Google Apps Script proxy for email notification
+        sendEventNotification(
+            alertType === 'master' ? 'par.reorder' : 'par.channel_low',
+            message,
+            {
+                sku: sku,
+                productName: productName,
+                alertType: alertType,
+                currentQty: currentQty,
+                minPar: parLevel
+            }
+        );
         
         // Also add to notification queue for UI display
         if (state.notifications) {
@@ -5962,8 +5973,308 @@
     }
     
     /**
+     * Send event to Google Apps Script proxy for email notification
+     * Connects to your existing v1.3.0 proxy
+     * v3.10.1 - Added 2026-01-21
+     * Note: Email enabled/disabled is controlled by proxy settings (toggle in Email Settings UI)
+     */
+    async function sendEventNotification(eventType, message, data) {
+        const config = configData || {};
+        const settings = config.settings || {};
+        
+        // Get values from existing CONFIG structure
+        const proxyUrl = config.syncHubProxyUrl || settings.proxyUrls?.syncHub;
+        const apiKey = config.ccdApiKey || settings.ccdApiKey;
+        
+        // Check if proxy is configured
+        if (!proxyUrl) {
+            console.warn('[Email] Sync Hub proxy URL not set in CONFIG (settings.proxyUrls.syncHub)');
+            return false;
+        }
+        
+        if (!apiKey) {
+            console.warn('[Email] ccdApiKey not set in CONFIG (settings.ccdApiKey)');
+            return false;
+        }
+        
+        try {
+            console.log(`[Email] Sending ${eventType} event to proxy...`);
+            
+            const response = await fetch(proxyUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'pushEvent',
+                    key: apiKey,
+                    eventType: eventType,
+                    source: 'sync_hub',
+                    message: message,
+                    data: data
+                })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                console.log(`[Email] ✅ Event sent successfully (${result.notificationType})`);
+                return true;
+            } else {
+                console.error('[Email] ❌ Proxy returned error:', result.error);
+                return false;
+            }
+            
+        } catch (error) {
+            console.error('[Email] ❌ Failed to send event:', error);
+            return false;
+        }
+    }
+    
+    // =============================================
+    // DATA INTEGRITY & VALIDATION (GAP 8, 9, 10)
+    // v3.10.0 - Added 2026-01-21
+    // =============================================
+    
+    /**
+     * GAP 8: SKU VALIDATION
+     * Validate that all SKUs in order exist in inventory
+     * Feature Flag: enableSKUValidation (default: false for backward compatibility)
+     */
+    async function validateOrderSKUs(order) {
+        // Check feature flag
+        const config = configData || {};
+        const enabled = config?.features?.enableSKUValidation ?? false;
+        
+        if (!enabled) {
+            console.log('[SKU Validation] Feature disabled - skipping validation');
+            return { valid: true, invalidSKUs: [], message: 'Validation disabled' };
+        }
+        
+        console.log('[SKU Validation] Checking SKUs for order:', order.id);
+        
+        // Ensure we have Master JSON loaded
+        if (!masterJsonData || !masterJsonData.inventory) {
+            console.warn('[SKU Validation] Master JSON not loaded - cannot validate');
+            return { valid: true, invalidSKUs: [], message: 'Master JSON not loaded' };
+        }
+        
+        const products = getProductsArray();
+        const invalidSKUs = [];
+        
+        // Check each item in the order
+        for (const item of order.items) {
+            const sku = item.sku;
+            
+            // Skip UNKNOWN SKUs (these are already flagged elsewhere)
+            if (sku === 'UNKNOWN') continue;
+            
+            // Try to find product
+            const product = products.find(p => (p.sku || p.SKU) === sku);
+            
+            if (!product) {
+                invalidSKUs.push({
+                    sku: sku,
+                    title: item.title || 'Unknown Product',
+                    quantity: item.qty || item.quantity || 1
+                });
+            }
+        }
+        
+        // Return results
+        if (invalidSKUs.length > 0) {
+            const skuList = invalidSKUs.map(i => i.sku).join(', ');
+            const message = `Order contains ${invalidSKUs.length} invalid SKU(s): ${skuList}`;
+            
+            console.error('[SKU Validation] ❌ Validation failed:', message);
+            
+            return {
+                valid: false,
+                invalidSKUs: invalidSKUs,
+                message: message
+            };
+        }
+        
+        console.log('[SKU Validation] ✅ All SKUs valid');
+        return {
+            valid: true,
+            invalidSKUs: [],
+            message: 'All SKUs valid'
+        };
+    }
+    
+    /**
+     * GAP 9: DUPLICATE ORDER PREVENTION
+     * Check if order has already been processed
+     * Feature Flag: enableDuplicateDetection (default: false for backward compatibility)
+     */
+    async function isOrderProcessed(orderId) {
+        // Check feature flag
+        const config = configData || {};
+        const enabled = config?.features?.enableDuplicateDetection ?? false;
+        
+        if (!enabled) {
+            console.log('[Duplicate Detection] Feature disabled - allowing processing');
+            return false; // Allow processing (old behavior)
+        }
+        
+        console.log('[Duplicate Detection] Checking if order already processed:', orderId);
+        
+        // Check in-memory set first (fast)
+        if (state.orders.processedIds.has(orderId)) {
+            console.log('[Duplicate Detection] ⚠️ Found in memory cache');
+            return true;
+        }
+        
+        // Check Master JSON _processedOrders array (persistent)
+        if (masterJsonData && masterJsonData._processedOrders) {
+            const processed = masterJsonData._processedOrders.find(o => o.orderId === orderId);
+            
+            if (processed) {
+                console.log('[Duplicate Detection] ⚠️ Order already processed:', {
+                    orderId: orderId,
+                    processedAt: processed.processedAt,
+                    processedBy: processed.processedBy,
+                    device: processed.device
+                });
+                
+                // Add to memory cache for future checks
+                state.orders.processedIds.add(orderId);
+                
+                return true;
+            }
+        }
+        
+        console.log('[Duplicate Detection] ✅ Order not yet processed');
+        return false;
+    }
+    
+    /**
+     * Mark order as processed in Master JSON (GAP 9)
+     */
+    async function persistProcessedOrder(order) {
+        // Check feature flag
+        const config = configData || {};
+        const enabled = config?.features?.enableDuplicateDetection ?? false;
+        
+        if (!enabled) {
+            console.log('[Duplicate Detection] Feature disabled - not marking order');
+            return;
+        }
+        
+        console.log('[Duplicate Detection] Marking order as processed:', order.id);
+        
+        // Add to memory cache
+        state.orders.processedIds.add(order.id);
+        
+        // Add to Master JSON persistent list
+        if (!masterJsonData._processedOrders) {
+            masterJsonData._processedOrders = [];
+        }
+        
+        // Create processed order record
+        const record = {
+            orderId: order.id,
+            channel: order.channel,
+            processedAt: new Date().toISOString(),
+            processedBy: 'Sync Hub v3.10.1',
+            device: localStorage.getItem('ccd_hostname') || 'Unknown',
+            totalAmount: order.total || 0,
+            itemCount: order.items?.length || 0
+        };
+        
+        masterJsonData._processedOrders.push(record);
+        
+        // Trim to last 10,000 orders to prevent bloat
+        if (masterJsonData._processedOrders.length > 10000) {
+            console.log('[Duplicate Detection] Trimming processed orders list from', 
+                masterJsonData._processedOrders.length, 'to 10,000');
+            masterJsonData._processedOrders = masterJsonData._processedOrders.slice(-10000);
+        }
+        
+        console.log('[Duplicate Detection] ✅ Order marked as processed');
+    }
+    
+    /**
+     * Load processed order IDs from Master JSON on startup
+     */
+    function loadProcessedOrderIds() {
+        if (masterJsonData && masterJsonData._processedOrders) {
+            console.log('[Duplicate Detection] Loading processed order IDs from Master JSON');
+            state.orders.processedIds.clear();
+            
+            for (const record of masterJsonData._processedOrders) {
+                state.orders.processedIds.add(record.orderId);
+            }
+            
+            console.log('[Duplicate Detection] Loaded', state.orders.processedIds.size, 'processed order IDs');
+        }
+    }
+    
+    /**
+     * GAP 10: QUANTITY VALIDATION
+     * Validate that channel allocations don't exceed warehouse quantity
+     * Feature Flag: enableQuantityValidation (default: false for backward compatibility)
+     */
+    function validateChannelAllocations(product, proposedAllocations = null) {
+        // Check feature flag
+        const config = configData || {};
+        const enabled = config?.features?.enableQuantityValidation ?? false;
+        
+        if (!enabled) {
+            console.log('[Qty Validation] Feature disabled - skipping validation');
+            return { valid: true, message: 'Validation disabled' };
+        }
+        
+        console.log('[Qty Validation] Checking allocations for:', product.sku || product.SKU);
+        
+        // Use proposed allocations or current ones
+        const allocations = proposedAllocations || product.channels || {};
+        
+        // Get warehouse quantity (try different field names)
+        const warehouseQty = product.warehouseQty || product.qty || product.quantity || 0;
+        
+        // Get channel quantities
+        const etsyQty = allocations.etsy || 0;
+        const wixQty = allocations.wix || 0;
+        const wayfairQty = allocations.wayfair || 0;
+        
+        const totalOnline = etsyQty + wixQty + wayfairQty;
+        
+        if (totalOnline > warehouseQty) {
+            const message = 
+                `Cannot allocate ${totalOnline} items online when only ` +
+                `${warehouseQty} in warehouse.\n\n` +
+                `Breakdown:\n` +
+                `- Etsy: ${etsyQty}\n` +
+                `- Wix: ${wixQty}\n` +
+                `- Wayfair: ${wayfairQty}\n` +
+                `- Total Online: ${totalOnline}\n` +
+                `- Warehouse: ${warehouseQty}\n` +
+                `- Overage: ${totalOnline - warehouseQty}`;
+            
+            console.warn('[Qty Validation] ❌ Invalid allocation:', message);
+            
+            return {
+                valid: false,
+                message: message,
+                details: {
+                    warehouse: warehouseQty,
+                    etsy: etsyQty,
+                    wix: wixQty,
+                    wayfair: wayfairQty,
+                    total: totalOnline,
+                    overage: totalOnline - warehouseQty
+                }
+            };
+        }
+        
+        console.log('[Qty Validation] ✅ Allocations valid');
+        return { valid: true, message: 'Allocations valid' };
+    }
+    
+    /**
      * Process a single order - deduct inventory and cascade to other channels
      * Supports collision detection with auto-retry for auto-process mode
+     * NOW INCLUDES: SKU validation (GAP 8) and Duplicate detection (GAP 9)
      */
     async function processOrder(orderId, isAutoProcess = false) {
         const order = state.orders.all.find(o => o.id === orderId);
@@ -5974,6 +6285,56 @@
         
         if (!masterJsonData) {
             toast('Please connect Master JSON file first', 'error');
+            return;
+        }
+        
+        // ====== GAP 9: DUPLICATE ORDER DETECTION ======
+        const alreadyProcessed = await isOrderProcessed(orderId);
+        if (alreadyProcessed) {
+            // Show warning toast
+            toast(
+                `⚠️ Order ${orderId} has already been processed!\n\n` +
+                `This is a duplicate. Inventory was already deducted.\n` +
+                `Skipping to prevent double-processing.`,
+                'warning',
+                8000
+            );
+            
+            // Log the duplicate attempt
+            addLog(`⚠️ Duplicate order blocked: ${orderId} (already processed)`, 'warning');
+            
+            // Mark in UI but don't process
+            order.status = 'duplicate';
+            order.processed = true;
+            updateOrdersDisplay();
+            
+            return;
+        }
+        
+        // ====== GAP 8: SKU VALIDATION ======
+        const validation = await validateOrderSKUs(order);
+        if (!validation.valid) {
+            // Mark order as failed with clear error
+            order.status = 'failed';
+            order.error = validation.message;
+            
+            // Log the failure
+            addLog(`❌ Order ${orderId} failed: ${validation.message}`, 'error');
+            
+            // Show detailed error to user
+            const skuList = validation.invalidSKUs.map(i => 
+                `• ${i.sku} (${i.title}) - Qty: ${i.quantity}`
+            ).join('\n');
+            
+            toast(
+                `❌ Cannot process order: Invalid SKUs found\n\n` +
+                `${skuList}\n\n` +
+                `Please add these SKUs to inventory first.`,
+                'error',
+                10000
+            );
+            
+            updateOrdersDisplay();
             return;
         }
         
@@ -6007,6 +6368,20 @@
                 // Calculate new quantity
                 const currentQty = product.warehouseQty || product.qty || product.quantity || 0;
                 const newQty = Math.max(0, currentQty - item.qty);
+                
+                // Check if sold out - send notification
+                if (currentQty > 0 && newQty === 0) {
+                    sendEventNotification(
+                        'inventory.soldout',
+                        `${product.productName || product.title || sku} is now sold out`,
+                        {
+                            sku: sku,
+                            productName: product.productName || product.title || 'Unknown',
+                            previousQty: currentQty,
+                            deductedQty: item.qty
+                        }
+                    );
+                }
                 
                 // Update the product
                 if (product.warehouseQty !== undefined) {
@@ -6217,6 +6592,9 @@
         // Mark order as processed
         markOrderProcessed(orderId);
         
+        // ====== GAP 9: PERSIST TO MASTER JSON ======
+        await persistProcessedOrder(order);
+        
         // Log order processed to activity log
         const itemsSummary = order.items.map(i => `${i.sku}(${i.qty})`).join(', ');
         logActivity('order', 'order_processed', order.channel,
@@ -6235,6 +6613,20 @@
         // Update stats
         updateStats();
         renderQueue();
+        
+        // Send order processed notification
+        sendEventNotification(
+            'order.created',
+            `Order processed from ${order.channel}`,
+            {
+                orderId: orderId,
+                channel: order.channel,
+                sku: order.items?.[0]?.sku || 'Multiple',
+                productName: order.items?.[0]?.title || 'Multiple items',
+                qty: order.items?.reduce((sum, item) => sum + (item.qty || 1), 0) || 0,
+                total: order.total || 0
+            }
+        );
         
         toast(`Order ${orderId} processed successfully`, 'success');
     }
