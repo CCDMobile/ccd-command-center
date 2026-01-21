@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCD System Monitor v2.0</title>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #05080f;
+            --bg-secondary: #0a1019;
+            --bg-card: #0d1520;
+            --bg-elevated: #111c2d;
+            --bg-input: #162033;
+            --border: #1e3048;
+            --border-light: #2a4060;
+            --text-primary: #e8f0f8;
+            --text-secondary: #8fa4bd;
+            --text-muted: #5a7090;
+            --success: #00d68f;
+            --success-dim: rgba(0, 214, 143, 0.15);
+            --warning: #ffb547;
+            --warning-dim: rgba(255, 181, 71, 0.15);
+            --error: #ff5c5c;
+            --error-dim: rgba(255, 92, 92, 0.15);
+            --info: #4da6ff;
+            --info-dim: rgba(77, 166, 255, 0.15);
+            --purple: #a78bfa;
+            --purple-dim: rgba(167, 139, 250, 0.15);
+            --cyan: #22d3ee;
+            --cyan-dim: rgba(34, 211, 238, 0.15);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Outfit', sans-serif; background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; }
+        body::before { content: ''; position: fixed; inset: 0; background-image: linear-gradient(rgba(30, 48, 72, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(30, 48, 72, 0.03) 1px, transparent 1px); background-size: 50px 50px; pointer-events: none; z-index: 0; }
+        .app-container { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; }
+        
+        /* Header */
+        .header { background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%); border-bottom: 1px solid var(--border); padding: 0 24px; height: 64px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; backdrop-filter: blur(12px); }
+        .header-left { display: flex; align-items: center; gap: 20px; }
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon { width: 40px; height: 40px; background: linear-gradient(135deg, var(--cyan), var(--purple)); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.3rem; box-shadow: 0 4px 16px rgba(34, 211, 238, 0.25); }
+        .logo-text { display: flex; flex-direction: column; }
+        .logo-title { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
+        .logo-version { font-size: 0.7rem; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; }
+        .header-center { display: flex; align-items: center; gap: 24px; }
+        .monitoring-status { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; }
+        .pulse-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); transition: all 0.3s; }
+        .pulse-dot.active { background: var(--success); animation: pulse 2s infinite; box-shadow: 0 0 20px rgba(0, 214, 143, 0.3); }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(1.15); } }
+        .monitoring-label { font-size: 0.85rem; font-weight: 500; }
+        .monitoring-timer { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; color: var(--text-muted); min-width: 50px; }
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        
+        /* Buttons */
+        .btn { padding: 10px 18px; border-radius: 8px; border: none; font-family: 'Outfit', sans-serif; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; transition: all 0.2s ease; }
+        .btn:active { transform: scale(0.98); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-primary { background: linear-gradient(135deg, var(--cyan), var(--info)); color: #000; }
+        .btn-success { background: var(--success); color: #000; }
+        .btn-danger { background: var(--error); color: #fff; }
+        .btn-secondary { background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn-secondary:hover { border-color: var(--border-light); background: var(--bg-input); }
+        .btn-ghost { background: transparent; color: var(--text-secondary); padding: 8px 12px; }
+        .btn-ghost:hover { color: var(--text-primary); background: var(--bg-elevated); }
+        .btn-sm { padding: 6px 12px; font-size: 0.8rem; }
+        
+        /* Main Content */
+        .main-content { flex: 1; padding: 24px; max-width: 1800px; margin: 0 auto; width: 100%; }
+        
+        /* Connection Panel */
+        .connection-panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; margin-bottom: 24px; }
+        .connection-panel.collapsed { padding: 16px 24px; }
+        .connection-header { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
+        .connection-title { display: flex; align-items: center; gap: 12px; font-size: 1rem; font-weight: 600; }
+        .connection-summary { display: flex; align-items: center; gap: 16px; }
+        .connection-badge { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-elevated); border-radius: 6px; font-size: 0.8rem; font-family: 'IBM Plex Mono', monospace; }
+        .connection-badge.connected { background: var(--success-dim); color: var(--success); }
+        .connection-badge.disconnected { background: var(--error-dim); color: var(--error); }
+        .connection-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+        .connection-body { margin-top: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .connection-panel.collapsed .connection-body { display: none; }
+        
+        /* File Cards */
+        .file-card { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 12px; padding: 20px; transition: all 0.2s; }
+        .file-card:hover { border-color: var(--border-light); }
+        .file-card.connected { border-color: var(--success); box-shadow: inset 0 0 0 1px var(--success-dim); }
+        .file-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .file-card-title { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+        .file-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; }
+        .file-icon.master { background: var(--info-dim); }
+        .file-icon.sync { background: var(--purple-dim); }
+        .file-icon.config { background: var(--cyan-dim); }
+        .file-status-badge { font-size: 0.75rem; padding: 4px 8px; border-radius: 4px; font-weight: 600; }
+        .file-status-badge.connected { background: var(--success-dim); color: var(--success); }
+        .file-status-badge.disconnected { background: var(--bg-input); color: var(--text-muted); }
+        .file-card-info { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 16px; }
+        .file-card-info .filename { font-family: 'IBM Plex Mono', monospace; color: var(--text-primary); font-size: 0.8rem; word-break: break-all; }
+        .file-card-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.75rem; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; }
+        .file-card-actions { margin-top: 16px; }
+        
+        /* Status Grid */
+        .status-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 16px; margin-bottom: 24px; }
+        .status-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; position: relative; overflow: hidden; transition: all 0.3s; }
+        .status-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--border); transition: background 0.3s; }
+        .status-card.success::before { background: var(--success); }
+        .status-card.warning::before { background: var(--warning); }
+        .status-card.error::before { background: var(--error); }
+        .status-card.info::before { background: var(--info); }
+        .status-card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+        .status-card-icon { font-size: 1.5rem; opacity: 0.8; }
+        .status-card-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+        .status-card-value { font-size: 1.8rem; font-weight: 700; line-height: 1; margin-bottom: 4px; }
+        .status-card-sub { font-size: 0.75rem; color: var(--text-muted); }
+        
+        /* Content Grid */
+        .content-grid { display: grid; grid-template-columns: 1fr 380px; gap: 24px; }
+        
+        /* Panels */
+        .panel { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
+        .panel-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); }
+        .panel-title { display: flex; align-items: center; gap: 10px; font-size: 0.95rem; font-weight: 600; }
+        .panel-badge { font-size: 0.7rem; padding: 3px 8px; background: var(--bg-elevated); border-radius: 10px; color: var(--text-muted); font-family: 'IBM Plex Mono', monospace; }
+        .panel-actions { display: flex; gap: 8px; }
+        .panel-body { flex: 1; overflow-y: auto; padding: 0; }
+        .panel-body.padded { padding: 20px; }
+        
+        /* Change Feed */
+        .change-feed { max-height: 500px; }
+        .change-item { padding: 16px 20px; border-bottom: 1px solid var(--border); transition: background 0.2s; cursor: pointer; }
+        .change-item:hover { background: var(--bg-elevated); }
+        .change-item:last-child { border-bottom: none; }
+        .change-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .change-file { display: flex; align-items: center; gap: 8px; }
+        .change-file-badge { font-size: 0.7rem; padding: 3px 8px; border-radius: 4px; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+        .change-file-badge.master { background: var(--info-dim); color: var(--info); }
+        .change-file-badge.sync { background: var(--purple-dim); color: var(--purple); }
+        .change-file-badge.config { background: var(--cyan-dim); color: var(--cyan); }
+        .change-file-badge.localstorage { background: var(--warning-dim); color: var(--warning); }
+        .change-type { font-size: 0.75rem; color: var(--text-muted); }
+        .change-time { font-size: 0.75rem; font-family: 'IBM Plex Mono', monospace; color: var(--text-muted); }
+        .change-summary { font-size: 0.9rem; color: var(--text-primary); margin-bottom: 8px; }
+        .change-details { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.8rem; }
+        .change-detail-item { display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-input); border-radius: 4px; }
+        .change-diff { display: flex; align-items: center; gap: 4px; }
+        .change-diff-old { color: var(--error); text-decoration: line-through; opacity: 0.7; }
+        .change-diff-new { color: var(--success); font-weight: 600; }
+        .change-meta { display: flex; gap: 12px; margin-top: 8px; font-size: 0.75rem; color: var(--text-muted); }
+        
+        /* Empty State */
+        .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+        .empty-state-icon { font-size: 3rem; margin-bottom: 16px; opacity: 0.4; }
+        .empty-state-title { font-size: 1.1rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; }
+        .empty-state-text { font-size: 0.9rem; max-width: 300px; margin: 0 auto 20px; }
+        
+        /* Sidebar */
+        .sidebar-stack { display: flex; flex-direction: column; gap: 24px; }
+        
+        /* localStorage Monitor */
+        .ls-item { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+        .ls-item:last-child { border-bottom: none; }
+        .ls-item-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+        .ls-key { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; color: var(--cyan); }
+        .ls-value { font-size: 0.8rem; color: var(--text-secondary); font-family: 'IBM Plex Mono', monospace; word-break: break-all; max-height: 40px; overflow: hidden; }
+        
+        /* Sync Hub Status */
+        .synchub-status { padding: 20px; }
+        .synchub-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+        .synchub-indicator { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; background: var(--bg-input); border: 2px solid var(--border); transition: all 0.3s; }
+        .synchub-indicator.connected { background: var(--success-dim); border-color: var(--success); box-shadow: 0 0 20px rgba(0, 214, 143, 0.3); }
+        .synchub-indicator.warning { background: var(--warning-dim); border-color: var(--warning); }
+        .synchub-indicator.disconnected { background: var(--error-dim); border-color: var(--error); }
+        .synchub-info h4 { font-size: 1rem; font-weight: 600; margin-bottom: 4px; }
+        .synchub-info p { font-size: 0.8rem; color: var(--text-muted); }
+        .synchub-details { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .synchub-detail { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }
+        .synchub-detail-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+        .synchub-detail-value { font-size: 0.9rem; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+        
+        /* Alerts */
+        .alerts-panel { max-height: 300px; }
+        .alert-item { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; }
+        .alert-item:last-child { border-bottom: none; }
+        .alert-icon { width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
+        .alert-icon.error { background: var(--error-dim); }
+        .alert-icon.warning { background: var(--warning-dim); }
+        .alert-icon.info { background: var(--info-dim); }
+        .alert-content { flex: 1; min-width: 0; }
+        .alert-title { font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; }
+        .alert-message { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 4px; }
+        .alert-time { font-size: 0.7rem; color: var(--text-muted); }
+        
+        /* Performance */
+        .perf-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; padding: 16px; }
+        .perf-item { background: var(--bg-elevated); border-radius: 8px; padding: 12px; }
+        .perf-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 4px; }
+        .perf-value { font-size: 1.1rem; font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+        .perf-value.good { color: var(--success); }
+        .perf-value.warning { color: var(--warning); }
+        .perf-value.bad { color: var(--error); }
+        .perf-bar { height: 4px; background: var(--bg-input); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+        .perf-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+        .perf-bar-fill.good { background: var(--success); }
+        .perf-bar-fill.warning { background: var(--warning); }
+        .perf-bar-fill.bad { background: var(--error); }
+        
+        /* Toast */
+        .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 2000; display: flex; flex-direction: column; gap: 10px; max-width: 400px; }
+        .toast { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; display: flex; align-items: center; gap: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); animation: toastIn 0.3s ease; }
+        @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .toast.success { border-left: 4px solid var(--success); }
+        .toast.error { border-left: 4px solid var(--error); }
+        .toast.warning { border-left: 4px solid var(--warning); }
+        .toast.info { border-left: 4px solid var(--info); }
+        .toast-icon { font-size: 1.2rem; }
+        .toast-message { font-size: 0.9rem; flex: 1; }
+        
+        /* Modal */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 3000; opacity: 0; visibility: hidden; transition: all 0.3s; }
+        .modal-overlay.active { opacity: 1; visibility: visible; }
+        .modal { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; width: 90%; max-width: 700px; max-height: 80vh; overflow: hidden; transform: translateY(20px) scale(0.95); transition: transform 0.3s; }
+        .modal-overlay.active .modal { transform: translateY(0) scale(1); }
+        .modal-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .modal-title { font-size: 1.2rem; font-weight: 700; }
+        .modal-close { width: 36px; height: 36px; border-radius: 8px; border: none; background: var(--bg-elevated); color: var(--text-secondary); font-size: 1.2rem; cursor: pointer; transition: all 0.2s; }
+        .modal-close:hover { background: var(--error); color: white; }
+        .modal-body { padding: 20px; max-height: calc(80vh - 140px); overflow-y: auto; }
+        .modal-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 12px; }
+        .detail-row { display: flex; padding: 12px 0; border-bottom: 1px solid var(--border); }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { width: 140px; font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600; flex-shrink: 0; }
+        .detail-value { flex: 1; font-size: 0.9rem; }
+        .detail-value pre { background: var(--bg-elevated); padding: 12px; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+        
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-primary); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+        
+        /* Responsive */
+        @media (max-width: 1400px) { .status-grid { grid-template-columns: repeat(3, 1fr); } }
+        @media (max-width: 1200px) { .content-grid { grid-template-columns: 1fr; } .connection-body { grid-template-columns: 1fr; } }
+        @media (max-width: 768px) { .status-grid { grid-template-columns: repeat(2, 1fr); } .header { flex-wrap: wrap; height: auto; padding: 12px; gap: 12px; } .header-center { order: 3; width: 100%; } }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">
+                    <div class="logo-icon">📡</div>
+                    <div class="logo-text">
+                        <span class="logo-title">CCD System Monitor</span>
+                        <span class="logo-version">v2.0.0 • Build 2026-01-20</span>
+                    </div>
+                </div>
+            </div>
+            <div class="header-center">
+                <div class="monitoring-status">
+                    <div class="pulse-dot" id="monitoringDot"></div>
+                    <span class="monitoring-label" id="monitoringLabel">Stopped</span>
+                    <span class="monitoring-timer" id="monitoringTimer">--</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-success" id="btnStartStop" onclick="toggleMonitoring()">▶️ Start</button>
+                <button class="btn btn-secondary" onclick="refreshNow()">🔄 Refresh</button>
+                <button class="btn btn-ghost" onclick="exportChangeHistory()">📤 Export</button>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <div class="connection-panel" id="connectionPanel">
+                <div class="connection-header" onclick="toggleConnectionPanel()">
+                    <div class="connection-title"><span>📂</span><span>File Connections</span></div>
+                    <div class="connection-summary">
+                        <div class="connection-badge disconnected" id="masterBadge"><span class="dot"></span><span>MASTER</span></div>
+                        <div class="connection-badge disconnected" id="syncBadge"><span class="dot"></span><span>SYNC</span></div>
+                        <div class="connection-badge disconnected" id="configBadge"><span class="dot"></span><span>CONFIG</span></div>
+                    </div>
+                </div>
+                <div class="connection-body">
+                    <div class="file-card" id="masterCard">
+                        <div class="file-card-header">
+                            <div class="file-card-title"><div class="file-icon master">📦</div><span>MASTER.json</span></div>
+                            <span class="file-status-badge disconnected" id="masterStatus">Not Connected</span>
+                        </div>
+                        <div class="file-card-info"><div>Primary inventory data</div><div class="filename" id="masterFilename">--</div></div>
+                        <div class="file-card-meta" id="masterMeta"><span>Size: --</span><span>Items: --</span></div>
+                        <div class="file-card-actions"><button class="btn btn-sm btn-primary" onclick="connectFile('master')">Connect</button></div>
+                    </div>
+                    <div class="file-card" id="syncCard">
+                        <div class="file-card-header">
+                            <div class="file-card-title"><div class="file-icon sync">🔄</div><span>SYNC.json</span></div>
+                            <span class="file-status-badge disconnected" id="syncStatus">Not Connected</span>
+                        </div>
+                        <div class="file-card-info"><div>Order queues and sync data</div><div class="filename" id="syncFilename">--</div></div>
+                        <div class="file-card-meta" id="syncMeta"><span>Size: --</span><span>Orders: --</span></div>
+                        <div class="file-card-actions"><button class="btn btn-sm btn-primary" onclick="connectFile('sync')">Connect</button></div>
+                    </div>
+                    <div class="file-card" id="configCard">
+                        <div class="file-card-header">
+                            <div class="file-card-title"><div class="file-icon config">⚙️</div><span>CONFIG.json</span></div>
+                            <span class="file-status-badge disconnected" id="configStatus">Not Connected</span>
+                        </div>
+                        <div class="file-card-info"><div>API credentials and settings</div><div class="filename" id="configFilename">--</div></div>
+                        <div class="file-card-meta" id="configMeta"><span>Size: --</span><span>APIs: --</span></div>
+                        <div class="file-card-actions"><button class="btn btn-sm btn-primary" onclick="connectFile('config')">Connect</button></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-grid">
+                <div class="status-card" id="cardInventory"><div class="status-card-header"><span class="status-card-icon">📦</span></div><div class="status-card-label">Inventory Items</div><div class="status-card-value" id="statInventoryCount">--</div><div class="status-card-sub" id="statInventoryActive">-- active</div></div>
+                <div class="status-card" id="cardChanges"><div class="status-card-header"><span class="status-card-icon">📝</span></div><div class="status-card-label">Pending Changes</div><div class="status-card-value" id="statPendingChanges">0</div><div class="status-card-sub" id="statPendingChannels">Ready to sync</div></div>
+                <div class="status-card" id="cardOrders"><div class="status-card-header"><span class="status-card-icon">🛒</span></div><div class="status-card-label">Pending Orders</div><div class="status-card-value" id="statPendingOrders">--</div><div class="status-card-sub" id="statOrderChannels">--</div></div>
+                <div class="status-card" id="cardSyncHub"><div class="status-card-header"><span class="status-card-icon">🔄</span></div><div class="status-card-label">Sync Hub</div><div class="status-card-value" id="statSyncHub">--</div><div class="status-card-sub" id="statSyncHubAge">No heartbeat</div></div>
+                <div class="status-card" id="cardActivity"><div class="status-card-header"><span class="status-card-icon">📋</span></div><div class="status-card-label">Activity Log</div><div class="status-card-value" id="statActivityCount">--</div><div class="status-card-sub" id="statActivityRecent">--</div></div>
+                <div class="status-card" id="cardErrors"><div class="status-card-header"><span class="status-card-icon">⚠️</span></div><div class="status-card-label">Recent Errors</div><div class="status-card-value" id="statErrorCount">0</div><div class="status-card-sub" id="statLastError">No errors</div></div>
+            </div>
+
+            <div class="content-grid">
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title"><span>📜</span><span>Live Change Feed</span><span class="panel-badge" id="changeFeedCount">0 changes</span></div>
+                        <div class="panel-actions"><button class="btn btn-sm btn-ghost" onclick="clearChangeHistory()">Clear</button></div>
+                    </div>
+                    <div class="panel-body change-feed" id="changeFeed">
+                        <div class="empty-state" id="changeFeedEmpty"><div class="empty-state-icon">📡</div><div class="empty-state-title">No Changes Detected</div><div class="empty-state-text">Connect files and start monitoring to see real-time changes</div></div>
+                    </div>
+                </div>
+
+                <div class="sidebar-stack">
+                    <div class="panel">
+                        <div class="panel-header"><div class="panel-title"><span>🔄</span><span>Sync Hub Status</span></div></div>
+                        <div class="panel-body padded synchub-status">
+                            <div class="synchub-header">
+                                <div class="synchub-indicator disconnected" id="synchubIndicator">🔌</div>
+                                <div class="synchub-info"><h4 id="synchubTitle">Not Detected</h4><p id="synchubSubtitle">No heartbeat received</p></div>
+                            </div>
+                            <div class="synchub-details">
+                                <div class="synchub-detail"><div class="synchub-detail-label">Last Heartbeat</div><div class="synchub-detail-value" id="synchubHeartbeat">--</div></div>
+                                <div class="synchub-detail"><div class="synchub-detail-label">Device</div><div class="synchub-detail-value" id="synchubDevice">--</div></div>
+                                <div class="synchub-detail"><div class="synchub-detail-label">Auto-Push</div><div class="synchub-detail-value" id="synchubAutoPush">--</div></div>
+                                <div class="synchub-detail"><div class="synchub-detail-label">Version</div><div class="synchub-detail-value" id="synchubVersion">--</div></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header"><div class="panel-title"><span>💾</span><span>localStorage Keys</span></div></div>
+                        <div class="panel-body" id="localStorageMonitor" style="max-height: 280px;"></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header"><div class="panel-title"><span>🚨</span><span>Alerts</span><span class="panel-badge" id="alertCount">0</span></div></div>
+                        <div class="panel-body alerts-panel" id="alertsPanel"><div class="empty-state" style="padding: 30px;"><div class="empty-state-icon">✅</div><div class="empty-state-title">All Clear</div><div class="empty-state-text">No active alerts</div></div></div>
+                    </div>
+                    <div class="panel">
+                        <div class="panel-header"><div class="panel-title"><span>⚡</span><span>Performance</span></div></div>
+                        <div class="panel-body">
+                            <div class="perf-grid">
+                                <div class="perf-item"><div class="perf-label">File Read</div><div class="perf-value good" id="perfFileRead">--</div><div class="perf-bar"><div class="perf-bar-fill good" id="perfFileReadBar" style="width: 0%"></div></div></div>
+                                <div class="perf-item"><div class="perf-label">Parse Time</div><div class="perf-value good" id="perfParse">--</div><div class="perf-bar"><div class="perf-bar-fill good" id="perfParseBar" style="width: 0%"></div></div></div>
+                                <div class="perf-item"><div class="perf-label">Memory</div><div class="perf-value good" id="perfMemory">--</div><div class="perf-bar"><div class="perf-bar-fill good" id="perfMemoryBar" style="width: 0%"></div></div></div>
+                                <div class="perf-item"><div class="perf-label">Read Count</div><div class="perf-value" id="perfReadCount">0</div></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+    <div class="modal-overlay" id="detailModal">
+        <div class="modal">
+            <div class="modal-header"><div class="modal-title" id="modalTitle">Change Details</div><button class="modal-close" onclick="closeModal()">&times;</button></div>
+            <div class="modal-body" id="modalBody"></div>
+            <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal()">Close</button></div>
+        </div>
+    </div>
+
+    <script>
+    // ============================================================================
+    // CCD SYSTEM MONITOR v2.0 - Core JavaScript
+    // ============================================================================
+    const state = {
+        files: {
+            master: { handle: null, data: null, prevData: null, lastModified: null },
+            sync: { handle: null, data: null, prevData: null, lastModified: null },
+            config: { handle: null, data: null, prevData: null, lastModified: null }
+        },
+        localStorageSnapshot: {},
+        isMonitoring: false,
+        monitorInterval: null,
+        refreshIntervalSeconds: 5,
+        nextRefreshIn: 5,
+        changeHistory: [],
+        maxHistorySize: 100,
+        alerts: [],
+        performance: { lastFileReadTime: 0, lastParseTime: 0, memoryUsage: 0, readCount: 0, errorCount: 0 },
+        db: null
+    };
+
+    const MONITORED_LS_KEYS = ['ccd_inventory_changes', 'ccd_inventory_last_change', 'ccd_sync_hub_last_processed_change', 'ccd_sync_hub_heartbeat', 'ccdSyncHubAutoSync', 'ccd_hostname', 'ccdUsername'];
+
+    // Initialize
+    async function init() {
+        console.log('🚀 [Monitor] Initializing CCD System Monitor v2.0');
+        if (!window.showOpenFilePicker) { toast('File System Access API not supported. Use Chrome or Edge.', 'error'); return; }
+        await initIndexedDB();
+        captureLocalStorageSnapshot();
+        renderLocalStorageMonitor();
+        await tryRestoreFileHandles();
+        updateAllDisplays();
+        console.log('✅ [Monitor] Initialization complete');
+    }
+
+    // IndexedDB
+    async function initIndexedDB() {
+        return new Promise((resolve) => {
+            const request = indexedDB.open('CCDSystemMonitor', 1);
+            request.onerror = () => resolve(null);
+            request.onsuccess = () => { state.db = request.result; resolve(state.db); };
+            request.onupgradeneeded = (e) => { e.target.result.createObjectStore('fileHandles'); };
+        });
+    }
+
+    async function saveFileHandle(type, handle) {
+        if (!state.db) return;
+        return new Promise((resolve) => {
+            try {
+                const tx = state.db.transaction('fileHandles', 'readwrite');
+                tx.objectStore('fileHandles').put(handle, type);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => resolve();
+            } catch (e) { resolve(); }
+        });
+    }
+
+    async function getFileHandle(type) {
+        if (!state.db) return null;
+        return new Promise((resolve) => {
+            try {
+                const tx = state.db.transaction('fileHandles', 'readonly');
+                const request = tx.objectStore('fileHandles').get(type);
+                request.onsuccess = () => resolve(request.result || null);
+                request.onerror = () => resolve(null);
+            } catch (e) { resolve(null); }
+        });
+    }
+
+    async function tryRestoreFileHandles() {
+        for (const type of ['master', 'sync', 'config']) {
+            try {
+                const handle = await getFileHandle(type);
+                if (handle && handle instanceof FileSystemFileHandle) {
+                    let permission = await handle.queryPermission({ mode: 'read' });
+                    if (permission !== 'granted') permission = await handle.requestPermission({ mode: 'read' });
+                    if (permission === 'granted') { state.files[type].handle = handle; await loadFile(type); }
+                }
+            } catch (e) { console.log(`⚠️ Could not restore ${type}:`, e.message); }
+        }
+        updateConnectionStatus();
+    }
+
+    // File Operations
+    async function connectFile(type) {
+        try {
+            const [handle] = await window.showOpenFilePicker({ types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }] });
+            state.files[type].handle = handle;
+            await loadFile(type);
+            await saveFileHandle(type, handle);
+            updateConnectionStatus();
+            toast(`Connected to ${handle.name}`, 'success');
+        } catch (e) { if (e.name !== 'AbortError') toast(`Failed to connect: ${e.message}`, 'error'); }
+    }
+
+    async function loadFile(type) {
+        const fileState = state.files[type];
+        if (!fileState.handle) return;
+        const startRead = performance.now();
+        try {
+            const file = await fileState.handle.getFile();
+            const text = await file.text();
+            const readTime = performance.now() - startRead;
+            const startParse = performance.now();
+            const data = JSON.parse(text);
+            const parseTime = performance.now() - startParse;
+            fileState.prevData = fileState.data;
+            fileState.data = data;
+            fileState.lastModified = file.lastModified;
+            state.performance.lastFileReadTime = readTime;
+            state.performance.lastParseTime = parseTime;
+            state.performance.readCount++;
+            return { data, readTime, parseTime, size: text.length };
+        } catch (e) { state.performance.errorCount++; throw e; }
+    }
+
+    async function loadAllFiles() {
+        for (const type of ['master', 'sync', 'config']) {
+            if (state.files[type].handle) { try { await loadFile(type); } catch (e) {} }
+        }
+    }
+
+    // Monitoring
+    function toggleMonitoring() { state.isMonitoring ? stopMonitoring() : startMonitoring(); }
+
+    function startMonitoring() {
+        if (state.isMonitoring) return;
+        state.isMonitoring = true;
+        state.nextRefreshIn = state.refreshIntervalSeconds;
+        document.getElementById('btnStartStop').innerHTML = '⏹️ Stop';
+        document.getElementById('btnStartStop').className = 'btn btn-danger';
+        document.getElementById('monitoringDot').className = 'pulse-dot active';
+        document.getElementById('monitoringLabel').textContent = 'Monitoring';
+        state.monitorInterval = setInterval(() => {
+            state.nextRefreshIn--;
+            document.getElementById('monitoringTimer').textContent = `${state.nextRefreshIn}s`;
+            if (state.nextRefreshIn <= 0) { monitoringLoop(); state.nextRefreshIn = state.refreshIntervalSeconds; }
+        }, 1000);
+        monitoringLoop();
+        toast('Monitoring started', 'success');
+    }
+
+    function stopMonitoring() {
+        if (!state.isMonitoring) return;
+        state.isMonitoring = false;
+        if (state.monitorInterval) { clearInterval(state.monitorInterval); state.monitorInterval = null; }
+        document.getElementById('btnStartStop').innerHTML = '▶️ Start';
+        document.getElementById('btnStartStop').className = 'btn btn-success';
+        document.getElementById('monitoringDot').className = 'pulse-dot';
+        document.getElementById('monitoringLabel').textContent = 'Stopped';
+        document.getElementById('monitoringTimer').textContent = '--';
+        toast('Monitoring stopped', 'info');
+    }
+
+    async function monitoringLoop() {
+        try {
+            await loadAllFiles();
+            detectFileChanges();
+            checkLocalStorageChanges();
+            checkSyncHubHeartbeat();
+            checkAlerts();
+            updateAllDisplays();
+            if (performance.memory) state.performance.memoryUsage = performance.memory.usedJSHeapSize / 1024 / 1024;
+        } catch (e) { state.performance.errorCount++; }
+    }
+
+    function refreshNow() { state.nextRefreshIn = state.refreshIntervalSeconds; monitoringLoop(); toast('Refreshed', 'info'); }
+
+    // Change Detection
+    function detectFileChanges() {
+        if (state.files.master.data && state.files.master.prevData) detectMasterChanges();
+        if (state.files.sync.data && state.files.sync.prevData) detectSyncChanges();
+    }
+
+    function detectMasterChanges() {
+        const prev = state.files.master.prevData, curr = state.files.master.data;
+        if (prev.lastModified !== curr.lastModified) {
+            const prevInv = new Map((prev.inventory || []).map(i => [i.sku, i]));
+            const currInv = new Map((curr.inventory || []).map(i => [i.sku, i]));
+            for (const [sku, currItem] of currInv) {
+                const prevItem = prevInv.get(sku);
+                if (!prevItem) { addChange({ file: 'master', type: 'itemAdded', summary: `New item: ${currItem.productName || sku}`, details: { sku }, user: curr.lastModifiedBy, device: curr.device }); }
+                else {
+                    const changes = compareItems(prevItem, currItem);
+                    if (changes.length > 0) addChange({ file: 'master', type: 'itemModified', summary: `${sku}: ${changes.map(f => f.field).join(', ')} changed`, details: { sku, productName: currItem.productName, changes }, user: curr.lastModifiedBy, device: curr.device });
+                }
+            }
+            for (const [sku, prevItem] of prevInv) { if (!currInv.has(sku)) addChange({ file: 'master', type: 'itemDeleted', summary: `Deleted: ${prevItem.productName || sku}`, details: { sku }, user: curr.lastModifiedBy, device: curr.device }); }
+        }
+    }
+
+    function compareItems(prev, curr) {
+        const changes = [];
+        for (const field of ['warehouseQty', 'wholesaleCost', 'retailPrice', 'etsyPrice', 'wixPrice', 'wayfairPrice']) {
+            if (prev[field] !== curr[field]) changes.push({ field, before: prev[field], after: curr[field] });
+        }
+        if (JSON.stringify(prev.channels) !== JSON.stringify(curr.channels)) {
+            const channelChanges = [];
+            for (const ch of ['etsy', 'wix', 'wayfair', 'tm']) {
+                const pv = prev.channels?.[ch] ?? 0, cv = curr.channels?.[ch] ?? 0;
+                if (pv !== cv) channelChanges.push({ channel: ch, before: pv, after: cv });
+            }
+            if (channelChanges.length > 0) changes.push({ field: 'channels', before: channelChanges.map(c => `${c.channel}:${c.before}`).join(','), after: channelChanges.map(c => `${c.channel}:${c.after}`).join(',') });
+        }
+        return changes;
+    }
+
+    function detectSyncChanges() {
+        const prev = state.files.sync.prevData, curr = state.files.sync.data;
+        for (const ch of ['etsy', 'wix', 'wayfair']) {
+            const pc = prev.orders?.[ch]?.length || 0, cc = curr.orders?.[ch]?.length || 0;
+            if (cc !== pc) addChange({ file: 'sync', type: 'ordersChanged', summary: `${ch.toUpperCase()} orders: ${pc} → ${cc}`, details: { channel: ch, before: pc, after: cc } });
+        }
+        if (prev.syncHubStatus?.lastHeartbeat !== curr.syncHubStatus?.lastHeartbeat && curr.syncHubStatus?.lastHeartbeat) {
+            addChange({ file: 'sync', type: 'heartbeat', summary: 'Sync Hub heartbeat', details: { timestamp: curr.syncHubStatus.lastHeartbeat, device: curr.syncHubStatus.device } });
+        }
+    }
+
+    // localStorage Monitoring
+    function captureLocalStorageSnapshot() { state.localStorageSnapshot = {}; for (const key of MONITORED_LS_KEYS) state.localStorageSnapshot[key] = localStorage.getItem(key); }
+
+    function checkLocalStorageChanges() {
+        for (const key of MONITORED_LS_KEYS) {
+            const curr = localStorage.getItem(key), prev = state.localStorageSnapshot[key];
+            if (curr !== prev) { handleLocalStorageChange(key, prev, curr); state.localStorageSnapshot[key] = curr; }
+        }
+        renderLocalStorageMonitor();
+    }
+
+    function handleLocalStorageChange(key, oldValue, newValue) {
+        let summary = `${key} changed`;
+        if (key === 'ccd_inventory_changes') { try { const c = JSON.parse(newValue || '[]'); summary = `Inventory changes queued: ${c.length} pending`; } catch (e) {} }
+        else if (key === 'ccd_sync_hub_heartbeat') { try { const h = JSON.parse(newValue || '{}'); summary = `Sync Hub heartbeat from ${h.hostname || 'unknown'}`; } catch (e) {} }
+        addChange({ file: 'localstorage', type: 'localStorageChange', summary, details: { key, oldValue, newValue } });
+    }
+
+    function renderLocalStorageMonitor() {
+        const container = document.getElementById('localStorageMonitor');
+        container.innerHTML = MONITORED_LS_KEYS.map(key => {
+            const value = localStorage.getItem(key);
+            let displayValue = value || '--';
+            if (key === 'ccd_inventory_changes') { try { displayValue = `${JSON.parse(value || '[]').length} pending`; } catch (e) {} }
+            else if (key === 'ccd_sync_hub_heartbeat') { try { displayValue = JSON.parse(value || '{}').hostname || '--'; } catch (e) {} }
+            else if (key === 'ccdSyncHubAutoSync') { try { const s = JSON.parse(value || '{}'); displayValue = (s.autoPushEnabled ? 'Push ON' : 'Push OFF'); } catch (e) {} }
+            else if (value && value.length > 30) displayValue = value.substring(0, 30) + '...';
+            return `<div class="ls-item"><div class="ls-item-header"><span class="ls-key">${key.replace('ccd_', '')}</span></div><div class="ls-value">${escapeHtml(displayValue)}</div></div>`;
+        }).join('');
+    }
+
+    // Sync Hub Heartbeat
+    function checkSyncHubHeartbeat() {
+        let heartbeat = null;
+        const lsHB = localStorage.getItem('ccd_sync_hub_heartbeat');
+        if (lsHB) { try { heartbeat = JSON.parse(lsHB); } catch (e) {} }
+        if (state.files.config.data?._syncHubStatus?.lastHeartbeat) {
+            const cfg = state.files.config.data._syncHubStatus;
+            if (!heartbeat || new Date(cfg.lastHeartbeat) > new Date(heartbeat.timestamp)) heartbeat = { timestamp: cfg.lastHeartbeat, hostname: cfg.device, version: cfg.version };
+        }
+        if (state.files.sync.data?.syncHubStatus?.lastHeartbeat) {
+            const sync = state.files.sync.data.syncHubStatus;
+            if (!heartbeat || new Date(sync.lastHeartbeat) > new Date(heartbeat.timestamp)) heartbeat = { timestamp: sync.lastHeartbeat, hostname: sync.device, version: sync.version };
+        }
+        updateSyncHubDisplay(heartbeat);
+    }
+
+    function updateSyncHubDisplay(heartbeat) {
+        const indicator = document.getElementById('synchubIndicator'), title = document.getElementById('synchubTitle'), subtitle = document.getElementById('synchubSubtitle');
+        const hbValue = document.getElementById('synchubHeartbeat'), deviceValue = document.getElementById('synchubDevice'), versionValue = document.getElementById('synchubVersion'), autoPushValue = document.getElementById('synchubAutoPush');
+        const statusCard = document.getElementById('cardSyncHub'), statValue = document.getElementById('statSyncHub'), statAge = document.getElementById('statSyncHubAge');
+        
+        if (!heartbeat || !heartbeat.timestamp) {
+            indicator.className = 'synchub-indicator disconnected'; indicator.textContent = '🔌'; title.textContent = 'Not Detected'; subtitle.textContent = 'No heartbeat received';
+            hbValue.textContent = '--'; deviceValue.textContent = '--'; versionValue.textContent = '--'; statusCard.className = 'status-card error'; statValue.textContent = 'Offline'; statAge.textContent = 'No heartbeat'; return;
+        }
+        const hbTime = new Date(heartbeat.timestamp), ageSeconds = (Date.now() - hbTime.getTime()) / 1000;
+        if (ageSeconds < 120) { indicator.className = 'synchub-indicator connected'; indicator.textContent = '✓'; title.textContent = 'Connected'; subtitle.textContent = `Active on ${heartbeat.hostname || 'Unknown'}`; statusCard.className = 'status-card success'; statValue.textContent = 'Online'; }
+        else if (ageSeconds < 300) { indicator.className = 'synchub-indicator warning'; indicator.textContent = '⚠'; title.textContent = 'Stale'; subtitle.textContent = `Last seen ${formatTimeAgo(hbTime)}`; statusCard.className = 'status-card warning'; statValue.textContent = 'Stale'; }
+        else { indicator.className = 'synchub-indicator disconnected'; indicator.textContent = '✗'; title.textContent = 'Disconnected'; subtitle.textContent = `Last seen ${formatTimeAgo(hbTime)}`; statusCard.className = 'status-card error'; statValue.textContent = 'Offline'; }
+        hbValue.textContent = hbTime.toLocaleTimeString(); deviceValue.textContent = heartbeat.hostname || '--'; versionValue.textContent = heartbeat.version || '--'; statAge.textContent = formatTimeAgo(hbTime);
+        try { const as = JSON.parse(localStorage.getItem('ccdSyncHubAutoSync') || '{}'); autoPushValue.textContent = as.autoPushEnabled ? '✓ Enabled' : '✗ Disabled'; } catch (e) { autoPushValue.textContent = '--'; }
+    }
+
+    // Alerts
+    function checkAlerts() {
+        state.alerts = [];
+        if (state.files.master.data?._activityLog) {
+            const errors = state.files.master.data._activityLog.filter(e => e.category === 'error' || e.action?.includes('failed')).slice(0, 5);
+            for (const err of errors) { if ((Date.now() - new Date(err.timestamp).getTime()) / 1000 < 86400) state.alerts.push({ type: 'error', title: err.action || 'Error', message: err.summary, timestamp: err.timestamp }); }
+        }
+        if (state.files.master.data?.inventory) {
+            const zero = state.files.master.data.inventory.filter(i => i.warehouseQty === 0 && i.active !== false);
+            if (zero.length > 0) state.alerts.push({ type: 'warning', title: 'Zero Stock Items', message: `${zero.length} items have zero warehouse quantity`, timestamp: new Date().toISOString() });
+        }
+        const hbStr = localStorage.getItem('ccd_sync_hub_heartbeat');
+        if (hbStr) { try { const hb = JSON.parse(hbStr), age = (Date.now() - new Date(hb.timestamp).getTime()) / 1000; if (age > 300) state.alerts.push({ type: 'warning', title: 'Sync Hub Stale', message: `No heartbeat for ${Math.floor(age / 60)} minutes`, timestamp: hb.timestamp }); } catch (e) {} }
+        renderAlerts();
+    }
+
+    function renderAlerts() {
+        const container = document.getElementById('alertsPanel'), countBadge = document.getElementById('alertCount'), errorCard = document.getElementById('cardErrors'), errorCount = document.getElementById('statErrorCount'), lastError = document.getElementById('statLastError');
+        countBadge.textContent = state.alerts.length;
+        const errors = state.alerts.filter(a => a.type === 'error');
+        errorCount.textContent = errors.length; errorCard.className = errors.length > 0 ? 'status-card error' : 'status-card';
+        lastError.textContent = errors.length > 0 ? formatTimeAgo(new Date(errors[0].timestamp)) : 'No errors';
+        if (state.alerts.length === 0) { container.innerHTML = `<div class="empty-state" style="padding: 30px;"><div class="empty-state-icon">✅</div><div class="empty-state-title">All Clear</div><div class="empty-state-text">No active alerts</div></div>`; return; }
+        container.innerHTML = state.alerts.map(a => `<div class="alert-item"><div class="alert-icon ${a.type}">${a.type === 'error' ? '❌' : a.type === 'warning' ? '⚠️' : 'ℹ️'}</div><div class="alert-content"><div class="alert-title">${escapeHtml(a.title)}</div><div class="alert-message">${escapeHtml(a.message)}</div><div class="alert-time">${formatTimeAgo(new Date(a.timestamp))}</div></div></div>`).join('');
+    }
+
+    // Change History
+    function addChange(change) {
+        change.id = `chg_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+        change.timestamp = new Date().toISOString();
+        state.changeHistory.unshift(change);
+        if (state.changeHistory.length > state.maxHistorySize) state.changeHistory = state.changeHistory.slice(0, state.maxHistorySize);
+        renderChangeFeed();
+    }
+
+    function renderChangeFeed() {
+        const container = document.getElementById('changeFeed'), emptyState = document.getElementById('changeFeedEmpty'), countBadge = document.getElementById('changeFeedCount');
+        countBadge.textContent = `${state.changeHistory.length} changes`;
+        if (state.changeHistory.length === 0) { emptyState.style.display = 'block'; return; }
+        emptyState.style.display = 'none';
+        container.innerHTML = state.changeHistory.map(c => {
+            const fileClass = c.file === 'localstorage' ? 'localstorage' : c.file, fileLabel = c.file === 'localstorage' ? 'localStorage' : c.file.toUpperCase();
+            let detailsHtml = '';
+            if (c.details?.changes) detailsHtml = c.details.changes.map(ch => `<div class="change-detail-item"><span>${ch.field}:</span><div class="change-diff"><span class="change-diff-old">${ch.before ?? '--'}</span><span>→</span><span class="change-diff-new">${ch.after ?? '--'}</span></div></div>`).join('');
+            return `<div class="change-item" onclick='showChangeDetails(${JSON.stringify(c).replace(/'/g, "&#39;")})'><div class="change-header"><div class="change-file"><span class="change-file-badge ${fileClass}">${fileLabel}</span><span class="change-type">${c.type}</span></div><span class="change-time">${formatTime(new Date(c.timestamp))}</span></div><div class="change-summary">${escapeHtml(c.summary)}</div>${detailsHtml ? `<div class="change-details">${detailsHtml}</div>` : ''}${c.user ? `<div class="change-meta"><span>👤 ${escapeHtml(c.user)}</span>${c.device ? `<span>💻 ${escapeHtml(c.device)}</span>` : ''}</div>` : ''}</div>`;
+        }).join('');
+    }
+
+    function clearChangeHistory() { if (!confirm('Clear all change history?')) return; state.changeHistory = []; renderChangeFeed(); toast('Change history cleared', 'info'); }
+
+    function exportChangeHistory() {
+        if (state.changeHistory.length === 0) { toast('No changes to export', 'warning'); return; }
+        const data = JSON.stringify(state.changeHistory, null, 2), blob = new Blob([data], { type: 'application/json' }), url = URL.createObjectURL(blob), a = document.createElement('a');
+        a.href = url; a.download = `ccd-monitor-changes-${new Date().toISOString().split('T')[0]}.json`; a.click(); URL.revokeObjectURL(url);
+        toast(`Exported ${state.changeHistory.length} changes`, 'success');
+    }
+
+    // UI Updates
+    function updateAllDisplays() { updateConnectionStatus(); updateStatusCards(); updatePerformanceMetrics(); }
+
+    function updateConnectionStatus() {
+        for (const type of ['master', 'sync', 'config']) {
+            const connected = !!state.files[type].handle;
+            document.getElementById(`${type}Badge`).className = connected ? 'connection-badge connected' : 'connection-badge disconnected';
+            document.getElementById(`${type}Card`).classList.toggle('connected', connected);
+            document.getElementById(`${type}Status`).className = connected ? 'file-status-badge connected' : 'file-status-badge disconnected';
+            document.getElementById(`${type}Status`).textContent = connected ? 'Connected' : 'Not Connected';
+            document.getElementById(`${type}Filename`).textContent = connected ? state.files[type].handle.name : '--';
+            const data = state.files[type].data;
+            if (type === 'master' && data) document.getElementById(`${type}Meta`).innerHTML = `<span>Size: ${formatBytes(JSON.stringify(data).length)}</span><span>Items: ${data.inventory?.length || 0}</span>`;
+            else if (type === 'sync' && data) document.getElementById(`${type}Meta`).innerHTML = `<span>Orders: ${(data.orders?.etsy?.length || 0) + (data.orders?.wix?.length || 0) + (data.orders?.wayfair?.length || 0)}</span>`;
+            else if (type === 'config' && data) document.getElementById(`${type}Meta`).innerHTML = `<span>APIs: ${Object.keys(data.apiKeys || {}).length}</span>`;
+        }
+    }
+
+    function updateStatusCards() {
+        if (state.files.master.data?.inventory) { const items = state.files.master.data.inventory, active = items.filter(i => i.active !== false).length; document.getElementById('statInventoryCount').textContent = items.length; document.getElementById('statInventoryActive').textContent = `${active} active`; document.getElementById('cardInventory').className = 'status-card success'; }
+        try { const changes = JSON.parse(localStorage.getItem('ccd_inventory_changes') || '[]'); document.getElementById('statPendingChanges').textContent = changes.length; document.getElementById('statPendingChannels').textContent = changes.length > 0 ? 'Waiting for sync' : 'Ready to sync'; document.getElementById('cardChanges').className = changes.length > 0 ? 'status-card warning' : 'status-card'; } catch (e) {}
+        if (state.files.sync.data?.orders) { const o = state.files.sync.data.orders, total = (o.etsy?.length || 0) + (o.wix?.length || 0) + (o.wayfair?.length || 0); document.getElementById('statPendingOrders').textContent = total; document.getElementById('statOrderChannels').textContent = `E:${o.etsy?.length || 0} W:${o.wix?.length || 0} WF:${o.wayfair?.length || 0}`; document.getElementById('cardOrders').className = total > 0 ? 'status-card info' : 'status-card'; }
+        if (state.files.master.data?._activityLog) { const log = state.files.master.data._activityLog; document.getElementById('statActivityCount').textContent = log.length; if (log.length > 0) document.getElementById('statActivityRecent').textContent = formatTimeAgo(new Date(log[0].timestamp)); document.getElementById('cardActivity').className = 'status-card info'; }
+    }
+
+    function updatePerformanceMetrics() {
+        const p = state.performance;
+        document.getElementById('perfFileRead').textContent = p.lastFileReadTime > 0 ? `${Math.round(p.lastFileReadTime)}ms` : '--';
+        document.getElementById('perfFileReadBar').style.width = `${Math.min(100, (p.lastFileReadTime / 500) * 100)}%`;
+        document.getElementById('perfParse').textContent = p.lastParseTime > 0 ? `${Math.round(p.lastParseTime)}ms` : '--';
+        document.getElementById('perfParseBar').style.width = `${Math.min(100, (p.lastParseTime / 300) * 100)}%`;
+        if (p.memoryUsage > 0) { document.getElementById('perfMemory').textContent = `${Math.round(p.memoryUsage)}MB`; document.getElementById('perfMemoryBar').style.width = `${Math.min(100, (p.memoryUsage / 200) * 100)}%`; }
+        document.getElementById('perfReadCount').textContent = p.readCount;
+    }
+
+    function toggleConnectionPanel() { document.getElementById('connectionPanel').classList.toggle('collapsed'); }
+
+    // Modal
+    function showChangeDetails(change) {
+        document.getElementById('modalTitle').textContent = `Change Details: ${change.type}`;
+        document.getElementById('modalBody').innerHTML = `
+            <div class="detail-row"><div class="detail-label">ID</div><div class="detail-value" style="font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem;">${change.id}</div></div>
+            <div class="detail-row"><div class="detail-label">Timestamp</div><div class="detail-value">${new Date(change.timestamp).toLocaleString()}</div></div>
+            <div class="detail-row"><div class="detail-label">File</div><div class="detail-value">${change.file}</div></div>
+            <div class="detail-row"><div class="detail-label">Type</div><div class="detail-value">${change.type}</div></div>
+            <div class="detail-row"><div class="detail-label">Summary</div><div class="detail-value">${escapeHtml(change.summary)}</div></div>
+            ${change.user ? `<div class="detail-row"><div class="detail-label">User</div><div class="detail-value">${escapeHtml(change.user)}</div></div>` : ''}
+            ${change.device ? `<div class="detail-row"><div class="detail-label">Device</div><div class="detail-value">${escapeHtml(change.device)}</div></div>` : ''}
+            <div class="detail-row"><div class="detail-label">Details</div><div class="detail-value"><pre>${JSON.stringify(change.details || {}, null, 2)}</pre></div></div>`;
+        document.getElementById('detailModal').classList.add('active');
+    }
+    function closeModal() { document.getElementById('detailModal').classList.remove('active'); }
+    document.getElementById('detailModal').addEventListener('click', (e) => { if (e.target.classList.contains('modal-overlay')) closeModal(); });
+
+    // Utilities
+    function escapeHtml(text) { if (!text) return ''; const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+    function formatTime(date) { return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true }); }
+    function formatTimeAgo(date) { const s = Math.floor((Date.now() - date.getTime()) / 1000); if (s < 5) return 'Just now'; if (s < 60) return `${s}s ago`; if (s < 3600) return `${Math.floor(s / 60)}m ago`; if (s < 86400) return `${Math.floor(s / 3600)}h ago`; return `${Math.floor(s / 86400)}d ago`; }
+    function formatBytes(bytes) { if (bytes < 1024) return bytes + ' B'; if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB'; return (bytes / 1048576).toFixed(2) + ' MB'; }
+    function toast(message, type = 'info') { const c = document.getElementById('toastContainer'), t = document.createElement('div'); t.className = `toast ${type}`; t.innerHTML = `<span class="toast-icon">${{success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️'}[type] || 'ℹ️'}</span><span class="toast-message">${message}</span>`; c.appendChild(t); setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(100%)'; setTimeout(() => t.remove(), 300); }, 3000); }
+
+    // Keyboard Shortcuts
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); if (e.key === ' ' && e.target.tagName !== 'INPUT') { e.preventDefault(); toggleMonitoring(); } if (e.key === 'r' && !e.ctrlKey && e.target.tagName !== 'INPUT') refreshNow(); });
+
+    // Initialize
+    document.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
