@@ -6620,17 +6620,19 @@
                     });
                     
                     // Log deduction to activity log
-                    logActivity('inventory', 'order_deduction', order.channel,
-                        `Deducted ${item.qty} units of ${sku} for order ${orderId}`,
-                        { 
-                            sku: sku, 
-                            quantity: item.qty, 
-                            oldQty: currentQty, 
-                            newQty: newQty, 
-                            orderId: orderId,
-                            channel: order.channel 
-                        }
-                    );
+                    if (typeof logActivity === 'function') {
+                        logActivity('inventory', 'order_deduction', order.channel,
+                            `Deducted ${item.qty} units of ${sku} for order ${orderId}`,
+                            { 
+                                sku: sku, 
+                                quantity: item.qty, 
+                                oldQty: currentQty, 
+                                newQty: newQty, 
+                                orderId: orderId,
+                                channel: order.channel 
+                            }
+                        );
+                    }
                 } else {
                     console.log(`[GAP 3] Skipping deduction for ${sku} (feature disabled)`);
                     addLog(`⚠️ Inventory deduction disabled - ${sku} not deducted`, 'info');
@@ -6789,15 +6791,17 @@
             addLog(`📤 Queued ${cascadeQueue.length} inventory updates to other channels`, 'info');
             
             // Log cascade queued to activity log
-            logActivity('sync', 'cascade_queued', order.channel,
-                `Queued ${cascadeQueue.length} channel updates from ${order.channel} order ${orderId}`,
-                { 
-                    orderId: orderId,
-                    sourceChannel: order.channel,
-                    cascadeCount: cascadeQueue.length,
-                    targets: cascadeQueue.map(c => ({ channel: c.channel, sku: c.sku, qty: c.qty }))
-                }
-            );
+            if (typeof logActivity === 'function') {
+                logActivity('sync', 'cascade_queued', order.channel,
+                    `Queued ${cascadeQueue.length} channel updates from ${order.channel} order ${orderId}`,
+                    { 
+                        orderId: orderId,
+                        sourceChannel: order.channel,
+                        cascadeCount: cascadeQueue.length,
+                        targets: cascadeQueue.map(c => ({ channel: c.channel, sku: c.sku, qty: c.qty }))
+                    }
+                );
+            }
             
             // ========== AUTO-PROCESS CASCADE IMMEDIATELY ==========
             // Don't wait for the 5-minute interval - process now!
@@ -6817,15 +6821,17 @@
         
         // Log order processed to activity log
         const itemsSummary = order.items.map(i => `${i.sku}(${i.qty})`).join(', ');
-        logActivity('order', 'order_processed', order.channel,
-            `Order ${orderId} processed - inventory deducted`,
-            { 
-                orderId: orderId,
-                channel: order.channel,
-                items: order.items?.map(i => ({ sku: i.sku, qty: i.qty })),
-                isAutoProcess: isAutoProcess
-            }
-        );
+        if (typeof logActivity === 'function') {
+            logActivity('order', 'order_processed', order.channel,
+                `Order ${orderId} processed - inventory deducted`,
+                { 
+                    orderId: orderId,
+                    channel: order.channel,
+                    items: order.items?.map(i => ({ sku: i.sku, qty: i.qty })),
+                    isAutoProcess: isAutoProcess
+                }
+            );
+        }
         
         // Re-check low stock
         checkLowStock();
