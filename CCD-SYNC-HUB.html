@@ -5809,15 +5809,7 @@
             
         } catch (error) {
             console.error('[Wayfair Orders] Error:', error);
-            
-            // Provide more actionable error messages
-            if (error.message.includes('401') || error.message.includes('Invalid environment')) {
-                addLog('Wayfair: API credentials issue - check Wayfair Partner Portal settings', 'error');
-            } else if (error.message.includes('not configured')) {
-                addLog('Wayfair: Proxy URL not configured - enter URL in Settings', 'warning');
-            } else {
-                addLog(`Wayfair orders error: ${error.message}`, 'error');
-            }
+            addLog(`Wayfair orders error: ${error.message}`, 'error');
         }
     }
     
@@ -6017,18 +6009,7 @@
     // ============================================================================
     
     function autoAdjustChannelAllocations(product, sourceChannel = null) {
-        // Enhanced error handling and logging
-        try {
-            if (!product) {
-                console.log('[AUTO-ADJUST] No product provided');
-                return { adjusted: false, changes: [], parAlerts: [] };
-            }
-            
-            console.log('[AUTO-ADJUST] Called for:', {
-                sku: product.sku || product.SKU,
-                sourceChannel: sourceChannel,
-                hasChannels: !!product.channels
-            });
+        if (!product) return { adjusted: false, changes: [], parAlerts: [] };
         
         // Initialize channels if missing
         if (!product.channels) {
@@ -6135,19 +6116,6 @@
         }
         
         return adjustments;
-        
-        } catch (funcError) {
-            console.error('[AUTO-ADJUST FUNCTION ERROR]', {
-                error: funcError,
-                errorName: funcError.name,
-                errorMessage: funcError.message,
-                errorStack: funcError.stack,
-                product: product,
-                sourceChannel: sourceChannel
-            });
-            // Return safe default
-            return { adjusted: false, changes: [], parAlerts: [] };
-        }
     }
     
     /**
@@ -6627,23 +6595,7 @@
                     }
                     
                     // v2.1.0: Auto-adjust channel allocations after order
-                    let adjustResult = { adjusted: false, changes: [], parAlerts: [] };
-                    try {
-                        adjustResult = autoAdjustChannelAllocations(product, order.channel);
-                    } catch (adjustError) {
-                        console.error('[AUTO-ADJUST ERROR]', {
-                            error: adjustError,
-                            errorName: adjustError.name,
-                            errorMessage: adjustError.message,
-                            errorStack: adjustError.stack,
-                            sku: sku,
-                            product: product,
-                            channel: order.channel
-                        });
-                        addLog(`⚠️ Warning: Channel adjustment failed for ${sku}: ${adjustError.message}`, 'warning');
-                        // Continue with empty adjustResult - don't stop the order processing
-                    }
-                    
+                    const adjustResult = autoAdjustChannelAllocations(product, order.channel);
                     if (adjustResult.adjusted) {
                         addLog(`🔄 Auto-adjusted channels for ${sku}: ${adjustResult.changes.map(c => `${c.channel} ${c.from}→${c.to}`).join(', ')}`, 'info');
                     }
