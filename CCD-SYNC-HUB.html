@@ -1314,6 +1314,9 @@
     <div class="toast-container" id="toastContainer"></div>
 
     <script>
+    // Fallback logActivity function (will be replaced by real one later)
+    window.logActivity = window.logActivity || function() { console.log('[logActivity not yet initialized]', arguments); };
+    
     // =============================================
     // GLOBAL ERROR HANDLING
     // =============================================
@@ -1380,6 +1383,9 @@
      * @param {object} details - Structured data (orderId, sku, quantities, etc.)
      */
     function logActivity(category, action, channel, summary, details = {}) {
+        // Override the fallback function
+        window.logActivity = logActivity;
+        
         // Only log if we have master data loaded
         if (typeof masterJsonData === 'undefined' || !masterJsonData) {
             console.log(`📋 [Activity] ${category}/${action}: ${summary} (not saved - no master file)`);
@@ -3719,12 +3725,10 @@
                     addLog(`✓ ${item.product?.productName || item.product?.name || 'Item'} ${item.action || 'synced'} to ${item.channel}`, 'success');
                     
                     // Log success to activity log
-                    if (typeof logActivity === 'function') {
-                        logActivity('sync', 'push_success', item.channel,
-                            `Pushed ${item.product?.sku || 'item'} qty=${item.product?.qty} to ${item.channel}`,
-                            { sku: item.product?.sku, channel: item.channel, quantity: item.product?.qty, reason: item.reason }
-                        );
-                    }
+                    logActivity('sync', 'push_success', item.channel,
+                        `Pushed ${item.product?.sku || 'item'} qty=${item.product?.qty} to ${item.channel}`,
+                        { sku: item.product?.sku, channel: item.channel, quantity: item.product?.qty, reason: item.reason }
+                    );
                 } else {
                     throw new Error(result.error || 'Unknown error');
                 }
@@ -3736,12 +3740,10 @@
                 addLog(`✗ Failed: ${item.product?.productName || item.product?.name || 'Item'} - ${error.message}`, 'error');
                 
                 // Log failure to activity log
-                if (typeof logActivity === 'function') {
-                    logActivity('error', 'push_failed', item.channel,
-                        `Failed to push ${item.product?.sku || 'item'} to ${item.channel}: ${error.message}`,
-                        { sku: item.product?.sku, channel: item.channel, error: error.message, reason: item.reason }
-                    );
-                }
+                logActivity('error', 'push_failed', item.channel,
+                    `Failed to push ${item.product?.sku || 'item'} to ${item.channel}: ${error.message}`,
+                    { sku: item.product?.sku, channel: item.channel, error: error.message, reason: item.reason }
+                );
                 
                 // Auto-retry if enabled and under max retries
                 if (state.settings.retryFailedEnabled && item.retryCount < state.settings.maxRetries) {
@@ -3769,12 +3771,10 @@
         
         // Log cascade completion to activity log
         if (succeeded > 0 || failed > 0) {
-            if (typeof logActivity === 'function') {
-                logActivity('sync', 'cascade_processed', 'system',
-                    `Cascade sync completed: ${succeeded} succeeded, ${failed} failed`,
-                    { succeeded: succeeded, failed: failed, total: processed }
-                );
-            }
+            logActivity('sync', 'cascade_processed', 'system',
+                `Cascade sync completed: ${succeeded} succeeded, ${failed} failed`,
+                { succeeded: succeeded, failed: failed, total: processed }
+            );
         }
     }
 
@@ -5686,18 +5686,16 @@
         for (const order of newOrders) {
             const itemCount = order.items?.length || 0;
             const totalValue = parseFloat(order.total) || 0;
-            if (typeof logActivity === 'function') {
-                logActivity('order', 'order_received', order.channel,
-                    `Order ${order.id} received - ${itemCount} item${itemCount !== 1 ? 's' : ''}, $${totalValue.toFixed(2)}`,
-                    { 
-                        orderId: order.id, 
-                        channel: order.channel,
-                        items: order.items?.map(i => ({ sku: i.sku, qty: i.qty, price: i.price })),
-                        total: totalValue,
-                        buyer: order.buyer
-                    }
-                );
-            }
+            logActivity('order', 'order_received', order.channel,
+                `Order ${order.id} received - ${itemCount} item${itemCount !== 1 ? 's' : ''}, $${totalValue.toFixed(2)}`,
+                { 
+                    orderId: order.id, 
+                    channel: order.channel,
+                    items: order.items?.map(i => ({ sku: i.sku, qty: i.qty, price: i.price })),
+                    total: totalValue,
+                    buyer: order.buyer
+                }
+            );
         }
     }
     
@@ -5936,15 +5934,13 @@
             
             // Log low stock alert to activity log (only log critical items - top 5)
             const criticalItems = state.lowStockItems.slice(0, 5);
-            if (typeof logActivity === 'function') {
-                logActivity('inventory', 'par_triggered', 'system',
-                    `${state.lowStockItems.length} items below PAR level`,
-                    { 
-                        count: state.lowStockItems.length,
-                        criticalItems: criticalItems.map(i => ({ sku: i.sku, current: i.currentQty, par: i.parLevel, deficit: i.deficit }))
-                    }
-                );
-            }
+            logActivity('inventory', 'par_triggered', 'system',
+                `${state.lowStockItems.length} items below PAR level`,
+                { 
+                    count: state.lowStockItems.length,
+                    criticalItems: criticalItems.map(i => ({ sku: i.sku, current: i.currentQty, par: i.parLevel, deficit: i.deficit }))
+                }
+            );
         }
     }
     
@@ -6625,19 +6621,17 @@
                     });
                     
                     // Log deduction to activity log
-                    if (typeof logActivity === 'function') {
-                        logActivity('inventory', 'order_deduction', order.channel,
-                            `Deducted ${item.qty} units of ${sku} for order ${orderId}`,
-                            { 
-                                sku: sku, 
-                                quantity: item.qty, 
-                                oldQty: currentQty, 
-                                newQty: newQty, 
-                                orderId: orderId,
-                                channel: order.channel 
-                            }
-                        );
-                    }
+                    logActivity('inventory', 'order_deduction', order.channel,
+                        `Deducted ${item.qty} units of ${sku} for order ${orderId}`,
+                        { 
+                            sku: sku, 
+                            quantity: item.qty, 
+                            oldQty: currentQty, 
+                            newQty: newQty, 
+                            orderId: orderId,
+                            channel: order.channel 
+                        }
+                    );
                 } else {
                     console.log(`[GAP 3] Skipping deduction for ${sku} (feature disabled)`);
                     addLog(`⚠️ Inventory deduction disabled - ${sku} not deducted`, 'info');
@@ -6796,17 +6790,15 @@
             addLog(`📤 Queued ${cascadeQueue.length} inventory updates to other channels`, 'info');
             
             // Log cascade queued to activity log
-            if (typeof logActivity === 'function') {
-                logActivity('sync', 'cascade_queued', order.channel,
-                    `Queued ${cascadeQueue.length} channel updates from ${order.channel} order ${orderId}`,
-                    { 
-                        orderId: orderId,
-                        sourceChannel: order.channel,
-                        cascadeCount: cascadeQueue.length,
-                        targets: cascadeQueue.map(c => ({ channel: c.channel, sku: c.sku, qty: c.qty }))
-                    }
-                );
-            }
+            logActivity('sync', 'cascade_queued', order.channel,
+                `Queued ${cascadeQueue.length} channel updates from ${order.channel} order ${orderId}`,
+                { 
+                    orderId: orderId,
+                    sourceChannel: order.channel,
+                    cascadeCount: cascadeQueue.length,
+                    targets: cascadeQueue.map(c => ({ channel: c.channel, sku: c.sku, qty: c.qty }))
+                }
+            );
             
             // ========== AUTO-PROCESS CASCADE IMMEDIATELY ==========
             // Don't wait for the 5-minute interval - process now!
@@ -6826,17 +6818,15 @@
         
         // Log order processed to activity log
         const itemsSummary = order.items.map(i => `${i.sku}(${i.qty})`).join(', ');
-        if (typeof logActivity === 'function') {
-            logActivity('order', 'order_processed', order.channel,
-                `Order ${orderId} processed - inventory deducted`,
-                { 
-                    orderId: orderId,
-                    channel: order.channel,
-                    items: order.items?.map(i => ({ sku: i.sku, qty: i.qty })),
-                    isAutoProcess: isAutoProcess
-                }
-            );
-        }
+        logActivity('order', 'order_processed', order.channel,
+            `Order ${orderId} processed - inventory deducted`,
+            { 
+                orderId: orderId,
+                channel: order.channel,
+                items: order.items?.map(i => ({ sku: i.sku, qty: i.qty })),
+                isAutoProcess: isAutoProcess
+            }
+        );
         
         // Re-check low stock
         checkLowStock();
