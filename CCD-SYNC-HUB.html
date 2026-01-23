@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.1.1 - Email CORS Fix</title>
+    <title>CCD Sync Hub v3.2.1 - Complete Email Notifications</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -1345,6 +1345,22 @@
         if (typeof addLog === 'function') {
             addLog(`Error: ${message}`, 'error');
         }
+        
+        // Send critical error notification for severe errors
+        const criticalKeywords = ['failed', 'crash', 'fatal', 'critical', 'corruption', 'lost'];
+        const isCritical = criticalKeywords.some(kw => message.toLowerCase().includes(kw));
+        
+        if (isCritical) {
+            sendEventNotification(
+                'critical.error',
+                `Critical error: ${message}`,
+                { 
+                    error: message, 
+                    timestamp: new Date().toISOString(),
+                    errorCount: errorLog.length
+                }
+            );
+        }
     }
     
     function updateErrorPanel() {
@@ -2494,6 +2510,7 @@
             processedIds: new Set() // Track processed order IDs to prevent duplicates
         },
         lowStockItems: [],
+        lowStockNotificationSent: false, // Prevent spam - only notify once per session
         currentOrdersTab: 'all',
         masterJson: {
             fileName: null,
@@ -2716,6 +2733,13 @@
         } catch (e) {
             console.error('[Sync Data] Save error:', e);
             addLog(`Sync data save failed: ${e.message}`, 'error');
+            
+            sendEventNotification(
+                'sync.failed',
+                `Sync data save failed: ${e.message}`,
+                { error: e.message, type: 'sync_data_save' }
+            );
+            
             return false;
         }
     }
@@ -3219,6 +3243,21 @@
                 }
             );
         }
+        
+        // Send sync.completed notification
+        if (totalOrders > 0) {
+            sendEventNotification(
+                'sync.completed',
+                `Order pull completed: ${totalOrders} orders, ${totalItems} items`,
+                {
+                    etsy: { orders: results.etsy.orders, items: results.etsy.items },
+                    wix: { orders: results.wix.orders, items: results.wix.items },
+                    wayfair: { orders: results.wayfair.orders, items: results.wayfair.items },
+                    totalOrders: totalOrders,
+                    totalItems: totalItems
+                }
+            );
+        }
     }
     
     async function pullEtsyOrders(startDate, endDate) {
@@ -3405,6 +3444,24 @@
                 });
             }
             orderDetails.push(orderInfo);
+        }
+        
+        // Send notification for new Wayfair orders
+        if (orders.length > 0) {
+            sendEventNotification(
+                'wayfair.order',
+                `${orders.length} new Wayfair order(s) found with ${itemCount} items`,
+                {
+                    orderCount: orders.length,
+                    itemCount: itemCount,
+                    orders: orderDetails.slice(0, 5).map(o => ({
+                        id: o.id,
+                        buyer: o.buyer,
+                        total: o.total,
+                        itemCount: o.items.length
+                    }))
+                }
+            );
         }
         
         return { orders: orders.length, items: itemCount, details: orderDetails };
@@ -3775,6 +3832,32 @@
                 `Cascade sync completed: ${succeeded} succeeded, ${failed} failed`,
                 { succeeded: succeeded, failed: failed, total: processed }
             );
+            
+            // Send sync completed notification
+            if (succeeded > 0) {
+                sendEventNotification(
+                    'channel.sync',
+                    `Channel sync completed: ${succeeded} items synced successfully`,
+                    {
+                        succeeded: succeeded,
+                        failed: failed,
+                        total: processed
+                    }
+                );
+            }
+            
+            // Send sync failed notification if there were failures
+            if (failed > 0) {
+                sendEventNotification(
+                    'sync.failed',
+                    `Channel sync had ${failed} failures out of ${processed} items`,
+                    {
+                        succeeded: succeeded,
+                        failed: failed,
+                        total: processed
+                    }
+                );
+            }
         }
     }
 
@@ -4234,6 +4317,15 @@
             const result = await jsonpRequest(`${url}?action=status&key=${key}`);
             state.connections.etsy = result.success;
             updateConnectionStatus('etsy', result.success, result.success ? 'Connected' : result.error);
+            
+            // Send notification on connection failure
+            if (!result.success) {
+                sendEventNotification(
+                    'connection.error',
+                    `Etsy API connection failed: ${result.error || 'Unknown error'}`,
+                    { channel: 'etsy', error: result.error }
+                );
+            }
         } catch (error) {
             // Fallback to regular fetch
             try {
@@ -4241,9 +4333,23 @@
                 const result = await response.json();
                 state.connections.etsy = result.success;
                 updateConnectionStatus('etsy', result.success, result.success ? 'Connected' : result.error);
+                
+                if (!result.success) {
+                    sendEventNotification(
+                        'connection.error',
+                        `Etsy API connection failed: ${result.error || 'Unknown error'}`,
+                        { channel: 'etsy', error: result.error }
+                    );
+                }
             } catch (fetchError) {
                 state.connections.etsy = false;
                 updateConnectionStatus('etsy', false, 'CORS error - check proxy deployment');
+                
+                sendEventNotification(
+                    'connection.error',
+                    `Etsy API connection failed: CORS error`,
+                    { channel: 'etsy', error: 'CORS error - check proxy deployment' }
+                );
             }
         }
     }
@@ -4310,9 +4416,23 @@
             
             state.connections.wix = result.success;
             updateConnectionStatus('wix', result.success, result.success ? 'Connected' : result.error);
+            
+            if (!result.success) {
+                sendEventNotification(
+                    'connection.error',
+                    `Wix API connection failed: ${result.error || 'Unknown error'}`,
+                    { channel: 'wix', error: result.error }
+                );
+            }
         } catch (error) {
             state.connections.wix = false;
             updateConnectionStatus('wix', false, error.message);
+            
+            sendEventNotification(
+                'connection.error',
+                `Wix API connection failed: ${error.message}`,
+                { channel: 'wix', error: error.message }
+            );
         }
     }
 
@@ -4331,9 +4451,23 @@
             
             state.connections.wayfair = result.success;
             updateConnectionStatus('wayfair', result.success, result.success ? 'Connected' : result.error);
+            
+            if (!result.success) {
+                sendEventNotification(
+                    'connection.error',
+                    `Wayfair API connection failed: ${result.error || 'Unknown error'}`,
+                    { channel: 'wayfair', error: result.error }
+                );
+            }
         } catch (error) {
             state.connections.wayfair = false;
             updateConnectionStatus('wayfair', false, error.message);
+            
+            sendEventNotification(
+                'connection.error',
+                `Wayfair API connection failed: ${error.message}`,
+                { channel: 'wayfair', error: error.message }
+            );
         }
     }
 
@@ -5941,6 +6075,25 @@
                     criticalItems: criticalItems.map(i => ({ sku: i.sku, current: i.currentQty, par: i.parLevel, deficit: i.deficit }))
                 }
             );
+            
+            // Send low stock notification (only once per session to avoid spam)
+            if (!state.lowStockNotificationSent) {
+                sendEventNotification(
+                    'low.stock',
+                    `${state.lowStockItems.length} items below PAR level`,
+                    {
+                        count: state.lowStockItems.length,
+                        topItems: criticalItems.map(i => ({
+                            sku: i.sku,
+                            name: i.name,
+                            current: i.currentQty,
+                            par: i.parLevel,
+                            deficit: i.deficit
+                        }))
+                    }
+                );
+                state.lowStockNotificationSent = true;
+            }
         }
     }
     
@@ -6162,12 +6315,7 @@
     /**
      * Send event to Google Apps Script proxy for email notification
      * Connects to your existing v1.3.0 proxy
-     * v3.10.2 - Updated 2026-01-22
-     * 
-     * IMPORTANT: Google Apps Script Web Apps have CORS limitations.
-     * setHeaders() does NOT work on ContentService responses.
-     * Solution: Use GET request with URL parameters (works around CORS)
-     * 
+     * v3.10.1 - Added 2026-01-21
      * Note: Email enabled/disabled is controlled by proxy settings (toggle in Email Settings UI)
      */
     async function sendEventNotification(eventType, message, data) {
@@ -6206,18 +6354,15 @@
             const requestUrl = `${proxyUrl}?${params.toString()}`;
             
             // Use dynamic script injection (JSONP-style) for guaranteed CORS bypass
-            // This is the most reliable method for Google Apps Script
             return new Promise((resolve) => {
                 const callbackName = 'emailCallback_' + Date.now();
                 const timeout = setTimeout(() => {
-                    // Cleanup on timeout
                     delete window[callbackName];
                     if (script.parentNode) script.parentNode.removeChild(script);
                     console.warn('[Email] ⚠️ Request timed out (but email may still be sent)');
-                    resolve(true); // Assume success - GAS often works even when response fails
+                    resolve(true);
                 }, 10000);
                 
-                // Create callback function
                 window[callbackName] = function(result) {
                     clearTimeout(timeout);
                     delete window[callbackName];
@@ -6232,20 +6377,15 @@
                     }
                 };
                 
-                // Add callback parameter
                 const fullUrl = `${requestUrl}&callback=${callbackName}`;
-                
-                // Create and inject script tag
                 const script = document.createElement('script');
                 script.src = fullUrl;
                 script.onerror = () => {
                     clearTimeout(timeout);
                     delete window[callbackName];
                     if (script.parentNode) script.parentNode.removeChild(script);
-                    // JSONP errors often mean success (GAS quirk) - try fetch as backup
                     console.log('[Email] Script load failed, trying fetch backup...');
                     
-                    // Backup: Try no-cors fetch (fire-and-forget)
                     fetch(requestUrl, { mode: 'no-cors' })
                         .then(() => {
                             console.log('[Email] ✅ Backup fetch completed (email likely sent)');
@@ -6262,7 +6402,6 @@
             
         } catch (error) {
             console.warn('[Email] ⚠️ Failed to send notification:', error.message);
-            // Don't throw - just log and return false so order processing continues
             return false;
         }
     }
@@ -6899,6 +7038,19 @@
                 total: order.total || 0
             }
         );
+        
+        // Send wayfair.sync notification specifically for Wayfair orders
+        if (order.channel === 'wayfair') {
+            sendEventNotification(
+                'wayfair.sync',
+                `Wayfair order ${orderId} synced to inventory`,
+                {
+                    orderId: orderId,
+                    items: order.items?.map(i => ({ sku: i.sku, qty: i.qty, title: i.title })),
+                    total: order.total || 0
+                }
+            );
+        }
         
         toast(`Order ${orderId} processed successfully`, 'success');
     }
