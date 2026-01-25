@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Channel Manager v3.1.0 - Shared Queue Support</title>
+    <title>CCD Channel Manager v3.3.0 - All GAPs Complete</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -301,13 +301,14 @@
 <body>
     <header class="header">
         <div class="header-left">
-            <div class="logo"><div class="logo-icon">&#128225;</div><span>Channel Manager v2.3.2 • Build: 2026-01-20 20:10</span></div>
+            <div class="logo"><div class="logo-icon">&#128225;</div><span>Channel Manager v3.3.0 • All 21 GAPs Complete</span></div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
                 <button class="nav-btn" data-view="products" onclick="switchView('products')">📦 Products</button>
                 <button class="nav-btn" data-view="orders" onclick="switchView('orders')">🛒 Orders</button>
                 <button class="nav-btn" data-view="compare" onclick="switchView('compare')">🔄 Compare & Sync</button>
                 <button class="nav-btn" data-view="sync" onclick="switchView('sync')">Sync Queue</button>
+                <button class="nav-btn" data-view="tools" onclick="switchView('tools')">🛠️ Tools</button>
                 <button class="nav-btn" data-view="settings" onclick="switchView('settings')">Settings</button>
             </nav>
         </div>
@@ -574,6 +575,9 @@
                             <button class="btn btn-secondary btn-sm" onclick="scrollToSync()">&#128260; Sync</button>
                         </div>
                     </div>
+                    
+                    <!-- GAP 6: PAR ALERT BADGE CONTAINER -->
+                    <div id="parAlertBadgeContainer" style="display: none;"></div>
                     
                     <!-- MASTER DATA INFO - Always shows product info from master JSON -->
                     <div id="masterDataPanel" style="background: linear-gradient(135deg, rgba(139,92,246,0.1), rgba(59,130,246,0.1)); border: 1px solid rgba(139,92,246,0.3); border-radius: 12px; padding: 16px; margin-bottom: 20px;">
@@ -847,6 +851,275 @@
                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
                     <button class="btn btn-secondary" onclick="resetSettings()">Reset</button>
                     <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                </div>
+            </div>
+
+            <!-- TOOLS VIEW (GAPs 4, 6, 11, 14) - v3.2.0 -->
+            <div id="toolsView" class="view">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                    <div>
+                        <h2 style="margin-bottom: 4px;">🛠️ Inventory Tools</h2>
+                        <div style="font-size: 0.85rem; color: var(--text-dim);">Data validation, sync tools, and automation</div>
+                    </div>
+                    <button class="btn btn-secondary" onclick="reloadConfig()">🔄 Reload Config</button>
+                </div>
+                
+                <!-- Feature Status Banner -->
+                <div id="toolsFeatureStatus" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 24px;">
+                    <div style="font-weight: 600; margin-bottom: 12px;">📋 Feature Flags Status</div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;" id="featureFlagsDisplay">
+                        <!-- Populated by JavaScript -->
+                        <div style="color: var(--text-dim);">Loading...</div>
+                    </div>
+                </div>
+                
+                <!-- Tools Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px;">
+                    
+                    <!-- GAP 4: Auto-Cascade Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(139,92,246,0.15);">🔄</div>
+                            <div>
+                                <div style="font-weight: 600;">Auto-Cascade Updates</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 4 • Automatically push inventory changes</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                When enabled, inventory changes in Master JSON are automatically queued for sync to channels.
+                            </p>
+                            <div id="autoCascadeStatus" style="padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 12px;">
+                                <span style="color: var(--text-dim);">Status: </span>
+                                <span id="autoCascadeStatusText">Checking...</span>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="checkAutoCascadeStatus()">🔍 Check Status</button>
+                                <button class="btn btn-primary" onclick="toggleAutoCascade()">Toggle Auto-Cascade</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 6: PAR Alerts Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(234,179,8,0.15);">⚠️</div>
+                            <div>
+                                <div style="font-weight: 600;">PAR Level Alerts</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 6 • Low stock warnings</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                Scan inventory for items below their PAR (Periodic Automatic Replenishment) levels.
+                            </p>
+                            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                                <button class="btn btn-secondary" onclick="scanParAlerts()">🔍 Scan PAR Levels</button>
+                            </div>
+                            <div id="parAlertsResults"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 11: Etsy-Wix Sync Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(59,130,246,0.15);">🔗</div>
+                            <div>
+                                <div style="font-weight: 600;">Etsy-Wix Sync Check</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 11 • Ensure quantities match</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                Etsy and Wix should always have matching quantities. Scan for and fix mismatches.
+                            </p>
+                            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                                <button class="btn btn-secondary" onclick="runEtsyWixScan()">🔍 Scan Mismatches</button>
+                                <button class="btn btn-primary" onclick="fixAllEtsyWixMismatches()">⚡ Fix All</button>
+                            </div>
+                            <div id="etsyWixSyncResults"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 14: Pricing Validation Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(34,197,94,0.15);">💰</div>
+                            <div>
+                                <div style="font-weight: 600;">Pricing Validation</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 14 • Check prices against formula</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 12px;">
+                                Formula: <code style="background: var(--bg-input); padding: 2px 6px; border-radius: 4px; font-size: 0.8rem;">(Cost × Markup) × (1 + Overhead%) + Surcharge</code>
+                            </p>
+                            
+                            <!-- Pricing Settings Display (Read-only) -->
+                            <div id="pricingSettingsPanel" style="background: var(--bg-input); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <span style="font-weight: 600; font-size: 0.9rem;">⚙️ Current Pricing Settings</span>
+                                    <span style="font-size: 0.75rem; color: var(--text-dim);">Edit in Inventory System → Settings</span>
+                                </div>
+                                
+                                <!-- Read-only display -->
+                                <div id="pricingSettingsDisplay" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; font-size: 0.85rem;">
+                                    <div><span style="color: var(--text-dim);">Markup:</span> <span id="dispMarkup">2.0×</span></div>
+                                    <div><span style="color: var(--text-dim);">Tolerance:</span> <span id="dispTolerance">5%</span></div>
+                                    <div><span style="color: var(--text-dim);">Etsy OH:</span> <span id="dispEtsyOH">10%</span></div>
+                                    <div><span style="color: var(--text-dim);">Wix OH:</span> <span id="dispWixOH">10%</span></div>
+                                    <div><span style="color: var(--text-dim);">Wayfair OH:</span> <span id="dispWayfairOH">10%</span></div>
+                                    <div><span style="color: var(--text-dim);">Etsy Surch:</span> <span id="dispEtsySurch">$7.00</span></div>
+                                    <div><span style="color: var(--text-dim);">Wix Surch:</span> <span id="dispWixSurch">$7.00</span></div>
+                                    <div><span style="color: var(--text-dim);">Wayfair Surch:</span> <span id="dispWayfairSurch">$0.00</span></div>
+                                </div>
+                            </div>
+                            
+                            <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                                <button class="btn btn-secondary" onclick="runPricingValidation()">🔍 Validate Prices</button>
+                                <button class="btn btn-primary" onclick="recalculateAllPricing()">⚡ Recalculate All</button>
+                            </div>
+                            <div id="pricingValidationResults"></div>
+                        </div>
+                    </div>
+                    
+                </div>
+                
+                <!-- Bulk Operations Section -->
+                <div style="margin-top: 24px;">
+                    <div class="settings-section">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(147,51,234,0.15);">⚡</div>
+                            <div>
+                                <div style="font-weight: 600;">Bulk Operations</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">Run all validations at once</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+                                <button class="btn btn-secondary" onclick="runAllValidations()">
+                                    🔍 Run All Validations
+                                </button>
+                                <button class="btn btn-primary" onclick="fixAllIssues()">
+                                    ⚡ Fix All Issues
+                                </button>
+                            </div>
+                            <div id="bulkOperationsResults" style="margin-top: 16px;"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 12: Auto-Retry Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(239,68,68,0.15);">🔁</div>
+                            <div>
+                                <div style="font-weight: 600;">Auto-Retry Failed Operations</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 12 • Automatic retry with backoff</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                Automatically retry failed sync operations with exponential backoff.
+                            </p>
+                            <div id="autoRetryStatus" style="padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 12px;">
+                                <span style="color: var(--text-dim);">Failed items: </span>
+                                <span id="autoRetryCount">0</span>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="checkAutoRetryStatus()">🔍 Check Status</button>
+                                <button class="btn btn-primary" onclick="processRetryQueue()">🔁 Retry Now</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 17: Bulk Operations Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(168,85,247,0.15);">📦</div>
+                            <div>
+                                <div style="font-weight: 600;">Bulk Operations</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 17 • Mass update products</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                Select multiple products and update them at once.
+                            </p>
+                            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button class="btn btn-secondary" id="bulkModeBtn" onclick="toggleBulkSelectionMode()">☐ Bulk Mode</button>
+                                <button class="btn btn-secondary" onclick="bulkSelectAll()">Select All</button>
+                                <span id="bulkSelectionCounter" style="display: none; padding: 8px; color: var(--text-dim);">0 selected</span>
+                            </div>
+                            <div id="bulkActionsPanel" style="display: none; margin-top: 12px; padding: 12px; background: var(--bg-input); border-radius: 8px;">
+                                <div style="font-weight: 600; margin-bottom: 8px;">Bulk Actions:</div>
+                                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                    <button class="btn btn-sm btn-etsy" onclick="bulkPushToChannel('etsy')">Push to Etsy</button>
+                                    <button class="btn btn-sm btn-wix" onclick="bulkPushToChannel('wix')">Push to Wix</button>
+                                    <button class="btn btn-sm btn-wayfair" onclick="bulkPushToChannel('wayfair')">Push to Wayfair</button>
+                                    <button class="btn btn-sm btn-danger" onclick="bulkDeleteProducts()">🗑️ Delete</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 18: Performance Metrics Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(34,197,94,0.15);">📊</div>
+                            <div>
+                                <div style="font-weight: 600;">Performance Metrics</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 18 • Track sync performance</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                Monitor sync success rates and response times.
+                            </p>
+                            <div id="metricsDisplay" style="padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 12px;"></div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="refreshMetricsDisplay()">🔄 Refresh</button>
+                                <button class="btn btn-secondary" onclick="exportMetrics()">📥 Export</button>
+                                <button class="btn btn-secondary" onclick="resetMetrics()">🗑️ Reset</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 19: Health Dashboard Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(59,130,246,0.15);">🏥</div>
+                            <div>
+                                <div style="font-weight: 600;">System Health</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 19 • System overview</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <div id="healthDashboardContent"></div>
+                            <button class="btn btn-secondary" onclick="refreshHealthDashboard()" style="margin-top: 12px;">🔄 Refresh Health</button>
+                        </div>
+                    </div>
+                    
+                    <!-- GAP 21: Audit Log Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(107,114,128,0.15);">📋</div>
+                            <div>
+                                <div style="font-weight: 600;">Audit Log</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">GAP 21 • Action history</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                View complete audit trail of all system actions.
+                            </p>
+                            <div id="auditLogViewer" style="margin-bottom: 12px;"></div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="renderAuditLogViewer('auditLogViewer')">🔍 View Log</button>
+                                <button class="btn btn-secondary" onclick="exportAuditLog()">📥 Export</button>
+                                <button class="btn btn-secondary" onclick="clearOldAuditEntries(90)">🗑️ Clear Old</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -1168,6 +1441,43 @@
                         <div class="form-group" style="flex: 1;">
                             <label class="form-label" style="color: var(--wayfair);">🛒 Wayfair SKU</label>
                             <input type="text" class="form-input" id="editorWayfairSku" placeholder="e.g., CCD90969">
+                        </div>
+                    </div>
+                    
+                    <!-- Channel Allocations (GAP 11 Integration) -->
+                    <h4 style="margin: 16px 0 8px 0; font-size: 0.9rem; color: var(--text-dim);">Channel Quantity Allocations</h4>
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label class="form-label" style="color: var(--etsy);">Etsy Qty</label>
+                            <input type="number" class="form-input" id="editorEtsyQty" placeholder="0" min="0">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label class="form-label" style="color: var(--wix);">Wix Qty</label>
+                            <input type="number" class="form-input" id="editorWixQty" placeholder="0" min="0">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label class="form-label" style="color: var(--wayfair);">Wayfair Qty</label>
+                            <input type="number" class="form-input" id="editorWayfairQty" placeholder="0" min="0">
+                        </div>
+                    </div>
+                    <div id="editorEtsyWixSyncWarning" style="display: none; padding: 8px 12px; background: rgba(234,179,8,0.15); border: 1px solid var(--warning); border-radius: 6px; margin-top: 8px; font-size: 0.85rem; color: var(--warning);">
+                        ⚠️ Etsy and Wix quantities should match to prevent overselling
+                    </div>
+                    
+                    <!-- Channel Prices (GAP 14 Integration) -->
+                    <h4 style="margin: 16px 0 8px 0; font-size: 0.9rem; color: var(--text-dim);">Channel-Specific Prices (optional)</h4>
+                    <div class="form-row">
+                        <div class="form-group" style="flex: 1;">
+                            <label class="form-label" style="color: var(--etsy);">Etsy Price</label>
+                            <input type="number" class="form-input" id="editorEtsyPrice" step="0.01" placeholder="Use retail">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label class="form-label" style="color: var(--wix);">Wix Price</label>
+                            <input type="number" class="form-input" id="editorWixPrice" step="0.01" placeholder="Use retail">
+                        </div>
+                        <div class="form-group" style="flex: 1;">
+                            <label class="form-label" style="color: var(--wayfair);">Wayfair Price</label>
+                            <input type="number" class="form-input" id="editorWayfairPrice" step="0.01" placeholder="Use retail">
                         </div>
                     </div>
                 </div>
@@ -1531,6 +1841,2316 @@
         set: function(val) { state.orders.wayfair = val; }
     });
     
+    // ===== CONFIG FILE INTEGRATION (v3.2.0) =====
+    // Load shared config from IndexedDB or fallback to defaults
+    
+    let configFileHandle = null;
+    let configData = null;
+    
+    /**
+     * Load config from shared config file or return defaults
+     * This enables feature flags across all CCD apps
+     */
+    async function loadConfig() {
+        // If we already have config loaded, return it
+        if (configData) {
+            return configData;
+        }
+        
+        try {
+            // Try to get config file handle from shared IndexedDB
+            const handle = await CCDSharedFiles.getConfigFile();
+            
+            if (handle) {
+                configFileHandle = handle;
+                const file = await handle.getFile();
+                const content = await file.text();
+                configData = JSON.parse(content);
+                console.log('[Config] ✅ Loaded from shared config file');
+                return configData;
+            }
+        } catch (error) {
+            console.warn('[Config] Could not load shared config:', error);
+        }
+        
+        // Return default config structure
+        console.log('[Config] Using default config (no shared file)');
+        return {
+            settings: {
+                features: {
+                    useSharedQueue: false,
+                    inventoryDeduction: true,
+                    autoCascade: false,
+                    enhancedHeartbeat: false,
+                    parAlerts: false,
+                    enforceEtsyWixSync: false,
+                    pricingValidation: false,
+                    autoRetry: false,
+                    collisionDetection: false,
+                    obSurcharge: false,
+                    loadingStates: true,
+                    bulkOperations: false,
+                    metrics: false,
+                    healthDashboard: false,
+                    userRoles: false,
+                    auditLog: false
+                }
+            }
+        };
+    }
+    
+    /**
+     * Reload config from file (force refresh)
+     */
+    async function reloadConfig() {
+        configData = null;
+        return await loadConfig();
+    }
+    
+    /**
+     * Save Master JSON to file with metadata updates (v3.2.0)
+     * This is a helper function for GAP implementations
+     * @param {Object} options - Save options
+     * @param {string} options.actionDescription - Description of the change
+     * @param {boolean} options.skipLog - Skip activity log (for internal saves like queue updates)
+     */
+    async function saveMasterJson(options = {}) {
+        const { actionDescription = 'Data updated', skipLog = false } = options;
+        
+        if (!masterFileHandle) {
+            console.error('[SaveMaster] No master file handle');
+            toast('No master file connected', 'error');
+            return false;
+        }
+        
+        if (!masterJsonData) {
+            console.error('[SaveMaster] No master data in memory');
+            return false;
+        }
+        
+        try {
+            // Update metadata
+            masterJsonData._metadata = masterJsonData._metadata || {};
+            masterJsonData._metadata.version = (masterJsonData._metadata.version || 0) + 1;
+            masterJsonData._metadata.lastModified = new Date().toISOString();
+            masterJsonData._metadata.lastModifiedBy = typeof getAppIdentifier === 'function' ? getAppIdentifier() : 'Channel Manager';
+            masterJsonData._metadata.lastAction = actionDescription;
+            
+            // Add to change log if not skipping
+            if (!skipLog) {
+                masterJsonData._changeLog = masterJsonData._changeLog || [];
+                if (typeof createChangeLogEntry === 'function') {
+                    masterJsonData._changeLog.unshift(createChangeLogEntry({
+                        changeType: 'auto',
+                        field: 'bulk_update',
+                        reason: actionDescription
+                    }));
+                }
+                
+                // Prune old entries
+                if (typeof pruneChangeLog === 'function') {
+                    pruneChangeLog(masterJsonData);
+                }
+            }
+            
+            // Write to file
+            const writable = await masterFileHandle.createWritable();
+            await writable.write(JSON.stringify(masterJsonData, null, 2));
+            await writable.close();
+            
+            // Update tracking variables for collision detection
+            const newFile = await masterFileHandle.getFile();
+            if (typeof loadedFileTimestamp !== 'undefined') {
+                loadedFileTimestamp = newFile.lastModified;
+            }
+            if (typeof loadedMetadataVersion !== 'undefined') {
+                loadedMetadataVersion = masterJsonData._metadata.version;
+            }
+            
+            console.log(`[SaveMaster] ✅ Saved: ${actionDescription}`);
+            return true;
+            
+        } catch (error) {
+            console.error('[SaveMaster] Failed to save:', error);
+            toast('Failed to save: ' + error.message, 'error');
+            return false;
+        }
+    }
+    
+    // ===== END CONFIG FILE INTEGRATION =====
+    
+    // =====================================================================
+    // GAP 4: AUTO-CASCADE INVENTORY UPDATES (v3.2.0)
+    // Automatically push inventory changes to channels when Master changes
+    // Feature Flag: config.settings.features.autoCascade
+    // Backward Compatible: Disabled by default, no behavior change when off
+    // =====================================================================
+    
+    let autoCascadeWatcherInterval = null;
+    let lastKnownInventoryState = null;
+    
+    /**
+     * Start watching for inventory changes to auto-cascade (GAP 4)
+     * Feature Flag: autoCascade
+     */
+    async function startAutoCascadeWatcher() {
+        const config = await loadConfig();
+        const autoCascadeEnabled = config?.settings?.features?.autoCascade ?? false;
+        
+        if (!autoCascadeEnabled) {
+            console.log('[Auto-Cascade] Feature disabled - not starting watcher');
+            return;
+        }
+        
+        if (autoCascadeWatcherInterval) {
+            console.log('[Auto-Cascade] Watcher already running');
+            return;
+        }
+        
+        console.log('[Auto-Cascade] Starting inventory change watcher');
+        
+        // Take initial snapshot
+        takeInventorySnapshot();
+        
+        // Check for changes every 30 seconds
+        autoCascadeWatcherInterval = setInterval(async () => {
+            await checkForInventoryChanges();
+        }, 30000);
+        
+        toast('🔄 Auto-Cascade enabled - watching for changes', 'info');
+    }
+    
+    /**
+     * Stop auto-cascade watcher (GAP 4)
+     */
+    function stopAutoCascadeWatcher() {
+        if (autoCascadeWatcherInterval) {
+            clearInterval(autoCascadeWatcherInterval);
+            autoCascadeWatcherInterval = null;
+            console.log('[Auto-Cascade] Watcher stopped');
+        }
+    }
+    
+    /**
+     * Take snapshot of current inventory state (GAP 4)
+     */
+    function takeInventorySnapshot() {
+        if (!masterJsonData?.inventory) {
+            lastKnownInventoryState = {};
+            return;
+        }
+        
+        lastKnownInventoryState = {};
+        for (const product of masterJsonData.inventory) {
+            if (product.sku) {
+                lastKnownInventoryState[product.sku] = {
+                    qty: product.qty || 0,
+                    channels: JSON.parse(JSON.stringify(product.channels || {}))
+                };
+            }
+        }
+        
+        console.log(`[Auto-Cascade] Snapshot taken: ${Object.keys(lastKnownInventoryState).length} products`);
+    }
+    
+    /**
+     * Check for inventory changes and cascade to channels (GAP 4)
+     */
+    async function checkForInventoryChanges() {
+        if (!masterJsonData?.inventory || !lastKnownInventoryState) {
+            return;
+        }
+        
+        const config = await loadConfig();
+        const autoCascadeEnabled = config?.settings?.features?.autoCascade ?? false;
+        
+        if (!autoCascadeEnabled) {
+            stopAutoCascadeWatcher();
+            return;
+        }
+        
+        const changes = [];
+        
+        for (const product of masterJsonData.inventory) {
+            if (!product.sku) continue;
+            
+            const previous = lastKnownInventoryState[product.sku];
+            if (!previous) {
+                // New product - skip for now
+                continue;
+            }
+            
+            const currentQty = product.qty || 0;
+            const previousQty = previous.qty || 0;
+            
+            // Check for warehouse qty change
+            if (currentQty !== previousQty) {
+                changes.push({
+                    sku: product.sku,
+                    productName: product.productName,
+                    field: 'qty',
+                    from: previousQty,
+                    to: currentQty,
+                    product: product
+                });
+            }
+            
+            // Check for channel allocation changes
+            const currentChannels = product.channels || {};
+            const previousChannels = previous.channels || {};
+            
+            for (const channel of ['etsy', 'wix', 'wayfair']) {
+                const currentVal = currentChannels[channel] || 0;
+                const previousVal = previousChannels[channel] || 0;
+                
+                if (currentVal !== previousVal) {
+                    changes.push({
+                        sku: product.sku,
+                        productName: product.productName,
+                        field: `channels.${channel}`,
+                        channel: channel,
+                        from: previousVal,
+                        to: currentVal,
+                        product: product
+                    });
+                }
+            }
+        }
+        
+        if (changes.length > 0) {
+            console.log(`[Auto-Cascade] Detected ${changes.length} changes`);
+            await processCascadeChanges(changes);
+        }
+        
+        // Update snapshot
+        takeInventorySnapshot();
+    }
+    
+    /**
+     * Process detected changes and push to channels (GAP 4)
+     */
+    async function processCascadeChanges(changes) {
+        const config = await loadConfig();
+        
+        // Group changes by SKU
+        const byProduct = {};
+        for (const change of changes) {
+            if (!byProduct[change.sku]) {
+                byProduct[change.sku] = {
+                    product: change.product,
+                    changes: []
+                };
+            }
+            byProduct[change.sku].changes.push(change);
+        }
+        
+        // Queue updates for each affected product
+        for (const sku of Object.keys(byProduct)) {
+            const { product, changes } = byProduct[sku];
+            
+            // Determine which channels need updating
+            const channelsToUpdate = new Set();
+            
+            for (const change of changes) {
+                if (change.channel) {
+                    channelsToUpdate.add(change.channel);
+                } else if (change.field === 'qty') {
+                    // Warehouse qty changed - update all active channels
+                    if (product.channels?.etsy > 0) channelsToUpdate.add('etsy');
+                    if (product.channels?.wix > 0) channelsToUpdate.add('wix');
+                    if (product.channels?.wayfair > 0) channelsToUpdate.add('wayfair');
+                }
+            }
+            
+            // Add to sync queue
+            for (const channel of channelsToUpdate) {
+                const queueItem = {
+                    id: `cascade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    product: product,
+                    channel: channel,
+                    action: 'update',
+                    fields: ['quantity'],
+                    status: 'pending',
+                    timestamp: new Date().toISOString(),
+                    source: 'auto-cascade',
+                    changes: changes.filter(c => c.channel === channel || !c.channel)
+                };
+                
+                state.syncQueue.push(queueItem);
+                console.log(`[Auto-Cascade] Queued ${channel} update for ${sku}`);
+            }
+        }
+        
+        // Save queue
+        await saveSyncQueue();
+        
+        // Notify user
+        const productCount = Object.keys(byProduct).length;
+        toast(`🔄 Auto-Cascade: Queued updates for ${productCount} product${productCount > 1 ? 's' : ''}`, 'info');
+        
+        // Log to activity log
+        if (typeof logActivity === 'function') {
+            logActivity('sync', 'auto_cascade', 'system',
+                `Auto-cascade queued ${changes.length} updates for ${productCount} products`,
+                { productCount, changeCount: changes.length, skus: Object.keys(byProduct) }
+            );
+        }
+    }
+    
+    // ===== END GAP 4: AUTO-CASCADE =====
+    
+    // =====================================================================
+    // GAP 6: PAR LEVEL ALERTS (v3.2.0)
+    // Display alerts when inventory falls below PAR levels
+    // Feature Flag: config.settings.features.parAlerts
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    /**
+     * Check PAR levels for a product and return alerts (GAP 6)
+     * Feature Flag: parAlerts
+     */
+    async function checkProductParLevels(product) {
+        const config = await loadConfig();
+        const parAlertsEnabled = config?.settings?.features?.parAlerts ?? false;
+        
+        if (!parAlertsEnabled) {
+            return { hasAlerts: false, alerts: [] };
+        }
+        
+        const alerts = [];
+        
+        // Check Master PAR (warehouse level)
+        if (product.masterParEnabled && product.masterParMin > 0) {
+            const currentQty = product.qty || 0;
+            if (currentQty <= product.masterParMin) {
+                alerts.push({
+                    type: 'masterPar',
+                    severity: currentQty === 0 ? 'critical' : 'warning',
+                    message: `Warehouse stock at ${currentQty} (min: ${product.masterParMin})`,
+                    current: currentQty,
+                    min: product.masterParMin,
+                    max: product.masterParMax || 0
+                });
+            }
+        }
+        
+        // Check Channel PAR (Etsy/Wix level)
+        if (product.channelParEnabled && product.channelParMin > 0) {
+            const etsyQty = product.channels?.etsy || 0;
+            const wixQty = product.channels?.wix || 0;
+            const channelQty = Math.min(etsyQty, wixQty);
+            
+            if (channelQty <= product.channelParMin) {
+                alerts.push({
+                    type: 'channelPar',
+                    severity: channelQty === 0 ? 'critical' : 'warning',
+                    message: `Online channels at ${channelQty} (min: ${product.channelParMin})`,
+                    current: channelQty,
+                    min: product.channelParMin,
+                    max: product.channelParMax || 0
+                });
+            }
+        }
+        
+        // Legacy minParLevel support
+        if (!product.masterParEnabled && product.minParLevel > 0) {
+            const currentQty = product.qty || 0;
+            if (currentQty <= product.minParLevel) {
+                alerts.push({
+                    type: 'legacyPar',
+                    severity: currentQty === 0 ? 'critical' : 'warning',
+                    message: `Stock at ${currentQty} (min: ${product.minParLevel})`,
+                    current: currentQty,
+                    min: product.minParLevel,
+                    max: product.maxParLevel || 0
+                });
+            }
+        }
+        
+        return {
+            hasAlerts: alerts.length > 0,
+            alerts: alerts
+        };
+    }
+    
+    /**
+     * Get all products with PAR alerts (GAP 6)
+     */
+    async function getAllParAlerts() {
+        const config = await loadConfig();
+        const parAlertsEnabled = config?.settings?.features?.parAlerts ?? false;
+        
+        if (!parAlertsEnabled) {
+            console.log('[PAR Alerts] Feature disabled');
+            return [];
+        }
+        
+        if (!masterJsonData?.inventory) {
+            return [];
+        }
+        
+        const productsWithAlerts = [];
+        
+        for (const product of masterJsonData.inventory) {
+            const result = await checkProductParLevels(product);
+            if (result.hasAlerts) {
+                productsWithAlerts.push({
+                    sku: product.sku,
+                    productName: product.productName,
+                    alerts: result.alerts
+                });
+            }
+        }
+        
+        console.log(`[PAR Alerts] Found ${productsWithAlerts.length} products with alerts`);
+        return productsWithAlerts;
+    }
+    
+    /**
+     * Render PAR alert badge for product detail view (GAP 6)
+     */
+    function renderParAlertBadge(alerts) {
+        if (!alerts || alerts.length === 0) {
+            return '';
+        }
+        
+        const hasCritical = alerts.some(a => a.severity === 'critical');
+        const color = hasCritical ? 'var(--error)' : 'var(--warning)';
+        const icon = hasCritical ? '🚨' : '⚠️';
+        
+        return `
+            <div style="background: ${hasCritical ? 'rgba(239,68,68,0.15)' : 'rgba(234,179,8,0.15)'}; 
+                        border: 1px solid ${color}; 
+                        border-radius: 8px; 
+                        padding: 12px 16px; 
+                        margin-bottom: 16px;">
+                <div style="font-weight: 600; color: ${color}; margin-bottom: 8px;">
+                    ${icon} PAR Level Alert${alerts.length > 1 ? 's' : ''}
+                </div>
+                ${alerts.map(a => `
+                    <div style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 4px;">
+                        • ${a.message}
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    }
+    
+    // ===== END GAP 6: PAR ALERTS =====
+    
+    // =====================================================================
+    // GAP 11: ETSY-WIX SYNC ENFORCEMENT UI TOOLS (v3.2.0)
+    // Provide UI tools to scan and fix Etsy-Wix quantity mismatches
+    // Feature Flag: config.settings.features.enforceEtsyWixSync
+    // Backward Compatible: Disabled by default, Sync Hub already auto-syncs
+    // =====================================================================
+    
+    /**
+     * Scan for Etsy-Wix mismatches (GAP 11)
+     */
+    async function scanEtsyWixMismatches() {
+        if (!masterJsonData?.inventory) {
+            toast('Master JSON not loaded', 'error');
+            return [];
+        }
+        
+        const mismatches = [];
+        
+        for (const product of masterJsonData.inventory) {
+            if (!product.channels) continue;
+            
+            const etsyQty = product.channels.etsy || 0;
+            const wixQty = product.channels.wix || 0;
+            
+            // Only flag if both have allocations and they differ
+            if ((etsyQty > 0 || wixQty > 0) && etsyQty !== wixQty) {
+                mismatches.push({
+                    sku: product.sku,
+                    productName: product.productName,
+                    etsyQty: etsyQty,
+                    wixQty: wixQty,
+                    suggestedQty: Math.min(etsyQty, wixQty),
+                    product: product
+                });
+            }
+        }
+        
+        console.log(`[Etsy-Wix Sync] Found ${mismatches.length} mismatches`);
+        return mismatches;
+    }
+    
+    /**
+     * Fix a single Etsy-Wix mismatch (GAP 11)
+     */
+    async function fixEtsyWixMismatch(sku, targetQty = null) {
+        if (!masterJsonData?.inventory) {
+            toast('Master JSON not loaded', 'error');
+            return false;
+        }
+        
+        const product = masterJsonData.inventory.find(p => p.sku === sku);
+        if (!product) {
+            toast(`Product ${sku} not found`, 'error');
+            return false;
+        }
+        
+        if (!product.channels) {
+            product.channels = {};
+        }
+        
+        const etsyQty = product.channels.etsy || 0;
+        const wixQty = product.channels.wix || 0;
+        
+        // Use provided target or default to lower value (conservative)
+        const syncedQty = targetQty !== null ? targetQty : Math.min(etsyQty, wixQty);
+        
+        const before = { etsy: etsyQty, wix: wixQty };
+        
+        product.channels.etsy = syncedQty;
+        product.channels.wix = syncedQty;
+        
+        console.log(`[Etsy-Wix Sync] Fixed ${sku}: Etsy ${before.etsy}→${syncedQty}, Wix ${before.wix}→${syncedQty}`);
+        
+        // Log to activity
+        if (typeof logActivity === 'function') {
+            logActivity('inventory', 'etsy_wix_sync_fix', 'system',
+                `Synced Etsy-Wix for ${sku}: both set to ${syncedQty}`,
+                { sku, before, after: syncedQty }
+            );
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Fix all Etsy-Wix mismatches (GAP 11)
+     */
+    async function fixAllEtsyWixMismatches() {
+        const mismatches = await scanEtsyWixMismatches();
+        
+        if (mismatches.length === 0) {
+            toast('✅ No Etsy-Wix mismatches found!', 'success');
+            return 0;
+        }
+        
+        const confirm = window.confirm(
+            `Found ${mismatches.length} Etsy-Wix mismatch${mismatches.length > 1 ? 'es' : ''}.\n\n` +
+            `Fix all by syncing to the LOWER quantity?\n\n` +
+            `This is the conservative approach to prevent overselling.`
+        );
+        
+        if (!confirm) {
+            return 0;
+        }
+        
+        let fixed = 0;
+        for (const mismatch of mismatches) {
+            if (await fixEtsyWixMismatch(mismatch.sku, mismatch.suggestedQty)) {
+                fixed++;
+            }
+        }
+        
+        if (fixed > 0) {
+            // Save changes
+            await saveMasterJson({
+                actionDescription: `Fixed ${fixed} Etsy-Wix mismatches`
+            });
+            
+            toast(`✅ Fixed ${fixed} Etsy-Wix mismatch${fixed > 1 ? 'es' : ''}`, 'success');
+        }
+        
+        return fixed;
+    }
+    
+    /**
+     * Render Etsy-Wix sync results (GAP 11)
+     */
+    function renderEtsyWixSyncResults(mismatches, containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        if (mismatches.length === 0) {
+            container.innerHTML = `
+                <div style="padding: 16px; background: rgba(34,197,94,0.15); border-radius: 8px; color: var(--success); text-align: center;">
+                    ✅ All products have matching Etsy and Wix quantities!
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = `
+            <div style="margin-top: 12px;">
+                <div style="color: var(--warning); margin-bottom: 12px;">
+                    ⚠️ Found ${mismatches.length} mismatch${mismatches.length > 1 ? 'es' : ''}:
+                </div>
+                <div style="max-height: 200px; overflow-y: auto; background: var(--bg-input); border-radius: 8px; padding: 8px;">
+                    ${mismatches.map(m => `
+                        <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid var(--border);">
+                            <div>
+                                <div style="font-weight: 600;">${m.sku}</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">${m.productName || 'Unknown'}</div>
+                            </div>
+                            <div style="text-align: right; font-size: 0.85rem;">
+                                <span style="color: var(--etsy);">Etsy: ${m.etsyQty}</span> / 
+                                <span style="color: var(--wix);">Wix: ${m.wixQty}</span>
+                                <div style="font-size: 0.75rem; color: var(--text-muted);">→ Sync to ${m.suggestedQty}</div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    /**
+     * Check Etsy-Wix sync before saving product (GAP 11)
+     * Called from product save function
+     */
+    async function validateEtsyWixSyncOnSave(product) {
+        const config = await loadConfig();
+        const enforceSync = config?.settings?.features?.enforceEtsyWixSync ?? false;
+        
+        if (!enforceSync) {
+            return { valid: true };
+        }
+        
+        if (!product.channels) {
+            return { valid: true };
+        }
+        
+        const etsyQty = product.channels.etsy || 0;
+        const wixQty = product.channels.wix || 0;
+        
+        // If both are 0 or they match, it's fine
+        if ((etsyQty === 0 && wixQty === 0) || etsyQty === wixQty) {
+            return { valid: true };
+        }
+        
+        // Mismatch detected
+        const syncedQty = Math.min(etsyQty, wixQty);
+        
+        const userChoice = window.confirm(
+            `⚠️ Etsy-Wix Sync Rule\n\n` +
+            `Etsy: ${etsyQty}\n` +
+            `Wix: ${wixQty}\n\n` +
+            `These must be equal. Sync both to ${syncedQty}?\n\n` +
+            `Click OK to sync, or Cancel to fix manually.`
+        );
+        
+        if (userChoice) {
+            product.channels.etsy = syncedQty;
+            product.channels.wix = syncedQty;
+            return { valid: true, adjusted: true, syncedTo: syncedQty };
+        } else {
+            return { valid: false, reason: 'User chose to fix manually' };
+        }
+    }
+    
+    // ===== END GAP 11: ETSY-WIX SYNC ENFORCEMENT =====
+    
+    // =====================================================================
+    // GAP 14: PRICING VALIDATION (v3.2.0)
+    // Validate and recalculate prices based on wholesale cost and formula
+    // Feature Flag: config.settings.features.pricingValidation
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    /**
+     * Get pricing config with defaults (GAP 14)
+     */
+    async function getPricingConfig() {
+        const config = await loadConfig();
+        
+        return {
+            // Markup multiplier (default 2.0 = 100% markup)
+            markup: config?.settings?.pricing?.markup ?? 2.0,
+            
+            // Channel-specific overhead percentages
+            etsyOverhead: config?.settings?.pricing?.etsyOverhead ?? 10,
+            wixOverhead: config?.settings?.pricing?.wixOverhead ?? 10,
+            wayfairOverhead: config?.settings?.pricing?.wayfairOverhead ?? 10,
+            
+            // Channel-specific surcharges (flat fee)
+            etsySurcharge: config?.settings?.pricing?.etsySurcharge ?? 7.00,
+            wixSurcharge: config?.settings?.pricing?.wixSurcharge ?? 7.00,
+            wayfairSurcharge: config?.settings?.pricing?.wayfairSurcharge ?? 0,
+            
+            // Tolerance for validation (5% = prices within 5% are OK)
+            tolerance: config?.settings?.pricing?.tolerance ?? 5
+        };
+    }
+    
+    /**
+     * Calculate expected price for a channel (GAP 14)
+     * Formula: (wholesale * markup) * (1 + overhead%) + surcharge
+     */
+    function calculateExpectedPrice(wholesaleCost, channel, pricingConfig) {
+        if (!wholesaleCost || wholesaleCost <= 0) {
+            return null;
+        }
+        
+        const markup = pricingConfig.markup;
+        let overhead, surcharge;
+        
+        switch (channel) {
+            case 'etsy':
+                overhead = pricingConfig.etsyOverhead;
+                surcharge = pricingConfig.etsySurcharge;
+                break;
+            case 'wix':
+                overhead = pricingConfig.wixOverhead;
+                surcharge = pricingConfig.wixSurcharge;
+                break;
+            case 'wayfair':
+                overhead = pricingConfig.wayfairOverhead;
+                surcharge = pricingConfig.wayfairSurcharge;
+                break;
+            default:
+                overhead = 10;
+                surcharge = 0;
+        }
+        
+        const basePrice = wholesaleCost * markup;
+        const withOverhead = basePrice * (1 + overhead / 100);
+        const finalPrice = withOverhead + surcharge;
+        
+        return Math.round(finalPrice * 100) / 100; // Round to cents
+    }
+    
+    /**
+     * Validate pricing for a single product (GAP 14)
+     */
+    async function validateProductPricing(product) {
+        const config = await loadConfig();
+        const pricingEnabled = config?.settings?.features?.pricingValidation ?? false;
+        
+        if (!pricingEnabled) {
+            return { valid: true, skipped: true };
+        }
+        
+        const pricingConfig = await getPricingConfig();
+        const wholesale = product.wholesalePrice || product.wholesaleCost || 0;
+        
+        if (wholesale <= 0) {
+            return { 
+                valid: true, 
+                skipped: true, 
+                reason: 'No wholesale cost' 
+            };
+        }
+        
+        const results = {
+            valid: true,
+            warnings: [],
+            details: {}
+        };
+        
+        // Check retail price
+        if (product.retailPrice) {
+            const expectedRetail = calculateExpectedPrice(wholesale, 'retail', {
+                ...pricingConfig,
+                etsyOverhead: 0,
+                etsySurcharge: 0
+            });
+            // Simple markup check for retail
+            const expectedSimple = wholesale * pricingConfig.markup;
+            const diff = Math.abs(product.retailPrice - expectedSimple);
+            const diffPercent = (diff / expectedSimple) * 100;
+            
+            results.details.retail = {
+                expected: expectedSimple,
+                actual: product.retailPrice,
+                diff: diff,
+                diffPercent: diffPercent
+            };
+            
+            if (diffPercent > pricingConfig.tolerance) {
+                results.valid = false;
+                results.warnings.push(
+                    `Retail price: Expected ~$${expectedSimple.toFixed(2)}, got $${product.retailPrice.toFixed(2)} (${diffPercent.toFixed(1)}% off)`
+                );
+            }
+        }
+        
+        // Check Etsy price (if product has Etsy listing)
+        if (product.channels?.etsy > 0 || product.etsyListingId) {
+            const expected = calculateExpectedPrice(wholesale, 'etsy', pricingConfig);
+            const actual = product.etsyPrice || product.retailPrice;
+            
+            if (actual && expected) {
+                const diff = Math.abs(expected - actual);
+                const diffPercent = (diff / expected) * 100;
+                
+                results.details.etsy = {
+                    expected: expected,
+                    actual: actual,
+                    diff: diff,
+                    diffPercent: diffPercent
+                };
+                
+                if (diffPercent > pricingConfig.tolerance) {
+                    results.valid = false;
+                    results.warnings.push(
+                        `Etsy price: Expected $${expected.toFixed(2)}, got $${actual.toFixed(2)} (${diffPercent.toFixed(1)}% off)`
+                    );
+                }
+            }
+        }
+        
+        // Check Wix price
+        if (product.channels?.wix > 0 || product.wixProductId) {
+            const expected = calculateExpectedPrice(wholesale, 'wix', pricingConfig);
+            const actual = product.wixPrice || product.retailPrice;
+            
+            if (actual && expected) {
+                const diff = Math.abs(expected - actual);
+                const diffPercent = (diff / expected) * 100;
+                
+                results.details.wix = {
+                    expected: expected,
+                    actual: actual,
+                    diff: diff,
+                    diffPercent: diffPercent
+                };
+                
+                if (diffPercent > pricingConfig.tolerance) {
+                    results.valid = false;
+                    results.warnings.push(
+                        `Wix price: Expected $${expected.toFixed(2)}, got $${actual.toFixed(2)} (${diffPercent.toFixed(1)}% off)`
+                    );
+                }
+            }
+        }
+        
+        // Check Wayfair price
+        if (product.channels?.wayfair > 0 || product.wayfairSku) {
+            const expected = calculateExpectedPrice(wholesale, 'wayfair', pricingConfig);
+            const actual = product.wayfairPrice;
+            
+            if (actual && expected) {
+                const diff = Math.abs(expected - actual);
+                const diffPercent = (diff / expected) * 100;
+                
+                results.details.wayfair = {
+                    expected: expected,
+                    actual: actual,
+                    diff: diff,
+                    diffPercent: diffPercent
+                };
+                
+                if (diffPercent > pricingConfig.tolerance) {
+                    results.valid = false;
+                    results.warnings.push(
+                        `Wayfair price: Expected $${expected.toFixed(2)}, got $${actual.toFixed(2)} (${diffPercent.toFixed(1)}% off)`
+                    );
+                }
+            }
+        }
+        
+        return results;
+    }
+    
+    /**
+     * Recalculate prices for a product (GAP 14)
+     */
+    async function recalculateProductPrices(product) {
+        const pricingConfig = await getPricingConfig();
+        const wholesale = product.wholesalePrice || product.wholesaleCost || 0;
+        
+        if (wholesale <= 0) {
+            console.warn(`[Pricing] No wholesale cost for ${product.sku}`);
+            return { changed: false };
+        }
+        
+        const changes = [];
+        
+        // Recalculate retail
+        const newRetail = wholesale * pricingConfig.markup;
+        if (product.retailPrice !== newRetail) {
+            changes.push(`Retail: $${product.retailPrice?.toFixed(2)} → $${newRetail.toFixed(2)}`);
+            product.retailPrice = Math.round(newRetail * 100) / 100;
+        }
+        
+        // Recalculate Etsy
+        if (product.channels?.etsy > 0 || product.etsyListingId) {
+            const newEtsy = calculateExpectedPrice(wholesale, 'etsy', pricingConfig);
+            if (product.etsyPrice !== newEtsy) {
+                changes.push(`Etsy: $${product.etsyPrice?.toFixed(2)} → $${newEtsy.toFixed(2)}`);
+                product.etsyPrice = newEtsy;
+            }
+        }
+        
+        // Recalculate Wix
+        if (product.channels?.wix > 0 || product.wixProductId) {
+            const newWix = calculateExpectedPrice(wholesale, 'wix', pricingConfig);
+            if (product.wixPrice !== newWix) {
+                changes.push(`Wix: $${product.wixPrice?.toFixed(2)} → $${newWix.toFixed(2)}`);
+                product.wixPrice = newWix;
+            }
+        }
+        
+        // Recalculate Wayfair
+        if (product.channels?.wayfair > 0 || product.wayfairSku) {
+            const newWayfair = calculateExpectedPrice(wholesale, 'wayfair', pricingConfig);
+            if (product.wayfairPrice !== newWayfair) {
+                changes.push(`Wayfair: $${product.wayfairPrice?.toFixed(2)} → $${newWayfair.toFixed(2)}`);
+                product.wayfairPrice = newWayfair;
+            }
+        }
+        
+        if (changes.length > 0) {
+            console.log(`[Pricing] Recalculated ${product.sku}: ${changes.join(', ')}`);
+        }
+        
+        return { changed: changes.length > 0, changes };
+    }
+    
+    /**
+     * Validate all products pricing (GAP 14)
+     */
+    async function validateAllPricing() {
+        const config = await loadConfig();
+        const pricingEnabled = config?.settings?.features?.pricingValidation ?? false;
+        
+        if (!pricingEnabled) {
+            toast('Pricing validation feature is disabled', 'warning');
+            return { issues: [], validated: 0 };
+        }
+        
+        if (!masterJsonData?.inventory) {
+            toast('Master JSON not loaded', 'error');
+            return { issues: [], validated: 0 };
+        }
+        
+        const issues = [];
+        let validated = 0;
+        
+        for (const product of masterJsonData.inventory) {
+            const result = await validateProductPricing(product);
+            validated++;
+            
+            if (!result.valid && !result.skipped) {
+                issues.push({
+                    sku: product.sku,
+                    productName: product.productName,
+                    warnings: result.warnings,
+                    details: result.details
+                });
+            }
+        }
+        
+        console.log(`[Pricing] Validated ${validated} products, found ${issues.length} with issues`);
+        return { issues, validated };
+    }
+    
+    /**
+     * Recalculate all pricing issues (GAP 14)
+     */
+    async function recalculateAllPricing() {
+        const { issues } = await validateAllPricing();
+        
+        if (issues.length === 0) {
+            toast('✅ All prices are correct!', 'success');
+            return 0;
+        }
+        
+        const confirm = window.confirm(
+            `Found ${issues.length} products with pricing issues.\n\n` +
+            `Recalculate all using the pricing formula?\n\n` +
+            `Formula: (Wholesale × Markup) × (1 + Overhead%) + Surcharge`
+        );
+        
+        if (!confirm) {
+            return 0;
+        }
+        
+        let recalculated = 0;
+        
+        for (const issue of issues) {
+            const product = masterJsonData.inventory.find(p => p.sku === issue.sku);
+            if (product) {
+                const result = await recalculateProductPrices(product);
+                if (result.changed) {
+                    recalculated++;
+                }
+            }
+        }
+        
+        if (recalculated > 0) {
+            await saveMasterJson({
+                actionDescription: `Recalculated pricing for ${recalculated} products`
+            });
+            
+            toast(`✅ Recalculated ${recalculated} products`, 'success');
+        }
+        
+        return recalculated;
+    }
+    
+    /**
+     * Render pricing validation results (GAP 14)
+     */
+    function renderPricingValidationResults(issues, validated, containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        if (issues.length === 0) {
+            container.innerHTML = `
+                <div style="padding: 16px; background: rgba(34,197,94,0.15); border-radius: 8px; color: var(--success); text-align: center;">
+                    ✅ All ${validated} products have correct pricing!
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = `
+            <div style="margin-top: 12px;">
+                <div style="color: var(--warning); margin-bottom: 12px;">
+                    ⚠️ Found ${issues.length} pricing issues out of ${validated} products:
+                </div>
+                <div style="max-height: 250px; overflow-y: auto; background: var(--bg-input); border-radius: 8px; padding: 8px;">
+                    ${issues.map(issue => `
+                        <div style="padding: 12px; border-bottom: 1px solid var(--border);">
+                            <div style="font-weight: 600; margin-bottom: 4px;">${issue.sku}</div>
+                            <div style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 8px;">${issue.productName || 'Unknown'}</div>
+                            <ul style="margin: 0; padding-left: 20px; font-size: 0.85rem; color: var(--warning);">
+                                ${issue.warnings.map(w => `<li>${w}</li>`).join('')}
+                            </ul>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+    }
+    
+    // ===== END GAP 14: PRICING VALIDATION =====
+    
+    // =====================================================================
+    // GAP 12: AUTO-RETRY FAILED OPERATIONS (v3.3.0)
+    // Automatically retry failed sync operations with exponential backoff
+    // Feature Flag: config.settings.features.autoRetry
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    let autoRetryInterval = null;
+    const MAX_RETRY_ATTEMPTS = 3;
+    const BASE_RETRY_DELAY = 5000; // 5 seconds
+    
+    /**
+     * Start auto-retry watcher (GAP 12)
+     */
+    async function startAutoRetryWatcher() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.autoRetry ?? false;
+        
+        if (!enabled) {
+            console.log('[Auto-Retry] Feature disabled');
+            return;
+        }
+        
+        if (autoRetryInterval) {
+            console.log('[Auto-Retry] Already running');
+            return;
+        }
+        
+        console.log('[Auto-Retry] Starting watcher');
+        
+        // Check for failed items every 30 seconds
+        autoRetryInterval = setInterval(async () => {
+            await processRetryQueue();
+        }, 30000);
+        
+        // Initial check
+        await processRetryQueue();
+    }
+    
+    /**
+     * Stop auto-retry watcher (GAP 12)
+     */
+    function stopAutoRetryWatcher() {
+        if (autoRetryInterval) {
+            clearInterval(autoRetryInterval);
+            autoRetryInterval = null;
+            console.log('[Auto-Retry] Watcher stopped');
+        }
+    }
+    
+    /**
+     * Process retry queue (GAP 12)
+     */
+    async function processRetryQueue() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.autoRetry ?? false;
+        
+        if (!enabled) return;
+        
+        const failedItems = state.syncQueue.filter(item => 
+            item.status === 'error' && 
+            (item.retryCount || 0) < MAX_RETRY_ATTEMPTS
+        );
+        
+        if (failedItems.length === 0) return;
+        
+        console.log(`[Auto-Retry] Found ${failedItems.length} items to retry`);
+        
+        for (const item of failedItems) {
+            const retryCount = item.retryCount || 0;
+            const delay = BASE_RETRY_DELAY * Math.pow(2, retryCount); // Exponential backoff
+            
+            // Check if enough time has passed since last attempt
+            const lastAttempt = item.lastRetryAt ? new Date(item.lastRetryAt).getTime() : 0;
+            const now = Date.now();
+            
+            if (now - lastAttempt < delay) {
+                continue; // Not time yet
+            }
+            
+            console.log(`[Auto-Retry] Retrying ${item.product?.sku} (attempt ${retryCount + 1}/${MAX_RETRY_ATTEMPTS})`);
+            
+            item.status = 'pending';
+            item.retryCount = retryCount + 1;
+            item.lastRetryAt = new Date().toISOString();
+            
+            try {
+                await processQueueItem(item);
+                item.status = 'completed';
+                item.completedAt = new Date().toISOString();
+                
+                logActivity('sync', 'retry_success', item.channel,
+                    `Retry successful for ${item.product?.sku} (attempt ${item.retryCount})`,
+                    { sku: item.product?.sku, retryCount: item.retryCount }
+                );
+                
+                toast(`✅ Retry successful: ${item.product?.sku}`, 'success');
+            } catch (err) {
+                item.status = 'error';
+                item.error = err.message;
+                
+                if (item.retryCount >= MAX_RETRY_ATTEMPTS) {
+                    item.status = 'failed_permanent';
+                    logActivity('error', 'retry_exhausted', item.channel,
+                        `All retries failed for ${item.product?.sku}`,
+                        { sku: item.product?.sku, retryCount: item.retryCount, error: err.message }
+                    );
+                }
+            }
+        }
+        
+        await saveSyncQueue();
+    }
+    
+    /**
+     * Manually retry a specific queue item (GAP 12)
+     */
+    async function retryQueueItem(itemId) {
+        const item = state.syncQueue.find(i => i.id === itemId);
+        if (!item) {
+            toast('Item not found', 'error');
+            return;
+        }
+        
+        item.status = 'pending';
+        item.retryCount = (item.retryCount || 0) + 1;
+        item.lastRetryAt = new Date().toISOString();
+        
+        try {
+            await processQueueItem(item);
+            item.status = 'completed';
+            toast(`✅ Retry successful: ${item.product?.sku}`, 'success');
+        } catch (err) {
+            item.status = 'error';
+            item.error = err.message;
+            toast(`❌ Retry failed: ${err.message}`, 'error');
+        }
+        
+        await saveSyncQueue();
+    }
+    
+    // ===== END GAP 12: AUTO-RETRY =====
+    
+    // =====================================================================
+    // GAP 13: COLLISION DETECTION (v3.3.0)
+    // NOTE: Collision detection is already implemented in the main file section
+    // See: checkForCollision(), showCollisionDialog() around line 4500
+    // Feature Flag: config.settings.features.collisionDetection
+    // =====================================================================
+    
+    // =====================================================================
+    // GAP 15: OB SURCHARGE HANDLING (v3.3.0)
+    // Handle online-only (OB) product surcharges
+    // Feature Flag: config.settings.features.obSurcharge
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    /**
+     * Get OB surcharge config (GAP 15)
+     */
+    async function getOBSurchargeConfig() {
+        const config = await loadConfig();
+        
+        return {
+            enabled: config?.settings?.features?.obSurcharge ?? false,
+            surchargeAmount: config?.settings?.obSurcharge?.amount ?? 7.00,
+            surchargeLabel: config?.settings?.obSurcharge?.label ?? 'Online Processing Fee',
+            applyToChannels: config?.settings?.obSurcharge?.channels ?? ['etsy', 'wix'],
+            excludeWayfair: config?.settings?.obSurcharge?.excludeWayfair ?? true
+        };
+    }
+    
+    /**
+     * Calculate price with OB surcharge (GAP 15)
+     */
+    async function calculatePriceWithOBSurcharge(basePrice, channel, product) {
+        const obConfig = await getOBSurchargeConfig();
+        
+        if (!obConfig.enabled) {
+            return basePrice;
+        }
+        
+        // Check if channel should have surcharge
+        if (!obConfig.applyToChannels.includes(channel.toLowerCase())) {
+            return basePrice;
+        }
+        
+        // Check if product is OB (online-only)
+        const isOB = product.isOB || product.onlineOnly || product.obProduct || false;
+        
+        if (!isOB) {
+            return basePrice;
+        }
+        
+        const priceWithSurcharge = basePrice + obConfig.surchargeAmount;
+        console.log(`[OB Surcharge] ${product.sku}: $${basePrice} + $${obConfig.surchargeAmount} = $${priceWithSurcharge}`);
+        
+        return Math.round(priceWithSurcharge * 100) / 100;
+    }
+    
+    /**
+     * Check if product has OB surcharge applied (GAP 15)
+     */
+    function hasOBSurcharge(product) {
+        return product.isOB || product.onlineOnly || product.obProduct || false;
+    }
+    
+    /**
+     * Bulk apply OB surcharge to products (GAP 15)
+     */
+    async function applyOBSurchargeToProducts(skus) {
+        const obConfig = await getOBSurchargeConfig();
+        
+        if (!obConfig.enabled) {
+            toast('OB Surcharge feature is disabled', 'warning');
+            return 0;
+        }
+        
+        if (!masterJsonData?.inventory) {
+            toast('Master JSON not loaded', 'error');
+            return 0;
+        }
+        
+        let updated = 0;
+        
+        for (const sku of skus) {
+            const product = masterJsonData.inventory.find(p => p.sku === sku);
+            if (!product) continue;
+            
+            // Mark as OB product
+            product.isOB = true;
+            product.obSurchargeAmount = obConfig.surchargeAmount;
+            product.lastModified = new Date().toISOString();
+            updated++;
+        }
+        
+        if (updated > 0) {
+            await saveMasterJson({
+                actionDescription: `Applied OB surcharge to ${updated} products`
+            });
+            toast(`✅ Applied OB surcharge to ${updated} products`, 'success');
+        }
+        
+        return updated;
+    }
+    
+    // ===== END GAP 15: OB SURCHARGE =====
+    
+    // =====================================================================
+    // GAP 16: LOADING STATES UI (v3.3.0)
+    // Better UI loading indicators throughout the app
+    // Feature Flag: config.settings.features.loadingStates
+    // Backward Compatible: Enabled by default (non-breaking UI enhancement)
+    // =====================================================================
+    
+    const loadingStates = {
+        masterFile: false,
+        syncData: false,
+        channels: false,
+        queue: false,
+        save: false
+    };
+    
+    /**
+     * Show loading state (GAP 16)
+     */
+    function showLoading(area, message = 'Loading...') {
+        loadingStates[area] = true;
+        
+        const overlay = document.getElementById('loadingOverlay');
+        const text = document.getElementById('loadingText');
+        
+        if (overlay && text) {
+            text.textContent = message;
+            overlay.style.display = 'flex';
+        }
+        
+        // Update specific area indicators
+        const indicator = document.getElementById(`${area}LoadingIndicator`);
+        if (indicator) {
+            indicator.style.display = 'inline-block';
+        }
+    }
+    
+    /**
+     * Hide loading state (GAP 16)
+     */
+    function hideLoading(area) {
+        loadingStates[area] = false;
+        
+        // Only hide overlay if no areas are loading
+        const anyLoading = Object.values(loadingStates).some(v => v);
+        
+        if (!anyLoading) {
+            const overlay = document.getElementById('loadingOverlay');
+            if (overlay) {
+                overlay.style.display = 'none';
+            }
+        }
+        
+        const indicator = document.getElementById(`${area}LoadingIndicator`);
+        if (indicator) {
+            indicator.style.display = 'none';
+        }
+    }
+    
+    /**
+     * Create loading spinner HTML (GAP 16)
+     */
+    function createSpinner(size = 'medium') {
+        const sizes = { small: '16px', medium: '24px', large: '40px' };
+        const s = sizes[size] || sizes.medium;
+        
+        return `<div class="loading-spinner" style="
+            width: ${s}; height: ${s}; 
+            border: 3px solid var(--border); 
+            border-top-color: var(--primary); 
+            border-radius: 50%; 
+            animation: spin 1s linear infinite;
+            display: inline-block;
+        "></div>`;
+    }
+    
+    /**
+     * Wrap async operation with loading state (GAP 16)
+     */
+    async function withLoading(area, message, operation) {
+        showLoading(area, message);
+        try {
+            return await operation();
+        } finally {
+            hideLoading(area);
+        }
+    }
+    
+    // ===== END GAP 16: LOADING STATES =====
+    
+    // =====================================================================
+    // GAP 17: BULK OPERATIONS (v3.3.0)
+    // Bulk edit/update multiple products at once
+    // Feature Flag: config.settings.features.bulkOperations
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    let bulkSelectionMode = false;
+    let bulkSelectedSkus = new Set();
+    
+    /**
+     * Toggle bulk selection mode (GAP 17)
+     */
+    function toggleBulkSelectionMode() {
+        bulkSelectionMode = !bulkSelectionMode;
+        bulkSelectedSkus.clear();
+        
+        const btn = document.getElementById('bulkModeBtn');
+        if (btn) {
+            btn.classList.toggle('active', bulkSelectionMode);
+            btn.textContent = bulkSelectionMode ? '✓ Bulk Mode ON' : '☐ Bulk Mode';
+        }
+        
+        updateBulkSelectionUI();
+        
+        if (bulkSelectionMode) {
+            toast('Bulk selection mode enabled. Click products to select.', 'info');
+        }
+    }
+    
+    /**
+     * Toggle product selection in bulk mode (GAP 17)
+     */
+    function toggleBulkSelect(sku) {
+        if (!bulkSelectionMode) return;
+        
+        if (bulkSelectedSkus.has(sku)) {
+            bulkSelectedSkus.delete(sku);
+        } else {
+            bulkSelectedSkus.add(sku);
+        }
+        
+        updateBulkSelectionUI();
+    }
+    
+    /**
+     * Select all visible products (GAP 17)
+     */
+    function bulkSelectAll() {
+        if (!bulkSelectionMode) return;
+        
+        state.products.forEach(p => {
+            if (p.sku) bulkSelectedSkus.add(p.sku);
+        });
+        
+        updateBulkSelectionUI();
+        toast(`Selected ${bulkSelectedSkus.size} products`, 'info');
+    }
+    
+    /**
+     * Deselect all products (GAP 17)
+     */
+    function bulkDeselectAll() {
+        bulkSelectedSkus.clear();
+        updateBulkSelectionUI();
+    }
+    
+    /**
+     * Update bulk selection UI (GAP 17)
+     */
+    function updateBulkSelectionUI() {
+        const counter = document.getElementById('bulkSelectionCounter');
+        if (counter) {
+            counter.textContent = `${bulkSelectedSkus.size} selected`;
+            counter.style.display = bulkSelectionMode ? 'inline' : 'none';
+        }
+        
+        const actions = document.getElementById('bulkActionsPanel');
+        if (actions) {
+            actions.style.display = bulkSelectionMode && bulkSelectedSkus.size > 0 ? 'flex' : 'none';
+        }
+        
+        // Update product cards
+        document.querySelectorAll('.product-card').forEach(card => {
+            const sku = card.dataset.sku;
+            if (sku) {
+                card.classList.toggle('bulk-selected', bulkSelectedSkus.has(sku));
+            }
+        });
+    }
+    
+    /**
+     * Bulk update field for selected products (GAP 17)
+     */
+    async function bulkUpdateField(field, value) {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.bulkOperations ?? false;
+        
+        if (!enabled) {
+            toast('Bulk operations feature is disabled', 'warning');
+            return 0;
+        }
+        
+        if (bulkSelectedSkus.size === 0) {
+            toast('No products selected', 'warning');
+            return 0;
+        }
+        
+        if (!masterJsonData?.inventory) {
+            toast('Master JSON not loaded', 'error');
+            return 0;
+        }
+        
+        const confirm = window.confirm(
+            `Update "${field}" to "${value}" for ${bulkSelectedSkus.size} products?\n\nThis cannot be undone.`
+        );
+        
+        if (!confirm) return 0;
+        
+        let updated = 0;
+        
+        for (const sku of bulkSelectedSkus) {
+            const product = masterJsonData.inventory.find(p => p.sku === sku);
+            if (product) {
+                product[field] = value;
+                product.lastModified = new Date().toISOString();
+                updated++;
+            }
+        }
+        
+        if (updated > 0) {
+            await saveMasterJson({
+                actionDescription: `Bulk updated ${field} for ${updated} products`
+            });
+            
+            logActivity('inventory', 'bulk_update', 'system',
+                `Bulk updated ${field} for ${updated} products`,
+                { field, value, count: updated, skus: Array.from(bulkSelectedSkus) }
+            );
+            
+            toast(`✅ Updated ${updated} products`, 'success');
+            await loadFromMasterFile();
+        }
+        
+        return updated;
+    }
+    
+    /**
+     * Bulk push selected products to channel (GAP 17)
+     */
+    async function bulkPushToChannel(channel) {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.bulkOperations ?? false;
+        
+        if (!enabled) {
+            toast('Bulk operations feature is disabled', 'warning');
+            return 0;
+        }
+        
+        if (bulkSelectedSkus.size === 0) {
+            toast('No products selected', 'warning');
+            return 0;
+        }
+        
+        const confirm = window.confirm(
+            `Push ${bulkSelectedSkus.size} products to ${channel}?\n\nThis will queue inventory updates.`
+        );
+        
+        if (!confirm) return 0;
+        
+        let queued = 0;
+        
+        for (const sku of bulkSelectedSkus) {
+            const product = state.products.find(p => p.sku === sku);
+            if (product) {
+                state.syncQueue.push({
+                    id: `bulk_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    product: product._raw || product,
+                    channel: channel,
+                    action: 'update',
+                    fields: ['quantity'],
+                    status: 'pending',
+                    timestamp: new Date().toISOString(),
+                    source: 'bulk_operation'
+                });
+                queued++;
+            }
+        }
+        
+        if (queued > 0) {
+            await saveSyncQueue();
+            
+            logActivity('sync', 'bulk_queue', channel,
+                `Bulk queued ${queued} products for ${channel}`,
+                { channel, count: queued }
+            );
+            
+            toast(`✅ Queued ${queued} products for ${channel}`, 'success');
+        }
+        
+        return queued;
+    }
+    
+    /**
+     * Bulk delete selected products (GAP 17)
+     */
+    async function bulkDeleteProducts() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.bulkOperations ?? false;
+        
+        if (!enabled) {
+            toast('Bulk operations feature is disabled', 'warning');
+            return 0;
+        }
+        
+        if (bulkSelectedSkus.size === 0) {
+            toast('No products selected', 'warning');
+            return 0;
+        }
+        
+        const confirm = window.confirm(
+            `⚠️ DELETE ${bulkSelectedSkus.size} products?\n\n` +
+            `This action CANNOT be undone!\n\n` +
+            `Type "DELETE" in the next prompt to confirm.`
+        );
+        
+        if (!confirm) return 0;
+        
+        const confirmText = window.prompt('Type DELETE to confirm:');
+        if (confirmText !== 'DELETE') {
+            toast('Deletion cancelled', 'info');
+            return 0;
+        }
+        
+        if (!masterJsonData?.inventory) {
+            toast('Master JSON not loaded', 'error');
+            return 0;
+        }
+        
+        const deletedSkus = Array.from(bulkSelectedSkus);
+        masterJsonData.inventory = masterJsonData.inventory.filter(
+            p => !bulkSelectedSkus.has(p.sku)
+        );
+        
+        await saveMasterJson({
+            actionDescription: `Bulk deleted ${deletedSkus.length} products`
+        });
+        
+        logActivity('inventory', 'bulk_delete', 'system',
+            `Bulk deleted ${deletedSkus.length} products`,
+            { count: deletedSkus.length, skus: deletedSkus }
+        );
+        
+        toast(`✅ Deleted ${deletedSkus.length} products`, 'success');
+        
+        bulkSelectedSkus.clear();
+        updateBulkSelectionUI();
+        await loadFromMasterFile();
+        
+        return deletedSkus.length;
+    }
+    
+    // ===== END GAP 17: BULK OPERATIONS =====
+    
+    // =====================================================================
+    // GAP 18: PERFORMANCE METRICS (v3.3.0)
+    // Track sync times, success rates, and other performance data
+    // Feature Flag: config.settings.features.metrics
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    const performanceMetrics = {
+        syncOperations: [],
+        errorCounts: {},
+        successCounts: {},
+        avgResponseTimes: {},
+        lastReset: new Date().toISOString()
+    };
+    
+    /**
+     * Record a metric (GAP 18)
+     */
+    async function recordMetric(category, action, duration, success, details = {}) {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.metrics ?? false;
+        
+        if (!enabled) return;
+        
+        const metric = {
+            timestamp: new Date().toISOString(),
+            category,
+            action,
+            duration,
+            success,
+            details
+        };
+        
+        performanceMetrics.syncOperations.push(metric);
+        
+        // Keep only last 1000 operations
+        if (performanceMetrics.syncOperations.length > 1000) {
+            performanceMetrics.syncOperations = performanceMetrics.syncOperations.slice(-1000);
+        }
+        
+        // Update counts
+        const key = `${category}_${action}`;
+        if (success) {
+            performanceMetrics.successCounts[key] = (performanceMetrics.successCounts[key] || 0) + 1;
+        } else {
+            performanceMetrics.errorCounts[key] = (performanceMetrics.errorCounts[key] || 0) + 1;
+        }
+        
+        // Update average response time
+        if (!performanceMetrics.avgResponseTimes[key]) {
+            performanceMetrics.avgResponseTimes[key] = { total: 0, count: 0 };
+        }
+        performanceMetrics.avgResponseTimes[key].total += duration;
+        performanceMetrics.avgResponseTimes[key].count += 1;
+        
+        console.log(`[Metrics] ${category}/${action}: ${duration}ms, success=${success}`);
+    }
+    
+    /**
+     * Get metrics summary (GAP 18)
+     */
+    function getMetricsSummary() {
+        const summary = {
+            totalOperations: performanceMetrics.syncOperations.length,
+            successRate: 0,
+            avgResponseTime: 0,
+            byChannel: {},
+            byAction: {},
+            errors: performanceMetrics.errorCounts,
+            lastReset: performanceMetrics.lastReset
+        };
+        
+        if (summary.totalOperations === 0) return summary;
+        
+        const successes = performanceMetrics.syncOperations.filter(m => m.success).length;
+        summary.successRate = Math.round((successes / summary.totalOperations) * 100);
+        
+        const totalTime = performanceMetrics.syncOperations.reduce((sum, m) => sum + (m.duration || 0), 0);
+        summary.avgResponseTime = Math.round(totalTime / summary.totalOperations);
+        
+        // Group by channel
+        for (const metric of performanceMetrics.syncOperations) {
+            const channel = metric.details?.channel || 'unknown';
+            if (!summary.byChannel[channel]) {
+                summary.byChannel[channel] = { count: 0, successes: 0, totalTime: 0 };
+            }
+            summary.byChannel[channel].count++;
+            if (metric.success) summary.byChannel[channel].successes++;
+            summary.byChannel[channel].totalTime += metric.duration || 0;
+        }
+        
+        // Calculate channel averages
+        for (const channel of Object.keys(summary.byChannel)) {
+            const data = summary.byChannel[channel];
+            data.successRate = Math.round((data.successes / data.count) * 100);
+            data.avgTime = Math.round(data.totalTime / data.count);
+        }
+        
+        return summary;
+    }
+    
+    /**
+     * Reset metrics (GAP 18)
+     */
+    function resetMetrics() {
+        performanceMetrics.syncOperations = [];
+        performanceMetrics.errorCounts = {};
+        performanceMetrics.successCounts = {};
+        performanceMetrics.avgResponseTimes = {};
+        performanceMetrics.lastReset = new Date().toISOString();
+        
+        toast('Metrics reset', 'info');
+    }
+    
+    /**
+     * Export metrics as JSON (GAP 18)
+     */
+    function exportMetrics() {
+        const data = {
+            summary: getMetricsSummary(),
+            raw: performanceMetrics
+        };
+        
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ccd-metrics-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        toast('Metrics exported', 'success');
+    }
+    
+    // ===== END GAP 18: PERFORMANCE METRICS =====
+    
+    // =====================================================================
+    // GAP 19: HEALTH DASHBOARD (v3.3.0)
+    // System health overview and monitoring
+    // Feature Flag: config.settings.features.healthDashboard
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    /**
+     * Get system health status (GAP 19)
+     */
+    async function getSystemHealth() {
+        const health = {
+            timestamp: new Date().toISOString(),
+            overall: 'healthy',
+            components: {},
+            issues: [],
+            recommendations: []
+        };
+        
+        // Check Master JSON
+        health.components.masterJson = {
+            status: masterFileHandle ? 'connected' : 'disconnected',
+            productCount: masterJsonData?.inventory?.length || 0,
+            lastModified: masterJsonData?._metadata?.lastModified || null
+        };
+        
+        if (!masterFileHandle) {
+            health.issues.push('Master JSON not connected');
+            health.overall = 'warning';
+        }
+        
+        // Check Sync Queue
+        const pendingItems = state.syncQueue.filter(i => i.status === 'pending').length;
+        const errorItems = state.syncQueue.filter(i => i.status === 'error').length;
+        
+        health.components.syncQueue = {
+            status: errorItems > 10 ? 'critical' : errorItems > 0 ? 'warning' : 'healthy',
+            total: state.syncQueue.length,
+            pending: pendingItems,
+            errors: errorItems
+        };
+        
+        if (errorItems > 10) {
+            health.issues.push(`${errorItems} items in error state`);
+            health.overall = 'critical';
+            health.recommendations.push('Review and retry failed queue items');
+        } else if (errorItems > 0) {
+            health.issues.push(`${errorItems} items need attention`);
+            if (health.overall === 'healthy') health.overall = 'warning';
+        }
+        
+        if (pendingItems > 50) {
+            health.issues.push(`${pendingItems} items pending - queue backlog`);
+            health.recommendations.push('Process queue or increase auto-process frequency');
+        }
+        
+        // Check Channel Connections
+        health.components.channels = {
+            etsy: state.connections?.etsy ? 'connected' : 'disconnected',
+            wix: state.connections?.wix ? 'connected' : 'disconnected',
+            wayfair: state.connections?.wayfair ? 'connected' : 'disconnected'
+        };
+        
+        const disconnectedChannels = Object.entries(health.components.channels)
+            .filter(([_, status]) => status === 'disconnected')
+            .map(([name]) => name);
+        
+        if (disconnectedChannels.length > 0) {
+            health.issues.push(`Disconnected channels: ${disconnectedChannels.join(', ')}`);
+            if (health.overall === 'healthy') health.overall = 'warning';
+        }
+        
+        // Check Config
+        const config = await loadConfig();
+        health.components.config = {
+            status: config ? 'loaded' : 'missing',
+            features: Object.keys(config?.settings?.features || {}).length
+        };
+        
+        // Check Metrics
+        const metrics = getMetricsSummary();
+        health.components.performance = {
+            successRate: metrics.successRate,
+            avgResponseTime: metrics.avgResponseTime,
+            status: metrics.successRate >= 90 ? 'healthy' : metrics.successRate >= 70 ? 'warning' : 'critical'
+        };
+        
+        if (metrics.successRate < 70 && metrics.totalOperations > 10) {
+            health.issues.push(`Low success rate: ${metrics.successRate}%`);
+            health.overall = 'critical';
+            health.recommendations.push('Investigate sync failures');
+        }
+        
+        return health;
+    }
+    
+    /**
+     * Render health dashboard (GAP 19)
+     */
+    async function renderHealthDashboard(containerId) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        const health = await getSystemHealth();
+        
+        const statusColor = {
+            healthy: 'var(--success)',
+            warning: 'var(--warning)',
+            critical: 'var(--error)'
+        };
+        
+        const statusIcon = {
+            healthy: '✅',
+            warning: '⚠️',
+            critical: '🚨',
+            connected: '🟢',
+            disconnected: '🔴',
+            loaded: '✅',
+            missing: '❌'
+        };
+        
+        container.innerHTML = `
+            <div style="padding: 20px;">
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
+                    <span style="font-size: 2rem;">${statusIcon[health.overall]}</span>
+                    <div>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: ${statusColor[health.overall]};">
+                            System ${health.overall.charAt(0).toUpperCase() + health.overall.slice(1)}
+                        </div>
+                        <div style="font-size: 0.85rem; color: var(--text-dim);">
+                            Last checked: ${new Date(health.timestamp).toLocaleString()}
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px;">
+                    ${Object.entries(health.components).map(([name, data]) => `
+                        <div style="background: var(--bg-input); padding: 16px; border-radius: 8px; border-left: 4px solid ${statusColor[data.status] || 'var(--border)'};">
+                            <div style="font-weight: 600; margin-bottom: 8px; text-transform: capitalize;">${name.replace(/([A-Z])/g, ' $1')}</div>
+                            <div style="font-size: 0.85rem; color: var(--text-dim);">
+                                ${statusIcon[data.status] || ''} ${data.status || 'unknown'}
+                            </div>
+                            ${Object.entries(data).filter(([k]) => k !== 'status').map(([k, v]) => `
+                                <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
+                                    ${k}: ${typeof v === 'number' ? v.toLocaleString() : v || 'N/A'}
+                                </div>
+                            `).join('')}
+                        </div>
+                    `).join('')}
+                </div>
+                
+                ${health.issues.length > 0 ? `
+                    <div style="background: rgba(239,68,68,0.1); border: 1px solid var(--error); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                        <div style="font-weight: 600; color: var(--error); margin-bottom: 8px;">⚠️ Issues Detected</div>
+                        <ul style="margin: 0; padding-left: 20px; color: var(--text);">
+                            ${health.issues.map(i => `<li>${i}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+                
+                ${health.recommendations.length > 0 ? `
+                    <div style="background: rgba(59,130,246,0.1); border: 1px solid var(--primary); border-radius: 8px; padding: 16px;">
+                        <div style="font-weight: 600; color: var(--primary); margin-bottom: 8px;">💡 Recommendations</div>
+                        <ul style="margin: 0; padding-left: 20px; color: var(--text);">
+                            ${health.recommendations.map(r => `<li>${r}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+    
+    // ===== END GAP 19: HEALTH DASHBOARD =====
+    
+    // =====================================================================
+    // GAP 20: USER ROLES & PERMISSIONS (v3.3.0)
+    // Basic user role system for access control
+    // Feature Flag: config.settings.features.userRoles
+    // Backward Compatible: Disabled by default (all users have full access)
+    // =====================================================================
+    
+    const USER_ROLES = {
+        admin: {
+            name: 'Administrator',
+            permissions: ['read', 'write', 'delete', 'sync', 'settings', 'users']
+        },
+        manager: {
+            name: 'Manager',
+            permissions: ['read', 'write', 'sync', 'settings']
+        },
+        operator: {
+            name: 'Operator',
+            permissions: ['read', 'write', 'sync']
+        },
+        viewer: {
+            name: 'Viewer',
+            permissions: ['read']
+        }
+    };
+    
+    let currentUser = null;
+    
+    /**
+     * Set current user (GAP 20)
+     */
+    async function setCurrentUser(username, role = 'operator') {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.userRoles ?? false;
+        
+        if (!enabled) {
+            // Feature disabled - full access
+            currentUser = { username: 'default', role: 'admin', permissions: USER_ROLES.admin.permissions };
+            return currentUser;
+        }
+        
+        if (!USER_ROLES[role]) {
+            console.error(`[User] Invalid role: ${role}`);
+            role = 'viewer';
+        }
+        
+        currentUser = {
+            username,
+            role,
+            permissions: USER_ROLES[role].permissions,
+            loginTime: new Date().toISOString()
+        };
+        
+        // Store in localStorage
+        localStorage.setItem('ccd_current_user', JSON.stringify(currentUser));
+        
+        logActivity('auth', 'login', 'system', `User ${username} logged in as ${role}`, { username, role });
+        
+        console.log(`[User] Set current user: ${username} (${role})`);
+        return currentUser;
+    }
+    
+    /**
+     * Get current user (GAP 20)
+     */
+    function getCurrentUser() {
+        if (currentUser) return currentUser;
+        
+        // Try to restore from localStorage
+        const saved = localStorage.getItem('ccd_current_user');
+        if (saved) {
+            try {
+                currentUser = JSON.parse(saved);
+                return currentUser;
+            } catch (e) {
+                console.error('[User] Error parsing saved user:', e);
+            }
+        }
+        
+        // Default to full access when feature is disabled
+        return { username: 'default', role: 'admin', permissions: USER_ROLES.admin.permissions };
+    }
+    
+    /**
+     * Check if user has permission (GAP 20)
+     */
+    async function hasPermission(permission) {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.userRoles ?? false;
+        
+        if (!enabled) return true; // Feature disabled = full access
+        
+        const user = getCurrentUser();
+        return user.permissions.includes(permission);
+    }
+    
+    /**
+     * Require permission for action (GAP 20)
+     */
+    async function requirePermission(permission, actionName = 'this action') {
+        const allowed = await hasPermission(permission);
+        
+        if (!allowed) {
+            toast(`❌ Permission denied: ${actionName} requires '${permission}' permission`, 'error');
+            
+            logActivity('auth', 'permission_denied', 'system',
+                `Permission denied for ${getCurrentUser().username}: ${actionName}`,
+                { username: getCurrentUser().username, permission, action: actionName }
+            );
+            
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Logout current user (GAP 20)
+     */
+    function logoutUser() {
+        const username = currentUser?.username || 'unknown';
+        
+        logActivity('auth', 'logout', 'system', `User ${username} logged out`, { username });
+        
+        currentUser = null;
+        localStorage.removeItem('ccd_current_user');
+        
+        toast('Logged out', 'info');
+    }
+    
+    // ===== END GAP 20: USER ROLES =====
+    
+    // =====================================================================
+    // GAP 21: AUDIT LOG (v3.3.0)
+    // Complete audit trail of all actions
+    // Feature Flag: config.settings.features.auditLog
+    // Backward Compatible: Disabled by default
+    // =====================================================================
+    
+    /**
+     * Write to audit log (GAP 21)
+     * This extends logActivity with persistent storage
+     */
+    async function writeAuditLog(action, details) {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.auditLog ?? false;
+        
+        if (!enabled) return;
+        
+        const entry = {
+            id: `audit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            timestamp: new Date().toISOString(),
+            user: getCurrentUser()?.username || 'system',
+            device: localStorage.getItem('ccd_hostname') || 'unknown',
+            action: action,
+            details: details,
+            sessionId: getSessionId()
+        };
+        
+        // Store in Master JSON _auditLog
+        if (masterJsonData) {
+            masterJsonData._auditLog = masterJsonData._auditLog || [];
+            masterJsonData._auditLog.unshift(entry);
+            
+            // Keep last 5000 entries
+            if (masterJsonData._auditLog.length > 5000) {
+                masterJsonData._auditLog = masterJsonData._auditLog.slice(0, 5000);
+            }
+            
+            // Don't save immediately - let the next regular save pick it up
+            // This prevents excessive file writes
+        }
+        
+        console.log(`[Audit] ${action}:`, details);
+    }
+    
+    /**
+     * Get session ID (GAP 21)
+     */
+    function getSessionId() {
+        let sessionId = sessionStorage.getItem('ccd_session_id');
+        if (!sessionId) {
+            sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            sessionStorage.setItem('ccd_session_id', sessionId);
+        }
+        return sessionId;
+    }
+    
+    /**
+     * Get audit log entries (GAP 21)
+     */
+    function getAuditLog(filters = {}) {
+        if (!masterJsonData?._auditLog) {
+            return [];
+        }
+        
+        let entries = masterJsonData._auditLog;
+        
+        // Apply filters
+        if (filters.user) {
+            entries = entries.filter(e => e.user === filters.user);
+        }
+        if (filters.action) {
+            entries = entries.filter(e => e.action.includes(filters.action));
+        }
+        if (filters.startDate) {
+            entries = entries.filter(e => new Date(e.timestamp) >= new Date(filters.startDate));
+        }
+        if (filters.endDate) {
+            entries = entries.filter(e => new Date(e.timestamp) <= new Date(filters.endDate));
+        }
+        if (filters.limit) {
+            entries = entries.slice(0, filters.limit);
+        }
+        
+        return entries;
+    }
+    
+    /**
+     * Render audit log viewer (GAP 21)
+     */
+    function renderAuditLogViewer(containerId, filters = {}) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        
+        const entries = getAuditLog({ ...filters, limit: filters.limit || 100 });
+        
+        if (entries.length === 0) {
+            container.innerHTML = `
+                <div style="padding: 40px; text-align: center; color: var(--text-dim);">
+                    <div style="font-size: 2rem; margin-bottom: 8px;">📋</div>
+                    <div>No audit log entries found</div>
+                </div>
+            `;
+            return;
+        }
+        
+        container.innerHTML = `
+            <div style="max-height: 500px; overflow-y: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+                    <thead style="position: sticky; top: 0; background: var(--bg-card);">
+                        <tr>
+                            <th style="text-align: left; padding: 8px; border-bottom: 1px solid var(--border);">Time</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 1px solid var(--border);">User</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 1px solid var(--border);">Action</th>
+                            <th style="text-align: left; padding: 8px; border-bottom: 1px solid var(--border);">Details</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${entries.map(e => `
+                            <tr style="border-bottom: 1px solid var(--border);">
+                                <td style="padding: 8px; font-family: monospace; font-size: 0.75rem; white-space: nowrap;">
+                                    ${new Date(e.timestamp).toLocaleString()}
+                                </td>
+                                <td style="padding: 8px;">${e.user || 'system'}</td>
+                                <td style="padding: 8px; font-weight: 500;">${e.action}</td>
+                                <td style="padding: 8px; color: var(--text-dim); max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
+                                    ${typeof e.details === 'object' ? JSON.stringify(e.details).substring(0, 100) : e.details || '-'}
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="padding: 12px; text-align: center; font-size: 0.8rem; color: var(--text-dim);">
+                Showing ${entries.length} entries
+            </div>
+        `;
+    }
+    
+    /**
+     * Export audit log (GAP 21)
+     */
+    function exportAuditLog(filters = {}) {
+        const entries = getAuditLog(filters);
+        
+        const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ccd-audit-log-${new Date().toISOString().split('T')[0]}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        
+        toast(`Exported ${entries.length} audit entries`, 'success');
+    }
+    
+    /**
+     * Clear old audit entries (GAP 21)
+     */
+    async function clearOldAuditEntries(daysToKeep = 90) {
+        if (!masterJsonData?._auditLog) return 0;
+        
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - daysToKeep);
+        
+        const before = masterJsonData._auditLog.length;
+        masterJsonData._auditLog = masterJsonData._auditLog.filter(
+            e => new Date(e.timestamp) > cutoff
+        );
+        const removed = before - masterJsonData._auditLog.length;
+        
+        if (removed > 0) {
+            await saveMasterJson({
+                actionDescription: `Cleared ${removed} audit entries older than ${daysToKeep} days`
+            });
+            toast(`Cleared ${removed} old audit entries`, 'info');
+        }
+        
+        return removed;
+    }
+    
+    // ===== END GAP 21: AUDIT LOG =====
+
     // ===== SYNC HUB INTEGRATION (GAP 1 - v3.1.0) =====
     // Backward compatible with feature flag: useSharedQueue
     // Save queue to localStorage (legacy) OR Master JSON _syncQueue (new)
@@ -1727,13 +4347,21 @@
         loadSyncQueue();
         updateFileStatus();
         
-        console.log('[Init] CCD Channel Manager v2.2 initialized');
+        // GAP 4: Start auto-cascade if enabled (delayed to allow files to load)
+        setTimeout(async () => {
+            const config = await loadConfig();
+            if (config?.settings?.features?.autoCascade && masterJsonData) {
+                startAutoCascadeWatcher();
+            }
+        }, 3000);
+        
+        console.log('[Init] CCD Channel Manager v3.2.0 initialized (GAPs 4, 6, 11, 14 implemented)');
         
         // Log startup to Activity Log (only if Master JSON is connected)
         setTimeout(() => {
             if (typeof logActivity === 'function' && masterJsonData) {
                 logActivity('system', 'channel_manager_started', 'system',
-                    'Channel Manager v2.2 started',
+                    'Channel Manager v3.2.0 started',
                     { reconnected: reconnected, syncDataConnected: !!syncDataFileHandle }
                 );
             }
@@ -2489,7 +5117,7 @@
         renderProductDetail(); 
     }
     
-    function renderProductDetail() {
+    async function renderProductDetail() {
         const p = state.selectedProduct;
         const empty = document.getElementById('emptyState');
         const detail = document.getElementById('productDetail');
@@ -2497,6 +5125,21 @@
         empty.style.display = 'none'; detail.classList.add('active');
         document.getElementById('detailTitle').textContent = p.name;
         document.getElementById('detailSku').textContent = 'SKU: ' + p.sku;
+        
+        // ============================================================
+        // GAP 6: PAR ALERT BADGE INTEGRATION
+        // ============================================================
+        const parAlertContainer = document.getElementById('parAlertBadgeContainer');
+        if (parAlertContainer && p._raw) {
+            const parResult = await checkProductParLevels(p._raw);
+            if (parResult.hasAlerts) {
+                parAlertContainer.innerHTML = renderParAlertBadge(parResult.alerts);
+                parAlertContainer.style.display = 'block';
+            } else {
+                parAlertContainer.innerHTML = '';
+                parAlertContainer.style.display = 'none';
+            }
+        }
         
         // Populate Master Data Panel
         document.getElementById('masterPrice').textContent = '$' + (p.price || 0).toFixed(2);
@@ -2731,11 +5374,21 @@
     async function processQueue() { 
         if (!state.syncQueue.length) { toast('Queue empty', 'info'); return; }
         const pending = state.syncQueue.filter(i => i.status === 'pending');
+        
+        if (pending.length === 0) { 
+            toast('No pending items in queue', 'info'); 
+            return; 
+        }
+        
+        toast(`Processing ${pending.length} item${pending.length > 1 ? 's' : ''}...`, 'info');
+        
         let completed = 0, errors = 0;
         for (const item of pending) {
             try {
-                if (item.channel === 'wayfair' && (item.action === 'inventory' || item.field === 'quantity')) await processWayfairInventory(item);
+                // Process based on channel
+                await processQueueItem(item);
                 item.status = 'completed';
+                item.completedAt = new Date().toISOString();
                 completed++;
                 
                 // Log individual success
@@ -2745,6 +5398,8 @@
                 );
             } catch (err) { 
                 item.status = 'error'; 
+                item.error = err.message;
+                item.errorAt = new Date().toISOString();
                 errors++;
                 console.error('Queue item error:', err);
                 
@@ -2755,6 +5410,9 @@
                 );
             }
         }
+        
+        // Save queue state
+        await saveSyncQueue();
         
         // Save activity log entries to disk
         if (masterFileHandle && masterJsonData) {
@@ -2768,7 +5426,192 @@
             }
         }
         
-        toast(`Processing ${state.syncQueue.length} items...`, 'info'); 
+        // Summary toast
+        if (errors > 0) {
+            toast(`⚠️ Completed: ${completed}, Errors: ${errors}`, 'warning');
+        } else {
+            toast(`✅ Successfully processed ${completed} item${completed > 1 ? 's' : ''}`, 'success');
+        }
+    }
+    
+    /**
+     * Process a single queue item based on channel and action
+     */
+    async function processQueueItem(item) {
+        const channel = item.channel?.toLowerCase();
+        const action = item.action?.toLowerCase() || 'update';
+        const fields = item.fields || [item.field].filter(Boolean) || ['quantity'];
+        
+        console.log(`[Queue] Processing: ${item.product?.sku} → ${channel} (${action})`);
+        
+        switch (channel) {
+            case 'wayfair':
+                await processWayfairQueueItem(item, action, fields);
+                break;
+            case 'etsy':
+                await processEtsyQueueItem(item, action, fields);
+                break;
+            case 'wix':
+                await processWixQueueItem(item, action, fields);
+                break;
+            default:
+                throw new Error(`Unknown channel: ${channel}`);
+        }
+    }
+    
+    /**
+     * Process Wayfair queue item
+     */
+    async function processWayfairQueueItem(item, action, fields) {
+        const { wayfairProxyUrl, wayfairApiKey, wayfairSupplierId } = state.settings;
+        if (!wayfairProxyUrl) throw new Error('Wayfair proxy not configured');
+        
+        const product = item.product;
+        if (!product) throw new Error('No product data in queue item');
+        
+        // Wayfair only supports inventory updates via API
+        if (action === 'inventory' || action === 'update' || fields.includes('quantity')) {
+            const inventory = [{
+                supplierPartNumber: product.wayfairSku || product.sku,
+                quantityOnHand: product.channels?.wayfair || product.wayfairQty || product.qty || 0,
+                supplierId: parseInt(wayfairSupplierId) || undefined
+            }];
+            
+            const response = await fetch(wayfairProxyUrl + '?action=updateInventory&key=' + encodeURIComponent(wayfairApiKey || ''), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inventory, feedKind: 'DIFFERENTIAL' })
+            });
+            
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Wayfair update failed');
+            return result;
+        }
+        
+        throw new Error(`Wayfair action '${action}' not supported`);
+    }
+    
+    /**
+     * Process Etsy queue item
+     */
+    async function processEtsyQueueItem(item, action, fields) {
+        const url = state.settings.etsyProxyUrl;
+        const key = state.settings.etsyApiKey || 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        
+        if (!url) throw new Error('Etsy proxy not configured');
+        
+        const product = item.product;
+        if (!product) throw new Error('No product data in queue item');
+        
+        const listingId = product.etsyListingId || product.etsy?.listingId;
+        
+        // Handle inventory/quantity updates
+        if (action === 'inventory' || action === 'update' || fields.includes('quantity')) {
+            if (!listingId) {
+                throw new Error(`No Etsy listing ID for SKU ${product.sku} - cannot update inventory`);
+            }
+            
+            const qty = product.channels?.etsy || product.etsyQty || product.qty || 0;
+            
+            const data = {
+                action: 'updateInventory',
+                key: key,
+                listing_id: listingId,
+                quantity: qty,
+                sku: product.sku
+            };
+            
+            const response = await fetch(`${url}?${new URLSearchParams(data)}`);
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Etsy inventory update failed');
+            return result;
+        }
+        
+        // Handle price updates
+        if (fields.includes('price')) {
+            if (!listingId) {
+                throw new Error(`No Etsy listing ID for SKU ${product.sku} - cannot update price`);
+            }
+            
+            const price = product.etsyPrice || product.retailPrice || 0;
+            
+            const data = {
+                action: 'updatePrice',
+                key: key,
+                listing_id: listingId,
+                price: price,
+                sku: product.sku
+            };
+            
+            const response = await fetch(`${url}?${new URLSearchParams(data)}`);
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Etsy price update failed');
+            return result;
+        }
+        
+        // Handle create action
+        if (action === 'create') {
+            throw new Error('Etsy listing creation requires manual setup via Etsy.com');
+        }
+        
+        throw new Error(`Etsy action '${action}' with fields [${fields.join(',')}] not supported`);
+    }
+    
+    /**
+     * Process Wix queue item
+     */
+    async function processWixQueueItem(item, action, fields) {
+        const url = state.settings.wixProxyUrl;
+        const key = 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        
+        if (!url) throw new Error('Wix proxy not configured');
+        
+        const product = item.product;
+        if (!product) throw new Error('No product data in queue item');
+        
+        const productId = product.wixProductId || product.wix?.productId;
+        
+        // Build update data based on fields
+        const data = { 
+            sku: product.sku,
+            action: 'syncProduct'
+        };
+        
+        if (productId) {
+            data.productId = productId;
+        }
+        
+        // Add fields to update
+        if (fields.includes('quantity') || action === 'inventory') {
+            data.quantity = product.channels?.wix || product.wixQty || product.qty || 0;
+        }
+        if (fields.includes('price')) {
+            data.price = product.wixPrice || product.retailPrice || 0;
+        }
+        if (fields.includes('title') || fields.includes('name')) {
+            data.name = product.productName || product.name || product.title;
+        }
+        if (fields.includes('description')) {
+            data.description = product.description || '';
+        }
+        
+        // For create action, we need all fields
+        if (action === 'create') {
+            data.name = product.productName || product.name || product.title;
+            data.description = product.description || '';
+            data.price = product.wixPrice || product.retailPrice || 0;
+            data.quantity = product.channels?.wix || product.wixQty || product.qty || 0;
+        }
+        
+        const response = await fetch(`${url}?action=syncProduct&key=${encodeURIComponent(key)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        
+        const result = await response.json();
+        if (!result.success) throw new Error(result.error || 'Wix update failed');
+        return result;
     }
     
     function loadSourceProducts() {
@@ -2880,8 +5723,8 @@
         document.getElementById('editorName').value = p.name || raw.productName || '';
         document.getElementById('editorDescription').value = p.description || raw.description || '';
         document.getElementById('editorPrice').value = p.price || raw.retailPrice || '';
-        document.getElementById('editorCost').value = raw.costPrice || raw.cost || '';
-        document.getElementById('editorQty').value = p.quantity || raw.warehouseQty || '';
+        document.getElementById('editorCost').value = raw.costPrice || raw.cost || raw.wholesalePrice || '';
+        document.getElementById('editorQty').value = p.quantity || raw.warehouseQty || raw.qty || '';
         document.getElementById('editorWeight').value = raw.weight || raw.shippingWeight || '';
         document.getElementById('editorLength').value = raw.length || raw.itemLength || '';
         document.getElementById('editorWidth').value = raw.width || raw.itemWidth || '';
@@ -2889,6 +5732,20 @@
         document.getElementById('editorEtsyId').value = p.etsy?.id || raw.etsyListingId || '';
         document.getElementById('editorWixId').value = p.wix?.id || raw.wixProductId || '';
         document.getElementById('editorWayfairSku').value = p.wayfair?.sku || raw.wayfairSku || '';
+        
+        // Channel allocations
+        const channels = raw.channels || {};
+        document.getElementById('editorEtsyQty').value = channels.etsy || raw.etsyQty || '';
+        document.getElementById('editorWixQty').value = channels.wix || raw.wixQty || '';
+        document.getElementById('editorWayfairQty').value = channels.wayfair || raw.wayfairQty || '';
+        
+        // Channel prices
+        document.getElementById('editorEtsyPrice').value = raw.etsyPrice || '';
+        document.getElementById('editorWixPrice').value = raw.wixPrice || '';
+        document.getElementById('editorWayfairPrice').value = raw.wayfairPrice || '';
+        
+        // Show/hide Etsy-Wix sync warning
+        updateEtsyWixSyncWarning();
         
         // Images
         const images = raw.images || raw.imageUrls || [];
@@ -2912,12 +5769,53 @@
         `).join('');
     }
     
+    /**
+     * Update Etsy-Wix sync warning in product editor (GAP 11 UI Integration)
+     */
+    function updateEtsyWixSyncWarning() {
+        const etsyQty = parseInt(document.getElementById('editorEtsyQty')?.value) || 0;
+        const wixQty = parseInt(document.getElementById('editorWixQty')?.value) || 0;
+        const warning = document.getElementById('editorEtsyWixSyncWarning');
+        
+        if (warning) {
+            // Show warning if both have values and they don't match
+            if ((etsyQty > 0 || wixQty > 0) && etsyQty !== wixQty) {
+                warning.style.display = 'block';
+            } else {
+                warning.style.display = 'none';
+            }
+        }
+    }
+    
+    // Add event listeners for Etsy/Wix qty fields to show sync warning
+    document.addEventListener('DOMContentLoaded', function() {
+        const etsyQtyField = document.getElementById('editorEtsyQty');
+        const wixQtyField = document.getElementById('editorWixQty');
+        
+        if (etsyQtyField) {
+            etsyQtyField.addEventListener('input', updateEtsyWixSyncWarning);
+        }
+        if (wixQtyField) {
+            wixQtyField.addEventListener('input', updateEtsyWixSyncWarning);
+        }
+    });
+    
     async function saveProductFromEditor() {
         const sku = document.getElementById('editorSku').value.trim();
         const name = document.getElementById('editorName').value.trim();
         
         if (!sku) { toast('SKU is required', 'error'); return; }
         if (!name) { toast('Product name is required', 'error'); return; }
+        
+        // Get channel allocations
+        const etsyQty = parseInt(document.getElementById('editorEtsyQty')?.value) || 0;
+        const wixQty = parseInt(document.getElementById('editorWixQty')?.value) || 0;
+        const wayfairQty = parseInt(document.getElementById('editorWayfairQty')?.value) || 0;
+        
+        // Get channel prices
+        const etsyPrice = parseFloat(document.getElementById('editorEtsyPrice')?.value) || null;
+        const wixPrice = parseFloat(document.getElementById('editorWixPrice')?.value) || null;
+        const wayfairPrice = parseFloat(document.getElementById('editorWayfairPrice')?.value) || null;
         
         // Build product object matching master JSON structure
         const productData = {
@@ -2939,8 +5837,34 @@
             tags: document.getElementById('editorTags').value.split(',').map(t => t.trim()).filter(t => t),
             upc: document.getElementById('editorUpc').value.trim(),
             vendor: document.getElementById('editorVendor').value.trim(),
-            lastModified: new Date().toISOString()
+            lastModified: new Date().toISOString(),
+            // Channel allocations
+            channels: {
+                etsy: etsyQty,
+                wix: wixQty,
+                wayfair: wayfairQty
+            }
         };
+        
+        // Add channel-specific prices if set
+        if (etsyPrice !== null) productData.etsyPrice = etsyPrice;
+        if (wixPrice !== null) productData.wixPrice = wixPrice;
+        if (wayfairPrice !== null) productData.wayfairPrice = wayfairPrice;
+        
+        // ============================================================
+        // GAP 11: ETSY-WIX SYNC VALIDATION
+        // ============================================================
+        const syncValidation = await validateEtsyWixSyncOnSave(productData);
+        if (!syncValidation.valid) {
+            // User chose to fix manually
+            return;
+        }
+        if (syncValidation.adjusted) {
+            // Update the form fields to reflect the adjustment
+            document.getElementById('editorEtsyQty').value = syncValidation.syncedTo;
+            document.getElementById('editorWixQty').value = syncValidation.syncedTo;
+            toast(`Etsy and Wix quantities synced to ${syncValidation.syncedTo}`, 'info');
+        }
         
         // Check if we can save to master file
         if (!masterFileHandle) {
@@ -3995,23 +6919,63 @@
         
         if (!url) throw new Error('Etsy proxy not configured');
         
-        // For now, just update inventory if we have a listing ID
-        if (product.etsy?.listingId && fields.quantity) {
+        const listingId = product.etsy?.listingId || product.etsyListingId;
+        
+        if (!listingId) {
+            throw new Error(`No Etsy listing ID for ${product.sku} - create listing on Etsy.com first`);
+        }
+        
+        let updated = false;
+        
+        // Update inventory/quantity
+        if (fields.quantity) {
             const data = {
                 action: 'updateInventory',
                 key: key,
-                listing_id: product.etsy.listingId,
-                quantity: sourceData.quantity || sourceData.etsyQty || 0,
+                listing_id: listingId,
+                quantity: sourceData.quantity || sourceData.etsyQty || sourceData.qty || 0,
                 sku: product.sku
             };
             
             const response = await fetch(`${url}?${new URLSearchParams(data)}`);
             const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Etsy sync failed');
-            return result;
+            if (!result.success) throw new Error(result.error || 'Etsy inventory update failed');
+            updated = true;
         }
         
-        toast('Etsy create/update coming soon', 'info');
+        // Update price (if proxy supports it)
+        if (fields.price) {
+            try {
+                const data = {
+                    action: 'updatePrice',
+                    key: key,
+                    listing_id: listingId,
+                    price: sourceData.price || sourceData.etsyPrice || sourceData.retailPrice || 0,
+                    sku: product.sku
+                };
+                
+                const response = await fetch(`${url}?${new URLSearchParams(data)}`);
+                const result = await response.json();
+                if (result.success) {
+                    updated = true;
+                } else {
+                    console.warn('Etsy price update not supported or failed:', result.error);
+                }
+            } catch (priceErr) {
+                console.warn('Etsy price update failed:', priceErr.message);
+            }
+        }
+        
+        // Title/description updates require Etsy API v3 which may not be available
+        if (fields.title || fields.description) {
+            console.warn('Etsy title/description updates require manual editing on Etsy.com');
+        }
+        
+        if (!updated) {
+            throw new Error('No fields were updated');
+        }
+        
+        return { success: true };
     }
     
     async function pushCompareProduct(target) {
@@ -4108,7 +7072,12 @@
     }
 
     async function fetchWayfairOrders() {
-        if (!state.connections.wayfair) { document.getElementById('wayfairConnectionAlert').style.display = 'flex'; toast('Connect to Wayfair first', 'warning'); return; }
+        const alertEl = document.getElementById('wayfairConnectionAlert');
+        if (!state.connections.wayfair) { 
+            if (alertEl) alertEl.style.display = 'flex'; 
+            toast('Connect to Wayfair first', 'warning'); 
+            return; 
+        }
         const icon = document.getElementById('ordersRefreshIcon');
         if (icon) icon.innerHTML = '<div class="spinner"></div>';
         try {
@@ -4322,16 +7291,6 @@
         if (!p.wayfairSku && !p.sku) { toast('Product needs a Wayfair SKU', 'warning'); return; }
         state.syncQueue.push({ id: Date.now(), product: p, channel: 'wayfair', action: 'inventory', fields: { quantity: true }, status: 'pending' });
         toast('Added to Wayfair inventory queue', 'success');
-    }
-
-    async function processWayfairInventory(item) {
-        const { wayfairProxyUrl, wayfairApiKey, wayfairSupplierId } = state.settings;
-        if (!wayfairProxyUrl) throw new Error('Proxy not configured');
-        const inventory = [{ supplierPartNumber: item.product.wayfairSku || item.product.sku, quantityOnHand: item.product.wayfairQty || item.product.quantity, supplierId: parseInt(wayfairSupplierId) }];
-        const response = await fetch(wayfairProxyUrl + '?action=updateInventory&key=' + wayfairApiKey, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inventory, feedKind: 'DIFFERENTIAL' }) });
-        const result = await response.json();
-        if (!result.success) throw new Error(result.error || 'Failed');
-        return result;
     }
 
     // ===== DASHBOARD FUNCTIONS =====
@@ -4626,6 +7585,379 @@
         closeModal('multiChannelPushModal');
         refreshDashboard();
     }
+
+    // =====================================================================
+    // TOOLS VIEW UI FUNCTIONS (GAPs 4, 6, 11, 14) - v3.2.0
+    // =====================================================================
+    
+    /**
+     * Update feature flags display in Tools view
+     */
+    async function updateFeatureFlagsDisplay() {
+        const container = document.getElementById('featureFlagsDisplay');
+        if (!container) return;
+        
+        const config = await loadConfig();
+        const features = config?.settings?.features || {};
+        
+        const flagStatus = (name, enabled) => `
+            <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-input); border-radius: 6px;">
+                <span style="width: 10px; height: 10px; border-radius: 50%; background: ${enabled ? 'var(--success)' : 'var(--text-muted)'};"></span>
+                <span style="font-size: 0.85rem;">${name}</span>
+                <span style="margin-left: auto; font-size: 0.75rem; color: ${enabled ? 'var(--success)' : 'var(--text-muted)'};">
+                    ${enabled ? 'ON' : 'OFF'}
+                </span>
+            </div>
+        `;
+        
+        container.innerHTML = `
+            ${flagStatus('Auto-Cascade', features.autoCascade)}
+            ${flagStatus('PAR Alerts', features.parAlerts)}
+            ${flagStatus('Etsy-Wix Sync', features.enforceEtsyWixSync)}
+            ${flagStatus('Pricing Validation', features.pricingValidation)}
+            ${flagStatus('Shared Queue', features.useSharedQueue)}
+            ${flagStatus('Inventory Deduction', features.inventoryDeduction)}
+            ${flagStatus('Auto-Retry', features.autoRetry)}
+            ${flagStatus('Collision Detection', features.collisionDetection)}
+            ${flagStatus('OB Surcharge', features.obSurcharge)}
+            ${flagStatus('Loading States', features.loadingStates)}
+            ${flagStatus('Bulk Operations', features.bulkOperations)}
+            ${flagStatus('Metrics', features.metrics)}
+            ${flagStatus('Health Dashboard', features.healthDashboard)}
+            ${flagStatus('User Roles', features.userRoles)}
+            ${flagStatus('Audit Log', features.auditLog)}
+        `;
+    }
+    
+    /**
+     * Check and display auto-cascade status (GAP 4)
+     */
+    async function checkAutoCascadeStatus() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.autoCascade ?? false;
+        const statusText = document.getElementById('autoCascadeStatusText');
+        
+        if (statusText) {
+            if (enabled) {
+                statusText.innerHTML = `<span style="color: var(--success);">✅ Enabled</span> - Watching for changes`;
+                if (!autoCascadeWatcherInterval) {
+                    startAutoCascadeWatcher();
+                }
+            } else {
+                statusText.innerHTML = `<span style="color: var(--text-muted);">⚪ Disabled</span> - Enable in config`;
+            }
+        }
+    }
+    
+    /**
+     * Toggle auto-cascade (GAP 4)
+     */
+    async function toggleAutoCascade() {
+        const config = await loadConfig();
+        const currentlyEnabled = config?.settings?.features?.autoCascade ?? false;
+        
+        if (currentlyEnabled) {
+            stopAutoCascadeWatcher();
+            toast('Auto-Cascade stopped (config still enabled)', 'info');
+        } else {
+            toast('Enable autoCascade in config file to use this feature', 'warning');
+        }
+        
+        await checkAutoCascadeStatus();
+    }
+    
+    /**
+     * Scan PAR alerts and display results (GAP 6)
+     */
+    async function scanParAlerts() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.parAlerts ?? false;
+        
+        if (!enabled) {
+            document.getElementById('parAlertsResults').innerHTML = `
+                <div style="padding: 12px; background: rgba(234,179,8,0.15); border-radius: 8px; color: var(--warning);">
+                    ⚠️ PAR Alerts feature is disabled. Enable <code>parAlerts</code> in config.
+                </div>
+            `;
+            return;
+        }
+        
+        const alerts = await getAllParAlerts();
+        const container = document.getElementById('parAlertsResults');
+        
+        if (alerts.length === 0) {
+            container.innerHTML = `
+                <div style="padding: 12px; background: rgba(34,197,94,0.15); border-radius: 8px; color: var(--success);">
+                    ✅ All products are above PAR levels!
+                </div>
+            `;
+            return;
+        }
+        
+        const criticalCount = alerts.filter(p => p.alerts.some(a => a.severity === 'critical')).length;
+        const warningCount = alerts.length - criticalCount;
+        
+        container.innerHTML = `
+            <div style="margin-bottom: 8px;">
+                ${criticalCount > 0 ? `<span style="color: var(--error);">🚨 ${criticalCount} critical</span>` : ''}
+                ${warningCount > 0 ? `<span style="color: var(--warning); margin-left: 8px;">⚠️ ${warningCount} warning</span>` : ''}
+            </div>
+            <div style="max-height: 150px; overflow-y: auto; background: var(--bg-input); border-radius: 8px; padding: 8px;">
+                ${alerts.slice(0, 10).map(p => `
+                    <div style="padding: 8px; border-bottom: 1px solid var(--border);">
+                        <div style="font-weight: 600; font-size: 0.85rem;">${p.sku}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-dim);">${p.alerts.map(a => a.message).join(', ')}</div>
+                    </div>
+                `).join('')}
+                ${alerts.length > 10 ? `<div style="padding: 8px; color: var(--text-dim);">...and ${alerts.length - 10} more</div>` : ''}
+            </div>
+        `;
+    }
+    
+    /**
+     * Run Etsy-Wix scan and display results (GAP 11)
+     */
+    async function runEtsyWixScan() {
+        const mismatches = await scanEtsyWixMismatches();
+        renderEtsyWixSyncResults(mismatches, 'etsyWixSyncResults');
+    }
+    
+    /**
+     * Run pricing validation and display results (GAP 14)
+     */
+    async function runPricingValidation() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.pricingValidation ?? false;
+        
+        if (!enabled) {
+            document.getElementById('pricingValidationResults').innerHTML = `
+                <div style="padding: 12px; background: rgba(234,179,8,0.15); border-radius: 8px; color: var(--warning);">
+                    ⚠️ Pricing validation feature is disabled. Enable <code>pricingValidation</code> in config.
+                </div>
+            `;
+            return;
+        }
+        
+        toast('Validating prices...', 'info');
+        const { issues, validated } = await validateAllPricing();
+        renderPricingValidationResults(issues, validated, 'pricingValidationResults');
+    }
+    
+    /**
+     * Run all validations at once
+     */
+    async function runAllValidations() {
+        toast('Running all validations...', 'info');
+        
+        const results = {
+            parAlerts: [],
+            etsyWixMismatches: [],
+            pricingIssues: []
+        };
+        
+        // PAR Alerts
+        const config = await loadConfig();
+        if (config?.settings?.features?.parAlerts) {
+            results.parAlerts = await getAllParAlerts();
+        }
+        
+        // Etsy-Wix Mismatches
+        results.etsyWixMismatches = await scanEtsyWixMismatches();
+        
+        // Pricing Issues
+        if (config?.settings?.features?.pricingValidation) {
+            const pricing = await validateAllPricing();
+            results.pricingIssues = pricing.issues;
+        }
+        
+        // Display summary
+        const container = document.getElementById('bulkOperationsResults');
+        const totalIssues = results.parAlerts.length + results.etsyWixMismatches.length + results.pricingIssues.length;
+        
+        if (totalIssues === 0) {
+            container.innerHTML = `
+                <div style="padding: 16px; background: rgba(34,197,94,0.15); border-radius: 8px; color: var(--success); text-align: center;">
+                    ✅ All validations passed! No issues found.
+                </div>
+            `;
+            toast('All validations passed!', 'success');
+        } else {
+            container.innerHTML = `
+                <div style="padding: 16px; background: rgba(234,179,8,0.15); border-radius: 8px;">
+                    <div style="font-weight: 600; color: var(--warning); margin-bottom: 12px;">
+                        ⚠️ Found ${totalIssues} total issues:
+                    </div>
+                    <ul style="margin: 0; padding-left: 20px; color: var(--text-dim);">
+                        ${results.parAlerts.length > 0 ? `<li>${results.parAlerts.length} PAR level alerts</li>` : ''}
+                        ${results.etsyWixMismatches.length > 0 ? `<li>${results.etsyWixMismatches.length} Etsy-Wix mismatches</li>` : ''}
+                        ${results.pricingIssues.length > 0 ? `<li>${results.pricingIssues.length} pricing issues</li>` : ''}
+                    </ul>
+                </div>
+            `;
+            toast(`Found ${totalIssues} issues`, 'warning');
+        }
+        
+        // Also update individual sections
+        if (results.parAlerts.length > 0) {
+            await scanParAlerts();
+        }
+        if (results.etsyWixMismatches.length > 0) {
+            renderEtsyWixSyncResults(results.etsyWixMismatches, 'etsyWixSyncResults');
+        }
+        if (results.pricingIssues.length > 0) {
+            renderPricingValidationResults(results.pricingIssues, results.pricingIssues.length, 'pricingValidationResults');
+        }
+    }
+    
+    /**
+     * Fix all issues at once
+     */
+    async function fixAllIssues() {
+        const confirmFix = window.confirm(
+            'This will attempt to fix:\n\n' +
+            '• All Etsy-Wix quantity mismatches (sync to lower value)\n' +
+            '• All pricing issues (recalculate from formula)\n\n' +
+            'PAR alerts cannot be auto-fixed (requires reordering).\n\n' +
+            'Continue?'
+        );
+        
+        if (!confirmFix) return;
+        
+        let fixed = 0;
+        
+        // Fix Etsy-Wix mismatches (without calling fixAllEtsyWixMismatches to avoid double-save)
+        const mismatches = await scanEtsyWixMismatches();
+        if (mismatches.length > 0) {
+            for (const m of mismatches) {
+                if (await fixEtsyWixMismatch(m.sku, m.suggestedQty)) {
+                    fixed++;
+                }
+            }
+        }
+        
+        // Fix pricing issues directly (without calling recalculateAllPricing to avoid double-confirm/save)
+        const config = await loadConfig();
+        if (config?.settings?.features?.pricingValidation) {
+            const { issues } = await validateAllPricing();
+            for (const issue of issues) {
+                const product = masterJsonData.inventory.find(p => p.sku === issue.sku);
+                if (product) {
+                    const result = await recalculateProductPrices(product);
+                    if (result.changed) {
+                        fixed++;
+                    }
+                }
+            }
+        }
+        
+        // Single save for all fixes
+        if (fixed > 0) {
+            await saveMasterJson({
+                actionDescription: `Bulk fix: ${fixed} issues resolved`
+            });
+            toast(`✅ Fixed ${fixed} issues`, 'success');
+        } else {
+            toast('No issues to fix', 'info');
+        }
+        
+        // Refresh displays
+        await runAllValidations();
+    }
+    
+    /**
+     * Check auto-retry status (GAP 12)
+     */
+    async function checkAutoRetryStatus() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.autoRetry ?? false;
+        const failedCount = state.syncQueue.filter(i => i.status === 'error').length;
+        
+        const countEl = document.getElementById('autoRetryCount');
+        if (countEl) {
+            countEl.textContent = failedCount;
+            countEl.style.color = failedCount > 0 ? 'var(--error)' : 'var(--success)';
+        }
+        
+        if (enabled && !autoRetryInterval) {
+            startAutoRetryWatcher();
+        }
+    }
+    
+    /**
+     * Refresh metrics display (GAP 18)
+     */
+    function refreshMetricsDisplay() {
+        const container = document.getElementById('metricsDisplay');
+        if (!container) return;
+        
+        const summary = getMetricsSummary();
+        
+        if (summary.totalOperations === 0) {
+            container.innerHTML = `<div style="color: var(--text-dim);">No metrics data yet</div>`;
+            return;
+        }
+        
+        container.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; text-align: center;">
+                <div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: var(--success);">${summary.successRate}%</div>
+                    <div style="font-size: 0.75rem; color: var(--text-dim);">Success Rate</div>
+                </div>
+                <div>
+                    <div style="font-size: 1.5rem; font-weight: 700;">${summary.avgResponseTime}ms</div>
+                    <div style="font-size: 0.75rem; color: var(--text-dim);">Avg Response</div>
+                </div>
+                <div>
+                    <div style="font-size: 1.5rem; font-weight: 700;">${summary.totalOperations}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-dim);">Total Ops</div>
+                </div>
+            </div>
+        `;
+    }
+    
+    /**
+     * Refresh health dashboard (GAP 19)
+     */
+    async function refreshHealthDashboard() {
+        await renderHealthDashboard('healthDashboardContent');
+    }
+    
+    // =====================================================================
+    // PRICING SETTINGS DISPLAY (Read-only)
+    // Editing is done in Inventory System → Settings → Pricing Formula
+    // =====================================================================
+    
+    /**
+     * Update pricing settings display (read-only)
+     */
+    async function updatePricingSettingsDisplay() {
+        const pricingConfig = await getPricingConfig();
+        
+        document.getElementById('dispMarkup').textContent = pricingConfig.markup + '×';
+        document.getElementById('dispTolerance').textContent = pricingConfig.tolerance + '%';
+        document.getElementById('dispEtsyOH').textContent = pricingConfig.etsyOverhead + '%';
+        document.getElementById('dispWixOH').textContent = pricingConfig.wixOverhead + '%';
+        document.getElementById('dispWayfairOH').textContent = pricingConfig.wayfairOverhead + '%';
+        document.getElementById('dispEtsySurch').textContent = '$' + pricingConfig.etsySurcharge.toFixed(2);
+        document.getElementById('dispWixSurch').textContent = '$' + pricingConfig.wixSurcharge.toFixed(2);
+        document.getElementById('dispWayfairSurch').textContent = '$' + pricingConfig.wayfairSurcharge.toFixed(2);
+    }
+    
+    // Initialize tools view when switching to it
+    const originalSwitchView = switchView;
+    switchView = function(v) {
+        originalSwitchView(v);
+        if (v === 'tools') {
+            updateFeatureFlagsDisplay();
+            checkAutoCascadeStatus();
+            checkAutoRetryStatus();
+            refreshMetricsDisplay();
+            refreshHealthDashboard();
+            updatePricingSettingsDisplay();
+        }
+    };
+    
+    // ===== END TOOLS VIEW UI FUNCTIONS =====
 
     document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('active'); }));
     document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active')); });
