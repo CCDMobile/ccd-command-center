@@ -7340,6 +7340,7 @@
     /**
      * Check Sync Hub heartbeat status
      * This checks for a heartbeat written by Sync Hub to localStorage or shared CONFIG
+     * Backward compatible: checks both sources
      */
     async function checkSyncHubStatus() {
         const statusEl = document.getElementById('dashSyncHubStatus');
@@ -7347,48 +7348,85 @@
         const alertBanner = document.getElementById('syncHubAlertBanner');
         const alertDetails = document.getElementById('syncHubAlertDetails');
         
+        // Elements might not exist on all views
+        if (!statusEl) return;
+        
         try {
-            // Check localStorage for heartbeat (same-PC scenario)
-            const heartbeat = localStorage.getItem('ccd_sync_hub_heartbeat');
+            let heartbeatData = null;
+            let heartbeatSource = null;
             
-            if (heartbeat) {
-                const data = JSON.parse(heartbeat);
-                const lastBeat = new Date(data.timestamp);
+            // Method 1: Check localStorage for heartbeat (same-PC scenario)
+            const localHeartbeat = localStorage.getItem('ccd_sync_hub_heartbeat');
+            if (localHeartbeat) {
+                heartbeatData = JSON.parse(localHeartbeat);
+                heartbeatSource = 'localStorage';
+            }
+            
+            // Method 2: Check CONFIG.heartbeat (cross-PC via OneDrive) - may be more recent
+            if (state.config?.heartbeat?.timestamp) {
+                const configBeat = state.config.heartbeat;
+                const configTime = new Date(configBeat.timestamp);
+                
+                // Use CONFIG heartbeat if it's more recent than localStorage
+                if (!heartbeatData || configTime > new Date(heartbeatData.timestamp)) {
+                    heartbeatData = configBeat;
+                    heartbeatSource = 'CONFIG';
+                }
+            }
+            
+            if (heartbeatData && heartbeatData.timestamp) {
+                const lastBeat = new Date(heartbeatData.timestamp);
                 const now = new Date();
                 const minutesAgo = Math.round((now - lastBeat) / 1000 / 60);
+                
+                // Extra info from heartbeat
+                const autoEnabled = heartbeatData.autoProcessEnabled ? ' • Auto: ON' : '';
+                const device = heartbeatData.source ? ` (${heartbeatData.source})` : '';
                 
                 if (minutesAgo < 5) {
                     // Sync Hub is running and healthy
                     statusEl.textContent = '✅ Running';
                     statusEl.style.color = 'var(--success)';
-                    lastSeenEl.textContent = `Last seen: ${minutesAgo === 0 ? 'Just now' : minutesAgo + 'm ago'}`;
-                    alertBanner.style.display = 'none';
+                    lastSeenEl.textContent = `${minutesAgo === 0 ? 'Just now' : minutesAgo + 'm ago'}${device}${autoEnabled}`;
+                    if (alertBanner) alertBanner.style.display = 'none';
                 } else if (minutesAgo < 15) {
                     // Sync Hub might be stale
                     statusEl.textContent = '⚠️ Stale';
                     statusEl.style.color = 'var(--warning)';
-                    lastSeenEl.textContent = `Last seen: ${minutesAgo}m ago`;
-                    alertBanner.style.display = 'none';
+                    lastSeenEl.textContent = `Last seen: ${minutesAgo}m ago${device}`;
+                    if (alertBanner) alertBanner.style.display = 'none';
                 } else {
                     // Sync Hub is likely not running
                     statusEl.textContent = '❌ Not Running';
                     statusEl.style.color = 'var(--error)';
                     lastSeenEl.textContent = `Last seen: ${minutesAgo}m ago`;
-                    alertBanner.style.display = 'block';
-                    alertDetails.textContent = `Sync Hub hasn't checked in for ${minutesAgo} minutes. Auto-sync may not be running.`;
+                    if (alertBanner) {
+                        alertBanner.style.display = 'block';
+                        if (alertDetails) {
+                            alertDetails.textContent = `Sync Hub hasn't checked in for ${minutesAgo} minutes. Auto-sync may not be running.`;
+                        }
+                    }
                 }
+                
+                console.log(`[Sync Hub Status] ${minutesAgo}m ago via ${heartbeatSource}`);
             } else {
-                // No heartbeat found - Sync Hub might be on different PC
+                // No heartbeat found - Sync Hub might be on different PC or not running
                 statusEl.textContent = '❓ Unknown';
                 statusEl.style.color = 'var(--text-dim)';
                 lastSeenEl.textContent = 'No heartbeat detected';
-                alertBanner.style.display = 'none';
+                if (alertBanner) alertBanner.style.display = 'none';
+                
+                console.log('[Sync Hub Status] No heartbeat found in localStorage or CONFIG');
             }
         } catch (error) {
             console.error('Error checking Sync Hub status:', error);
-            statusEl.textContent = '❓ Error';
-            statusEl.style.color = 'var(--text-dim)';
-            lastSeenEl.textContent = 'Could not check status';
+            if (statusEl) {
+                statusEl.textContent = '❓ Error';
+                statusEl.style.color = 'var(--text-dim)';
+            }
+            if (lastSeenEl) {
+                lastSeenEl.textContent = 'Could not check status';
+            }
         }
     }
 
