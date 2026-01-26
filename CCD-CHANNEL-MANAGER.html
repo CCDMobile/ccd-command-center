@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Channel Manager v3.3.0 - All GAPs Complete</title>
+    <title>CCD Channel Manager v3.4.0 - Clickable Feature Flags</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -301,7 +301,7 @@
 <body>
     <header class="header">
         <div class="header-left">
-            <div class="logo"><div class="logo-icon">&#128225;</div><span>Channel Manager v3.3.0 • All 21 GAPs Complete</span></div>
+            <div class="logo"><div class="logo-icon">&#128225;</div><span>Channel Manager v3.4.0 • All 21 GAPs Complete</span></div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">📊 Dashboard</button>
                 <button class="nav-btn" data-view="products" onclick="switchView('products')">📦 Products</button>
@@ -1905,6 +1905,102 @@
     async function reloadConfig() {
         configData = null;
         return await loadConfig();
+    }
+    
+    /**
+     * Save config to file (v3.4.0 - Feature Flag Toggle Support)
+     */
+    async function saveConfig() {
+        if (!configFileHandle) {
+            toast('No config file connected. Changes will be lost on refresh.', 'warning');
+            return false;
+        }
+        
+        try {
+            // Update metadata
+            if (configData._metadata) {
+                configData._metadata.version = (configData._metadata.version || 0) + 1;
+                configData._metadata.lastModified = new Date().toISOString();
+                configData._metadata.lastModifiedBy = 'Channel Manager v3.4.0';
+            }
+            
+            const writable = await configFileHandle.createWritable();
+            await writable.write(JSON.stringify(configData, null, 2));
+            await writable.close();
+            
+            console.log('[Config] ✅ Saved to config file');
+            return true;
+        } catch (error) {
+            console.error('[Config] Failed to save:', error);
+            toast('Failed to save config: ' + error.message, 'error');
+            return false;
+        }
+    }
+    
+    /**
+     * Toggle a feature flag and save (v3.4.0)
+     */
+    async function toggleFeatureFlag(flagKey) {
+        const config = await loadConfig();
+        if (!config.settings) config.settings = {};
+        if (!config.settings.features) config.settings.features = {};
+        
+        const currentValue = config.settings.features[flagKey] ?? false;
+        const newValue = !currentValue;
+        
+        config.settings.features[flagKey] = newValue;
+        
+        // Handle backward compatibility for sharedQueue/useSharedQueue
+        if (flagKey === 'sharedQueue') {
+            config.settings.features.useSharedQueue = newValue;
+        }
+        if (flagKey === 'useSharedQueue') {
+            config.settings.features.sharedQueue = newValue;
+        }
+        
+        // Handle etsyWixSync/enforceEtsyWixSync
+        if (flagKey === 'etsyWixSync') {
+            config.settings.features.enforceEtsyWixSync = newValue;
+        }
+        if (flagKey === 'enforceEtsyWixSync') {
+            config.settings.features.etsyWixSync = newValue;
+        }
+        
+        // Save the config
+        const saved = await saveConfig();
+        
+        // Show feedback
+        const flagNames = {
+            autoCascade: 'Auto-Cascade',
+            parAlerts: 'PAR Alerts',
+            enforceEtsyWixSync: 'Etsy-Wix Sync',
+            etsyWixSync: 'Etsy-Wix Sync',
+            pricingValidation: 'Pricing Validation',
+            useSharedQueue: 'Shared Queue',
+            sharedQueue: 'Shared Queue',
+            inventoryDeduction: 'Inventory Deduction',
+            autoRetry: 'Auto-Retry',
+            collisionDetection: 'Collision Detection',
+            obSurcharge: 'OB Surcharge',
+            loadingStates: 'Loading States',
+            bulkOperations: 'Bulk Operations',
+            metrics: 'Metrics',
+            healthDashboard: 'Health Dashboard',
+            userRoles: 'User Roles',
+            auditLog: 'Audit Log',
+            enhancedHeartbeat: 'Enhanced Heartbeat'
+        };
+        
+        const flagName = flagNames[flagKey] || flagKey;
+        toast(`${flagName}: ${newValue ? 'ON' : 'OFF'}${saved ? '' : ' (not saved)'}`, newValue ? 'success' : 'info');
+        
+        // Re-render the display
+        await updateFeatureFlagsDisplay();
+        
+        // Trigger any flag-specific side effects
+        if (flagKey === 'autoCascade') {
+            await checkAutoCascadeStatus();
+        }
     }
     
     /**
@@ -7168,10 +7264,7 @@
                                order.channel === 'wix' ? '🌐' : '🏠';
             const orderId = order.id || order.poNumber || order.receipt_id || 'N/A';
             const orderDate = order.date || order.orderDate || order.poDate || order.createdDate;
-            // Ensure total is a number - handle string values like "$123.45" or objects
-            let totalRaw = order.total || order.grandTotal || 0;
-            const total = typeof totalRaw === 'number' ? totalRaw : 
-                          typeof totalRaw === 'string' ? parseFloat(totalRaw.replace(/[^0-9.-]/g, '')) || 0 : 0;
+            const total = order.total || order.grandTotal || 0;
             const items = order.items || order.products || [];
             const buyer = order.buyer || order.customerName || 'Unknown';
             
@@ -7204,17 +7297,14 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                ${items.map(item => {
-                                    const priceRaw = item.price || item.unitPrice || 0;
-                                    const price = typeof priceRaw === 'number' ? priceRaw : parseFloat(String(priceRaw).replace(/[^0-9.-]/g, '')) || 0;
-                                    return `
+                                ${items.map(item => `
                                     <tr>
                                         <td style="padding: 8px 12px; font-family: 'JetBrains Mono', monospace;">${esc(item.sku || item.partNumber || '-')}</td>
                                         <td style="padding: 8px 12px;">${esc(item.name || item.title || '-')}</td>
                                         <td style="padding: 8px 12px;">${item.qty || item.quantity || 1}</td>
-                                        <td style="padding: 8px 12px;">$${price.toFixed(2)}</td>
+                                        <td style="padding: 8px 12px;">$${(item.price || item.unitPrice || 0).toFixed(2)}</td>
                                     </tr>
-                                `}).join('')}
+                                `).join('')}
                             </tbody>
                         </table>
                     </div>
@@ -7340,7 +7430,6 @@
     /**
      * Check Sync Hub heartbeat status
      * This checks for a heartbeat written by Sync Hub to localStorage or shared CONFIG
-     * Backward compatible: checks both sources
      */
     async function checkSyncHubStatus() {
         const statusEl = document.getElementById('dashSyncHubStatus');
@@ -7348,85 +7437,48 @@
         const alertBanner = document.getElementById('syncHubAlertBanner');
         const alertDetails = document.getElementById('syncHubAlertDetails');
         
-        // Elements might not exist on all views
-        if (!statusEl) return;
-        
         try {
-            let heartbeatData = null;
-            let heartbeatSource = null;
+            // Check localStorage for heartbeat (same-PC scenario)
+            const heartbeat = localStorage.getItem('ccd_sync_hub_heartbeat');
             
-            // Method 1: Check localStorage for heartbeat (same-PC scenario)
-            const localHeartbeat = localStorage.getItem('ccd_sync_hub_heartbeat');
-            if (localHeartbeat) {
-                heartbeatData = JSON.parse(localHeartbeat);
-                heartbeatSource = 'localStorage';
-            }
-            
-            // Method 2: Check CONFIG.heartbeat (cross-PC via OneDrive) - may be more recent
-            if (state.config?.heartbeat?.timestamp) {
-                const configBeat = state.config.heartbeat;
-                const configTime = new Date(configBeat.timestamp);
-                
-                // Use CONFIG heartbeat if it's more recent than localStorage
-                if (!heartbeatData || configTime > new Date(heartbeatData.timestamp)) {
-                    heartbeatData = configBeat;
-                    heartbeatSource = 'CONFIG';
-                }
-            }
-            
-            if (heartbeatData && heartbeatData.timestamp) {
-                const lastBeat = new Date(heartbeatData.timestamp);
+            if (heartbeat) {
+                const data = JSON.parse(heartbeat);
+                const lastBeat = new Date(data.timestamp);
                 const now = new Date();
                 const minutesAgo = Math.round((now - lastBeat) / 1000 / 60);
-                
-                // Extra info from heartbeat
-                const autoEnabled = heartbeatData.autoProcessEnabled ? ' • Auto: ON' : '';
-                const device = heartbeatData.source ? ` (${heartbeatData.source})` : '';
                 
                 if (minutesAgo < 5) {
                     // Sync Hub is running and healthy
                     statusEl.textContent = '✅ Running';
                     statusEl.style.color = 'var(--success)';
-                    lastSeenEl.textContent = `${minutesAgo === 0 ? 'Just now' : minutesAgo + 'm ago'}${device}${autoEnabled}`;
-                    if (alertBanner) alertBanner.style.display = 'none';
+                    lastSeenEl.textContent = `Last seen: ${minutesAgo === 0 ? 'Just now' : minutesAgo + 'm ago'}`;
+                    alertBanner.style.display = 'none';
                 } else if (minutesAgo < 15) {
                     // Sync Hub might be stale
                     statusEl.textContent = '⚠️ Stale';
                     statusEl.style.color = 'var(--warning)';
-                    lastSeenEl.textContent = `Last seen: ${minutesAgo}m ago${device}`;
-                    if (alertBanner) alertBanner.style.display = 'none';
+                    lastSeenEl.textContent = `Last seen: ${minutesAgo}m ago`;
+                    alertBanner.style.display = 'none';
                 } else {
                     // Sync Hub is likely not running
                     statusEl.textContent = '❌ Not Running';
                     statusEl.style.color = 'var(--error)';
                     lastSeenEl.textContent = `Last seen: ${minutesAgo}m ago`;
-                    if (alertBanner) {
-                        alertBanner.style.display = 'block';
-                        if (alertDetails) {
-                            alertDetails.textContent = `Sync Hub hasn't checked in for ${minutesAgo} minutes. Auto-sync may not be running.`;
-                        }
-                    }
+                    alertBanner.style.display = 'block';
+                    alertDetails.textContent = `Sync Hub hasn't checked in for ${minutesAgo} minutes. Auto-sync may not be running.`;
                 }
-                
-                console.log(`[Sync Hub Status] ${minutesAgo}m ago via ${heartbeatSource}`);
             } else {
-                // No heartbeat found - Sync Hub might be on different PC or not running
+                // No heartbeat found - Sync Hub might be on different PC
                 statusEl.textContent = '❓ Unknown';
                 statusEl.style.color = 'var(--text-dim)';
                 lastSeenEl.textContent = 'No heartbeat detected';
-                if (alertBanner) alertBanner.style.display = 'none';
-                
-                console.log('[Sync Hub Status] No heartbeat found in localStorage or CONFIG');
+                alertBanner.style.display = 'none';
             }
         } catch (error) {
             console.error('Error checking Sync Hub status:', error);
-            if (statusEl) {
-                statusEl.textContent = '❓ Error';
-                statusEl.style.color = 'var(--text-dim)';
-            }
-            if (lastSeenEl) {
-                lastSeenEl.textContent = 'Could not check status';
-            }
+            statusEl.textContent = '❓ Error';
+            statusEl.style.color = 'var(--text-dim)';
+            lastSeenEl.textContent = 'Could not check status';
         }
     }
 
@@ -7635,7 +7687,7 @@
     // =====================================================================
     
     /**
-     * Update feature flags display in Tools view
+     * Update feature flags display in Tools view (v3.4.0 - Clickable Toggles)
      */
     async function updateFeatureFlagsDisplay() {
         const container = document.getElementById('featureFlagsDisplay');
@@ -7644,32 +7696,64 @@
         const config = await loadConfig();
         const features = config?.settings?.features || {};
         
-        const flagStatus = (name, enabled) => `
-            <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-input); border-radius: 6px;">
-                <span style="width: 10px; height: 10px; border-radius: 50%; background: ${enabled ? 'var(--success)' : 'var(--text-muted)'};"></span>
-                <span style="font-size: 0.85rem;">${name}</span>
-                <span style="margin-left: auto; font-size: 0.75rem; color: ${enabled ? 'var(--success)' : 'var(--text-muted)'};">
-                    ${enabled ? 'ON' : 'OFF'}
-                </span>
-            </div>
-        `;
+        // Flag definitions with display names and categories
+        const flagDefs = [
+            { key: 'autoCascade', name: 'Auto-Cascade', cat: 'sync' },
+            { key: 'useSharedQueue', name: 'Shared Queue', cat: 'sync' },
+            { key: 'obSurcharge', name: 'OB Surcharge', cat: 'pricing' },
+            { key: 'healthDashboard', name: 'Health Dashboard', cat: 'monitor' },
+            { key: 'parAlerts', name: 'PAR Alerts', cat: 'inventory' },
+            { key: 'inventoryDeduction', name: 'Inventory Deduction', cat: 'inventory' },
+            { key: 'loadingStates', name: 'Loading States', cat: 'ui' },
+            { key: 'userRoles', name: 'User Roles', cat: 'security' },
+            { key: 'enforceEtsyWixSync', name: 'Etsy-Wix Sync', cat: 'sync' },
+            { key: 'autoRetry', name: 'Auto-Retry', cat: 'sync' },
+            { key: 'bulkOperations', name: 'Bulk Operations', cat: 'ops' },
+            { key: 'auditLog', name: 'Audit Log', cat: 'monitor' },
+            { key: 'pricingValidation', name: 'Pricing Validation', cat: 'pricing' },
+            { key: 'collisionDetection', name: 'Collision Detection', cat: 'ops' },
+            { key: 'metrics', name: 'Metrics', cat: 'monitor' },
+            { key: 'enhancedHeartbeat', name: 'Enhanced Heartbeat', cat: 'monitor' }
+        ];
+        
+        const catColors = {
+            sync: '#3b82f6',
+            inventory: '#10b981',
+            pricing: '#f59e0b',
+            monitor: '#8b5cf6',
+            ops: '#ec4899',
+            ui: '#6366f1',
+            security: '#ef4444'
+        };
+        
+        const enabledCount = flagDefs.filter(f => features[f.key]).length;
+        
+        const flagToggle = (flag) => {
+            const enabled = features[flag.key] ?? false;
+            const color = catColors[flag.cat] || '#64748b';
+            return `
+                <div onclick="toggleFeatureFlag('${flag.key}')" 
+                     style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--bg-input); border-radius: 8px; cursor: pointer; transition: all 0.2s; border: 1px solid transparent;"
+                     onmouseover="this.style.background='var(--bg-hover)'; this.style.borderColor='var(--border)';"
+                     onmouseout="this.style.background='var(--bg-input)'; this.style.borderColor='transparent';"
+                     title="Click to toggle ${flag.name}">
+                    <span style="width: 8px; height: 8px; border-radius: 50%; background: ${color}; flex-shrink: 0;"></span>
+                    <span style="font-size: 0.85rem; flex: 1;">${flag.name}</span>
+                    <div style="position: relative; width: 40px; height: 22px; background: ${enabled ? 'var(--success)' : '#374151'}; border-radius: 11px; transition: background 0.2s; flex-shrink: 0;">
+                        <div style="position: absolute; top: 2px; left: ${enabled ? '20px' : '2px'}; width: 18px; height: 18px; background: white; border-radius: 50%; transition: left 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.3);"></div>
+                    </div>
+                </div>
+            `;
+        };
         
         container.innerHTML = `
-            ${flagStatus('Auto-Cascade', features.autoCascade)}
-            ${flagStatus('PAR Alerts', features.parAlerts)}
-            ${flagStatus('Etsy-Wix Sync', features.enforceEtsyWixSync)}
-            ${flagStatus('Pricing Validation', features.pricingValidation)}
-            ${flagStatus('Shared Queue', features.useSharedQueue)}
-            ${flagStatus('Inventory Deduction', features.inventoryDeduction)}
-            ${flagStatus('Auto-Retry', features.autoRetry)}
-            ${flagStatus('Collision Detection', features.collisionDetection)}
-            ${flagStatus('OB Surcharge', features.obSurcharge)}
-            ${flagStatus('Loading States', features.loadingStates)}
-            ${flagStatus('Bulk Operations', features.bulkOperations)}
-            ${flagStatus('Metrics', features.metrics)}
-            ${flagStatus('Health Dashboard', features.healthDashboard)}
-            ${flagStatus('User Roles', features.userRoles)}
-            ${flagStatus('Audit Log', features.auditLog)}
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+                <span style="font-size: 0.8rem; color: var(--text-dim);">Click any flag to toggle</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); background: var(--bg-input); padding: 4px 10px; border-radius: 10px;">${enabledCount} / ${flagDefs.length} enabled</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+                ${flagDefs.map(f => flagToggle(f)).join('')}
+            </div>
         `;
     }
     
