@@ -339,6 +339,28 @@
                     </button>
                 </div>
                 <div id="fileStatus" style="margin-top: 6px; font-size: 0.7rem; color: var(--text-muted); text-align: center; padding: 4px;"></div>
+                
+                <!-- AI Content Studio Import Panel (Feature Flag: aiContentStudioIntegration) -->
+                <div id="contentStudioImports" style="margin-top: 12px; padding: 12px; background: linear-gradient(135deg, rgba(245,158,11,0.1), rgba(217,119,6,0.1)); border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; display: none;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <div style="font-weight: 600; font-size: 0.85rem; color: #f59e0b;">📤 Content Studio</div>
+                        <div id="pendingCount" style="background: #f59e0b; color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 700;">0</div>
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-dim); margin-bottom: 8px;">
+                        Content ready to import
+                    </div>
+                    <div id="pendingList" style="max-height: 200px; overflow-y: auto; margin-bottom: 8px;">
+                        <!-- Populated dynamically -->
+                    </div>
+                    <div style="display: flex; gap: 4px;">
+                        <button class="btn-sm" onclick="importAllPending()" style="flex: 1; background: #f59e0b; color: white; font-size: 0.75rem;">
+                            Import All
+                        </button>
+                        <button class="btn-sm btn-secondary" onclick="clearPending()" style="flex: 1; font-size: 0.75rem;">
+                            Clear
+                        </button>
+                    </div>
+                </div>
             </div>
             <div class="product-list" id="productList"></div>
         </aside>
@@ -917,6 +939,30 @@
                                 <button class="btn btn-secondary" onclick="scanParAlerts()">🔍 Scan PAR Levels</button>
                             </div>
                             <div id="parAlertsResults"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- AI Content Studio Integration Tool -->
+                    <div class="settings-section" style="margin-bottom: 0;">
+                        <div class="settings-header">
+                            <div class="settings-icon" style="background: rgba(245,158,11,0.15);">📤</div>
+                            <div>
+                                <div style="font-weight: 600;">AI Content Studio Integration</div>
+                                <div style="font-size: 0.8rem; color: var(--text-dim);">Import AI-generated content</div>
+                            </div>
+                        </div>
+                        <div class="settings-body">
+                            <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 16px;">
+                                When enabled, content generated in AI Content Studio can be imported with one click.
+                            </p>
+                            <div id="aiStudioStatus" style="padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 12px;">
+                                <span style="color: var(--text-dim);">Status: </span>
+                                <span id="aiStudioStatusText">Checking...</span>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" onclick="checkAiStudioStatus()">🔍 Check Status</button>
+                                <button class="btn btn-primary" onclick="toggleAiStudioIntegration()">Toggle Integration</button>
+                            </div>
                         </div>
                     </div>
                     
@@ -1893,7 +1939,8 @@
                     metrics: false,
                     healthDashboard: false,
                     userRoles: false,
-                    auditLog: false
+                    auditLog: false,
+                    aiContentStudioIntegration: true  // NEW: AI Content Studio import feature
                 }
             }
         };
@@ -4442,6 +4489,14 @@
         refreshDashboard(); 
         loadSyncQueue();
         updateFileStatus();
+        
+        // AI Content Studio Integration: Load pending content if feature enabled
+        setTimeout(async () => {
+            const config = await loadConfig();
+            if (config?.settings?.features?.aiContentStudioIntegration) {
+                loadPendingContent();
+            }
+        }, 1000);
         
         // GAP 4: Start auto-cascade if enabled (delayed to allow files to load)
         setTimeout(async () => {
@@ -7795,6 +7850,46 @@
     }
     
     /**
+     * Check AI Studio Integration status
+     */
+    async function checkAiStudioStatus() {
+        const config = await loadConfig();
+        const enabled = config?.settings?.features?.aiContentStudioIntegration ?? false;
+        const statusText = document.getElementById('aiStudioStatusText');
+        
+        if (statusText) {
+            if (enabled) {
+                // Count pending imports
+                const pendingCount = Object.keys(localStorage).filter(k => 
+                    k.startsWith('cm_import_') || k.startsWith('cm_batch_')
+                ).length;
+                
+                statusText.innerHTML = `<span style="color: var(--success);">✅ Enabled</span> - ${pendingCount} pending imports`;
+                loadPendingContent(); // Refresh display
+            } else {
+                statusText.innerHTML = `<span style="color: var(--text-muted);">⚪ Disabled</span> - Enable in config`;
+                document.getElementById('contentStudioImports').style.display = 'none';
+            }
+        }
+    }
+    
+    /**
+     * Toggle AI Studio Integration
+     */
+    async function toggleAiStudioIntegration() {
+        const config = await loadConfig();
+        const currentlyEnabled = config?.settings?.features?.aiContentStudioIntegration ?? true;
+        
+        if (currentlyEnabled) {
+            toast('To disable AI Content Studio integration, set aiContentStudioIntegration: false in config file', 'info');
+        } else {
+            toast('To enable AI Content Studio integration, set aiContentStudioIntegration: true in config file', 'info');
+        }
+        
+        await checkAiStudioStatus();
+    }
+    
+    /**
      * Scan PAR alerts and display results (GAP 6)
      */
     async function scanParAlerts() {
@@ -8078,6 +8173,7 @@
         if (v === 'tools') {
             updateFeatureFlagsDisplay();
             checkAutoCascadeStatus();
+            checkAiStudioStatus(); // AI Content Studio Integration
             checkAutoRetryStatus();
             refreshMetricsDisplay();
             refreshHealthDashboard();
@@ -8086,6 +8182,291 @@
     };
     
     // ===== END TOOLS VIEW UI FUNCTIONS =====
+    
+    // ============================================
+    // AI CONTENT STUDIO INTEGRATION
+    // Feature Flag: aiContentStudioIntegration
+    // ============================================
+    
+    /**
+     * Load pending content from AI Content Studio
+     * Only runs if feature flag is enabled
+     */
+    async function loadPendingContent() {
+        // Check feature flag
+        const config = await loadConfig();
+        if (!config?.settings?.features?.aiContentStudioIntegration) {
+            document.getElementById('contentStudioImports').style.display = 'none';
+            return;
+        }
+        
+        const imports = [];
+        const batchImports = [];
+        
+        // Check for individual imports
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('cm_import_')) {
+                try {
+                    const data = JSON.parse(localStorage.getItem(key));
+                    imports.push({ key, data });
+                } catch (e) {
+                    console.error('[AI Studio] Error parsing import:', key, e);
+                }
+            }
+        });
+        
+        // Check for batch imports
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('cm_batch_')) {
+                try {
+                    const data = JSON.parse(localStorage.getItem(key));
+                    batchImports.push({ key, data });
+                } catch (e) {
+                    console.error('[AI Studio] Error parsing batch:', key, e);
+                }
+            }
+        });
+        
+        const totalCount = imports.length + batchImports.reduce((sum, b) => sum + (b.data.count || 0), 0);
+        
+        if (totalCount > 0) {
+            displayPendingContent(imports, batchImports, totalCount);
+        } else {
+            document.getElementById('contentStudioImports').style.display = 'none';
+        }
+    }
+    
+    /**
+     * Display pending imports in sidebar
+     */
+    function displayPendingContent(imports, batchImports, totalCount) {
+        const panel = document.getElementById('contentStudioImports');
+        const countEl = document.getElementById('pendingCount');
+        const listEl = document.getElementById('pendingList');
+        
+        panel.style.display = 'block';
+        countEl.textContent = totalCount;
+        
+        let html = '';
+        
+        // Individual imports
+        imports.forEach(imp => {
+            const platform = imp.data.platform ? imp.data.platform.charAt(0).toUpperCase() + imp.data.platform.slice(1) : 'Unknown';
+            const timeAgo = formatTimeAgo(imp.data.timestamp);
+            html += `
+                <div style="background: var(--bg-input); padding: 8px; border-radius: 6px; margin-bottom: 4px; font-size: 0.75rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 4px;">
+                        <div>
+                            <div style="font-weight: 600; color: var(--text);">${imp.data.sku}</div>
+                            <div style="color: var(--text-dim); font-size: 0.7rem;">${platform} • ${timeAgo}</div>
+                        </div>
+                        <button onclick="importSingle('${imp.key}')" style="background: #10b981; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem;">
+                            Import
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        // Batch imports
+        batchImports.forEach(batch => {
+            const timeAgo = formatTimeAgo(batch.data.timestamp);
+            const count = batch.data.count || 0;
+            html += `
+                <div style="background: rgba(245,158,11,0.2); padding: 8px; border-radius: 6px; margin-bottom: 4px; font-size: 0.75rem; border: 1px solid rgba(245,158,11,0.3);">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div>
+                            <div style="font-weight: 600; color: #f59e0b;">Batch Import</div>
+                            <div style="color: var(--text-dim); font-size: 0.7rem;">${count} items • ${timeAgo}</div>
+                        </div>
+                        <button onclick="importBatch('${batch.key}')" style="background: #f59e0b; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.7rem;">
+                            Import
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        listEl.innerHTML = html || '<div style="color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 8px;">No pending imports</div>';
+    }
+    
+    /**
+     * Format timestamp as "time ago"
+     */
+    function formatTimeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        
+        if (seconds < 60) return 'just now';
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        return `${Math.floor(seconds / 86400)}d ago`;
+    }
+    
+    /**
+     * Import single item from AI Content Studio
+     */
+    function importSingle(key) {
+        const data = JSON.parse(localStorage.getItem(key));
+        
+        if (!data) {
+            toast('Import data not found', 'error');
+            return;
+        }
+        
+        // Switch to Queue Manager view
+        switchView('queue');
+        
+        // Pre-fill form with content
+        setTimeout(() => {
+            document.getElementById('modalSKU').value = data.sku;
+            document.getElementById('modalProductName').textContent = data.productName || data.sku;
+            
+            // Set platform
+            const platformSelect = document.getElementById('modalPlatform');
+            if (platformSelect) {
+                platformSelect.value = data.platform || 'etsy';
+            }
+            
+            // Set description
+            const descField = document.getElementById('modalDescription');
+            if (descField) {
+                descField.value = data.content.description || '';
+            }
+            
+            // Set price
+            const priceField = document.getElementById('modalPrice');
+            if (priceField && data.pricing) {
+                priceField.value = data.pricing.retail || '';
+            }
+            
+            // Set quantity
+            const qtyField = document.getElementById('modalQuantity');
+            if (qtyField && data.inventory) {
+                qtyField.value = data.inventory.quantity || '';
+            }
+            
+            // Set tags
+            const tagsField = document.getElementById('modalTags');
+            if (tagsField && data.content.tags) {
+                tagsField.value = data.content.tags.slice(0, 13).join(', ');
+            }
+            
+            // Remove from pending
+            localStorage.removeItem(key);
+            
+            // Reload pending panel
+            loadPendingContent();
+            
+            // Show success message
+            toast(`✅ Content imported for SKU ${data.sku}!`, 'success');
+            
+            // Open the add to queue modal if it exists
+            const addModal = document.getElementById('addToQueueModal');
+            if (addModal) {
+                addModal.classList.add('active');
+            }
+            
+            console.log(`[AI Studio] Imported content for SKU ${data.sku} from Content Studio`);
+        }, 100);
+    }
+    
+    /**
+     * Import batch from AI Content Studio
+     */
+    function importBatch(key) {
+        const batchData = JSON.parse(localStorage.getItem(key));
+        
+        if (!batchData || !batchData.products) {
+            toast('Batch data not found', 'error');
+            return;
+        }
+        
+        const count = batchData.products.length;
+        
+        if (!confirm(`Import ${count} items from Content Studio?\n\nThey will be added to your pending imports for individual review.`)) {
+            return;
+        }
+        
+        let imported = 0;
+        batchData.products.forEach(product => {
+            // Store each as individual import for manual review
+            const individualKey = `cm_import_${product.sku}_${product.platform}_${Date.now()}_${Math.random()}`;
+            localStorage.setItem(individualKey, JSON.stringify(product));
+            imported++;
+        });
+        
+        // Remove batch
+        localStorage.removeItem(key);
+        
+        // Reload pending
+        loadPendingContent();
+        
+        toast(`✅ ${imported} items imported! Import each one individually to review before publishing.`, 'success');
+        
+        console.log(`[AI Studio] Imported ${imported} items from batch`);
+    }
+    
+    /**
+     * Import all pending items
+     */
+    function importAllPending() {
+        const imports = [];
+        
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('cm_import_')) {
+                try {
+                    const data = JSON.parse(localStorage.getItem(key));
+                    imports.push({ key, data });
+                } catch (e) {
+                    console.error('[AI Studio] Error:', e);
+                }
+            }
+        });
+        
+        if (imports.length === 0) {
+            toast('No pending imports found', 'warning');
+            return;
+        }
+        
+        if (!confirm(`Import all ${imports.length} items?`)) {
+            return;
+        }
+        
+        // Import first one automatically
+        if (imports.length > 0) {
+            importSingle(imports[0].key);
+        }
+        
+        toast(`✅ Ready to import ${imports.length} items! Starting with the first item. Import the rest one by one to review each.`, 'success');
+    }
+    
+    /**
+     * Clear all pending imports
+     */
+    function clearPending() {
+        const keys = Object.keys(localStorage).filter(k => k.startsWith('cm_import_') || k.startsWith('cm_batch_'));
+        
+        if (keys.length === 0) {
+            toast('No pending imports to clear', 'warning');
+            return;
+        }
+        
+        if (!confirm(`Clear ${keys.length} pending imports?\n\nThis cannot be undone.`)) {
+            return;
+        }
+        
+        keys.forEach(key => localStorage.removeItem(key));
+        
+        loadPendingContent();
+        
+        toast(`✅ Cleared ${keys.length} pending imports`, 'success');
+        
+        console.log(`[AI Studio] Cleared ${keys.length} pending imports`);
+    }
+    
+    // ============================================
+    // END AI CONTENT STUDIO INTEGRATION
+    // ============================================
 
     document.querySelectorAll('.modal-overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('active'); }));
     document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.modal-overlay.active').forEach(m => m.classList.remove('active')); });
