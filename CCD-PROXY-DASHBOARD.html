@@ -1,0 +1,1305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCD Proxy Dashboard Monitor v1.1 - JSONP Fix</title>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0c1222;
+            --bg-secondary: #141d2f;
+            --bg-card: #1a2540;
+            --bg-hover: #1e2d4a;
+            --border: #2a3f5f;
+            --text: #e2e8f0;
+            --text-dim: #8892a6;
+            --text-muted: #5a6478;
+            --success: #22c55e;
+            --success-bg: rgba(34, 197, 94, 0.15);
+            --warning: #eab308;
+            --warning-bg: rgba(234, 179, 8, 0.15);
+            --error: #ef4444;
+            --error-bg: rgba(239, 68, 68, 0.15);
+            --info: #3b82f6;
+            --info-bg: rgba(59, 130, 246, 0.15);
+            --etsy: #f56400;
+            --etsy-bg: rgba(245, 100, 0, 0.15);
+            --wix: #0061ff;
+            --wix-bg: rgba(0, 97, 255, 0.15);
+            --wayfair: #9333ea;
+            --wayfair-bg: rgba(147, 51, 234, 0.15);
+            --shippo: #00b4d8;
+            --shippo-bg: rgba(0, 180, 216, 0.15);
+            --synchub: #8b5cf6;
+            --synchub-bg: rgba(139, 92, 246, 0.15);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'DM Sans', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text);
+            min-height: 100vh;
+        }
+        
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 0 24px;
+            height: 64px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header-left { display: flex; align-items: center; gap: 16px; }
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 1.2rem;
+        }
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #f59e0b, #ef4444);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+        }
+        .header-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: var(--bg-card);
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+        .status-dot.healthy { background: var(--success); box-shadow: 0 0 8px var(--success); }
+        .status-dot.degraded { background: var(--warning); box-shadow: 0 0 8px var(--warning); }
+        .status-dot.down { background: var(--error); box-shadow: 0 0 8px var(--error); }
+        .status-dot.checking { background: var(--info); animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #f59e0b, #ef4444);
+            color: white;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3); }
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { background: var(--bg-hover); }
+        .btn-sm { padding: 6px 12px; font-size: 0.8rem; }
+        
+        /* Container */
+        .container { max-width: 1600px; margin: 0 auto; padding: 24px; }
+        
+        /* Summary Cards */
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .summary-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+        .summary-value { font-size: 2.5rem; font-weight: 700; }
+        .summary-label { font-size: 0.85rem; color: var(--text-dim); margin-top: 4px; }
+        .summary-card.healthy .summary-value { color: var(--success); }
+        .summary-card.degraded .summary-value { color: var(--warning); }
+        .summary-card.down .summary-value { color: var(--error); }
+        
+        /* Proxy Grid */
+        .proxy-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        .proxy-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.2s;
+        }
+        .proxy-card:hover { border-color: var(--text-muted); }
+        .proxy-card.healthy { border-left: 4px solid var(--success); }
+        .proxy-card.degraded { border-left: 4px solid var(--warning); }
+        .proxy-card.down { border-left: 4px solid var(--error); }
+        .proxy-card.unknown { border-left: 4px solid var(--text-muted); }
+        
+        .proxy-header {
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+        .proxy-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .proxy-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.3rem;
+        }
+        .proxy-icon.etsy { background: var(--etsy-bg); }
+        .proxy-icon.wix { background: var(--wix-bg); }
+        .proxy-icon.wayfair { background: var(--wayfair-bg); }
+        .proxy-icon.shippo { background: var(--shippo-bg); }
+        .proxy-icon.synchub { background: var(--synchub-bg); }
+        
+        .proxy-name { font-weight: 600; font-size: 1.1rem; }
+        .proxy-version { font-size: 0.8rem; color: var(--text-dim); }
+        
+        .proxy-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 600;
+        }
+        .proxy-status.healthy { background: var(--success-bg); color: var(--success); }
+        .proxy-status.degraded { background: var(--warning-bg); color: var(--warning); }
+        .proxy-status.down { background: var(--error-bg); color: var(--error); }
+        .proxy-status.unknown { background: var(--bg-card); color: var(--text-muted); }
+        .proxy-status.checking { background: var(--info-bg); color: var(--info); }
+        
+        .proxy-body { padding: 20px; }
+        .proxy-stats {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin-bottom: 16px;
+        }
+        .proxy-stat {
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .proxy-stat-value { font-size: 1.3rem; font-weight: 700; }
+        .proxy-stat-label { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+        
+        .proxy-details { font-size: 0.85rem; }
+        .proxy-detail {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .proxy-detail:last-child { border-bottom: none; }
+        .proxy-detail-label { color: var(--text-dim); }
+        .proxy-detail-value { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; }
+        
+        .proxy-actions {
+            padding: 16px 20px;
+            background: var(--bg-card);
+            display: flex;
+            gap: 8px;
+        }
+        
+        /* Config Section */
+        .config-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .config-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+        }
+        .config-item { margin-bottom: 16px; }
+        .config-label {
+            font-size: 0.85rem;
+            color: var(--text-dim);
+            margin-bottom: 6px;
+            display: block;
+        }
+        .config-input {
+            width: 100%;
+            padding: 10px 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+        .config-input:focus {
+            outline: none;
+            border-color: var(--info);
+        }
+        
+        /* Log Panel */
+        .log-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        .log-header {
+            padding: 16px 20px;
+            background: var(--bg-card);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+        }
+        .log-title { font-weight: 600; }
+        .log-body {
+            height: 300px;
+            overflow-y: auto;
+            padding: 12px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+        }
+        .log-entry {
+            display: flex;
+            gap: 12px;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: var(--text-muted); flex-shrink: 0; }
+        .log-type {
+            width: 70px;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .log-type.success { color: var(--success); }
+        .log-type.error { color: var(--error); }
+        .log-type.warning { color: var(--warning); }
+        .log-type.info { color: var(--info); }
+        .log-message { flex: 1; word-break: break-word; }
+        
+        /* Response Time Chart */
+        .chart-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }
+        .chart-title {
+            font-weight: 600;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .chart-bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            height: 120px;
+            padding: 10px 0;
+        }
+        .chart-bar-group {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        .chart-bar {
+            width: 100%;
+            max-width: 60px;
+            border-radius: 4px 4px 0 0;
+            transition: height 0.3s ease;
+        }
+        .chart-bar.etsy { background: var(--etsy); }
+        .chart-bar.wix { background: var(--wix); }
+        .chart-bar.wayfair { background: var(--wayfair); }
+        .chart-bar.shippo { background: var(--shippo); }
+        .chart-bar.synchub { background: var(--synchub); }
+        .chart-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-align: center;
+        }
+        .chart-value {
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        
+        /* Toast */
+        .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+        .toast {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-top: 8px;
+            font-weight: 500;
+            animation: slideIn 0.3s ease;
+        }
+        .toast.success { background: var(--success); color: white; }
+        .toast.error { background: var(--error); color: white; }
+        .toast.warning { background: var(--warning); color: black; }
+        .toast.info { background: var(--info); color: white; }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        
+        /* Auto-refresh indicator */
+        .auto-refresh {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+        .auto-refresh input { margin-right: 4px; }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+            .proxy-grid { grid-template-columns: 1fr; }
+            .header { padding: 0 16px; }
+            .container { padding: 16px; }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">
+                <div class="logo-icon">📡</div>
+                <span>CCD Proxy Monitor</span>
+            </div>
+            <div class="header-status" id="overallStatus">
+                <span class="status-dot" id="overallDot"></span>
+                <span id="overallText">Initializing...</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="auto-refresh">
+                <input type="checkbox" id="autoRefresh" checked>
+                <label for="autoRefresh">Auto-refresh</label>
+                <select id="refreshInterval" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 0.8rem;">
+                    <option value="30">30s</option>
+                    <option value="60" selected>1m</option>
+                    <option value="300">5m</option>
+                </select>
+            </div>
+            <button class="btn btn-primary" onclick="checkAllProxies()">
+                🔄 Check All Now
+            </button>
+            <button class="btn btn-secondary" onclick="exportReport()">
+                📄 Export Report
+            </button>
+            <button class="btn btn-secondary" onclick="exportDiagnostics()" style="background: linear-gradient(135deg, #f59e0b, #ef4444); color: white; border: none;">
+                🔧 Diagnostics
+            </button>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Summary Cards -->
+        <div class="summary-grid">
+            <div class="summary-card" id="summaryTotal">
+                <div class="summary-value">5</div>
+                <div class="summary-label">Total Proxies</div>
+            </div>
+            <div class="summary-card healthy" id="summaryHealthy">
+                <div class="summary-value">-</div>
+                <div class="summary-label">Healthy</div>
+            </div>
+            <div class="summary-card degraded" id="summaryDegraded">
+                <div class="summary-value">-</div>
+                <div class="summary-label">Degraded</div>
+            </div>
+            <div class="summary-card down" id="summaryDown">
+                <div class="summary-value">-</div>
+                <div class="summary-label">Down</div>
+            </div>
+            <div class="summary-card" id="summaryAvgResponse">
+                <div class="summary-value">-</div>
+                <div class="summary-label">Avg Response</div>
+            </div>
+        </div>
+
+        <!-- Response Time Chart -->
+        <div class="chart-container">
+            <div class="chart-title">📊 Response Times (ms)</div>
+            <div class="chart-bars" id="responseChart">
+                <div class="chart-bar-group">
+                    <div class="chart-bar etsy" id="chartEtsy" style="height: 0px;"></div>
+                    <div class="chart-value" id="chartEtsyValue">-</div>
+                    <div class="chart-label">Etsy</div>
+                </div>
+                <div class="chart-bar-group">
+                    <div class="chart-bar wix" id="chartWix" style="height: 0px;"></div>
+                    <div class="chart-value" id="chartWixValue">-</div>
+                    <div class="chart-label">Wix</div>
+                </div>
+                <div class="chart-bar-group">
+                    <div class="chart-bar wayfair" id="chartWayfair" style="height: 0px;"></div>
+                    <div class="chart-value" id="chartWayfairValue">-</div>
+                    <div class="chart-label">Wayfair</div>
+                </div>
+                <div class="chart-bar-group">
+                    <div class="chart-bar shippo" id="chartShippo" style="height: 0px;"></div>
+                    <div class="chart-value" id="chartShippoValue">-</div>
+                    <div class="chart-label">Shippo</div>
+                </div>
+                <div class="chart-bar-group">
+                    <div class="chart-bar synchub" id="chartSynchub" style="height: 0px;"></div>
+                    <div class="chart-value" id="chartSynchubValue">-</div>
+                    <div class="chart-label">Sync Hub</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Proxy Cards -->
+        <div class="proxy-grid" id="proxyGrid">
+            <!-- Cards generated dynamically -->
+        </div>
+
+        <!-- Configuration -->
+        <div class="config-section">
+            <div class="config-title">⚙️ Proxy Configuration</div>
+            <div class="config-grid">
+                <div class="config-item">
+                    <label class="config-label">Etsy Proxy URL</label>
+                    <input type="text" class="config-input" id="etsyUrl" placeholder="https://script.google.com/macros/s/...">
+                </div>
+                <div class="config-item">
+                    <label class="config-label">Wix Proxy URL</label>
+                    <input type="text" class="config-input" id="wixUrl" placeholder="https://script.google.com/macros/s/...">
+                </div>
+                <div class="config-item">
+                    <label class="config-label">Wayfair Proxy URL</label>
+                    <input type="text" class="config-input" id="wayfairUrl" placeholder="https://script.google.com/macros/s/...">
+                </div>
+                <div class="config-item">
+                    <label class="config-label">Shippo Proxy URL</label>
+                    <input type="text" class="config-input" id="shippoUrl" placeholder="https://script.google.com/macros/s/...">
+                </div>
+                <div class="config-item">
+                    <label class="config-label">Sync Hub Proxy URL</label>
+                    <input type="text" class="config-input" id="synchubUrl" placeholder="https://script.google.com/macros/s/...">
+                </div>
+                <div class="config-item">
+                    <label class="config-label">API Key</label>
+                    <input type="password" class="config-input" id="apiKey" placeholder="ccd_...">
+                </div>
+            </div>
+            <div style="margin-top: 16px; display: flex; gap: 12px;">
+                <button class="btn btn-primary" onclick="saveConfig()">💾 Save Configuration</button>
+                <button class="btn btn-secondary" onclick="loadFromConfigFile()">📂 Load from CONFIG.json</button>
+            </div>
+        </div>
+
+        <!-- Log Panel -->
+        <div class="log-section">
+            <div class="log-header">
+                <div class="log-title">📋 Activity Log</div>
+                <button class="btn btn-secondary btn-sm" onclick="clearLog()">Clear</button>
+            </div>
+            <div class="log-body" id="logBody">
+                <div class="log-entry">
+                    <span class="log-time">--:--:--</span>
+                    <span class="log-type info">INFO</span>
+                    <span class="log-message">Proxy Monitor initialized. Configure proxy URLs and click "Check All Now".</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ============================================================================
+// STATE
+// ============================================================================
+const PROXIES = [
+    { id: 'etsy', name: 'Etsy Proxy', icon: '🛒', color: '#f56400' },
+    { id: 'wix', name: 'Wix Proxy', icon: '🌐', color: '#0061ff' },
+    { id: 'wayfair', name: 'Wayfair Proxy', icon: '🏠', color: '#9333ea' },
+    { id: 'shippo', name: 'Shippo Proxy', icon: '📦', color: '#00b4d8' },
+    { id: 'synchub', name: 'Sync Hub Proxy', icon: '🔄', color: '#8b5cf6' }
+];
+
+let proxyStatus = {};
+let refreshTimer = null;
+let checkHistory = [];
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+    loadConfig();
+    renderProxyCards();
+    setupAutoRefresh();
+    log('info', 'Proxy Monitor v1.1 initialized (JSONP enabled)');
+});
+
+function loadConfig() {
+    // Load from localStorage
+    const saved = localStorage.getItem('ccd_proxy_monitor_config');
+    if (saved) {
+        try {
+            const config = JSON.parse(saved);
+            document.getElementById('etsyUrl').value = config.etsyUrl || '';
+            document.getElementById('wixUrl').value = config.wixUrl || '';
+            document.getElementById('wayfairUrl').value = config.wayfairUrl || '';
+            document.getElementById('shippoUrl').value = config.shippoUrl || '';
+            document.getElementById('synchubUrl').value = config.synchubUrl || '';
+            document.getElementById('apiKey').value = config.apiKey || '';
+            log('success', 'Configuration loaded from localStorage');
+        } catch (e) {
+            log('error', 'Failed to load config: ' + e.message);
+        }
+    }
+}
+
+function saveConfig() {
+    const config = {
+        etsyUrl: document.getElementById('etsyUrl').value,
+        wixUrl: document.getElementById('wixUrl').value,
+        wayfairUrl: document.getElementById('wayfairUrl').value,
+        shippoUrl: document.getElementById('shippoUrl').value,
+        synchubUrl: document.getElementById('synchubUrl').value,
+        apiKey: document.getElementById('apiKey').value
+    };
+    localStorage.setItem('ccd_proxy_monitor_config', JSON.stringify(config));
+    log('success', 'Configuration saved');
+    toast('Configuration saved', 'success');
+}
+
+async function loadFromConfigFile() {
+    try {
+        const [handle] = await window.showOpenFilePicker({
+            types: [{ accept: { 'application/json': ['.json'] } }]
+        });
+        const file = await handle.getFile();
+        const config = JSON.parse(await file.text());
+        
+        // Extract proxy URLs from CONFIG.json format
+        const settings = config.settings || config;
+        const proxyUrls = settings.proxyUrls || {};
+        
+        document.getElementById('etsyUrl').value = proxyUrls.etsy || settings.etsyProxyUrl || '';
+        document.getElementById('wixUrl').value = proxyUrls.wix || settings.wixProxyUrl || '';
+        document.getElementById('wayfairUrl').value = proxyUrls.wayfair || settings.wayfairProxyUrl || '';
+        document.getElementById('shippoUrl').value = proxyUrls.shippo || settings.shippoProxyUrl || '';
+        document.getElementById('synchubUrl').value = proxyUrls.syncHub || settings.syncHubProxyUrl || '';
+        document.getElementById('apiKey').value = settings.ccdApiKey || '';
+        
+        saveConfig();
+        log('success', 'Configuration loaded from ' + handle.name);
+        toast('Loaded from CONFIG.json', 'success');
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            log('error', 'Failed to load CONFIG: ' + e.message);
+            toast('Error loading file', 'error');
+        }
+    }
+}
+
+// ============================================================================
+// PROXY CARD RENDERING
+// ============================================================================
+function renderProxyCards() {
+    const grid = document.getElementById('proxyGrid');
+    grid.innerHTML = PROXIES.map(proxy => `
+        <div class="proxy-card unknown" id="card-${proxy.id}">
+            <div class="proxy-header">
+                <div class="proxy-title">
+                    <div class="proxy-icon ${proxy.id}">${proxy.icon}</div>
+                    <div>
+                        <div class="proxy-name">${proxy.name}</div>
+                        <div class="proxy-version" id="version-${proxy.id}">Version: --</div>
+                    </div>
+                </div>
+                <div class="proxy-status unknown" id="status-${proxy.id}">
+                    <span class="status-dot"></span>
+                    Unknown
+                </div>
+            </div>
+            <div class="proxy-body">
+                <div class="proxy-stats">
+                    <div class="proxy-stat">
+                        <div class="proxy-stat-value" id="response-${proxy.id}">--</div>
+                        <div class="proxy-stat-label">Response (ms)</div>
+                    </div>
+                    <div class="proxy-stat">
+                        <div class="proxy-stat-value" id="uptime-${proxy.id}">--</div>
+                        <div class="proxy-stat-label">Uptime</div>
+                    </div>
+                    <div class="proxy-stat">
+                        <div class="proxy-stat-value" id="requests-${proxy.id}">--</div>
+                        <div class="proxy-stat-label">Requests</div>
+                    </div>
+                </div>
+                <div class="proxy-details">
+                    <div class="proxy-detail">
+                        <span class="proxy-detail-label">Last Check</span>
+                        <span class="proxy-detail-value" id="lastcheck-${proxy.id}">Never</span>
+                    </div>
+                    <div class="proxy-detail">
+                        <span class="proxy-detail-label">Error Rate</span>
+                        <span class="proxy-detail-value" id="errorrate-${proxy.id}">--</span>
+                    </div>
+                    <div class="proxy-detail">
+                        <span class="proxy-detail-label">Last Error</span>
+                        <span class="proxy-detail-value" id="lasterror-${proxy.id}">None</span>
+                    </div>
+                </div>
+            </div>
+            <div class="proxy-actions">
+                <button class="btn btn-secondary btn-sm" onclick="checkProxy('${proxy.id}')">🔍 Check</button>
+                <button class="btn btn-secondary btn-sm" onclick="testEndpoint('${proxy.id}', 'status')">📡 Status</button>
+                <button class="btn btn-secondary btn-sm" onclick="testEndpoint('${proxy.id}', 'ping')">🏓 Ping</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+// ============================================================================
+// PROXY HEALTH CHECKS
+// ============================================================================
+async function checkAllProxies() {
+    log('info', '🔄 Checking all proxies...');
+    updateOverallStatus('checking', 'Checking...');
+    
+    const results = await Promise.all(PROXIES.map(p => checkProxy(p.id)));
+    
+    // Update summary
+    const healthy = results.filter(r => r?.status === 'healthy').length;
+    const degraded = results.filter(r => r?.status === 'degraded').length;
+    const down = results.filter(r => r?.status === 'down' || r?.status === 'error').length;
+    
+    document.querySelector('#summaryHealthy .summary-value').textContent = healthy;
+    document.querySelector('#summaryDegraded .summary-value').textContent = degraded;
+    document.querySelector('#summaryDown .summary-value').textContent = down;
+    
+    // Calculate average response time
+    const responseTimes = results.filter(r => r?.responseTime).map(r => r.responseTime);
+    const avgResponse = responseTimes.length > 0 
+        ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+        : '-';
+    document.querySelector('#summaryAvgResponse .summary-value').textContent = 
+        avgResponse === '-' ? avgResponse : avgResponse + 'ms';
+    
+    // Update overall status
+    if (down === PROXIES.length) {
+        updateOverallStatus('down', 'All Proxies Down');
+    } else if (down > 0 || degraded > 0) {
+        updateOverallStatus('degraded', `${healthy}/${PROXIES.length} Healthy`);
+    } else {
+        updateOverallStatus('healthy', 'All Systems Operational');
+    }
+    
+    // Update chart
+    updateResponseChart(results);
+    
+    log('success', `Check complete: ${healthy} healthy, ${degraded} degraded, ${down} down`);
+}
+
+async function checkProxy(proxyId) {
+    const proxy = PROXIES.find(p => p.id === proxyId);
+    const urlInput = document.getElementById(proxyId + 'Url');
+    const url = urlInput?.value;
+    const apiKey = document.getElementById('apiKey').value;
+    
+    const card = document.getElementById('card-' + proxyId);
+    const statusEl = document.getElementById('status-' + proxyId);
+    
+    if (!url) {
+        updateProxyCard(proxyId, { status: 'unknown', message: 'Not configured' });
+        return { proxyId, status: 'unknown' };
+    }
+    
+    // Set checking state
+    statusEl.className = 'proxy-status checking';
+    statusEl.innerHTML = '<span class="status-dot checking"></span> Checking...';
+    
+    const startTime = Date.now();
+    
+    try {
+        // Try health endpoint first (new), fall back to status (existing)
+        let data;
+        let endpoint = 'health';
+        
+        try {
+            const response = await fetchWithTimeout(`${url}?action=health&key=${apiKey}`, 10000);
+            data = await response.json();
+        } catch (e) {
+            // Fall back to status endpoint
+            endpoint = 'status';
+            const response = await fetchWithTimeout(`${url}?action=status&key=${apiKey}`, 10000);
+            data = await response.json();
+        }
+        
+        const responseTime = Date.now() - startTime;
+        
+        // Determine status
+        let status = 'healthy';
+        if (!data.success && data.success !== undefined) {
+            status = 'down';
+        } else if (responseTime > 5000) {
+            status = 'degraded';
+        }
+        
+        const result = {
+            proxyId,
+            status,
+            responseTime,
+            endpoint,
+            data,
+            timestamp: new Date().toISOString()
+        };
+        
+        proxyStatus[proxyId] = result;
+        updateProxyCard(proxyId, result);
+        
+        log(status === 'healthy' ? 'success' : 'warning', 
+            `${proxy.name}: ${status} (${responseTime}ms)`);
+        
+        return result;
+        
+    } catch (error) {
+        const responseTime = Date.now() - startTime;
+        const result = {
+            proxyId,
+            status: 'down',
+            responseTime,
+            error: error.message,
+            timestamp: new Date().toISOString()
+        };
+        
+        proxyStatus[proxyId] = result;
+        updateProxyCard(proxyId, result);
+        
+        log('error', `${proxy.name}: ${error.message}`);
+        
+        return result;
+    }
+}
+
+async function testEndpoint(proxyId, action) {
+    const url = document.getElementById(proxyId + 'Url').value;
+    const apiKey = document.getElementById('apiKey').value;
+    
+    if (!url) {
+        toast('Proxy URL not configured', 'warning');
+        return;
+    }
+    
+    log('info', `Testing ${proxyId} ?action=${action}...`);
+    
+    try {
+        const start = Date.now();
+        const response = await fetchWithTimeout(`${url}?action=${action}&key=${apiKey}`, 10000);
+        const data = await response.json();
+        const elapsed = Date.now() - start;
+        
+        log('success', `${proxyId} ${action}: ${JSON.stringify(data).substring(0, 100)}... (${elapsed}ms)`);
+        toast(`${action} successful (${elapsed}ms)`, 'success');
+    } catch (e) {
+        log('error', `${proxyId} ${action} failed: ${e.message}`);
+        toast(`${action} failed: ${e.message}`, 'error');
+    }
+}
+
+function fetchWithTimeout(url, timeout) {
+    // Use JSONP for Google Apps Script URLs (CORS workaround)
+    if (url.includes('script.google.com')) {
+        return jsonpFetch(url, timeout);
+    }
+    // Regular fetch for other URLs
+    return Promise.race([
+        fetch(url),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeout))
+    ]);
+}
+
+/**
+ * JSONP fetch for Google Apps Script (v1.1 - CORS fix)
+ * Creates a script tag to load data, bypassing CORS restrictions
+ */
+function jsonpFetch(url, timeout) {
+    return new Promise((resolve, reject) => {
+        const callbackName = 'jsonpCallback_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        
+        // Add callback parameter to URL
+        const separator = url.includes('?') ? '&' : '?';
+        const jsonpUrl = `${url}${separator}callback=${callbackName}`;
+        
+        // Create script element
+        const script = document.createElement('script');
+        script.src = jsonpUrl;
+        
+        // Set up timeout
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new Error('Timeout'));
+        }, timeout);
+        
+        // Cleanup function
+        function cleanup() {
+            clearTimeout(timeoutId);
+            delete window[callbackName];
+            if (script.parentNode) {
+                script.parentNode.removeChild(script);
+            }
+        }
+        
+        // Define callback function
+        window[callbackName] = function(data) {
+            cleanup();
+            // Wrap in Response-like object for compatibility
+            resolve({
+                ok: true,
+                json: () => Promise.resolve(data)
+            });
+        };
+        
+        // Handle script load error
+        script.onerror = function() {
+            cleanup();
+            reject(new Error('Failed to fetch'));
+        };
+        
+        // Add script to page to trigger the request
+        document.body.appendChild(script);
+    });
+}
+
+// ============================================================================
+// UI UPDATES
+// ============================================================================
+function updateProxyCard(proxyId, result) {
+    const card = document.getElementById('card-' + proxyId);
+    const statusEl = document.getElementById('status-' + proxyId);
+    
+    // Update card border
+    card.className = 'proxy-card ' + result.status;
+    
+    // Update status badge
+    const statusText = result.status === 'healthy' ? 'Healthy' :
+                       result.status === 'degraded' ? 'Degraded' :
+                       result.status === 'down' ? 'Down' : 'Unknown';
+    statusEl.className = 'proxy-status ' + result.status;
+    statusEl.innerHTML = `<span class="status-dot ${result.status}"></span> ${statusText}`;
+    
+    // Update stats
+    document.getElementById('response-' + proxyId).textContent = 
+        result.responseTime ? result.responseTime + 'ms' : '--';
+    document.getElementById('lastcheck-' + proxyId).textContent = 
+        new Date().toLocaleTimeString();
+    
+    // Update from health endpoint data if available
+    if (result.data?.runtime) {
+        document.getElementById('uptime-' + proxyId).textContent = 
+            result.data.runtime.uptime || '--';
+        document.getElementById('requests-' + proxyId).textContent = 
+            result.data.runtime.requestCount || '--';
+        document.getElementById('errorrate-' + proxyId).textContent = 
+            result.data.runtime.errorRate || '--';
+        document.getElementById('lasterror-' + proxyId).textContent = 
+            result.data.runtime.lastErrorMessage?.substring(0, 30) || 'None';
+    }
+    
+    if (result.data?.proxy?.version) {
+        document.getElementById('version-' + proxyId).textContent = 
+            'Version: ' + result.data.proxy.version;
+    }
+    
+    if (result.error) {
+        document.getElementById('lasterror-' + proxyId).textContent = 
+            result.error.substring(0, 30);
+    }
+}
+
+function updateOverallStatus(status, text) {
+    const dot = document.getElementById('overallDot');
+    const textEl = document.getElementById('overallText');
+    
+    dot.className = 'status-dot ' + status;
+    textEl.textContent = text;
+}
+
+function updateResponseChart(results) {
+    const maxResponse = Math.max(...results.filter(r => r?.responseTime).map(r => r.responseTime), 1);
+    const maxHeight = 100;
+    
+    results.forEach(r => {
+        if (!r?.proxyId) return;
+        const bar = document.getElementById('chart' + capitalize(r.proxyId));
+        const value = document.getElementById('chart' + capitalize(r.proxyId) + 'Value');
+        
+        if (bar && r.responseTime) {
+            const height = Math.max(4, (r.responseTime / maxResponse) * maxHeight);
+            bar.style.height = height + 'px';
+        }
+        if (value) {
+            value.textContent = r.responseTime ? r.responseTime + 'ms' : '--';
+        }
+    });
+}
+
+function capitalize(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+// ============================================================================
+// AUTO-REFRESH
+// ============================================================================
+function setupAutoRefresh() {
+    const checkbox = document.getElementById('autoRefresh');
+    const intervalSelect = document.getElementById('refreshInterval');
+    
+    checkbox.addEventListener('change', toggleAutoRefresh);
+    intervalSelect.addEventListener('change', toggleAutoRefresh);
+    
+    toggleAutoRefresh();
+}
+
+function toggleAutoRefresh() {
+    if (refreshTimer) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+    }
+    
+    if (document.getElementById('autoRefresh').checked) {
+        const interval = parseInt(document.getElementById('refreshInterval').value) * 1000;
+        refreshTimer = setInterval(checkAllProxies, interval);
+        log('info', `Auto-refresh enabled (${interval/1000}s interval)`);
+    } else {
+        log('info', 'Auto-refresh disabled');
+    }
+}
+
+// ============================================================================
+// LOGGING & EXPORT
+// ============================================================================
+function log(type, message) {
+    const body = document.getElementById('logBody');
+    const time = new Date().toLocaleTimeString();
+    
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `
+        <span class="log-time">${time}</span>
+        <span class="log-type ${type}">${type.toUpperCase()}</span>
+        <span class="log-message">${message}</span>
+    `;
+    body.appendChild(entry);
+    body.scrollTop = body.scrollHeight;
+    
+    // Keep history for export
+    checkHistory.push({ time, type, message });
+    if (checkHistory.length > 500) checkHistory.shift();
+}
+
+function clearLog() {
+    document.getElementById('logBody').innerHTML = '';
+    log('info', 'Log cleared');
+}
+
+function toast(message, type) {
+    const container = document.getElementById('toastContainer');
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = message;
+    container.appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+}
+
+function exportReport() {
+    const report = {
+        reportType: 'CCD Proxy Monitor Report',
+        generated: new Date().toISOString(),
+        version: '1.0',
+        
+        summary: {
+            total: PROXIES.length,
+            healthy: Object.values(proxyStatus).filter(s => s.status === 'healthy').length,
+            degraded: Object.values(proxyStatus).filter(s => s.status === 'degraded').length,
+            down: Object.values(proxyStatus).filter(s => s.status === 'down').length
+        },
+        
+        proxies: PROXIES.map(p => ({
+            id: p.id,
+            name: p.name,
+            url: document.getElementById(p.id + 'Url')?.value || 'Not configured',
+            ...proxyStatus[p.id]
+        })),
+        
+        configuration: {
+            etsyUrl: document.getElementById('etsyUrl').value,
+            wixUrl: document.getElementById('wixUrl').value,
+            wayfairUrl: document.getElementById('wayfairUrl').value,
+            shippoUrl: document.getElementById('shippoUrl').value,
+            synchubUrl: document.getElementById('synchubUrl').value,
+            apiKeyConfigured: !!document.getElementById('apiKey').value
+        },
+        
+        history: checkHistory.slice(-100)
+    };
+    
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ccd-proxy-report-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    
+    log('success', 'Report exported');
+    toast('Report exported', 'success');
+}
+
+// ============================================================================
+// FULL DIAGNOSTICS EXPORT - For troubleshooting with Claude
+// ============================================================================
+function exportDiagnostics() {
+    const diagnostics = {
+        // Header
+        reportType: 'CCD Proxy Diagnostic Report',
+        generated: new Date().toISOString(),
+        version: '1.0',
+        
+        // Summary
+        summary: {
+            totalProxies: PROXIES.length,
+            healthy: Object.values(proxyStatus).filter(s => s.status === 'healthy').length,
+            degraded: Object.values(proxyStatus).filter(s => s.status === 'degraded').length,
+            down: Object.values(proxyStatus).filter(s => s.status === 'down').length,
+            unchecked: PROXIES.length - Object.keys(proxyStatus).length
+        },
+        
+        // Detailed proxy status
+        proxies: PROXIES.map(p => {
+            const status = proxyStatus[p.id] || {};
+            const url = document.getElementById(p.id + 'Url')?.value || '';
+            return {
+                id: p.id,
+                name: p.name,
+                configured: !!url,
+                url: url ? (url.substring(0, 50) + '...') : 'Not configured',
+                fullUrl: url,
+                status: status.status || 'unchecked',
+                responseTime: status.responseTime || null,
+                lastCheck: status.timestamp || null,
+                endpoint: status.endpoint || null,
+                error: status.error || null,
+                rawResponse: status.data || null
+            };
+        }),
+        
+        // Problem proxies (for quick reference)
+        problems: PROXIES
+            .filter(p => {
+                const s = proxyStatus[p.id];
+                return !s || s.status === 'down' || s.status === 'degraded' || s.error;
+            })
+            .map(p => {
+                const s = proxyStatus[p.id] || {};
+                return {
+                    proxy: p.name,
+                    issue: s.error || s.status || 'Not checked',
+                    responseTime: s.responseTime || null
+                };
+            }),
+        
+        // Configuration (masked)
+        configuration: {
+            etsyUrl: maskUrl(document.getElementById('etsyUrl').value),
+            wixUrl: maskUrl(document.getElementById('wixUrl').value),
+            wayfairUrl: maskUrl(document.getElementById('wayfairUrl').value),
+            shippoUrl: maskUrl(document.getElementById('shippoUrl').value),
+            synchubUrl: maskUrl(document.getElementById('synchubUrl').value),
+            apiKeyConfigured: !!document.getElementById('apiKey').value,
+            apiKeyPrefix: document.getElementById('apiKey').value?.substring(0, 8) || 'none'
+        },
+        
+        // Environment
+        environment: {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            language: navigator.language,
+            online: navigator.onLine,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            localTime: new Date().toString(),
+            screenSize: `${screen.width}x${screen.height}`,
+            windowSize: `${window.innerWidth}x${window.innerHeight}`
+        },
+        
+        // Full activity log
+        activityLog: checkHistory.slice(-200)
+    };
+    
+    // Generate human-readable text report
+    const textReport = generateProxyDiagnosticText(diagnostics);
+    
+    // Download JSON
+    const jsonBlob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' });
+    const jsonLink = document.createElement('a');
+    jsonLink.href = URL.createObjectURL(jsonBlob);
+    jsonLink.download = `ccd-proxy-diagnostics-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    jsonLink.click();
+    
+    // Download TXT after short delay
+    setTimeout(() => {
+        const textBlob = new Blob([textReport], { type: 'text/plain' });
+        const textLink = document.createElement('a');
+        textLink.href = URL.createObjectURL(textBlob);
+        textLink.download = `ccd-proxy-diagnostics-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+        textLink.click();
+    }, 500);
+    
+    log('success', 'Diagnostic report exported (JSON + TXT)');
+    toast('Diagnostics exported - share TXT file for support', 'success');
+}
+
+function maskUrl(url) {
+    if (!url) return 'Not configured';
+    // Show domain but mask the script ID
+    const match = url.match(/https:\/\/script\.google\.com\/macros\/s\/([^/]+)/);
+    if (match) {
+        return `https://script.google.com/macros/s/${match[1].substring(0, 10)}...${match[1].slice(-6)}/exec`;
+    }
+    return url.substring(0, 30) + '...';
+}
+
+function generateProxyDiagnosticText(d) {
+    let txt = '';
+    txt += '═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += '                    CCD PROXY DIAGNOSTIC REPORT\n';
+    txt += '═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += `Generated: ${d.generated}\n`;
+    txt += `Monitor Version: ${d.version}\n`;
+    txt += '\n';
+    
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' SUMMARY\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += `Total Proxies:  ${d.summary.totalProxies}\n`;
+    txt += `Healthy:        ${d.summary.healthy} ✓\n`;
+    txt += `Degraded:       ${d.summary.degraded} ⚠\n`;
+    txt += `Down:           ${d.summary.down} ✗\n`;
+    txt += `Unchecked:      ${d.summary.unchecked}\n`;
+    txt += '\n';
+    
+    if (d.problems.length > 0) {
+        txt += '───────────────────────────────────────────────────────────────────────────────\n';
+        txt += ' ⚠ PROBLEMS DETECTED\n';
+        txt += '───────────────────────────────────────────────────────────────────────────────\n';
+        d.problems.forEach((p, i) => {
+            txt += `${i + 1}. ${p.proxy}\n`;
+            txt += `   Issue: ${p.issue}\n`;
+            if (p.responseTime) txt += `   Response Time: ${p.responseTime}ms\n`;
+            txt += '\n';
+        });
+    }
+    
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' PROXY STATUS DETAILS\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    d.proxies.forEach(p => {
+        const statusIcon = p.status === 'healthy' ? '✓' : p.status === 'degraded' ? '⚠' : p.status === 'down' ? '✗' : '?';
+        txt += `\n${statusIcon} ${p.name} (${p.id})\n`;
+        txt += `  Status: ${p.status}\n`;
+        txt += `  Configured: ${p.configured ? 'Yes' : 'No'}\n`;
+        if (p.configured) {
+            txt += `  URL: ${p.url}\n`;
+        }
+        if (p.responseTime) txt += `  Response Time: ${p.responseTime}ms\n`;
+        if (p.lastCheck) txt += `  Last Check: ${p.lastCheck}\n`;
+        if (p.endpoint) txt += `  Endpoint Used: ${p.endpoint}\n`;
+        if (p.error) txt += `  Error: ${p.error}\n`;
+        if (p.rawResponse) {
+            txt += `  Raw Response: ${JSON.stringify(p.rawResponse).substring(0, 100)}...\n`;
+        }
+    });
+    
+    txt += '\n───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' CONFIGURATION\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += `Etsy URL:     ${d.configuration.etsyUrl}\n`;
+    txt += `Wix URL:      ${d.configuration.wixUrl}\n`;
+    txt += `Wayfair URL:  ${d.configuration.wayfairUrl}\n`;
+    txt += `Shippo URL:   ${d.configuration.shippoUrl}\n`;
+    txt += `Sync Hub URL: ${d.configuration.synchubUrl}\n`;
+    txt += `API Key:      ${d.configuration.apiKeyConfigured ? 'Configured (' + d.configuration.apiKeyPrefix + '...)' : 'NOT CONFIGURED'}\n`;
+    
+    txt += '\n───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' ENVIRONMENT\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += `Browser: ${d.environment.userAgent}\n`;
+    txt += `Platform: ${d.environment.platform}\n`;
+    txt += `Online: ${d.environment.online}\n`;
+    txt += `Timezone: ${d.environment.timezone}\n`;
+    txt += `Local Time: ${d.environment.localTime}\n`;
+    
+    txt += '\n───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' RECENT ACTIVITY LOG (Last 50 entries)\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    d.activityLog.slice(-50).forEach(entry => {
+        txt += `[${entry.time}] ${entry.type.toUpperCase().padEnd(7)} ${entry.message}\n`;
+    });
+    
+    txt += '\n═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += '                         END OF DIAGNOSTIC REPORT\n';
+    txt += '═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += '\nTo get help: Copy this entire file and paste it to Claude.\n';
+    
+    return txt;
+}
+</script>
+</body>
+</html>
