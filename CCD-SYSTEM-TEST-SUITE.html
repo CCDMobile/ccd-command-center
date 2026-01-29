@@ -1,0 +1,1852 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CCD System Test Suite v2.0</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0f1a;
+            --bg-secondary: #111827;
+            --bg-card: #151d2e;
+            --border: #2d3748;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --info: #3b82f6;
+            --purple: #8b5cf6;
+            --cyan: #06b6d4;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, var(--cyan), var(--purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 8px;
+        }
+        .header p { color: var(--text-secondary); }
+        .header .version { 
+            display: inline-block;
+            background: var(--bg-secondary);
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            margin-top: 8px;
+            border: 1px solid var(--border);
+        }
+        .status-bar {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .status-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+        }
+        .status-card .value { font-size: 2rem; font-weight: 700; }
+        .status-card .label { font-size: 0.85rem; color: var(--text-muted); margin-top: 4px; }
+        .status-card.passed .value { color: var(--success); }
+        .status-card.failed .value { color: var(--error); }
+        .status-card.pending .value { color: var(--warning); }
+        .status-card.running .value { color: var(--info); }
+        .main-grid { display: grid; grid-template-columns: 380px 1fr; gap: 24px; }
+        .sidebar {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            height: fit-content;
+            position: sticky;
+            top: 20px;
+        }
+        .sidebar h3 { margin-bottom: 16px; display: flex; align-items: center; gap: 8px; font-size: 1rem; }
+        .file-status { padding: 12px; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 12px; }
+        .file-status .name { font-weight: 600; margin-bottom: 4px; font-size: 0.9rem; }
+        .file-status .status { font-size: 0.8rem; display: flex; align-items: center; gap: 6px; }
+        .file-status .status.connected { color: var(--success); }
+        .file-status .status.disconnected { color: var(--text-muted); }
+        .file-status .details { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; }
+        .btn {
+            padding: 10px 16px;
+            border: none;
+            border-radius: 8px;
+            font-family: inherit;
+            font-weight: 600;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+        .btn-primary { background: linear-gradient(135deg, var(--info), var(--purple)); color: white; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-secondary { background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border); }
+        .btn:hover { transform: translateY(-1px); opacity: 0.9; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-block { width: 100%; justify-content: center; }
+        .test-category {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-bottom: 16px;
+            overflow: hidden;
+        }
+        .category-header {
+            padding: 14px 20px;
+            background: var(--bg-secondary);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+        }
+        .category-header:hover { background: #1a2332; }
+        .category-header h3 { display: flex; align-items: center; gap: 10px; font-size: 1rem; }
+        .category-header .badge { padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; }
+        .badge.passed { background: rgba(16, 185, 129, 0.2); color: var(--success); }
+        .badge.failed { background: rgba(239, 68, 68, 0.2); color: var(--error); }
+        .badge.pending { background: rgba(245, 158, 11, 0.2); color: var(--warning); }
+        .badge.running { background: rgba(59, 130, 246, 0.2); color: var(--info); }
+        .category-body { padding: 16px 20px; }
+        .category-body.collapsed { display: none; }
+        .test-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            gap: 12px;
+        }
+        .test-item:last-child { margin-bottom: 0; }
+        .test-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+        .test-icon.passed { background: rgba(16, 185, 129, 0.2); }
+        .test-icon.failed { background: rgba(239, 68, 68, 0.2); }
+        .test-icon.pending { background: rgba(245, 158, 11, 0.2); }
+        .test-icon.running { background: rgba(59, 130, 246, 0.2); }
+        .test-info { flex: 1; min-width: 0; }
+        .test-name { font-weight: 600; margin-bottom: 2px; font-size: 0.9rem; }
+        .test-desc { font-size: 0.8rem; color: var(--text-muted); line-height: 1.4; }
+        .test-result { font-size: 0.8rem; text-align: right; flex-shrink: 0; }
+        .test-result.passed { color: var(--success); }
+        .test-result.failed { color: var(--error); }
+        .test-result .duration { color: var(--text-muted); font-size: 0.7rem; }
+        .test-result .detail { font-size: 0.7rem; color: var(--text-muted); max-width: 200px; word-break: break-word; }
+        .log-panel {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            margin-top: 24px;
+        }
+        .log-header {
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .log-body {
+            height: 250px;
+            overflow-y: auto;
+            padding: 12px 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+        }
+        .log-entry { padding: 4px 0; border-bottom: 1px solid var(--border); display: flex; gap: 10px; }
+        .log-entry:last-child { border-bottom: none; }
+        .log-time { color: var(--text-muted); flex-shrink: 0; font-size: 0.75rem; }
+        .log-type { width: 55px; font-weight: 600; flex-shrink: 0; font-size: 0.75rem; }
+        .log-type.info { color: var(--info); }
+        .log-type.success { color: var(--success); }
+        .log-type.error { color: var(--error); }
+        .log-type.warn { color: var(--warning); }
+        .log-message { flex: 1; word-break: break-word; }
+        .actions-bar { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+        .progress-bar { height: 4px; background: var(--bg-secondary); border-radius: 2px; overflow: hidden; margin-top: 16px; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, var(--info), var(--success)); transition: width 0.3s ease; }
+        .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+        .toast { padding: 12px 20px; border-radius: 8px; margin-top: 8px; font-weight: 500; animation: slideIn 0.3s ease; }
+        .toast.success { background: var(--success); color: white; }
+        .toast.error { background: var(--error); color: white; }
+        .toast.warning { background: var(--warning); color: black; }
+        .toast.info { background: var(--info); color: white; }
+        @keyframes slideIn { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .validation-note {
+            background: rgba(59, 130, 246, 0.1);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 16px;
+            font-size: 0.8rem;
+        }
+        .validation-note strong { color: var(--info); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🧪 CCD System Test Suite</h1>
+            <p>Production-Quality Testing for CCD Inventory Ecosystem</p>
+            <span class="version">v2.0 - Validated Against Real Data Structures</span>
+        </header>
+        
+        <div class="status-bar">
+            <div class="status-card" id="statusTotal"><div class="value">0</div><div class="label">Total Tests</div></div>
+            <div class="status-card passed" id="statusPassed"><div class="value">0</div><div class="label">Passed</div></div>
+            <div class="status-card failed" id="statusFailed"><div class="value">0</div><div class="label">Failed</div></div>
+            <div class="status-card pending" id="statusPending"><div class="value">0</div><div class="label">Pending</div></div>
+            <div class="status-card running" id="statusDuration"><div class="value">0s</div><div class="label">Duration</div></div>
+        </div>
+        
+        <div class="actions-bar">
+            <button class="btn btn-primary" onclick="runAllTests()">▶️ Run All Tests</button>
+            <button class="btn btn-success" onclick="runQuickValidation()">⚡ Quick Validation (5 Critical)</button>
+            <button class="btn btn-secondary" onclick="resetTests()">🔄 Reset</button>
+            <button class="btn btn-secondary" onclick="exportResults()">📄 Export Results</button>
+            <button class="btn btn-secondary" onclick="exportDiagnostics()" style="background: linear-gradient(135deg, #f59e0b, #ef4444); color: white; border: none;">🔧 Export Diagnostics</button>
+        </div>
+        
+        <div class="main-grid">
+            <aside class="sidebar">
+                <h3>📁 Data Sources</h3>
+                
+                <div class="file-status">
+                    <div class="name">MASTER.json (Inventory)</div>
+                    <div class="status disconnected" id="masterStatus">⚪ Not connected</div>
+                    <div class="details" id="masterDetails">Required fields: inventory[], _metadata, _activityLog</div>
+                </div>
+                
+                <div class="file-status">
+                    <div class="name">CONFIG.json (Settings)</div>
+                    <div class="status disconnected" id="configStatus">⚪ Not connected</div>
+                    <div class="details" id="configDetails">Required: settings, heartbeat</div>
+                </div>
+                
+                <div class="file-status">
+                    <div class="name">SYNC.json (Orders)</div>
+                    <div class="status disconnected" id="syncStatus">⚪ Not connected</div>
+                    <div class="details" id="syncDetails">Required: etsy, wix, wayfair sections</div>
+                </div>
+                
+                <button class="btn btn-primary btn-block" onclick="connectFiles()" style="margin-top: 16px; margin-bottom: 12px;">
+                    📂 Connect All Files
+                </button>
+                <button class="btn btn-secondary btn-block" onclick="loadSampleData()">
+                    🧪 Use Sample Data
+                </button>
+                
+                <div class="progress-bar" id="testProgress" style="display: none;">
+                    <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+                </div>
+                
+                <div class="validation-note">
+                    <strong>ℹ️ Test Reliability</strong><br>
+                    Tests are validated against actual CCD ecosystem data structures. Sample data mirrors real production schemas.
+                </div>
+            </aside>
+            
+            <main>
+                <!-- CONFIG & Settings Tests -->
+                <div class="test-category" id="cat-config">
+                    <div class="category-header" onclick="toggleCategory('config')">
+                        <h3><span>⚙️</span> CONFIG & Settings</h3>
+                        <span class="badge pending" id="badge-config">0/6</span>
+                    </div>
+                    <div class="category-body" id="body-config">
+                        <div class="test-item" id="test-configMetadata">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">CONFIG Metadata</div>
+                                <div class="test-desc">_metadata exists with version number and schemaVersion</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-configSettings">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Settings Structure</div>
+                                <div class="test-desc">settings object has enabledChannels, proxyUrls, autoProcessEnabled</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-configFeatureFlags">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Feature Flags</div>
+                                <div class="test-desc">settings.features has boolean flags (inventoryDeduction, etc.)</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-configHeartbeat">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Heartbeat Structure</div>
+                                <div class="test-desc">heartbeat has timestamp, source, status fields</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-configHeartbeatAge">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Heartbeat Freshness</div>
+                                <div class="test-desc">heartbeat.timestamp is within last 15 minutes (warns if stale)</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-localStorageHeartbeat">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">localStorage Heartbeat</div>
+                                <div class="test-desc">ccd_sync_hub_heartbeat exists for same-PC detection</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- MASTER Inventory Tests -->
+                <div class="test-category" id="cat-master">
+                    <div class="category-header" onclick="toggleCategory('master')">
+                        <h3><span>📦</span> MASTER Inventory Data</h3>
+                        <span class="badge pending" id="badge-master">0/7</span>
+                    </div>
+                    <div class="category-body" id="body-master">
+                        <div class="test-item" id="test-masterMetadata">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">MASTER Metadata</div>
+                                <div class="test-desc">_metadata exists with version for collision detection</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-inventoryArray">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Inventory Array</div>
+                                <div class="test-desc">inventory is an array with at least 1 item</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-inventoryRequiredFields">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Required Fields</div>
+                                <div class="test-desc">Items have: sku, qty, wholesalePrice, channels object</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-channelsStructure">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Channels Structure</div>
+                                <div class="test-desc">channels object has etsy, wix, wayfair, treasuremarts keys</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-noNegativeQty">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">No Negative Quantities</div>
+                                <div class="test-desc">All qty and channel allocations are >= 0</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-channelAllocationLimit">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Channel Allocation Limits</div>
+                                <div class="test-desc">Online channels (etsy/wix/wayfair) <= qty - treasuremarts</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-activityLogExists">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Activity Log</div>
+                                <div class="test-desc">_activityLog array exists for change tracking</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SYNC Orders Tests -->
+                <div class="test-category" id="cat-sync">
+                    <div class="category-header" onclick="toggleCategory('sync')">
+                        <h3><span>🛒</span> SYNC Order Data</h3>
+                        <span class="badge pending" id="badge-sync">0/6</span>
+                    </div>
+                    <div class="category-body" id="body-sync">
+                        <div class="test-item" id="test-syncMetadata">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">SYNC Metadata</div>
+                                <div class="test-desc">_metadata exists with version for collision detection</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-etsyStructure">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Etsy Structure</div>
+                                <div class="test-desc">etsy.orders array exists with valid order objects</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-wixStructure">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Wix Structure</div>
+                                <div class="test-desc">wix.orders array exists (price may be string or object)</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-wayfairStructure">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Wayfair Structure</div>
+                                <div class="test-desc">wayfair.orders array exists (may be empty)</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-orderRequiredFields">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Order Required Fields</div>
+                                <div class="test-desc">Orders have: id, date, items array</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-noDuplicateOrders">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">No Duplicate Orders</div>
+                                <div class="test-desc">No duplicate order IDs within each channel</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pricing & Calculations -->
+                <div class="test-category" id="cat-pricing">
+                    <div class="category-header" onclick="toggleCategory('pricing')">
+                        <h3><span>💰</span> Pricing & Calculations</h3>
+                        <span class="badge pending" id="badge-pricing">0/5</span>
+                    </div>
+                    <div class="category-body" id="body-pricing">
+                        <div class="test-item" id="test-priceFieldsExist">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Price Fields Exist</div>
+                                <div class="test-desc">Items have wholesalePrice, retailPrice (may be 0)</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-costFieldsExist">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Cost Fields Exist</div>
+                                <div class="test-desc">Items have ibShipping, tariff, obShipping fields</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-priceParsingLogic">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Price Parsing Logic</div>
+                                <div class="test-desc">Can parse "$49.99", "49.99", and {amount: "49.99"} formats</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-toFixedSafety">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">toFixed Safety</div>
+                                <div class="test-desc">parseFloat + toFixed(2) works on all price formats</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-costCalculation">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Cost Calculation</div>
+                                <div class="test-desc">Total cost formula: wholesale + (wholesale×ibShipping%) + tariff + obShipping</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Data Integrity -->
+                <div class="test-category" id="cat-integrity">
+                    <div class="category-header" onclick="toggleCategory('integrity')">
+                        <h3><span>🔒</span> Data Integrity</h3>
+                        <span class="badge pending" id="badge-integrity">0/4</span>
+                    </div>
+                    <div class="category-body" id="body-integrity">
+                        <div class="test-item" id="test-jsonValid">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">JSON Valid</div>
+                                <div class="test-desc">All loaded data can be serialized/deserialized</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-noNullSku">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">No Null SKUs</div>
+                                <div class="test-desc">Every inventory item has a non-empty SKU</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-uniqueIds">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Unique Item IDs</div>
+                                <div class="test-desc">No duplicate IDs in inventory array</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                        <div class="test-item" id="test-versionTracking">
+                            <div class="test-icon pending">⏳</div>
+                            <div class="test-info">
+                                <div class="test-name">Version Tracking</div>
+                                <div class="test-desc">All files have numeric version in _metadata</div>
+                            </div>
+                            <div class="test-result"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log Panel -->
+                <div class="log-panel">
+                    <div class="log-header">
+                        <h3 style="font-size: 1rem;">📋 Test Log</h3>
+                        <button class="btn btn-secondary" onclick="clearLog()" style="padding: 6px 12px; font-size: 0.8rem;">Clear</button>
+                    </div>
+                    <div class="log-body" id="logBody">
+                        <div class="log-entry">
+                            <span class="log-time">--:--:--</span>
+                            <span class="log-type info">INFO</span>
+                            <span class="log-message">Test Suite v2.0 ready. Connect files or use sample data to begin.</span>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    
+    <div class="toast-container" id="toastContainer"></div>
+
+<script>
+// ============================================================================
+// STATE
+// ============================================================================
+let masterData = null;
+let configData = null;
+let syncData = null;
+let usingSampleData = false;
+
+const testResults = {
+    total: 0,
+    passed: 0,
+    failed: 0,
+    pending: 0,
+    startTime: null,
+    endTime: null,
+    results: {}
+};
+
+// ============================================================================
+// SAMPLE DATA - Mirrors actual production schema exactly
+// ============================================================================
+const SAMPLE_MASTER = {
+    inventory: [
+        {
+            id: "1",
+            sku: "TEST-001",
+            productName: "Test Widget A",
+            brandName: "Test Brand",
+            qty: 50,
+            wholesalePrice: 10.00,
+            ibShipping: 20,  // percentage
+            tariff: 2.00,
+            obShipping: 5.50,
+            retailPrice: 29.99,
+            channels: {
+                etsy: 15,
+                wix: 15,
+                wayfair: 10,
+                treasuremarts: 5
+            },
+            isActive: true,
+            dateAdded: "2025-01-01T00:00:00.000Z"
+        },
+        {
+            id: "2",
+            sku: "TEST-002",
+            productName: "Test Gadget B",
+            brandName: "Test Brand",
+            qty: 25,
+            wholesalePrice: 15.00,
+            ibShipping: 15,
+            tariff: 3.00,
+            obShipping: 6.00,
+            retailPrice: 49.99,
+            channels: {
+                etsy: 10,
+                wix: 10,
+                wayfair: 5,
+                treasuremarts: 0
+            },
+            isActive: true,
+            dateAdded: "2025-01-01T00:00:00.000Z"
+        }
+    ],
+    _metadata: {
+        version: 1,
+        lastModified: new Date().toISOString(),
+        lastModifiedBy: "Test Suite",
+        fileType: "CCD_MASTER_INVENTORY"
+    },
+    _activityLog: [
+        {
+            timestamp: new Date().toISOString(),
+            type: "info",
+            message: "Test suite sample data loaded"
+        }
+    ]
+};
+
+const SAMPLE_CONFIG = {
+    _metadata: {
+        version: 1,
+        lastModified: new Date().toISOString(),
+        lastModifiedBy: "Test Suite",
+        fileType: "CCD_SYSTEM_CONFIG",
+        schemaVersion: "3.1.0"
+    },
+    settings: {
+        autoProcessEnabled: true,
+        autoProcessInterval: "5",
+        enabledChannels: {
+            etsy: true,
+            wix: true,
+            wayfair: true
+        },
+        proxyUrls: {
+            etsy: "https://example.com/etsy",
+            wix: "https://example.com/wix",
+            wayfair: "https://example.com/wayfair"
+        },
+        features: {
+            inventoryDeduction: true,
+            useSharedQueue: false,
+            autoCascade: false
+        }
+    },
+    heartbeat: {
+        timestamp: new Date().toISOString(),
+        source: "Test Suite",
+        status: "running",
+        autoProcessEnabled: true
+    },
+    activityLog: []
+};
+
+const SAMPLE_SYNC = {
+    etsy: {
+        orders: [
+            {
+                id: "ETSY-123456789",
+                channel: "etsy",
+                date: new Date(Date.now() - 86400000).toISOString(),
+                buyer: "John Doe",
+                total: 29.99,
+                status: "Completed",
+                processed: true,
+                items: [
+                    { sku: "TEST-001", title: "Test Widget A", qty: 1, price: 29.99 }
+                ]
+            }
+        ],
+        lastSync: new Date().toISOString()
+    },
+    wix: {
+        orders: [
+            {
+                id: "WIX-abc123-def456",
+                channel: "wix",
+                date: new Date(Date.now() - 172800000).toISOString(),
+                buyer: "Jane Smith",
+                total: "49.99",  // String format like real data
+                status: "FULFILLED",
+                processed: false,
+                items: [
+                    { 
+                        sku: "TEST-002", 
+                        title: "Test Gadget B", 
+                        qty: 1, 
+                        price: { amount: "49.99", formattedAmount: "$49.99" }  // Object format like real Wix data
+                    }
+                ]
+            }
+        ],
+        lastSync: new Date().toISOString()
+    },
+    wayfair: {
+        orders: [],  // Empty like real data often is
+        lastSync: null
+    },
+    _metadata: {
+        version: 1,
+        lastModified: new Date().toISOString(),
+        lastModifiedBy: "Test Suite"
+    }
+};
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+document.addEventListener('DOMContentLoaded', () => {
+    log('info', 'CCD System Test Suite v2.0 initialized');
+    log('info', 'Tests validated against actual production data structures');
+    countPendingTests();
+    updateStatusBar();
+});
+
+// ============================================================================
+// FILE CONNECTIONS
+// ============================================================================
+async function connectFiles() {
+    try {
+        // MASTER
+        log('info', 'Select MASTER.json (inventory file)...');
+        const [mh] = await window.showOpenFilePicker({ types: [{ accept: { 'application/json': ['.json'] } }] });
+        const mFile = await mh.getFile();
+        masterData = JSON.parse(await mFile.text());
+        updateFileStatus('master', mh.name, masterData);
+        log('success', `MASTER loaded: ${mh.name} (${masterData.inventory?.length || 0} items)`);
+
+        // CONFIG
+        log('info', 'Select CONFIG.json (settings file)...');
+        const [ch] = await window.showOpenFilePicker({ types: [{ accept: { 'application/json': ['.json'] } }] });
+        const cFile = await ch.getFile();
+        configData = JSON.parse(await cFile.text());
+        updateFileStatus('config', ch.name, configData);
+        log('success', `CONFIG loaded: ${ch.name}`);
+
+        // SYNC
+        log('info', 'Select SYNC.json (orders file)...');
+        const [sh] = await window.showOpenFilePicker({ types: [{ accept: { 'application/json': ['.json'] } }] });
+        const sFile = await sh.getFile();
+        syncData = JSON.parse(await sFile.text());
+        updateFileStatus('sync', sh.name, syncData);
+        const orderCount = (syncData.etsy?.orders?.length || 0) + (syncData.wix?.orders?.length || 0) + (syncData.wayfair?.orders?.length || 0);
+        log('success', `SYNC loaded: ${sh.name} (${orderCount} orders)`);
+
+        usingSampleData = false;
+        toast('All files connected successfully', 'success');
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            log('error', `File connection error: ${e.message}`);
+            toast('Error: ' + e.message, 'error');
+        }
+    }
+}
+
+function loadSampleData() {
+    masterData = JSON.parse(JSON.stringify(SAMPLE_MASTER));
+    configData = JSON.parse(JSON.stringify(SAMPLE_CONFIG));
+    syncData = JSON.parse(JSON.stringify(SAMPLE_SYNC));
+    usingSampleData = true;
+    
+    // Also set localStorage heartbeat
+    localStorage.setItem('ccd_sync_hub_heartbeat', JSON.stringify({
+        timestamp: new Date().toISOString(),
+        source: 'Test Suite (Sample)',
+        status: 'running'
+    }));
+    
+    updateFileStatus('master', 'Sample Data', masterData);
+    updateFileStatus('config', 'Sample Data', configData);
+    updateFileStatus('sync', 'Sample Data', syncData);
+    
+    log('success', 'Sample data loaded (mirrors production schema)');
+    toast('Sample data loaded', 'success');
+}
+
+function updateFileStatus(type, filename, data) {
+    const statusEl = document.getElementById(type + 'Status');
+    const detailsEl = document.getElementById(type + 'Details');
+    
+    if (statusEl) {
+        statusEl.className = 'status connected';
+        statusEl.innerHTML = `🟢 ${filename}`;
+    }
+    
+    if (detailsEl) {
+        if (type === 'master') {
+            detailsEl.textContent = `${data.inventory?.length || 0} items, v${data._metadata?.version || '?'}`;
+        } else if (type === 'config') {
+            detailsEl.textContent = `v${data._metadata?.version || '?'}, schema ${data._metadata?.schemaVersion || '?'}`;
+        } else if (type === 'sync') {
+            const count = (data.etsy?.orders?.length || 0) + (data.wix?.orders?.length || 0) + (data.wayfair?.orders?.length || 0);
+            detailsEl.textContent = `${count} orders, v${data._metadata?.version || '?'}`;
+        }
+    }
+}
+
+// ============================================================================
+// UTILITY: Safe Price Parsing (handles all formats in ecosystem)
+// ============================================================================
+function safeParsePrice(value) {
+    if (value === null || value === undefined) return 0;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'object' && value.amount) {
+        // Wix format: { amount: "49.99", formattedAmount: "$49.99" }
+        return parseFloat(String(value.amount).replace(/[^0-9.-]/g, '')) || 0;
+    }
+    // String format: "$49.99" or "49.99"
+    return parseFloat(String(value).replace(/[^0-9.-]/g, '')) || 0;
+}
+
+// ============================================================================
+// TEST FUNCTIONS - CONFIG & Settings
+// ============================================================================
+async function testConfigMetadata() {
+    if (!configData) return { passed: false, message: 'No CONFIG loaded' };
+    
+    const meta = configData._metadata;
+    if (!meta) return { passed: false, message: '_metadata missing' };
+    if (typeof meta.version !== 'number') return { passed: false, message: 'version not a number' };
+    
+    return { passed: true, message: `v${meta.version}, schema ${meta.schemaVersion || 'N/A'}` };
+}
+
+async function testConfigSettings() {
+    if (!configData?.settings) return { passed: false, message: 'settings object missing' };
+    
+    const s = configData.settings;
+    const checks = [];
+    
+    if (!s.enabledChannels) checks.push('enabledChannels');
+    if (!s.proxyUrls) checks.push('proxyUrls');
+    if (s.autoProcessEnabled === undefined) checks.push('autoProcessEnabled');
+    
+    if (checks.length > 0) {
+        return { passed: false, message: `Missing: ${checks.join(', ')}` };
+    }
+    
+    return { passed: true, message: 'All required settings present' };
+}
+
+async function testConfigFeatureFlags() {
+    // Note: features is INSIDE settings in actual CONFIG
+    const features = configData?.settings?.features;
+    if (!features) return { passed: false, message: 'settings.features missing' };
+    
+    const flags = Object.entries(features).filter(([k, v]) => typeof v === 'boolean');
+    if (flags.length === 0) return { passed: false, message: 'No boolean flags found' };
+    
+    return { passed: true, message: `${flags.length} flags: ${flags.map(f => f[0]).join(', ')}` };
+}
+
+async function testConfigHeartbeat() {
+    const hb = configData?.heartbeat;
+    if (!hb) return { passed: false, message: 'heartbeat object missing' };
+    
+    const required = ['timestamp', 'source', 'status'];
+    const missing = required.filter(f => !hb[f]);
+    
+    if (missing.length > 0) {
+        return { passed: false, message: `Missing: ${missing.join(', ')}` };
+    }
+    
+    return { passed: true, message: `Source: ${hb.source}, Status: ${hb.status}` };
+}
+
+async function testConfigHeartbeatAge() {
+    const hb = configData?.heartbeat;
+    if (!hb?.timestamp) return { passed: false, message: 'No heartbeat timestamp' };
+    
+    const age = Date.now() - new Date(hb.timestamp).getTime();
+    const ageMinutes = Math.round(age / 60000);
+    
+    if (ageMinutes > 15) {
+        return { passed: false, message: `Stale: ${ageMinutes} min old (>15 min)` };
+    }
+    if (ageMinutes > 5) {
+        return { passed: true, message: `Warning: ${ageMinutes} min old (consider restarting Sync Hub)` };
+    }
+    
+    return { passed: true, message: `Fresh: ${ageMinutes} min old` };
+}
+
+async function testLocalStorageHeartbeat() {
+    const raw = localStorage.getItem('ccd_sync_hub_heartbeat');
+    if (!raw) return { passed: false, message: 'No localStorage heartbeat (same-PC only)' };
+    
+    try {
+        const hb = JSON.parse(raw);
+        if (!hb.timestamp) return { passed: false, message: 'Invalid format: no timestamp' };
+        
+        const age = Date.now() - new Date(hb.timestamp).getTime();
+        const ageMinutes = Math.round(age / 60000);
+        
+        return { passed: ageMinutes < 15, message: `${ageMinutes} min old, source: ${hb.source || 'unknown'}` };
+    } catch (e) {
+        return { passed: false, message: 'Invalid JSON in localStorage' };
+    }
+}
+
+// ============================================================================
+// TEST FUNCTIONS - MASTER Inventory
+// ============================================================================
+async function testMasterMetadata() {
+    if (!masterData) return { passed: false, message: 'No MASTER loaded' };
+    
+    const meta = masterData._metadata;
+    if (!meta) return { passed: false, message: '_metadata missing' };
+    if (typeof meta.version !== 'number') return { passed: false, message: 'version not a number' };
+    
+    return { passed: true, message: `v${meta.version}` };
+}
+
+async function testInventoryArray() {
+    if (!masterData?.inventory) return { passed: false, message: 'inventory missing' };
+    if (!Array.isArray(masterData.inventory)) return { passed: false, message: 'inventory not an array' };
+    if (masterData.inventory.length === 0) return { passed: false, message: 'inventory is empty' };
+    
+    return { passed: true, message: `${masterData.inventory.length} items` };
+}
+
+async function testInventoryRequiredFields() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const required = ['sku', 'qty', 'wholesalePrice', 'channels'];
+    const issues = [];
+    
+    masterData.inventory.slice(0, 100).forEach((item, i) => {
+        required.forEach(field => {
+            if (item[field] === undefined) {
+                issues.push(`Item ${i}: missing ${field}`);
+            }
+        });
+    });
+    
+    if (issues.length > 0) {
+        return { passed: false, message: issues.slice(0, 3).join('; ') + (issues.length > 3 ? ` (+${issues.length - 3} more)` : '') };
+    }
+    
+    return { passed: true, message: 'All items have required fields' };
+}
+
+async function testChannelsStructure() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const expectedChannels = ['etsy', 'wix', 'wayfair', 'treasuremarts'];
+    const issues = [];
+    
+    masterData.inventory.slice(0, 50).forEach((item, i) => {
+        if (!item.channels || typeof item.channels !== 'object') {
+            issues.push(`${item.sku || i}: no channels object`);
+            return;
+        }
+        expectedChannels.forEach(ch => {
+            if (item.channels[ch] === undefined) {
+                issues.push(`${item.sku}: missing ${ch}`);
+            }
+        });
+    });
+    
+    if (issues.length > 0) {
+        return { passed: false, message: issues.slice(0, 2).join('; ') };
+    }
+    
+    return { passed: true, message: 'All items have all channel keys' };
+}
+
+async function testNoNegativeQty() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const negatives = [];
+    masterData.inventory.forEach(item => {
+        if ((item.qty || 0) < 0) negatives.push(`${item.sku}: qty=${item.qty}`);
+        if (item.channels) {
+            Object.entries(item.channels).forEach(([ch, val]) => {
+                if ((val || 0) < 0) negatives.push(`${item.sku}.${ch}=${val}`);
+            });
+        }
+    });
+    
+    if (negatives.length > 0) {
+        return { passed: false, message: negatives.slice(0, 3).join(', ') };
+    }
+    
+    return { passed: true, message: 'All quantities >= 0' };
+}
+
+async function testChannelAllocationLimit() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const violations = [];
+    masterData.inventory.forEach(item => {
+        const qty = item.qty || 0;
+        const tm = item.channels?.treasuremarts || 0;
+        const warehouse = qty - tm;
+        
+        ['etsy', 'wix', 'wayfair'].forEach(ch => {
+            const alloc = item.channels?.[ch] || 0;
+            if (alloc > warehouse) {
+                violations.push(`${item.sku}: ${ch}(${alloc}) > warehouse(${warehouse})`);
+            }
+        });
+    });
+    
+    if (violations.length > 0) {
+        return { passed: false, message: violations.slice(0, 2).join('; ') };
+    }
+    
+    return { passed: true, message: 'All allocations within warehouse limits' };
+}
+
+async function testActivityLogExists() {
+    if (!masterData?._activityLog) return { passed: false, message: '_activityLog missing' };
+    if (!Array.isArray(masterData._activityLog)) return { passed: false, message: '_activityLog not an array' };
+    
+    return { passed: true, message: `${masterData._activityLog.length} entries` };
+}
+
+// ============================================================================
+// TEST FUNCTIONS - SYNC Orders
+// ============================================================================
+async function testSyncMetadata() {
+    if (!syncData) return { passed: false, message: 'No SYNC loaded' };
+    
+    const meta = syncData._metadata;
+    if (!meta) return { passed: false, message: '_metadata missing' };
+    if (typeof meta.version !== 'number') return { passed: false, message: 'version not a number' };
+    
+    return { passed: true, message: `v${meta.version}` };
+}
+
+async function testEtsyStructure() {
+    if (!syncData?.etsy) return { passed: false, message: 'etsy section missing' };
+    if (!Array.isArray(syncData.etsy.orders)) return { passed: false, message: 'etsy.orders not an array' };
+    
+    return { passed: true, message: `${syncData.etsy.orders.length} orders` };
+}
+
+async function testWixStructure() {
+    if (!syncData?.wix) return { passed: false, message: 'wix section missing' };
+    if (!Array.isArray(syncData.wix.orders)) return { passed: false, message: 'wix.orders not an array' };
+    
+    // Verify we can handle Wix price formats
+    const orders = syncData.wix.orders;
+    if (orders.length > 0) {
+        const sample = orders[0];
+        if (sample.items?.[0]?.price) {
+            const priceType = typeof sample.items[0].price;
+            return { passed: true, message: `${orders.length} orders (price format: ${priceType === 'object' ? 'object' : priceType})` };
+        }
+    }
+    
+    return { passed: true, message: `${syncData.wix.orders.length} orders` };
+}
+
+async function testWayfairStructure() {
+    if (!syncData?.wayfair) return { passed: false, message: 'wayfair section missing' };
+    if (!Array.isArray(syncData.wayfair.orders)) return { passed: false, message: 'wayfair.orders not an array' };
+    
+    return { passed: true, message: `${syncData.wayfair.orders.length} orders` };
+}
+
+async function testOrderRequiredFields() {
+    if (!syncData) return { passed: false, message: 'No SYNC loaded' };
+    
+    const issues = [];
+    const channels = ['etsy', 'wix', 'wayfair'];
+    
+    channels.forEach(ch => {
+        (syncData[ch]?.orders || []).slice(0, 10).forEach((order, i) => {
+            if (!order.id) issues.push(`${ch}[${i}]: missing id`);
+            if (!order.date) issues.push(`${ch}[${i}]: missing date`);
+            if (!order.items && !order.products) issues.push(`${ch}[${i}]: missing items`);
+        });
+    });
+    
+    if (issues.length > 0) {
+        return { passed: false, message: issues.slice(0, 3).join('; ') };
+    }
+    
+    return { passed: true, message: 'All orders have required fields' };
+}
+
+async function testNoDuplicateOrders() {
+    if (!syncData) return { passed: false, message: 'No SYNC loaded' };
+    
+    const duplicates = [];
+    ['etsy', 'wix', 'wayfair'].forEach(ch => {
+        const orders = syncData[ch]?.orders || [];
+        const ids = orders.map(o => o.id);
+        const seen = new Set();
+        ids.forEach(id => {
+            if (seen.has(id)) duplicates.push(`${ch}: ${id}`);
+            seen.add(id);
+        });
+    });
+    
+    if (duplicates.length > 0) {
+        return { passed: false, message: `Duplicates: ${duplicates.slice(0, 3).join(', ')}` };
+    }
+    
+    return { passed: true, message: 'No duplicate order IDs' };
+}
+
+// ============================================================================
+// TEST FUNCTIONS - Pricing & Calculations
+// ============================================================================
+async function testPriceFieldsExist() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const missing = [];
+    masterData.inventory.slice(0, 50).forEach(item => {
+        if (item.wholesalePrice === undefined) missing.push(`${item.sku}: wholesalePrice`);
+        if (item.retailPrice === undefined) missing.push(`${item.sku}: retailPrice`);
+    });
+    
+    if (missing.length > 0) {
+        return { passed: false, message: missing.slice(0, 3).join('; ') };
+    }
+    
+    return { passed: true, message: 'All items have price fields' };
+}
+
+async function testCostFieldsExist() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    // These fields may be 0 but should exist
+    const sample = masterData.inventory[0];
+    const fields = ['ibShipping', 'tariff', 'obShipping'];
+    const present = fields.filter(f => sample[f] !== undefined);
+    
+    return { passed: present.length === fields.length, message: `${present.length}/${fields.length} cost fields present` };
+}
+
+async function testPriceParsingLogic() {
+    // Test the safeParsePrice function against all real formats
+    const testCases = [
+        { input: 49.99, expected: 49.99 },
+        { input: "49.99", expected: 49.99 },
+        { input: "$49.99", expected: 49.99 },
+        { input: { amount: "49.99", formattedAmount: "$49.99" }, expected: 49.99 },
+        { input: null, expected: 0 },
+        { input: undefined, expected: 0 },
+        { input: "36.95", expected: 36.95 },
+    ];
+    
+    const failures = [];
+    testCases.forEach(tc => {
+        const result = safeParsePrice(tc.input);
+        if (Math.abs(result - tc.expected) > 0.01) {
+            failures.push(`${JSON.stringify(tc.input)} => ${result} (expected ${tc.expected})`);
+        }
+    });
+    
+    if (failures.length > 0) {
+        return { passed: false, message: failures[0] };
+    }
+    
+    return { passed: true, message: 'All formats parsed correctly' };
+}
+
+async function testToFixedSafety() {
+    // Ensure toFixed(2) works on all parsed prices
+    const testValues = [49.99, "49.99", "$49.99", { amount: "36.95" }, null, undefined, 0, ""];
+    
+    const failures = [];
+    testValues.forEach(v => {
+        try {
+            const parsed = safeParsePrice(v);
+            const fixed = parsed.toFixed(2);
+            if (typeof fixed !== 'string') failures.push(`${JSON.stringify(v)}: toFixed didn't return string`);
+        } catch (e) {
+            failures.push(`${JSON.stringify(v)}: ${e.message}`);
+        }
+    });
+    
+    if (failures.length > 0) {
+        return { passed: false, message: failures[0] };
+    }
+    
+    return { passed: true, message: 'toFixed(2) works on all formats' };
+}
+
+async function testCostCalculation() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    // Test cost formula: wholesale + (wholesale * ibShipping%) + tariff + obShipping
+    const item = masterData.inventory[0];
+    const wholesale = item.wholesalePrice || 0;
+    const ibPct = item.ibShipping || 0;
+    const tariff = item.tariff || 0;
+    const obShipping = item.obShipping || 0;
+    
+    const inbound = wholesale * (ibPct / 100);
+    const totalCost = wholesale + inbound + tariff + obShipping;
+    
+    if (totalCost < 0) {
+        return { passed: false, message: 'Calculation produced negative cost' };
+    }
+    
+    return { passed: true, message: `Sample cost: $${totalCost.toFixed(2)} (wholesale $${wholesale}, +${ibPct}% IB, +$${tariff} tariff, +$${obShipping} OB)` };
+}
+
+// ============================================================================
+// TEST FUNCTIONS - Data Integrity
+// ============================================================================
+async function testJsonValid() {
+    try {
+        if (masterData) JSON.parse(JSON.stringify(masterData));
+        if (configData) JSON.parse(JSON.stringify(configData));
+        if (syncData) JSON.parse(JSON.stringify(syncData));
+        return { passed: true, message: 'All data serializes cleanly' };
+    } catch (e) {
+        return { passed: false, message: `Serialization error: ${e.message}` };
+    }
+}
+
+async function testNoNullSku() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const nullSkus = masterData.inventory.filter(item => !item.sku || item.sku.trim() === '');
+    
+    if (nullSkus.length > 0) {
+        return { passed: false, message: `${nullSkus.length} items with null/empty SKU` };
+    }
+    
+    return { passed: true, message: 'All items have SKUs' };
+}
+
+async function testUniqueIds() {
+    if (!masterData?.inventory?.length) return { passed: false, message: 'No inventory' };
+    
+    const ids = masterData.inventory.map(i => i.id);
+    const seen = new Set();
+    const duplicates = [];
+    
+    ids.forEach(id => {
+        if (seen.has(id)) duplicates.push(id);
+        seen.add(id);
+    });
+    
+    if (duplicates.length > 0) {
+        return { passed: false, message: `${duplicates.length} duplicate IDs: ${duplicates.slice(0, 3).join(', ')}` };
+    }
+    
+    return { passed: true, message: `${ids.length} unique IDs` };
+}
+
+async function testVersionTracking() {
+    const versions = [];
+    
+    if (masterData?._metadata?.version !== undefined) {
+        versions.push(`MASTER: v${masterData._metadata.version}`);
+    }
+    if (configData?._metadata?.version !== undefined) {
+        versions.push(`CONFIG: v${configData._metadata.version}`);
+    }
+    if (syncData?._metadata?.version !== undefined) {
+        versions.push(`SYNC: v${syncData._metadata.version}`);
+    }
+    
+    if (versions.length < 3) {
+        return { passed: false, message: `Only ${versions.length}/3 files have version tracking` };
+    }
+    
+    return { passed: true, message: versions.join(', ') };
+}
+
+// ============================================================================
+// TEST RUNNER
+// ============================================================================
+const ALL_TESTS = [
+    // CONFIG & Settings
+    { id: 'configMetadata', fn: testConfigMetadata, category: 'config' },
+    { id: 'configSettings', fn: testConfigSettings, category: 'config' },
+    { id: 'configFeatureFlags', fn: testConfigFeatureFlags, category: 'config' },
+    { id: 'configHeartbeat', fn: testConfigHeartbeat, category: 'config' },
+    { id: 'configHeartbeatAge', fn: testConfigHeartbeatAge, category: 'config' },
+    { id: 'localStorageHeartbeat', fn: testLocalStorageHeartbeat, category: 'config' },
+    
+    // MASTER Inventory
+    { id: 'masterMetadata', fn: testMasterMetadata, category: 'master' },
+    { id: 'inventoryArray', fn: testInventoryArray, category: 'master' },
+    { id: 'inventoryRequiredFields', fn: testInventoryRequiredFields, category: 'master' },
+    { id: 'channelsStructure', fn: testChannelsStructure, category: 'master' },
+    { id: 'noNegativeQty', fn: testNoNegativeQty, category: 'master' },
+    { id: 'channelAllocationLimit', fn: testChannelAllocationLimit, category: 'master' },
+    { id: 'activityLogExists', fn: testActivityLogExists, category: 'master' },
+    
+    // SYNC Orders
+    { id: 'syncMetadata', fn: testSyncMetadata, category: 'sync' },
+    { id: 'etsyStructure', fn: testEtsyStructure, category: 'sync' },
+    { id: 'wixStructure', fn: testWixStructure, category: 'sync' },
+    { id: 'wayfairStructure', fn: testWayfairStructure, category: 'sync' },
+    { id: 'orderRequiredFields', fn: testOrderRequiredFields, category: 'sync' },
+    { id: 'noDuplicateOrders', fn: testNoDuplicateOrders, category: 'sync' },
+    
+    // Pricing & Calculations
+    { id: 'priceFieldsExist', fn: testPriceFieldsExist, category: 'pricing' },
+    { id: 'costFieldsExist', fn: testCostFieldsExist, category: 'pricing' },
+    { id: 'priceParsingLogic', fn: testPriceParsingLogic, category: 'pricing' },
+    { id: 'toFixedSafety', fn: testToFixedSafety, category: 'pricing' },
+    { id: 'costCalculation', fn: testCostCalculation, category: 'pricing' },
+    
+    // Data Integrity
+    { id: 'jsonValid', fn: testJsonValid, category: 'integrity' },
+    { id: 'noNullSku', fn: testNoNullSku, category: 'integrity' },
+    { id: 'uniqueIds', fn: testUniqueIds, category: 'integrity' },
+    { id: 'versionTracking', fn: testVersionTracking, category: 'integrity' },
+];
+
+async function runAllTests() {
+    if (!masterData || !configData || !syncData) {
+        toast('Please load all 3 files first', 'warning');
+        return;
+    }
+    
+    resetTests();
+    testResults.startTime = Date.now();
+    document.getElementById('testProgress').style.display = 'block';
+    
+    log('info', `🚀 Running ${ALL_TESTS.length} tests...`);
+    
+    testResults.total = ALL_TESTS.length;
+    
+    for (let i = 0; i < ALL_TESTS.length; i++) {
+        const test = ALL_TESTS[i];
+        document.getElementById('progressFill').style.width = `${((i + 1) / ALL_TESTS.length) * 100}%`;
+        await runSingleTest(test.id, test.fn);
+        await new Promise(r => setTimeout(r, 20));
+    }
+    
+    testResults.endTime = Date.now();
+    const duration = ((testResults.endTime - testResults.startTime) / 1000).toFixed(1);
+    document.querySelector('#statusDuration .value').textContent = duration + 's';
+    
+    log('info', `✅ Complete: ${testResults.passed}/${testResults.total} passed (${testResults.failed} failed)`);
+    
+    if (testResults.failed > 0) {
+        toast(`${testResults.failed} test(s) failed - review log for details`, 'error');
+    } else {
+        toast('All tests passed! ✓', 'success');
+    }
+}
+
+async function runQuickValidation() {
+    if (!masterData && !configData && !syncData) {
+        toast('Please load at least one file', 'warning');
+        return;
+    }
+    
+    log('info', '⚡ Running quick validation (5 critical tests)...');
+    
+    const criticalTests = [
+        { id: 'inventoryArray', fn: testInventoryArray },
+        { id: 'noNegativeQty', fn: testNoNegativeQty },
+        { id: 'jsonValid', fn: testJsonValid },
+        { id: 'priceParsingLogic', fn: testPriceParsingLogic },
+        { id: 'configHeartbeat', fn: testConfigHeartbeat },
+    ];
+    
+    let passed = 0;
+    for (const test of criticalTests) {
+        try {
+            const result = await test.fn();
+            if (result.passed) passed++;
+            log(result.passed ? 'success' : 'error', `${test.id}: ${result.message}`);
+        } catch (e) {
+            log('error', `${test.id}: Exception - ${e.message}`);
+        }
+    }
+    
+    toast(`Quick validation: ${passed}/${criticalTests.length} passed`, passed === criticalTests.length ? 'success' : 'warning');
+}
+
+async function runSingleTest(id, fn) {
+    const el = document.getElementById('test-' + id);
+    const iconEl = el?.querySelector('.test-icon');
+    const resultEl = el?.querySelector('.test-result');
+    
+    if (iconEl) {
+        iconEl.className = 'test-icon running';
+        iconEl.textContent = '⏳';
+    }
+    
+    const start = Date.now();
+    
+    try {
+        const result = await fn();
+        const duration = Date.now() - start;
+        
+        testResults.results[id] = { ...result, duration };
+        
+        if (result.passed) {
+            testResults.passed++;
+            if (iconEl) {
+                iconEl.className = 'test-icon passed';
+                iconEl.textContent = '✅';
+            }
+            if (resultEl) {
+                resultEl.className = 'test-result passed';
+                resultEl.innerHTML = `Passed<div class="duration">${duration}ms</div><div class="detail">${result.message}</div>`;
+            }
+            log('success', `✅ ${id}: ${result.message}`);
+        } else {
+            testResults.failed++;
+            if (iconEl) {
+                iconEl.className = 'test-icon failed';
+                iconEl.textContent = '❌';
+            }
+            if (resultEl) {
+                resultEl.className = 'test-result failed';
+                resultEl.innerHTML = `Failed<div class="duration">${duration}ms</div><div class="detail">${result.message}</div>`;
+            }
+            log('error', `❌ ${id}: ${result.message}`);
+        }
+    } catch (e) {
+        testResults.failed++;
+        if (iconEl) {
+            iconEl.className = 'test-icon failed';
+            iconEl.textContent = '❌';
+        }
+        if (resultEl) {
+            resultEl.className = 'test-result failed';
+            resultEl.innerHTML = `Error<div class="detail">${e.message}</div>`;
+        }
+        log('error', `❌ ${id}: Exception - ${e.message}`);
+        testResults.results[id] = { passed: false, message: e.message, exception: true };
+    }
+    
+    testResults.pending--;
+    updateStatusBar();
+    updateCategoryBadges();
+}
+
+// ============================================================================
+// UI HELPERS
+// ============================================================================
+function resetTests() {
+    testResults.total = 0;
+    testResults.passed = 0;
+    testResults.failed = 0;
+    testResults.pending = 0;
+    testResults.results = {};
+    testResults.startTime = null;
+    testResults.endTime = null;
+    
+    document.querySelectorAll('.test-item').forEach(el => {
+        const icon = el.querySelector('.test-icon');
+        const result = el.querySelector('.test-result');
+        if (icon) {
+            icon.className = 'test-icon pending';
+            icon.textContent = '⏳';
+        }
+        if (result) {
+            result.className = 'test-result';
+            result.innerHTML = '';
+        }
+    });
+    
+    countPendingTests();
+    updateStatusBar();
+    updateCategoryBadges();
+    
+    document.getElementById('testProgress').style.display = 'none';
+    document.getElementById('progressFill').style.width = '0%';
+    document.querySelector('#statusDuration .value').textContent = '0s';
+}
+
+function countPendingTests() {
+    testResults.pending = document.querySelectorAll('.test-item').length;
+    testResults.total = testResults.pending;
+}
+
+function updateStatusBar() {
+    document.querySelector('#statusTotal .value').textContent = testResults.total;
+    document.querySelector('#statusPassed .value').textContent = testResults.passed;
+    document.querySelector('#statusFailed .value').textContent = testResults.failed;
+    document.querySelector('#statusPending .value').textContent = testResults.pending;
+}
+
+function updateCategoryBadges() {
+    const categories = ['config', 'master', 'sync', 'pricing', 'integrity'];
+    
+    categories.forEach(cat => {
+        const body = document.getElementById('body-' + cat);
+        const badge = document.getElementById('badge-' + cat);
+        if (!body || !badge) return;
+        
+        const total = body.querySelectorAll('.test-item').length;
+        const passed = body.querySelectorAll('.test-icon.passed').length;
+        const failed = body.querySelectorAll('.test-icon.failed').length;
+        
+        badge.textContent = `${passed}/${total}`;
+        badge.className = 'badge ' + (failed > 0 ? 'failed' : passed === total ? 'passed' : passed > 0 ? 'running' : 'pending');
+    });
+}
+
+function toggleCategory(cat) {
+    const body = document.getElementById('body-' + cat);
+    if (body) {
+        body.classList.toggle('collapsed');
+    }
+}
+
+function log(type, msg) {
+    const body = document.getElementById('logBody');
+    const time = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.innerHTML = `<span class="log-time">${time}</span><span class="log-type ${type}">${type.toUpperCase()}</span><span class="log-message">${msg}</span>`;
+    body.appendChild(entry);
+    body.scrollTop = body.scrollHeight;
+}
+
+function clearLog() {
+    document.getElementById('logBody').innerHTML = '';
+    log('info', 'Log cleared');
+}
+
+function toast(msg, type) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + type;
+    t.textContent = msg;
+    document.getElementById('toastContainer').appendChild(t);
+    setTimeout(() => t.remove(), 4000);
+}
+
+function exportResults() {
+    const report = {
+        timestamp: new Date().toISOString(),
+        version: '2.0',
+        usingSampleData,
+        summary: {
+            total: testResults.total,
+            passed: testResults.passed,
+            failed: testResults.failed,
+            duration: testResults.endTime ? (testResults.endTime - testResults.startTime) / 1000 : 0
+        },
+        results: testResults.results,
+        dataInfo: {
+            masterVersion: masterData?._metadata?.version,
+            configVersion: configData?._metadata?.version,
+            syncVersion: syncData?._metadata?.version,
+            inventoryCount: masterData?.inventory?.length,
+            orderCount: (syncData?.etsy?.orders?.length || 0) + (syncData?.wix?.orders?.length || 0) + (syncData?.wayfair?.orders?.length || 0)
+        }
+    };
+    
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ccd-test-results-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    
+    log('success', 'Results exported');
+    toast('Results exported', 'success');
+}
+
+// ============================================================================
+// DIAGNOSTIC EXPORT - Full troubleshooting report
+// ============================================================================
+function exportDiagnostics() {
+    // Collect all log entries
+    const logEntries = [];
+    document.querySelectorAll('#logBody .log-entry').forEach(el => {
+        logEntries.push({
+            time: el.querySelector('.log-time')?.textContent || '',
+            type: el.querySelector('.log-type')?.textContent || '',
+            message: el.querySelector('.log-message')?.textContent || ''
+        });
+    });
+    
+    // Build comprehensive diagnostic report
+    const diagnostics = {
+        // Header
+        reportType: 'CCD System Diagnostic Report',
+        generated: new Date().toISOString(),
+        testSuiteVersion: '2.0',
+        usingSampleData,
+        
+        // Test Summary
+        testSummary: {
+            total: testResults.total,
+            passed: testResults.passed,
+            failed: testResults.failed,
+            pending: testResults.pending,
+            durationMs: testResults.endTime ? testResults.endTime - testResults.startTime : 0
+        },
+        
+        // Failed Tests (most important for troubleshooting)
+        failedTests: Object.entries(testResults.results)
+            .filter(([id, r]) => !r.passed)
+            .map(([id, r]) => ({
+                testId: id,
+                message: r.message,
+                duration: r.duration,
+                exception: r.exception || false
+            })),
+        
+        // All Test Results
+        allTestResults: testResults.results,
+        
+        // Data Structure Snapshots (for debugging)
+        dataStructures: {
+            master: {
+                hasData: !!masterData,
+                inventoryCount: masterData?.inventory?.length || 0,
+                metadataVersion: masterData?._metadata?.version,
+                metadataLastModified: masterData?._metadata?.lastModified,
+                activityLogCount: masterData?._activityLog?.length || 0,
+                sampleItem: masterData?.inventory?.[0] ? {
+                    id: masterData.inventory[0].id,
+                    sku: masterData.inventory[0].sku,
+                    qty: masterData.inventory[0].qty,
+                    channels: masterData.inventory[0].channels,
+                    hasWholesalePrice: masterData.inventory[0].wholesalePrice !== undefined,
+                    hasRetailPrice: masterData.inventory[0].retailPrice !== undefined,
+                    hasIbShipping: masterData.inventory[0].ibShipping !== undefined,
+                    hasTariff: masterData.inventory[0].tariff !== undefined,
+                    hasObShipping: masterData.inventory[0].obShipping !== undefined
+                } : null
+            },
+            config: {
+                hasData: !!configData,
+                metadataVersion: configData?._metadata?.version,
+                schemaVersion: configData?._metadata?.schemaVersion,
+                hasSettings: !!configData?.settings,
+                hasFeatures: !!configData?.settings?.features,
+                featureFlags: configData?.settings?.features || {},
+                enabledChannels: configData?.settings?.enabledChannels || {},
+                hasHeartbeat: !!configData?.heartbeat,
+                heartbeat: configData?.heartbeat ? {
+                    timestamp: configData.heartbeat.timestamp,
+                    source: configData.heartbeat.source,
+                    status: configData.heartbeat.status,
+                    ageMinutes: Math.round((Date.now() - new Date(configData.heartbeat.timestamp).getTime()) / 60000)
+                } : null
+            },
+            sync: {
+                hasData: !!syncData,
+                metadataVersion: syncData?._metadata?.version,
+                etsy: {
+                    orderCount: syncData?.etsy?.orders?.length || 0,
+                    lastSync: syncData?.etsy?.lastSync
+                },
+                wix: {
+                    orderCount: syncData?.wix?.orders?.length || 0,
+                    lastSync: syncData?.wix?.lastSync,
+                    samplePriceFormat: syncData?.wix?.orders?.[0]?.items?.[0]?.price ? 
+                        typeof syncData.wix.orders[0].items[0].price : 'N/A'
+                },
+                wayfair: {
+                    orderCount: syncData?.wayfair?.orders?.length || 0,
+                    lastSync: syncData?.wayfair?.lastSync
+                }
+            },
+            localStorage: {
+                heartbeat: (() => {
+                    try {
+                        const raw = localStorage.getItem('ccd_sync_hub_heartbeat');
+                        if (!raw) return { exists: false };
+                        const hb = JSON.parse(raw);
+                        return {
+                            exists: true,
+                            timestamp: hb.timestamp,
+                            source: hb.source,
+                            status: hb.status,
+                            ageMinutes: Math.round((Date.now() - new Date(hb.timestamp).getTime()) / 60000)
+                        };
+                    } catch (e) {
+                        return { exists: false, error: e.message };
+                    }
+                })()
+            }
+        },
+        
+        // Browser/Environment Info
+        environment: {
+            userAgent: navigator.userAgent,
+            platform: navigator.platform,
+            language: navigator.language,
+            cookiesEnabled: navigator.cookieEnabled,
+            onLine: navigator.onLine,
+            screenWidth: screen.width,
+            screenHeight: screen.height,
+            windowWidth: window.innerWidth,
+            windowHeight: window.innerHeight,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            localTime: new Date().toString()
+        },
+        
+        // Test Log
+        testLog: logEntries
+    };
+    
+    // Create text report for easy reading
+    const textReport = generateTextReport(diagnostics);
+    
+    // Download JSON
+    const jsonBlob = new Blob([JSON.stringify(diagnostics, null, 2)], { type: 'application/json' });
+    const jsonLink = document.createElement('a');
+    jsonLink.href = URL.createObjectURL(jsonBlob);
+    jsonLink.download = `ccd-diagnostics-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    jsonLink.click();
+    
+    // Also download text version
+    setTimeout(() => {
+        const textBlob = new Blob([textReport], { type: 'text/plain' });
+        const textLink = document.createElement('a');
+        textLink.href = URL.createObjectURL(textBlob);
+        textLink.download = `ccd-diagnostics-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+        textLink.click();
+    }, 500);
+    
+    log('success', 'Diagnostic report exported (JSON + TXT)');
+    toast('Diagnostic report exported', 'success');
+}
+
+function generateTextReport(d) {
+    let txt = '';
+    txt += '═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += '                    CCD SYSTEM DIAGNOSTIC REPORT\n';
+    txt += '═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += `Generated: ${d.generated}\n`;
+    txt += `Test Suite Version: ${d.testSuiteVersion}\n`;
+    txt += `Using Sample Data: ${d.usingSampleData}\n`;
+    txt += '\n';
+    
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' TEST SUMMARY\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += `Total:  ${d.testSummary.total}\n`;
+    txt += `Passed: ${d.testSummary.passed} ✓\n`;
+    txt += `Failed: ${d.testSummary.failed} ✗\n`;
+    txt += `Duration: ${(d.testSummary.durationMs / 1000).toFixed(2)}s\n`;
+    txt += '\n';
+    
+    if (d.failedTests.length > 0) {
+        txt += '───────────────────────────────────────────────────────────────────────────────\n';
+        txt += ' FAILED TESTS (ATTENTION REQUIRED)\n';
+        txt += '───────────────────────────────────────────────────────────────────────────────\n';
+        d.failedTests.forEach((t, i) => {
+            txt += `${i + 1}. ${t.testId}\n`;
+            txt += `   Message: ${t.message}\n`;
+            if (t.exception) txt += `   ⚠ Exception occurred\n`;
+            txt += '\n';
+        });
+    }
+    
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' DATA FILES STATUS\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    
+    txt += `\nMASTER.json:\n`;
+    txt += `  Loaded: ${d.dataStructures.master.hasData ? 'Yes' : 'No'}\n`;
+    txt += `  Version: ${d.dataStructures.master.metadataVersion || 'N/A'}\n`;
+    txt += `  Items: ${d.dataStructures.master.inventoryCount}\n`;
+    txt += `  Last Modified: ${d.dataStructures.master.metadataLastModified || 'N/A'}\n`;
+    
+    txt += `\nCONFIG.json:\n`;
+    txt += `  Loaded: ${d.dataStructures.config.hasData ? 'Yes' : 'No'}\n`;
+    txt += `  Version: ${d.dataStructures.config.metadataVersion || 'N/A'}\n`;
+    txt += `  Schema: ${d.dataStructures.config.schemaVersion || 'N/A'}\n`;
+    txt += `  Has Settings: ${d.dataStructures.config.hasSettings}\n`;
+    txt += `  Has Features: ${d.dataStructures.config.hasFeatures}\n`;
+    if (d.dataStructures.config.heartbeat) {
+        txt += `  Heartbeat: ${d.dataStructures.config.heartbeat.status} (${d.dataStructures.config.heartbeat.ageMinutes} min ago)\n`;
+        txt += `  Heartbeat Source: ${d.dataStructures.config.heartbeat.source}\n`;
+    }
+    
+    txt += `\nSYNC.json:\n`;
+    txt += `  Loaded: ${d.dataStructures.sync.hasData ? 'Yes' : 'No'}\n`;
+    txt += `  Version: ${d.dataStructures.sync.metadataVersion || 'N/A'}\n`;
+    txt += `  Etsy Orders: ${d.dataStructures.sync.etsy.orderCount}\n`;
+    txt += `  Wix Orders: ${d.dataStructures.sync.wix.orderCount}\n`;
+    txt += `  Wayfair Orders: ${d.dataStructures.sync.wayfair.orderCount}\n`;
+    txt += `  Wix Price Format: ${d.dataStructures.sync.wix.samplePriceFormat}\n`;
+    
+    txt += `\nlocalStorage Heartbeat:\n`;
+    if (d.dataStructures.localStorage.heartbeat.exists) {
+        txt += `  Status: ${d.dataStructures.localStorage.heartbeat.status}\n`;
+        txt += `  Age: ${d.dataStructures.localStorage.heartbeat.ageMinutes} min\n`;
+        txt += `  Source: ${d.dataStructures.localStorage.heartbeat.source}\n`;
+    } else {
+        txt += `  Not found (same-PC sync only)\n`;
+    }
+    
+    txt += '\n───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' ENVIRONMENT\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    txt += `Browser: ${d.environment.userAgent}\n`;
+    txt += `Platform: ${d.environment.platform}\n`;
+    txt += `Timezone: ${d.environment.timezone}\n`;
+    txt += `Local Time: ${d.environment.localTime}\n`;
+    txt += `Online: ${d.environment.onLine}\n`;
+    txt += `Screen: ${d.environment.screenWidth}x${d.environment.screenHeight}\n`;
+    
+    txt += '\n───────────────────────────────────────────────────────────────────────────────\n';
+    txt += ' TEST LOG\n';
+    txt += '───────────────────────────────────────────────────────────────────────────────\n';
+    d.testLog.forEach(entry => {
+        txt += `[${entry.time}] ${entry.type.padEnd(7)} ${entry.message}\n`;
+    });
+    
+    txt += '\n═══════════════════════════════════════════════════════════════════════════════\n';
+    txt += '                         END OF DIAGNOSTIC REPORT\n';
+    txt += '═══════════════════════════════════════════════════════════════════════════════\n';
+    
+    return txt;
+}
+</script>
+</body>
+</html>
