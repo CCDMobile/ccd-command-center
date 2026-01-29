@@ -1,0 +1,1903 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Pricing Advisor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #f1f5f9;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container { max-width: 1800px; margin: 0 auto; }
+        
+        .header {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .header h1 {
+            font-size: 1.8rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .cache-indicator {
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-left: auto;
+        }
+        
+        .cache-indicator.fresh {
+            background: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+        }
+        
+        .main-layout {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 24px;
+        }
+        
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-height: calc(100vh - 180px);
+            overflow-y: auto;
+        }
+        
+        .panel {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+        }
+        
+        .panel h3 {
+            color: #c4b5fd;
+            margin-bottom: 16px;
+            font-size: 1.1rem;
+        }
+        
+        .api-key-section {
+            margin-bottom: 16px;
+        }
+        
+        .api-key-status {
+            padding: 12px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px;
+            color: #10b981;
+            font-size: 0.9rem;
+            margin-top: 8px;
+            display: none;
+        }
+        
+        .api-key-status.active { display: block; }
+        
+        .api-key-input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #f1f5f9;
+            font-size: 0.95rem;
+            font-family: monospace;
+        }
+        
+        .connect-btn {
+            background: linear-gradient(135deg, #6366f1, #4f46e5);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            margin-top: 8px;
+        }
+        
+        .connect-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(99, 102, 241, 0.3);
+        }
+        
+        .filter-group {
+            margin-bottom: 16px;
+        }
+        
+        .filter-group label {
+            display: block;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .filter-group input,
+        .filter-group select {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #f1f5f9;
+            font-size: 0.95rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .stat-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #6366f1;
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+        
+        .analyze-btn {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s;
+            margin-top: 20px;
+        }
+        
+        .analyze-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(16, 185, 129, 0.3);
+        }
+        
+        .analyze-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .global-competitors-panel {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .competitor-url-input {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .competitor-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        
+        .competitor-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(15, 23, 42, 0.6);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+        
+        .competitor-item a {
+            color: #a5b4fc;
+            text-decoration: none;
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .competitor-section {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+        }
+        
+        .competitor-section h5 {
+            color: #a5b4fc;
+            margin-bottom: 12px;
+        }
+        
+        .competitor-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 12px;
+        }
+        
+        .competitor-table th,
+        .competitor-table td {
+            padding: 8px;
+            text-align: left;
+            border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+        }
+        
+        .competitor-table th {
+            color: #cbd5e1;
+            font-size: 0.85rem;
+        }
+        
+        .competitor-table td {
+            color: #f1f5f9;
+        }
+        
+        .add-competitor-btn {
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .modal.active {
+            display: flex;
+        }
+        
+        .modal-content {
+            background: rgba(30, 41, 59, 0.95);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 32px;
+            max-width: 500px;
+            width: 90%;
+        }
+        
+        .modal-content h3 {
+            color: #c4b5fd;
+            margin-bottom: 20px;
+        }
+        
+        .modal-content input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #f1f5f9;
+            margin-bottom: 12px;
+        }
+        
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+        
+        .market-position {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .position-bar {
+            position: relative;
+            height: 40px;
+            background: linear-gradient(to right, #ef4444, #f59e0b, #10b981);
+            border-radius: 8px;
+            margin: 16px 0;
+        }
+        
+        .position-marker {
+            position: absolute;
+            top: -8px;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 56px;
+            background: #f1f5f9;
+            border-radius: 2px;
+        }
+        
+        .position-label {
+            position: absolute;
+            top: -28px;
+            transform: translateX(-50%);
+            color: #f1f5f9;
+            font-weight: 700;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+        
+        .position-legend {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 8px;
+        }
+        
+        .remove-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        
+        .bulk-actions {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 16px 24px;
+            margin-bottom: 16px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .bulk-actions.active {
+            display: flex;
+        }
+        
+        .bulk-actions span {
+            color: #a5b4fc;
+            font-weight: 600;
+        }
+        
+        .bulk-actions button {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-accept { background: #10b981; color: white; }
+        .btn-reject { background: #ef4444; color: white; }
+        .btn-export { background: #6366f1; color: white; }
+        .btn-clear { background: #f59e0b; color: white; }
+        .btn-future {
+            background: rgba(100, 116, 139, 0.3);
+            color: #94a3b8;
+            cursor: not-allowed;
+        }
+        
+        .list-table {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .list-header {
+            display: grid;
+            grid-template-columns: 40px 100px 2fr 120px 120px 100px 100px 40px;
+            gap: 12px;
+            padding: 16px 20px;
+            background: rgba(15, 23, 42, 0.6);
+            border-bottom: 1px solid #334155;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #cbd5e1;
+        }
+        
+        .list-row {
+            display: grid;
+            grid-template-columns: 40px 100px 2fr 120px 120px 100px 100px 40px;
+            gap: 12px;
+            padding: 16px 20px;
+            border-bottom: 1px solid #334155;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .list-row:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+        
+        .list-row.priority-high {
+            border-left: 4px solid #ef4444;
+        }
+        
+        .list-row.priority-medium {
+            border-left: 4px solid #f59e0b;
+        }
+        
+        .list-row.priority-low {
+            border-left: 4px solid #64748b;
+        }
+        
+        .expand-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            color: #6366f1;
+        }
+        
+        .price-change {
+            font-weight: 600;
+        }
+        
+        .price-change.positive {
+            color: #10b981;
+        }
+        
+        .price-change.negative {
+            color: #ef4444;
+        }
+        
+        .priority-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            display: inline-block;
+        }
+        
+        .priority-high {
+            background: rgba(239, 68, 68, 0.2);
+            color: #fca5a5;
+        }
+        
+        .priority-medium {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fcd34d;
+        }
+        
+        .priority-low {
+            background: rgba(100, 116, 139, 0.2);
+            color: #cbd5e1;
+        }
+        
+        .expanded-card {
+            padding: 24px;
+            background: rgba(15, 23, 42, 0.4);
+            border-top: 1px solid #334155;
+            display: none;
+        }
+        
+        .expanded-card.active {
+            display: block;
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 24px;
+        }
+        
+        .product-info h4 {
+            font-size: 1.3rem;
+            color: #f1f5f9;
+            margin-bottom: 8px;
+        }
+        
+        .product-info .sku {
+            color: #94a3b8;
+            font-size: 0.95rem;
+        }
+        
+        .warning-banner {
+            background: rgba(239, 68, 68, 0.1);
+            border-left: 3px solid #ef4444;
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            color: #fca5a5;
+        }
+        
+        .pricing-comparison {
+            display: grid;
+            grid-template-columns: 1fr auto 1fr;
+            gap: 24px;
+            align-items: center;
+            margin-bottom: 24px;
+            padding: 20px;
+            background: rgba(15, 23, 42, 0.4);
+            border-radius: 12px;
+        }
+        
+        .price-column h5 {
+            color: #94a3b8;
+            margin-bottom: 12px;
+            font-size: 0.9rem;
+        }
+        
+        .price-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            background: rgba(30, 41, 59, 0.6);
+            border-radius: 6px;
+            margin-bottom: 8px;
+        }
+        
+        .price-label {
+            color: #cbd5e1;
+        }
+        
+        .price-value {
+            font-weight: 700;
+            font-size: 1.1rem;
+        }
+        
+        .arrow {
+            font-size: 2rem;
+            color: #6366f1;
+        }
+        
+        .analysis-section {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+        
+        .analysis-section h5 {
+            color: #a5b4fc;
+            margin-bottom: 12px;
+            font-size: 1rem;
+        }
+        
+        .platform-fees-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        
+        .platform-fee-box {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 12px;
+            border-radius: 8px;
+        }
+        
+        .platform-fee-box.best {
+            border: 2px solid #10b981;
+        }
+        
+        .platform-name {
+            color: #cbd5e1;
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+        }
+        
+        .platform-margin {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #f1f5f9;
+        }
+        
+        .seasonal-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        
+        .velocity-warning {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px;
+            background: rgba(239, 68, 68, 0.1);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .psych-pricing-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        
+        .psych-box {
+            background: rgba(15, 23, 42, 0.6);
+            padding: 12px;
+            border-radius: 8px;
+        }
+        
+        .psych-box.optimized {
+            border: 2px solid #10b981;
+        }
+        
+        .insight-box {
+            background: rgba(99, 102, 241, 0.1);
+            border-left: 3px solid #6366f1;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .insight-box h5 {
+            color: #a5b4fc;
+            margin-bottom: 8px;
+        }
+        
+        .insight-box p {
+            color: #cbd5e1;
+            line-height: 1.6;
+        }
+        
+        .metrics-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .metric-small {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .metric-small .value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: #6366f1;
+        }
+        
+        .metric-small .label {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-modify { background: #f59e0b; color: white; }
+        .btn-copy {
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px;
+        }
+        
+        .spinner {
+            border: 3px solid rgba(99, 102, 241, 0.3);
+            border-top: 3px solid #6366f1;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+        }
+        
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                🎯 AI Pricing Advisor
+                <span class="cache-indicator" id="cacheIndicator" style="display: none;"></span>
+            </h1>
+            <p style="color: #94a3b8; margin-top: 8px;">AI-powered pricing with platform fee analysis, seasonal intelligence, and inventory velocity tracking</p>
+            <div style="margin-top: 12px;">
+                <button onclick="clearCache()" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;">
+                    🗑️ Clear Cache
+                </button>
+                <span style="color: #64748b; font-size: 0.85rem; margin-left: 8px;">Use if quota exceeded or seeing wrong results</span>
+            </div>
+        </div>
+        
+        <div class="main-layout">
+            <div class="sidebar">
+                <div class="panel">
+                    <h3>1️⃣ API Configuration</h3>
+                    <div class="api-key-section">
+                        <label style="display: block; color: #cbd5e1; font-size: 0.9rem; margin-bottom: 8px;">Anthropic API Key</label>
+                        <input type="password" class="api-key-input" id="apiKeyInput" placeholder="sk-ant-...">
+                        <button class="connect-btn" onclick="saveApiKey()">💾 Save API Key</button>
+                        <div class="api-key-status" id="apiKeyStatus"></div>
+                    </div>
+                </div>
+                
+                <div class="panel">
+                    <h3>2️⃣ Connect Data</h3>
+                    <button class="connect-btn" onclick="connectFile()">📁 Select MASTER.json</button>
+                    <div class="api-key-status" id="fileStatus"></div>
+                </div>
+                
+                <div class="panel" id="optionsPanel" style="display: none;">
+                    <h3>3️⃣ Filter Products</h3>
+                    
+                    <div class="filter-group">
+                        <label>Search Products</label>
+                        <input type="text" id="searchBox" placeholder="Name or SKU..." oninput="updateProductList()">
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Category</label>
+                        <select id="categoryFilter" onchange="updateProductList()">
+                            <option value="">All Categories</option>
+                        </select>
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-value" id="matchingCount">0</div>
+                            <div class="stat-label">Matching</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="totalCount">0</div>
+                            <div class="stat-label">Total</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel" id="analysisPanel" style="display: none;">
+                    <h3>4️⃣ Analysis Options</h3>
+                    
+                    <div class="filter-group">
+                        <label>How many to analyze?</label>
+                        <input type="number" id="analyzeCount" value="5" min="1" max="100">
+                        <p style="color: #64748b; font-size: 0.8rem; margin-top: 4px;">Cost: ~$0.04 per product</p>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Target Margin</label>
+                        <input type="number" id="targetMargin" value="40" min="20" max="80">
+                        <p style="color: #64748b; font-size: 0.8rem; margin-top: 4px;">Minimum margin %</p>
+                    </div>
+                    
+                    <button class="analyze-btn" id="analyzeBtn" onclick="analyzeProducts()" disabled>
+                        🤖 Analyze Pricing
+                    </button>
+                </div>
+                
+                <div class="panel" id="competitorsPanel" style="display: none;">
+                    <h3>🌐 Global Competitors</h3>
+                    <div class="global-competitors-panel">
+                        <div class="competitor-url-input">
+                            <input type="text" id="competitorUrl" placeholder="Competitor URL" style="flex: 1; background: rgba(15, 23, 42, 0.6); border: 1px solid #475569; border-radius: 6px; padding: 8px; color: #f1f5f9;">
+                            <button class="connect-btn" onclick="addGlobalCompetitor()" style="width: auto; padding: 8px 16px; margin: 0;">Add</button>
+                        </div>
+                        <div class="competitor-list" id="globalCompetitorList"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="content-area">
+                <div class="bulk-actions" id="bulkActions">
+                    <span id="selectedCount">0 selected</span>
+                    <button class="btn-accept" onclick="bulkAccept()">✅ Accept Selected</button>
+                    <button class="btn-reject" onclick="bulkReject()">❌ Reject Selected</button>
+                    <button class="btn-export" onclick="exportAccepted()">📊 Export CSV</button>
+                    <button class="btn-clear" onclick="clearCache()">🗑️ Clear Cache</button>
+                    <button class="btn-future" disabled>💾 Update JSON (Soon)</button>
+                </div>
+                
+                <div id="resultsArea"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Competitor Modal -->
+    <div class="modal" id="competitorModal">
+        <div class="modal-content">
+            <h3>Add Competitor Price</h3>
+            <input type="text" id="compName" placeholder="Competitor name (e.g., Etsy - RusticHomeShop)">
+            <input type="number" id="compPrice" placeholder="Price" step="0.01">
+            <input type="text" id="compURL" placeholder="URL (optional)">
+            <div class="modal-actions">
+                <button class="btn btn-accept" onclick="saveCompetitor()">Add</button>
+                <button class="btn btn-reject" onclick="closeCompetitorModal()">Cancel</button>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let masterData = null;
+        let fileHandle = null;
+        let filteredProducts = [];
+        let recommendations = [];
+        let acceptedRecommendations = new Set();
+        let globalCompetitors = [];
+        let competitorData = {}; // Store by SKU for per-product tracking
+        let currentProductIndex = null; // For modal
+        let apiKey = '';
+        const WORKER_URL = 'https://cold-field-4bb6.psmith-925.workers.dev/';
+        
+        // Load saved data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadApiKey();
+            loadGlobalCompetitors();
+            loadCompetitorData();
+            loadFromCache();
+        });
+        
+        function loadApiKey() {
+            const saved = localStorage.getItem('anthropic_api_key');
+            if (saved) {
+                apiKey = saved;
+                document.getElementById('apiKeyInput').value = saved;
+                document.getElementById('apiKeyStatus').textContent = '✅ API Key loaded';
+                document.getElementById('apiKeyStatus').classList.add('active');
+            }
+        }
+        
+        function saveApiKey() {
+            const input = document.getElementById('apiKeyInput').value.trim();
+            if (!input.startsWith('sk-ant-')) {
+                alert('Invalid API key format. Must start with sk-ant-');
+                return;
+            }
+            apiKey = input;
+            localStorage.setItem('anthropic_api_key', apiKey);
+            document.getElementById('apiKeyStatus').textContent = '✅ API Key saved';
+            document.getElementById('apiKeyStatus').classList.add('active');
+        }
+        
+        function loadGlobalCompetitors() {
+            const saved = localStorage.getItem('global_competitors');
+            if (saved) {
+                globalCompetitors = JSON.parse(saved);
+                updateCompetitorList();
+            }
+        }
+        
+        function addGlobalCompetitor() {
+            const url = document.getElementById('competitorUrl').value.trim();
+            if (!url) return;
+            
+            globalCompetitors.push(url);
+            localStorage.setItem('global_competitors', JSON.stringify(globalCompetitors));
+            document.getElementById('competitorUrl').value = '';
+            updateCompetitorList();
+        }
+        
+        function removeGlobalCompetitor(index) {
+            globalCompetitors.splice(index, 1);
+            localStorage.setItem('global_competitors', JSON.stringify(globalCompetitors));
+            updateCompetitorList();
+        }
+        
+        function updateCompetitorList() {
+            const list = document.getElementById('globalCompetitorList');
+            if (globalCompetitors.length === 0) {
+                list.innerHTML = '<p style="color: #94a3b8; font-size: 0.85rem;">No competitors added yet</p>';
+            } else {
+                list.innerHTML = globalCompetitors.map((url, i) => `
+                    <div class="competitor-item">
+                        <a href="${url}" target="_blank">${url}</a>
+                        <button class="remove-btn" onclick="removeGlobalCompetitor(${i})">×</button>
+                    </div>
+                `).join('');
+            }
+        }
+        
+        function saveToCache(data) {
+            try {
+                const cacheData = {
+                    data: data,
+                    timestamp: Date.now(),
+                    count: data.length,
+                    accepted: Array.from(acceptedRecommendations)
+                };
+                
+                const jsonString = JSON.stringify(cacheData);
+                const sizeInMB = (jsonString.length / (1024 * 1024)).toFixed(2);
+                
+                console.log(`💾 Cache size: ${sizeInMB}MB`);
+                
+                // If cache is getting large (>4MB), warn and clear old
+                if (sizeInMB > 4) {
+                    console.warn(`⚠️ Cache is large (${sizeInMB}MB) - clearing old data to prevent quota errors`);
+                    localStorage.removeItem('pricing_cache');
+                }
+                
+                localStorage.setItem('pricing_cache', jsonString);
+                console.log('✅ Pricing data cached successfully');
+            } catch (error) {
+                if (error.name === 'QuotaExceededError') {
+                    console.warn('⚠️ localStorage quota exceeded - clearing old cache and retrying...');
+                    localStorage.removeItem('pricing_cache');
+                    try {
+                        const cacheData = {
+                            data: data,
+                            timestamp: Date.now(),
+                            count: data.length,
+                            accepted: Array.from(acceptedRecommendations)
+                        };
+                        localStorage.setItem('pricing_cache', JSON.stringify(cacheData));
+                        console.log('✅ Pricing data cached after clearing old data');
+                    } catch (retryError) {
+                        console.warn('⚠️ Still cannot cache - continuing without cache');
+                        console.warn('Results are displayed but will not persist on refresh.');
+                    }
+                } else {
+                    console.error('Cache save error:', error);
+                }
+            }
+        }
+        
+        function loadFromCache() {
+            const cached = localStorage.getItem('pricing_cache');
+            if (!cached) return;
+            
+            const data = JSON.parse(cached);
+            const age = Date.now() - data.timestamp;
+            
+            // Cache valid for 7 days
+            if (age > 7 * 24 * 60 * 60 * 1000) {
+                localStorage.removeItem('pricing_cache');
+                return;
+            }
+            
+            recommendations = data.data;
+            acceptedRecommendations = new Set(data.accepted || []);
+            
+            // Show cache indicator
+            const hours = Math.floor(age / (1000 * 60 * 60));
+            const indicator = document.getElementById('cacheIndicator');
+            indicator.textContent = `📦 Loaded from cache (${hours}h old)`;
+            indicator.style.display = 'block';
+            
+            if (recommendations.length > 0) {
+                displayResults();
+            }
+        }
+        
+        function clearCache() {
+            if (!confirm('Clear all cached analysis results?')) return;
+            
+            localStorage.removeItem('pricing_cache');
+            recommendations = [];
+            acceptedRecommendations.clear();
+            document.getElementById('resultsArea').innerHTML = '';
+            document.getElementById('cacheIndicator').style.display = 'none';
+            alert('✅ Cache cleared! Analyze products to get fresh results.');
+        }
+        
+        function clearCache() {
+            localStorage.removeItem('pricing_cache');
+            document.getElementById('cacheIndicator').style.display = 'none';
+            document.getElementById('resultsArea').innerHTML = '';
+            recommendations = [];
+            acceptedRecommendations.clear();
+            console.log('✅ Pricing cache cleared successfully');
+            alert('✅ Cache cleared! Analyze products to see fresh results.');
+        }
+        
+        function openCompetitorModal(index) {
+            currentProductIndex = index;
+            document.getElementById('competitorModal').classList.add('active');
+        }
+        
+        function closeCompetitorModal() {
+            document.getElementById('competitorModal').classList.remove('active');
+            document.getElementById('compName').value = '';
+            document.getElementById('compPrice').value = '';
+            document.getElementById('compURL').value = '';
+        }
+        
+        function saveCompetitor() {
+            const name = document.getElementById('compName').value.trim();
+            const price = parseFloat(document.getElementById('compPrice').value);
+            const url = document.getElementById('compURL').value.trim();
+            
+            if (!name || !price || price <= 0) {
+                alert('Please enter valid competitor name and price.');
+                return;
+            }
+            
+            const product = recommendations[currentProductIndex].product;
+            if (!competitorData[product.sku]) {
+                competitorData[product.sku] = [];
+            }
+            
+            competitorData[product.sku].push({ name, price, url });
+            closeCompetitorModal();
+            
+            // Save to localStorage
+            localStorage.setItem('competitor_data', JSON.stringify(competitorData));
+            
+            // Re-analyze just this product with new competitor data
+            console.log(`🔄 Re-analyzing SKU ${product.sku} with new competitor data...`);
+            reanalyzeSingleProduct(currentProductIndex);
+        }
+        
+        function removeCompetitor(sku, compIndex) {
+            if (competitorData[sku]) {
+                competitorData[sku].splice(compIndex, 1);
+                localStorage.setItem('competitor_data', JSON.stringify(competitorData));
+                
+                // Find product index and re-analyze
+                const productIndex = recommendations.findIndex(r => r.product.sku === sku);
+                if (productIndex !== -1) {
+                    reanalyzeSingleProduct(productIndex);
+                }
+            }
+        }
+        
+        async function reanalyzeSingleProduct(index) {
+            const item = recommendations[index];
+            const targetMargin = parseInt(document.getElementById('targetMargin').value) || 40;
+            const competitors = competitorData[item.product.sku] || [];
+            
+            console.log(`\n🔄 Re-analyzing SKU ${item.product.sku}...`);
+            console.log(`  Target Margin: ${targetMargin}%`);
+            console.log(`  Competitors: ${competitors.length}`);
+            
+            // Show loading indicator with message
+            const expanded = document.getElementById(`expanded-${index}`);
+            const originalContent = expanded.innerHTML;
+            
+            expanded.innerHTML = `
+                <div style="padding: 60px; text-align: center;">
+                    <div class="spinner"></div>
+                    <p style="margin-top: 20px; color: #a5b4fc;">Re-analyzing SKU ${item.product.sku}...</p>
+                    <p style="margin-top: 8px; color: #64748b; font-size: 0.9rem;">Using target margin: ${targetMargin}%</p>
+                    ${competitors.length > 0 ? `<p style="margin-top: 4px; color: #64748b; font-size: 0.9rem;">With ${competitors.length} competitor prices</p>` : ''}
+                </div>
+            `;
+            
+            try {
+                // Analyze with current settings
+                const rec = await analyzePricing(item.product, targetMargin, competitors);
+                
+                // Update recommendation
+                recommendations[index] = { product: item.product, rec, competitors };
+                
+                // Re-display just this card
+                expanded.innerHTML = `<div id="recommendation-card-${index}">${renderFullCard(recommendations[index], index)}</div>`;
+                
+                console.log(`✅ SKU ${item.product.sku} re-analyzed successfully`);
+                
+                // Show success message briefly
+                const successMsg = document.createElement('div');
+                successMsg.style.cssText = 'position: fixed; top: 20px; right: 20px; background: rgba(16, 185, 129, 0.9); color: white; padding: 16px 24px; border-radius: 8px; z-index: 9999; animation: slideIn 0.3s ease-out;';
+                successMsg.innerHTML = `✅ SKU ${item.product.sku} updated with new analysis`;
+                document.body.appendChild(successMsg);
+                
+                setTimeout(() => {
+                    successMsg.style.animation = 'slideOut 0.3s ease-in';
+                    setTimeout(() => successMsg.remove(), 300);
+                }, 2000);
+                
+            } catch (error) {
+                console.error('Re-analysis error:', error);
+                expanded.innerHTML = originalContent;
+                alert(`Error re-analyzing SKU ${item.product.sku}: ${error.message}`);
+            }
+        }
+        
+        function loadCompetitorData() {
+            const saved = localStorage.getItem('competitor_data');
+            if (saved) {
+                try {
+                    competitorData = JSON.parse(saved);
+                    console.log('📊 Loaded competitor data for', Object.keys(competitorData).length, 'products');
+                } catch (error) {
+                    console.error('Error loading competitor data:', error);
+                    competitorData = {};
+                }
+            }
+        }
+        
+        async function connectFile() {
+            try {
+                [fileHandle] = await window.showOpenFilePicker({
+                    types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
+                });
+                
+                const file = await fileHandle.getFile();
+                const contents = await file.text();
+                masterData = JSON.parse(contents);
+                
+                if (!masterData?.inventory?.length) {
+                    alert('Invalid file format: No inventory data found.');
+                    return;
+                }
+                
+                // Debug: Log first product to verify data structure
+                console.log('=== MASTER.JSON DATA VERIFICATION ===');
+                console.log('Total products loaded:', masterData.inventory.length);
+                console.log('Sample product (first):', {
+                    sku: masterData.inventory[0].sku,
+                    name: masterData.inventory[0].productName,
+                    wholesale: masterData.inventory[0].wholesalePrice,
+                    retail: masterData.inventory[0].retailPrice,
+                    qty: masterData.inventory[0].qty
+                });
+                
+                // Check for SKU 90969 specifically
+                const sku90969 = masterData.inventory.find(p => p.sku === '90969');
+                if (sku90969) {
+                    console.log('SKU 90969 data:', {
+                        name: sku90969.productName,
+                        wholesale: sku90969.wholesalePrice,
+                        retail: sku90969.retailPrice,
+                        qty: sku90969.qty
+                    });
+                    console.log('✅ Expected retail for 90969: $26.25');
+                    if (sku90969.retailPrice !== 26.25) {
+                        console.warn('⚠️ WARNING: SKU 90969 retail price is', sku90969.retailPrice, 'but should be $26.25');
+                        console.warn('Your MASTER.json file may be outdated. Re-export from Inventory System.');
+                    }
+                }
+                console.log('=====================================');
+                
+                document.getElementById('fileStatus').textContent = 
+                    `✅ Connected - ${masterData.inventory.length} products`;
+                document.getElementById('fileStatus').classList.add('active');
+                document.getElementById('optionsPanel').style.display = 'block';
+                document.getElementById('analysisPanel').style.display = 'block';
+                document.getElementById('competitorsPanel').style.display = 'block';
+                
+                populateFilters();
+                updateProductList();
+                
+            } catch (error) {
+                if (error.name !== 'AbortError') alert('Error: ' + error.message);
+            }
+        }
+        
+        function populateFilters() {
+            const categories = new Set(masterData.inventory.map(p => p.category).filter(Boolean));
+            const select = document.getElementById('categoryFilter');
+            categories.forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat;
+                option.textContent = cat;
+                select.appendChild(option);
+            });
+        }
+        
+        function updateProductList() {
+            if (!masterData) return;
+            
+            const search = document.getElementById('searchBox').value.toLowerCase();
+            const category = document.getElementById('categoryFilter').value;
+            
+            filteredProducts = masterData.inventory.filter(p => {
+                if (search && !p.productName.toLowerCase().includes(search) && !p.sku.toLowerCase().includes(search)) return false;
+                if (category && p.category !== category) return false;
+                return true;
+            });
+            
+            document.getElementById('matchingCount').textContent = filteredProducts.length;
+            document.getElementById('totalCount').textContent = masterData.inventory.length;
+            document.getElementById('analyzeBtn').disabled = filteredProducts.length === 0 || !apiKey;
+        }
+        
+        async function analyzeProducts() {
+            if (!apiKey) {
+                alert('Please enter and save your API key first.');
+                return;
+            }
+            
+            const count = Math.min(parseInt(document.getElementById('analyzeCount').value) || 5, filteredProducts.length);
+            if (count === 0) return alert('No products selected.');
+            
+            const cost = (count * 0.04).toFixed(2);
+            if (!confirm(`Analyze ${count} products? Cost: ~$${cost}`)) return;
+            
+            const targetMargin = parseInt(document.getElementById('targetMargin').value) || 40;
+            
+            const resultsArea = document.getElementById('resultsArea');
+            resultsArea.innerHTML = '<div class="loading"><div class="spinner"></div><p>Analyzing with AI...</p></div>';
+            
+            // Clear cache indicator for fresh analysis
+            const indicator = document.getElementById('cacheIndicator');
+            indicator.textContent = '✨ Fresh analysis';
+            indicator.classList.add('fresh');
+            indicator.style.display = 'block';
+            
+            recommendations = [];
+            acceptedRecommendations.clear();
+            const products = filteredProducts.slice(0, count);
+            
+            console.log('\n=== PRICING ANALYSIS DEBUG ===');
+            console.log(`Analyzing ${count} products in parallel...`);
+            console.log('==================================\n');
+            
+            const startTime = Date.now();
+            
+            // Load saved competitor data
+            loadCompetitorData();
+            
+            // PARALLEL ANALYSIS - All products at once!
+            const promises = products.map(async (product, index) => {
+                console.log(`⏳ Starting analysis for SKU ${product.sku}...`);
+                const competitors = competitorData[product.sku] || [];
+                if (competitors.length > 0) {
+                    console.log(`  📊 Using ${competitors.length} competitor prices for SKU ${product.sku}`);
+                }
+                const rec = await analyzePricing(product, targetMargin, competitors);
+                console.log(`✅ SKU ${product.sku} complete`);
+                
+                // Progressive display - show results as they come in
+                recommendations.push({ product, rec, competitors });
+                if (recommendations.length === 1) {
+                    // Show first result immediately
+                    displayResults();
+                } else if (recommendations.length % 3 === 0 || recommendations.length === products.length) {
+                    // Update every 3 products or at the end
+                    displayResults();
+                }
+                
+                resultsArea.innerHTML = `<div class="loading"><div class="spinner"></div><p>Analyzed ${recommendations.length}/${count} products...</p></div>`;
+                
+                return { product, rec, competitors };
+            });
+            
+            await Promise.all(promises);
+            
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.log(`\n⚡ All ${count} products analyzed in ${elapsed}s (parallel)`);
+            console.log('✅ ANALYSIS COMPLETE!\n');
+            
+            // Sort by priority after all complete
+            const priorityOrder = { high: 0, medium: 1, low: 2 };
+            recommendations.sort((a, b) => priorityOrder[a.rec.priority] - priorityOrder[b.rec.priority]);
+            
+            saveToCache(recommendations);
+            displayResults();
+            
+            // Clear loading message
+            resultsArea.innerHTML = '';
+        }
+        
+        async function analyzePricing(product, targetMargin, competitors = []) {
+            const currentMargin = ((product.retailPrice - product.wholesalePrice) / product.retailPrice * 100).toFixed(1);
+            const currentDate = new Date();
+            const currentMonth = currentDate.toLocaleString('default', { month: 'long' });
+            
+            // Calculate platform fees
+            const etsyFees = product.retailPrice * 0.065 + 0.20 + product.retailPrice * 0.03 + product.retailPrice * 0.05;
+            const wayfairFees = product.retailPrice * 0.15;
+            const wixFees = product.retailPrice * 0.029 + 0.30;
+            
+            const etsyMargin = ((product.retailPrice - product.wholesalePrice - etsyFees) / product.retailPrice * 100).toFixed(1);
+            const wayfairMargin = ((product.retailPrice - product.wholesalePrice - wayfairFees) / product.retailPrice * 100).toFixed(1);
+            const wixMargin = ((product.retailPrice - product.wholesalePrice - wixFees) / product.retailPrice * 100).toFixed(1);
+            
+            // Seasonal factors
+            const seasonalFactors = {
+                'January': 0.85, 'February': 0.90, 'March': 0.95,
+                'April': 1.05, 'May': 1.10, 'June': 1.05,
+                'July': 1.00, 'August': 0.95, 'September': 1.05,
+                'October': 1.15, 'November': 1.20, 'December': 1.25
+            };
+            const seasonalFactor = seasonalFactors[currentMonth] || 1.0;
+            
+            // Inventory velocity
+            const daysInStock = 90; // Placeholder
+            const velocity = product.qty / daysInStock;
+            const isDeadStock = product.qty > 50 && velocity < 0.5;
+            
+            // Competitor context
+            let competitorContext = '';
+            if (competitors.length > 0) {
+                const prices = competitors.map(c => c.price);
+                const avgCompPrice = (prices.reduce((a,b) => a+b, 0) / prices.length).toFixed(2);
+                const minCompPrice = Math.min(...prices).toFixed(2);
+                const maxCompPrice = Math.max(...prices).toFixed(2);
+                
+                competitorContext = `
+COMPETITOR PRICES (${competitors.length} tracked):
+- Lowest: $${minCompPrice}
+- Highest: $${maxCompPrice}
+- Average: $${avgCompPrice}
+- Your price vs avg: ${((product.retailPrice / avgCompPrice - 1) * 100).toFixed(1)}%
+- Sources: ${competitors.map(c => c.name).join(', ')}`;
+            }
+            
+            const prompt = `Analyze pricing for: ${product.productName}
+SKU: ${product.sku}
+
+CURRENT DATA:
+- Retail: $${product.retailPrice}
+- Wholesale: $${product.wholesalePrice}
+- Current Margin: ${currentMargin}%
+- Stock: ${product.qty} units
+- Season: ${currentMonth} (factor: ${seasonalFactor})
+- Inventory Velocity: ${velocity.toFixed(2)} units/day
+- Dead Stock: ${isDeadStock ? 'YES ⚠️' : 'No'}
+${competitorContext}
+
+PLATFORM ANALYSIS:
+- Etsy: ${etsyMargin}% margin after fees
+- Wayfair: ${wayfairMargin}% margin after fees
+- Wix: ${wixMargin}% margin after fees
+
+TARGET: ${targetMargin}% minimum margin
+
+Provide JSON:
+{
+  "recommendation": "increase/decrease/maintain",
+  "suggestedRetailPrice": number,
+  "reasoning": "2-3 sentences with platform, seasonal, inventory${competitors.length > 0 ? ', and competitor' : ''} insights",
+  "priority": "high/medium/low",
+  "expectedImpact": "brief impact statement",
+  "confidence": number (0-100),
+  "platformRecommendation": "which platform to focus on",
+  "seasonalStrategy": "brief seasonal pricing strategy",
+  "inventoryAction": "clear/maintain/restock"${competitors.length > 0 ? ',\n  "marketPosition": "below/at/above market average"' : ''}
+}
+
+ONLY JSON, no markdown.`;
+
+            try {
+                const response = await fetch(WORKER_URL, {
+                    method: "POST",
+                    headers: { 
+                        "Content-Type": "application/json",
+                        "x-api-key": apiKey,
+                        "anthropic-version": "2023-06-01"
+                    },
+                    body: JSON.stringify({
+                        model: "claude-sonnet-4-20250514",
+                        max_tokens: 800,
+                        messages: [{ role: "user", content: prompt }]
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const text = data.content[0].text;
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                
+                if (jsonMatch) {
+                    const result = JSON.parse(jsonMatch[0]);
+                    // Add calculated data
+                    result.platformFees = { etsy: etsyMargin, wayfair: wayfairMargin, wix: wixMargin };
+                    result.seasonal = { month: currentMonth, factor: seasonalFactor };
+                    result.velocity = { rate: velocity.toFixed(2), isDeadStock };
+                    return result;
+                }
+                
+                throw new Error('Invalid JSON response');
+                
+            } catch (error) {
+                return {
+                    recommendation: 'error',
+                    suggestedRetailPrice: product.retailPrice,
+                    reasoning: 'Error: ' + error.message,
+                    priority: 'low',
+                    expectedImpact: 'Error',
+                    confidence: 0,
+                    platformFees: { etsy: etsyMargin, wayfair: wayfairMargin, wix: wixMargin },
+                    seasonal: { month: currentMonth, factor: seasonalFactor },
+                    velocity: { rate: velocity.toFixed(2), isDeadStock }
+                };
+            }
+        }
+        
+        function displayResults() {
+            if (recommendations.length === 0) {
+                document.getElementById('resultsArea').innerHTML = '<div class="panel"><p style="color: #94a3b8;">No results. Analyze products to see recommendations.</p></div>';
+                return;
+            }
+            
+            const priorityOrder = { high: 0, medium: 1, low: 2 };
+            recommendations.sort((a, b) => priorityOrder[a.rec.priority] - priorityOrder[b.rec.priority]);
+            
+            let html = `
+                <div class="list-table">
+                    <div class="list-header">
+                        <div><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></div>
+                        <div>SKU</div>
+                        <div>Product</div>
+                        <div>Current</div>
+                        <div>Recommended</div>
+                        <div>Change</div>
+                        <div>Priority</div>
+                        <div></div>
+                    </div>
+            `;
+            
+            recommendations.forEach((item, index) => {
+                const change = item.rec.suggestedRetailPrice - item.product.retailPrice;
+                const changeClass = change >= 0 ? 'positive' : 'negative';
+                const isAccepted = acceptedRecommendations.has(index);
+                
+                html += `
+                    <div class="list-row priority-${item.rec.priority}" id="row-${index}">
+                        <div><input type="checkbox" class="row-checkbox" data-index="${index}" onchange="updateBulkActions()"></div>
+                        <div>${item.product.sku}</div>
+                        <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.product.productName}</div>
+                        <div>$${item.product.retailPrice.toFixed(2)}</div>
+                        <div>$${item.rec.suggestedRetailPrice.toFixed(2)}</div>
+                        <div class="price-change ${changeClass}">${change >= 0 ? '+' : ''}$${change.toFixed(2)}</div>
+                        <div><span class="priority-badge priority-${item.rec.priority}">${item.rec.priority}</span></div>
+                        <div class="expand-icon" onclick="toggleExpand(${index})">▶</div>
+                    </div>
+                    <div class="expanded-card" id="expanded-${index}">
+                        <div id="recommendation-card-${index}">
+                            ${renderFullCard(item, index)}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+            
+            document.getElementById('resultsArea').innerHTML = html;
+        }
+        
+        function renderFullCard(item, index) {
+            const product = item.product;
+            const rec = item.rec;
+            const currentMargin = ((product.retailPrice - product.wholesalePrice) / product.retailPrice * 100).toFixed(1);
+            const newMargin = ((rec.suggestedRetailPrice - product.wholesalePrice) / rec.suggestedRetailPrice * 100).toFixed(1);
+            const priceChange = rec.suggestedRetailPrice - product.retailPrice;
+            
+            const currentPrice = product.retailPrice.toFixed(2);
+            const suggestedPrice = rec.suggestedRetailPrice.toFixed(2);
+            const currentEnding = currentPrice.split('.')[1];
+            const suggestedEnding = suggestedPrice.split('.')[1];
+            const isPsychOptimized = suggestedEnding === '99' || suggestedEnding === '95' || suggestedEnding === '97';
+            
+            let warnings = '';
+            if (rec.velocity.isDeadStock) {
+                warnings += `<div class="warning-banner">⚠️ Dead Stock Warning: ${product.qty} units, velocity ${rec.velocity.rate}/day - Consider clearance pricing</div>`;
+            }
+            
+            return `
+                <div class="card-header">
+                    <div class="product-info">
+                        <h4>${product.productName}</h4>
+                        <div class="sku">SKU: ${product.sku} | Stock: ${product.qty} units</div>
+                    </div>
+                    <span class="priority-badge priority-${rec.priority}">${rec.priority.toUpperCase()}</span>
+                </div>
+                
+                ${warnings}
+                
+                <div class="pricing-comparison">
+                    <div class="price-column">
+                        <h5>Current Pricing</h5>
+                        <div class="price-row">
+                            <span class="price-label">Retail:</span>
+                            <span class="price-value">$${product.retailPrice.toFixed(2)}</span>
+                        </div>
+                        <div class="price-row">
+                            <span class="price-label">Wholesale:</span>
+                            <span class="price-value">$${product.wholesalePrice.toFixed(2)}</span>
+                        </div>
+                        <div class="price-row">
+                            <span class="price-label">Margin:</span>
+                            <span class="price-value">${currentMargin}%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="arrow">${rec.recommendation === 'increase' ? '↗' : rec.recommendation === 'decrease' ? '↘' : '→'}</div>
+                    
+                    <div class="price-column">
+                        <h5>Recommended Pricing</h5>
+                        <div class="price-row">
+                            <span class="price-label">Retail:</span>
+                            <span class="price-value">
+                                $${rec.suggestedRetailPrice.toFixed(2)}
+                                <span class="price-change ${priceChange < 0 ? 'negative' : ''}" style="font-size: 0.85rem; margin-left: 8px;">${priceChange >= 0 ? '+' : ''}$${priceChange.toFixed(2)}</span>
+                            </span>
+                        </div>
+                        <div class="price-row">
+                            <span class="price-label">Wholesale:</span>
+                            <span class="price-value">$${product.wholesalePrice.toFixed(2)}</span>
+                        </div>
+                        <div class="price-row">
+                            <span class="price-label">New Margin:</span>
+                            <span class="price-value">${newMargin}%</span>
+                        </div>
+                    </div>
+                </div>
+                
+                ${item.competitors && item.competitors.length > 0 ? `
+                <div class="competitor-section">
+                    <h5>💰 Competitor Prices</h5>
+                    <table class="competitor-table">
+                        <thead>
+                            <tr>
+                                <th>Competitor</th>
+                                <th>Price</th>
+                                <th>Link</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${item.competitors.map((c, i) => `
+                                <tr>
+                                    <td>${c.name}</td>
+                                    <td>$${c.price.toFixed(2)}</td>
+                                    <td>${c.url ? `<a href="${c.url}" target="_blank" style="color: #a5b4fc;">View</a>` : '-'}</td>
+                                    <td><button class="btn-reject" style="padding: 4px 8px; font-size: 0.8rem;" onclick="removeCompetitor('${product.sku}', ${i})">×</button></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    <button class="add-competitor-btn" onclick="openCompetitorModal(${index})">+ Add Competitor</button>
+                    
+                    ${(() => {
+                        const prices = item.competitors.map(c => c.price);
+                        const avgPrice = prices.reduce((a,b) => a+b, 0) / prices.length;
+                        const minPrice = Math.min(...prices);
+                        const maxPrice = Math.max(...prices);
+                        const yourPosition = ((product.retailPrice - minPrice) / (maxPrice - minPrice)) * 100;
+                        
+                        return `
+                        <div class="market-position">
+                            <h5 style="color: #cbd5e1; margin-bottom: 8px;">Market Position</h5>
+                            <div class="position-bar">
+                                <div class="position-marker" style="left: ${yourPosition}%;">
+                                    <div class="position-label">YOU</div>
+                                </div>
+                            </div>
+                            <div class="position-legend">
+                                <span>Low: $${minPrice.toFixed(2)}</span>
+                                <span>Avg: $${avgPrice.toFixed(2)}</span>
+                                <span>High: $${maxPrice.toFixed(2)}</span>
+                            </div>
+                            <p style="color: #94a3b8; font-size: 0.9rem; margin-top: 12px;">
+                                ${product.retailPrice < avgPrice ? '📉 Below average - room to increase' : product.retailPrice > avgPrice ? '⚠️ Above average - may lose sales' : '✅ At market average'}
+                            </p>
+                        </div>
+                        `;
+                    })()}
+                </div>
+                ` : `
+                <div class="competitor-section">
+                    <h5>💰 Competitor Prices</h5>
+                    <p style="color: #94a3b8; margin-bottom: 12px;">No competitor data yet. Add competitors to see market positioning.</p>
+                    <button class="add-competitor-btn" onclick="openCompetitorModal(${index})">+ Add Competitor</button>
+                </div>
+                `}
+                
+                <div class="analysis-section">
+                    <h5>💳 Platform Fee Analysis</h5>
+                    <div class="platform-fees-grid">
+                        <div class="platform-fee-box ${rec.platformFees.etsy > rec.platformFees.wayfair && rec.platformFees.etsy > rec.platformFees.wix ? 'best' : ''}">
+                            <div class="platform-name">Etsy</div>
+                            <div class="platform-margin">${rec.platformFees.etsy}%</div>
+                            <div style="font-size: 0.75rem; color: #94a3b8;">margin after fees</div>
+                        </div>
+                        <div class="platform-fee-box ${rec.platformFees.wayfair > rec.platformFees.etsy && rec.platformFees.wayfair > rec.platformFees.wix ? 'best' : ''}">
+                            <div class="platform-name">Wayfair</div>
+                            <div class="platform-margin">${rec.platformFees.wayfair}%</div>
+                            <div style="font-size: 0.75rem; color: #94a3b8;">margin after fees</div>
+                        </div>
+                        <div class="platform-fee-box ${rec.platformFees.wix > rec.platformFees.etsy && rec.platformFees.wix > rec.platformFees.wayfair ? 'best' : ''}">
+                            <div class="platform-name">Wix</div>
+                            <div class="platform-margin">${rec.platformFees.wix}%</div>
+                            <div style="font-size: 0.75rem; color: #94a3b8;">margin after fees</div>
+                        </div>
+                    </div>
+                    ${rec.platformRecommendation ? `<p style="color: #cbd5e1; font-size: 0.9rem; margin-top: 12px;">📌 ${rec.platformRecommendation}</p>` : ''}
+                </div>
+                
+                <div class="analysis-section">
+                    <h5>🗓️ Seasonal Intelligence</h5>
+                    <div class="seasonal-info">
+                        <div>
+                            <div style="color: #cbd5e1; font-size: 0.85rem;">Current Month</div>
+                            <div style="font-size: 1.1rem; font-weight: 700;">${rec.seasonal.month}</div>
+                        </div>
+                        <div>
+                            <div style="color: #cbd5e1; font-size: 0.85rem;">Demand Factor</div>
+                            <div style="font-size: 1.1rem; font-weight: 700; color: ${rec.seasonal.factor > 1 ? '#10b981' : '#f59e0b'};">${rec.seasonal.factor}x</div>
+                        </div>
+                        <div>
+                            <div style="color: #cbd5e1; font-size: 0.85rem;">Status</div>
+                            <div style="font-size: 1.1rem; font-weight: 700;">${rec.seasonal.factor > 1.1 ? '🔥 High' : rec.seasonal.factor > 0.95 ? '📊 Normal' : '❄️ Low'}</div>
+                        </div>
+                    </div>
+                    ${rec.seasonalStrategy ? `<p style="color: #cbd5e1; font-size: 0.9rem;">💡 ${rec.seasonalStrategy}</p>` : ''}
+                </div>
+                
+                <div class="analysis-section">
+                    <h5>📦 Inventory Velocity</h5>
+                    ${rec.velocity.isDeadStock ? `
+                        <div class="velocity-warning">
+                            <span style="font-size: 1.5rem;">⚠️</span>
+                            <div>
+                                <div style="font-weight: 600; color: #fca5a5;">Dead Stock Detected</div>
+                                <div style="font-size: 0.85rem; color: #cbd5e1;">Velocity: ${rec.velocity.rate} units/day | Stock: ${product.qty} units</div>
+                            </div>
+                        </div>
+                    ` : ''}
+                    <div style="padding: 12px; background: rgba(15, 23, 42, 0.6); border-radius: 8px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <span style="color: #cbd5e1;">Sales Velocity:</span>
+                            <span style="font-weight: 700;">${rec.velocity.rate} units/day</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                            <span style="color: #cbd5e1;">Current Stock:</span>
+                            <span style="font-weight: 700;">${product.qty} units</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between;">
+                            <span style="color: #cbd5e1;">Recommended Action:</span>
+                            <span style="font-weight: 700; color: ${rec.inventoryAction === 'clear' ? '#ef4444' : '#10b981'};">${rec.inventoryAction?.toUpperCase() || 'MAINTAIN'}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="analysis-section">
+                    <h5>🧠 Psychological Pricing</h5>
+                    <div class="psych-pricing-grid">
+                        <div class="psych-box">
+                            <div style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 4px;">Current Price</div>
+                            <div style="font-size: 1.3rem; font-weight: 700;">$${currentPrice}</div>
+                            <div style="font-size: 0.75rem; color: #cbd5e1; margin-top: 4px;">Ends in .${currentEnding}</div>
+                        </div>
+                        <div class="psych-box ${isPsychOptimized ? 'optimized' : ''}">
+                            <div style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 4px;">Optimized Price</div>
+                            <div style="font-size: 1.3rem; font-weight: 700;">$${suggestedPrice}</div>
+                            <div style="font-size: 0.75rem; color: ${isPsychOptimized ? '#10b981' : '#cbd5e1'}; margin-top: 4px;">
+                                ${isPsychOptimized ? '✅ Optimized (.99/.95/.97)' : 'Ends in .' + suggestedEnding}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="insight-box">
+                    <h5>💡 AI Reasoning</h5>
+                    <p>${rec.reasoning}</p>
+                </div>
+                
+                <div class="insight-box" style="background: rgba(16, 185, 129, 0.1); border-color: #10b981;">
+                    <h5 style="color: #6ee7b7;">📈 Expected Impact</h5>
+                    <p>${rec.expectedImpact}</p>
+                </div>
+                
+                <div class="metrics-row">
+                    <div class="metric-small">
+                        <div class="value">${rec.recommendation.toUpperCase()}</div>
+                        <div class="label">Action</div>
+                    </div>
+                    <div class="metric-small">
+                        <div class="value">${rec.confidence}%</div>
+                        <div class="label">Confidence</div>
+                    </div>
+                    <div class="metric-small">
+                        <div class="value">$${Math.abs(priceChange).toFixed(2)}</div>
+                        <div class="label">Change</div>
+                    </div>
+                    <div class="metric-small">
+                        <div class="value">${(newMargin - currentMargin).toFixed(1)}%</div>
+                        <div class="label">Margin Δ</div>
+                    </div>
+                </div>
+                
+                <div class="actions">
+                    <button class="btn btn-accept" onclick="acceptSingle(${index})">✅ Accept</button>
+                    <button class="btn btn-primary" onclick="reanalyzeSingleProduct(${index})" style="background: linear-gradient(135deg, #6366f1, #4f46e5);">🔄 Re-Analyze</button>
+                    <button class="btn btn-modify" onclick="modifyPrice(${index})">✏️ Modify</button>
+                    <button class="btn btn-reject" onclick="rejectSingle(${index})">❌ Reject</button>
+                    <button class="btn btn-copy" onclick="copySingle(${index})">📋 Copy</button>
+                </div>
+            `;
+        }
+        
+        function toggleExpand(index) {
+            const expanded = document.getElementById(`expanded-${index}`);
+            const icon = document.querySelector(`#row-${index} .expand-icon`);
+            
+            if (expanded.classList.contains('active')) {
+                expanded.classList.remove('active');
+                icon.textContent = '▶';
+            } else {
+                // Close all others
+                document.querySelectorAll('.expanded-card').forEach(card => card.classList.remove('active'));
+                document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
+                
+                expanded.classList.add('active');
+                icon.textContent = '▼';
+            }
+        }
+        
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            const selectAll = document.getElementById('selectAll').checked;
+            checkboxes.forEach(cb => cb.checked = selectAll);
+            updateBulkActions();
+        }
+        
+        function updateBulkActions() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            const bulkActions = document.getElementById('bulkActions');
+            const count = document.getElementById('selectedCount');
+            
+            if (checked.length > 0) {
+                bulkActions.classList.add('active');
+                count.textContent = `${checked.length} selected`;
+            } else {
+                bulkActions.classList.remove('active');
+            }
+        }
+        
+        function acceptSingle(index) {
+            acceptedRecommendations.add(index);
+            saveToCache(recommendations);
+            alert(`✅ Accepted recommendation for ${recommendations[index].product.sku}`);
+        }
+        
+        function rejectSingle(index) {
+            if (confirm('Remove this recommendation?')) {
+                recommendations.splice(index, 1);
+                saveToCache(recommendations);
+                displayResults();
+            }
+        }
+        
+        function modifyPrice(index) {
+            const item = recommendations[index];
+            const newPrice = prompt(`Enter new price for ${item.product.productName}:`, item.rec.suggestedRetailPrice);
+            if (newPrice && !isNaN(newPrice)) {
+                item.rec.suggestedRetailPrice = parseFloat(newPrice);
+                saveToCache(recommendations);
+                displayResults();
+            }
+        }
+        
+        function copySingle(index) {
+            const item = recommendations[index];
+            const text = `${item.product.sku}\nProduct: ${item.product.productName}\nCurrent: $${item.product.retailPrice}\nRecommended: $${item.rec.suggestedRetailPrice}\nReasoning: ${item.rec.reasoning}`;
+            navigator.clipboard.writeText(text);
+            alert('Copied to clipboard!');
+        }
+        
+        function bulkAccept() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            checked.forEach(cb => {
+                const index = parseInt(cb.dataset.index);
+                acceptedRecommendations.add(index);
+            });
+            saveToCache(recommendations);
+            alert(`✅ Accepted ${checked.length} recommendations`);
+        }
+        
+        function bulkReject() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            if (!confirm(`Remove ${checked.length} recommendations?`)) return;
+            
+            const indices = Array.from(checked).map(cb => parseInt(cb.dataset.index)).sort((a, b) => b - a);
+            indices.forEach(i => recommendations.splice(i, 1));
+            
+            saveToCache(recommendations);
+            displayResults();
+        }
+        
+        function exportAccepted() {
+            const accepted = recommendations.filter((_, i) => acceptedRecommendations.has(i));
+            
+            if (accepted.length === 0) {
+                alert('No accepted recommendations to export');
+                return;
+            }
+            
+            let csv = 'SKU,Product,Current_Price,Recommended_Price,Change,Priority,Confidence,Reasoning,Action\n';
+            accepted.forEach(item => {
+                const change = (item.rec.suggestedRetailPrice - item.product.retailPrice).toFixed(2);
+                csv += `"${item.product.sku}","${item.product.productName}",${item.product.retailPrice},${item.rec.suggestedRetailPrice},${change},${item.rec.priority.toUpperCase()},${item.rec.confidence},"${item.rec.reasoning}",ACCEPTED\n`;
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `pricing-accepted-${Date.now()}.csv`;
+            a.click();
+        }
+    </script>
+</body>
+</html>

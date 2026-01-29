@@ -1,0 +1,1711 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Content Studio</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+            color: #f1f5f9;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .header h1 {
+            font-size: 1.8rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .header p {
+            color: #94a3b8;
+            margin-top: 8px;
+        }
+        
+        .cache-indicator {
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            margin-left: auto;
+        }
+        
+        .cache-indicator.fresh {
+            background: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+        }
+        
+        .main-layout {
+            display: grid;
+            grid-template-columns: 420px 1fr;
+            gap: 24px;
+        }
+        
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-height: calc(100vh - 180px);
+            overflow-y: auto;
+        }
+        
+        .panel {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+        }
+        
+        .panel h3 {
+            color: #c4b5fd;
+            margin-bottom: 16px;
+            font-size: 1.1rem;
+        }
+        
+        .api-key-section {
+            margin-bottom: 16px;
+        }
+        
+        .api-key-status {
+            padding: 12px;
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px;
+            color: #10b981;
+            font-size: 0.9rem;
+            margin-top: 8px;
+            display: none;
+        }
+        
+        .api-key-status.active { display: block; }
+        
+        .api-key-input {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #f1f5f9;
+            font-size: 0.95rem;
+            font-family: monospace;
+        }
+        
+        .connect-btn {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 100%;
+            margin-top: 8px;
+        }
+        
+        .connect-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(139, 92, 246, 0.3);
+        }
+        
+        .filter-group {
+            margin-bottom: 16px;
+        }
+        
+        .filter-group label {
+            display: block;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .filter-group input,
+        .filter-group select,
+        .filter-group textarea {
+            width: 100%;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #f1f5f9;
+            font-size: 0.95rem;
+            font-family: inherit;
+        }
+        
+        .filter-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
+        }
+        
+        .checkbox-group label {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-weight: normal;
+            cursor: pointer;
+            line-height: 1.5;
+            padding: 4px 0;
+            min-height: 28px;
+        }
+        
+        .checkbox-group label input[type="checkbox"] {
+            margin-top: 4px;
+            flex-shrink: 0;
+            width: 16px;
+            height: 16px;
+        }
+        
+        .checkbox-group label span {
+            flex: 1;
+            color: #e2e8f0;
+            font-size: 0.95rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .stat-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #8b5cf6;
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            color: #94a3b8;
+            margin-top: 4px;
+        }
+        
+        .generate-btn {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s;
+            margin-top: 20px;
+        }
+        
+        .generate-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(16, 185, 129, 0.3);
+        }
+        
+        .generate-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .bulk-actions {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 16px 24px;
+            margin-bottom: 16px;
+            display: none;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .bulk-actions.active {
+            display: flex;
+        }
+        
+        .bulk-actions span {
+            color: #a5b4fc;
+            font-weight: 600;
+        }
+        
+        .bulk-actions button {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-copy { background: #6366f1; color: white; }
+        .btn-export { background: #10b981; color: white; }
+        .btn-clear { background: #f59e0b; color: white; }
+        
+        .view-toggle {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 12px;
+            margin-bottom: 16px;
+            display: flex;
+            gap: 8px;
+        }
+        
+        .view-btn {
+            flex: 1;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            padding: 10px;
+            border-radius: 8px;
+            color: #cbd5e1;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        
+        .view-btn.active {
+            background: rgba(139, 92, 246, 0.2);
+            border-color: #8b5cf6;
+            color: #c4b5fd;
+        }
+        
+        .list-table {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            overflow: hidden;
+        }
+        
+        .list-header {
+            display: grid;
+            grid-template-columns: 40px 100px 2fr 200px 100px 100px 40px;
+            gap: 12px;
+            padding: 16px 20px;
+            background: rgba(15, 23, 42, 0.6);
+            border-bottom: 1px solid #334155;
+            font-weight: 600;
+            font-size: 0.9rem;
+            color: #cbd5e1;
+        }
+        
+        .list-row {
+            display: grid;
+            grid-template-columns: 40px 100px 2fr 200px 100px 100px 40px;
+            gap: 12px;
+            padding: 16px 20px;
+            border-bottom: 1px solid #334155;
+            cursor: pointer;
+            transition: all 0.2s;
+            border-left: 4px solid #8b5cf6;
+        }
+        
+        .list-row:hover {
+            background: rgba(139, 92, 246, 0.1);
+        }
+        
+        .expand-icon {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            color: #8b5cf6;
+        }
+        
+        .platform-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        
+        .platform-pill {
+            background: rgba(139, 92, 246, 0.2);
+            color: #c4b5fd;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }
+        
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            background: rgba(16, 185, 129, 0.2);
+            color: #6ee7b7;
+        }
+        
+        .expanded-card {
+            padding: 24px;
+            background: rgba(15, 23, 42, 0.4);
+            border-top: 1px solid #334155;
+            display: none;
+        }
+        
+        .expanded-card.active {
+            display: block;
+        }
+        
+        .card-view {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        .result-card {
+            background: rgba(30, 41, 59, 0.8);
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 24px;
+            border-left: 4px solid #8b5cf6;
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: start;
+            margin-bottom: 20px;
+        }
+        
+        .product-info h4 {
+            font-size: 1.2rem;
+            color: #f1f5f9;
+            margin-bottom: 4px;
+        }
+        
+        .product-info .meta {
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+        
+        .channel-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        
+        .channel-tab {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #334155;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 0.9rem;
+        }
+        
+        .channel-tab:hover {
+            background: rgba(139, 92, 246, 0.1);
+            border-color: #8b5cf6;
+        }
+        
+        .channel-tab.active {
+            background: rgba(139, 92, 246, 0.2);
+            border-color: #8b5cf6;
+            color: #c4b5fd;
+        }
+        
+        .content-section {
+            margin-bottom: 24px;
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .section-header h5 {
+            color: #a5b4fc;
+            font-size: 0.95rem;
+        }
+        
+        .char-count {
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+        
+        .char-count.good {
+            color: #10b981;
+        }
+        
+        .char-count.warning {
+            color: #f59e0b;
+        }
+        
+        .char-count.error {
+            color: #ef4444;
+        }
+        
+        .content-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 16px;
+            line-height: 1.6;
+            min-height: 80px;
+            white-space: pre-wrap;
+        }
+        
+        .keyword-tier {
+            background: rgba(15, 23, 42, 0.6);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .tier-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        
+        .tier-name {
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        .tier-core { color: #ef4444; }
+        .tier-seasonal { color: #f59e0b; }
+        .tier-usecase { color: #10b981; }
+        .tier-longtail { color: #3b82f6; }
+        .tier-intent { color: #8b5cf6; }
+        
+        .keyword-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        .keyword {
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            color: #a5b4fc;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+        }
+        
+        .keyword.core {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+        }
+        
+        .keyword.seasonal {
+            background: rgba(245, 158, 11, 0.2);
+            border-color: rgba(245, 158, 11, 0.4);
+            color: #fcd34d;
+        }
+        
+        .keyword.usecase {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: #6ee7b7;
+        }
+        
+        .keyword.longtail {
+            background: rgba(59, 130, 246, 0.2);
+            border-color: rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+        }
+        
+        .keyword.intent {
+            background: rgba(139, 92, 246, 0.2);
+            border-color: rgba(139, 92, 246, 0.4);
+            color: #c4b5fd;
+        }
+        
+        .hashtag-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }
+        
+        .hashtag {
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-family: monospace;
+        }
+        
+        .hashtag.high-reach {
+            background: rgba(239, 68, 68, 0.2);
+            border-color: rgba(239, 68, 68, 0.4);
+            color: #fca5a5;
+        }
+        
+        .hashtag.medium-reach {
+            background: rgba(245, 158, 11, 0.2);
+            border-color: rgba(245, 158, 11, 0.4);
+            color: #fcd34d;
+        }
+        
+        .hashtag.niche-reach {
+            background: rgba(16, 185, 129, 0.2);
+            border-color: rgba(16, 185, 129, 0.4);
+            color: #6ee7b7;
+        }
+        
+        .tag-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .tag {
+            background: rgba(139, 92, 246, 0.2);
+            border: 1px solid rgba(139, 92, 246, 0.4);
+            color: #c4b5fd;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #8b5cf6;
+            color: white;
+        }
+        
+        .btn-secondary {
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            border: 1px solid rgba(99, 102, 241, 0.3);
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 60px;
+        }
+        
+        .spinner {
+            border: 3px solid rgba(139, 92, 246, 0.3);
+            border-top: 3px solid #8b5cf6;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .hidden { display: none; }
+        
+        .platform-limits {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.3);
+            border-radius: 8px;
+            padding: 8px 12px;
+            margin-top: 8px;
+            font-size: 0.8rem;
+            color: #a5b4fc;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                ✨ AI Content Studio
+                <span class="cache-indicator" id="cacheIndicator" style="display: none;"></span>
+            </h1>
+            <p>Generate SEO-optimized content with 5-tier keywords for Etsy, Wix, Wayfair, Pinterest, Instagram, and Facebook</p>
+            <div style="margin-top: 12px;">
+                <button onclick="clearCache()" style="background: rgba(239, 68, 68, 0.2); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem;">
+                    🗑️ Clear Cache
+                </button>
+                <span style="color: #64748b; font-size: 0.85rem; margin-left: 8px;">Use if quota exceeded or seeing wrong results</span>
+            </div>
+        </div>
+        
+        <div class="main-layout">
+            <div class="sidebar">
+                <div class="panel">
+                    <h3>1️⃣ API Configuration</h3>
+                    <div class="api-key-section">
+                        <label style="display: block; color: #cbd5e1; font-size: 0.9rem; margin-bottom: 8px;">Anthropic API Key</label>
+                        <input type="password" class="api-key-input" id="apiKeyInput" placeholder="sk-ant-...">
+                        <button class="connect-btn" onclick="saveApiKey()">💾 Save API Key</button>
+                        <div class="api-key-status" id="apiKeyStatus"></div>
+                    </div>
+                </div>
+                
+                <div class="panel">
+                    <h3>2️⃣ Connect Data</h3>
+                    <button class="connect-btn" onclick="connectFile()">📁 Select MASTER.json</button>
+                    <div class="api-key-status" id="fileStatus"></div>
+                </div>
+                
+                <div class="panel" id="selectionPanel" style="display: none;">
+                    <h3>3️⃣ Select Products</h3>
+                    
+                    <div class="filter-group">
+                        <label>Search Products</label>
+                        <input type="text" id="searchBox" placeholder="Search by name or SKU..." oninput="updateProductList()">
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Category</label>
+                        <select id="categoryFilter" onchange="updateProductList()">
+                            <option value="">All Categories</option>
+                        </select>
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-box">
+                            <div class="stat-value" id="matchingCount">0</div>
+                            <div class="stat-label">Matching</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="stat-value" id="totalCount">0</div>
+                            <div class="stat-label">Total</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="panel" id="optionsPanel" style="display: none;">
+                    <h3>4️⃣ Content Options</h3>
+                    
+                    <div class="filter-group">
+                        <label>How many products?</label>
+                        <input type="number" id="productCount" value="3" min="1" max="50">
+                        <p style="color: #64748b; font-size: 0.8rem; margin-top: 4px;">Cost: ~$0.06 per product</p>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Target Platforms</label>
+                        <div class="checkbox-group">
+                            <label>
+                                <input type="checkbox" id="channelEtsy" checked>
+                                <span>Etsy (Artisan, Detailed)</span>
+                            </label>
+                            <label>
+                                <input type="checkbox" id="channelWix" checked>
+                                <span>Wix (Concise, Value)</span>
+                            </label>
+                            <label>
+                                <input type="checkbox" id="channelWayfair">
+                                <span>Wayfair (Specs, Practical)</span>
+                            </label>
+                            <label>
+                                <input type="checkbox" id="channelPinterest" checked>
+                                <span>📌 Pinterest (Visual, Inspirational)</span>
+                            </label>
+                            <label>
+                                <input type="checkbox" id="channelInstagram" checked>
+                                <span>📸 Instagram (Engaging, Hashtags)</span>
+                            </label>
+                            <label>
+                                <input type="checkbox" id="channelFacebook">
+                                <span>👥 Facebook (Conversational)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Writing Tone</label>
+                        <select id="toneSelect">
+                            <option value="professional">Professional</option>
+                            <option value="casual">Casual & Friendly</option>
+                            <option value="luxury">Luxury & Elegant</option>
+                            <option value="cozy">Warm & Cozy</option>
+                            <option value="rustic">Rustic & Farmhouse</option>
+                        </select>
+                    </div>
+                    
+                    <div class="filter-group">
+                        <label>Additional Instructions</label>
+                        <textarea id="customInstructions" placeholder="e.g., 'Emphasize eco-friendly' or 'Target gift shoppers'"></textarea>
+                    </div>
+                    
+                    <button class="generate-btn" id="generateBtn" onclick="generateContent()" disabled>
+                        ✨ Generate Content
+                    </button>
+                </div>
+            </div>
+            
+            <div class="content-area">
+                <div class="bulk-actions" id="bulkActions">
+                    <span id="selectedCount">0 selected</span>
+                    <button class="btn-copy" onclick="bulkCopy()">📋 Copy Selected</button>
+                    <button class="btn-export" onclick="bulkExport()">📊 Export CSV</button>
+                    <button class="btn-clear" onclick="clearCache()">🗑️ Clear Cache</button>
+                </div>
+                
+                <div class="view-toggle" id="viewToggle" style="display: none;">
+                    <button class="view-btn active" onclick="switchView('list')">📋 List View</button>
+                    <button class="view-btn" onclick="switchView('card')">📇 Card View</button>
+                </div>
+                
+                <div id="resultsArea"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let masterData = null;
+        let fileHandle = null;
+        let filteredProducts = [];
+        let generatedContent = [];
+        let currentView = 'list';
+        let apiKey = '';
+        const WORKER_URL = 'https://cold-field-4bb6.psmith-925.workers.dev/';
+        
+        const PLATFORM_LIMITS = {
+            etsy: { description: 800, title: 140 },
+            wix: { description: 300, title: 100 },
+            wayfair: { description: 500, title: 120 },
+            pinterest: { description: 500, title: 100 },
+            instagram: { caption: 2200, visible: 125, hashtags: 30 },
+            facebook: { description: 500, title: 100 }
+        };
+        
+        window.addEventListener('DOMContentLoaded', () => {
+            loadApiKey();
+            loadFromCache();
+        });
+        
+        function loadApiKey() {
+            const saved = localStorage.getItem('anthropic_api_key');
+            if (saved) {
+                apiKey = saved;
+                document.getElementById('apiKeyInput').value = saved;
+                document.getElementById('apiKeyStatus').textContent = '✅ API Key loaded';
+                document.getElementById('apiKeyStatus').classList.add('active');
+            }
+        }
+        
+        function saveApiKey() {
+            const input = document.getElementById('apiKeyInput').value.trim();
+            if (!input.startsWith('sk-ant-')) {
+                alert('Invalid API key format. Must start with sk-ant-');
+                return;
+            }
+            apiKey = input;
+            localStorage.setItem('anthropic_api_key', apiKey);
+            document.getElementById('apiKeyStatus').textContent = '✅ API Key saved';
+            document.getElementById('apiKeyStatus').classList.add('active');
+            updateGenerateButton();
+        }
+        
+        function saveToCache(data) {
+            try {
+                const cacheData = {
+                    data: data,
+                    timestamp: Date.now(),
+                    count: data.length
+                };
+                
+                const jsonString = JSON.stringify(cacheData);
+                const sizeInMB = (jsonString.length / (1024 * 1024)).toFixed(2);
+                
+                console.log(`💾 Cache size: ${sizeInMB}MB`);
+                
+                // If cache is getting large (>4MB), warn and clear old
+                if (sizeInMB > 4) {
+                    console.warn(`⚠️ Cache is large (${sizeInMB}MB) - clearing old data to prevent quota errors`);
+                    localStorage.removeItem('content_cache');
+                }
+                
+                localStorage.setItem('content_cache', jsonString);
+                console.log('✅ Content cached successfully');
+            } catch (error) {
+                if (error.name === 'QuotaExceededError') {
+                    console.warn('⚠️ localStorage quota exceeded - clearing old cache and retrying...');
+                    // Clear old cache and try again
+                    localStorage.removeItem('content_cache');
+                    try {
+                        const cacheData = {
+                            data: data,
+                            timestamp: Date.now(),
+                            count: data.length
+                        };
+                        localStorage.setItem('content_cache', JSON.stringify(cacheData));
+                        console.log('✅ Content cached after clearing old data');
+                    } catch (retryError) {
+                        console.warn('⚠️ Still cannot cache - continuing without cache');
+                        console.warn('Results are displayed but will not persist on refresh.');
+                        // Continue without caching - not critical
+                    }
+                } else {
+                    console.error('Cache save error:', error);
+                }
+            }
+        }
+        
+        function loadFromCache() {
+            const cached = localStorage.getItem('content_cache');
+            if (!cached) return;
+            
+            const data = JSON.parse(cached);
+            const age = Date.now() - data.timestamp;
+            
+            // Cache valid for 7 days
+            if (age > 7 * 24 * 60 * 60 * 1000) {
+                localStorage.removeItem('content_cache');
+                return;
+            }
+            
+            generatedContent = data.data;
+            
+            // Show cache indicator
+            const hours = Math.floor(age / (1000 * 60 * 60));
+            const indicator = document.getElementById('cacheIndicator');
+            indicator.textContent = `📦 Loaded from cache (${hours}h old)`;
+            indicator.style.display = 'block';
+            
+            if (generatedContent.length > 0) {
+                document.getElementById('viewToggle').style.display = 'flex';
+                displayResults();
+            }
+        }
+        
+        function clearCache() {
+            if (!confirm('Clear all cached content?')) return;
+            
+            localStorage.removeItem('content_cache');
+            generatedContent = [];
+            document.getElementById('resultsArea').innerHTML = '';
+            document.getElementById('viewToggle').style.display = 'none';
+            document.getElementById('cacheIndicator').style.display = 'none';
+            alert('✅ Cache cleared! Generate content to get fresh results.');
+        }
+        
+        function clearCache() {
+            localStorage.removeItem('content_cache');
+            document.getElementById('cacheIndicator').style.display = 'none';
+            document.getElementById('resultsArea').innerHTML = '';
+            document.getElementById('viewToggle').style.display = 'none';
+            generatedContent = [];
+            console.log('✅ Cache cleared successfully');
+            alert('✅ Cache cleared! Generate new content to see fresh results.');
+        }
+        
+        async function connectFile() {
+            try {
+                [fileHandle] = await window.showOpenFilePicker({
+                    types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }]
+                });
+                
+                const file = await fileHandle.getFile();
+                const contents = await file.text();
+                masterData = JSON.parse(contents);
+                
+                if (!masterData?.inventory?.length) {
+                    alert('Invalid file format.');
+                    return;
+                }
+                
+                document.getElementById('fileStatus').textContent = 
+                    `✅ Connected - ${masterData.inventory.length} products loaded`;
+                document.getElementById('fileStatus').classList.add('active');
+                document.getElementById('selectionPanel').style.display = 'block';
+                document.getElementById('optionsPanel').style.display = 'block';
+                
+                populateFilters();
+                updateProductList();
+                
+            } catch (error) {
+                if (error.name !== 'AbortError') alert('Error: ' + error.message);
+            }
+        }
+        
+        function populateFilters() {
+            const categories = new Set(masterData.inventory.map(p => p.category).filter(Boolean));
+            const select = document.getElementById('categoryFilter');
+            categories.forEach(cat => {
+                const option = document.createElement('option');
+                option.value = cat;
+                option.textContent = cat;
+                select.appendChild(option);
+            });
+        }
+        
+        function updateProductList() {
+            if (!masterData) return;
+            
+            const search = document.getElementById('searchBox').value.toLowerCase();
+            const category = document.getElementById('categoryFilter').value;
+            
+            filteredProducts = masterData.inventory.filter(p => {
+                if (search && !p.productName.toLowerCase().includes(search) && !p.sku.toLowerCase().includes(search)) return false;
+                if (category && p.category !== category) return false;
+                return true;
+            });
+            
+            document.getElementById('matchingCount').textContent = filteredProducts.length;
+            document.getElementById('totalCount').textContent = masterData.inventory.length;
+            updateGenerateButton();
+        }
+        
+        function updateGenerateButton() {
+            document.getElementById('generateBtn').disabled = filteredProducts.length === 0 || !apiKey;
+        }
+        
+        async function generateContent() {
+            if (!apiKey) {
+                alert('Please enter and save your API key first.');
+                return;
+            }
+            
+            const count = Math.min(parseInt(document.getElementById('productCount').value) || 3, filteredProducts.length);
+            if (count === 0) return alert('No products selected.');
+            
+            const channels = [];
+            if (document.getElementById('channelEtsy').checked) channels.push('etsy');
+            if (document.getElementById('channelWix').checked) channels.push('wix');
+            if (document.getElementById('channelWayfair').checked) channels.push('wayfair');
+            if (document.getElementById('channelPinterest').checked) channels.push('pinterest');
+            if (document.getElementById('channelInstagram').checked) channels.push('instagram');
+            if (document.getElementById('channelFacebook').checked) channels.push('facebook');
+            
+            console.log('=== CONTENT GENERATION DEBUG ===');
+            console.log('Checkbox states:', {
+                etsy: document.getElementById('channelEtsy').checked,
+                wix: document.getElementById('channelWix').checked,
+                wayfair: document.getElementById('channelWayfair').checked,
+                pinterest: document.getElementById('channelPinterest').checked,
+                instagram: document.getElementById('channelInstagram').checked,
+                facebook: document.getElementById('channelFacebook').checked
+            });
+            console.log('Selected channels array:', channels);
+            console.log('Products to generate:', count);
+            console.log('==================================');
+            
+            if (!channels.length) return alert('Select at least one platform.');
+            
+            const cost = (count * channels.length * 0.06).toFixed(2);
+            if (!confirm(`Generate for ${count} products × ${channels.length} platforms? Cost: ~$${cost}`)) return;
+            
+            const options = {
+                tone: document.getElementById('toneSelect').value,
+                customInstructions: document.getElementById('customInstructions').value
+            };
+            
+            const resultsArea = document.getElementById('resultsArea');
+            resultsArea.innerHTML = '<div class="loading"><div class="spinner"></div><p>Generating content with AI...</p></div>';
+            
+            // Clear cache indicator for fresh generation
+            const indicator = document.getElementById('cacheIndicator');
+            indicator.textContent = '✨ Fresh generation';
+            indicator.classList.add('fresh');
+            indicator.style.display = 'block';
+            
+            generatedContent = [];
+            const products = filteredProducts.slice(0, count);
+            
+            for (let i = 0; i < products.length; i++) {
+                const product = products[i];
+                const content = {};
+                
+                console.log(`\n📝 Generating for product ${i+1}/${products.length}: ${product.sku}`);
+                console.log(`⚡ Parallel generation for ${channels.length} platforms...`);
+                
+                const startTime = Date.now();
+                
+                // PARALLEL GENERATION - All platforms at once!
+                const promises = channels.map(async (channel) => {
+                    console.log(`  ⏳ Starting ${channel}...`);
+                    const result = await generateForChannel(product, channel, options);
+                    console.log(`  ✅ ${channel} done`);
+                    return { channel, result };
+                });
+                
+                // Wait for all platforms to finish
+                const results = await Promise.all(promises);
+                
+                // Organize results by channel
+                results.forEach(({ channel, result }) => {
+                    content[channel] = result;
+                });
+                
+                const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                console.log(`  ⚡ All ${channels.length} platforms completed in ${elapsed}s (parallel)`);
+                console.log(`  📦 Content generated for channels:`, Object.keys(content));
+                
+                generatedContent.push({ product, content });
+                
+                // Progressive display - show this product immediately
+                if (i === 0) {
+                    document.getElementById('viewToggle').style.display = 'flex';
+                }
+                displayResults();
+                
+                resultsArea.innerHTML = `<div class="loading"><div class="spinner"></div><p>Generated ${i + 1}/${count} products...</p></div>`;
+            }
+            
+            console.log('\n✅ ALL PRODUCTS GENERATED SUCCESSFULLY!');
+            console.log('==================================\n');
+            
+            try {
+                saveToCache(generatedContent);
+            } catch (error) {
+                console.warn('⚠️ Cache save failed, but results will still display');
+            }
+            
+            document.getElementById('viewToggle').style.display = 'flex';
+            displayResults();
+            
+            // Clear loading message
+            resultsArea.innerHTML = '';
+        }
+        
+        async function generateForChannel(product, channel, options) {
+            let prompt = buildPrompt(product, channel, options);
+            
+            try {
+                const response = await fetch(WORKER_URL, {
+                    method: "POST",
+                    headers: { 
+                        "Content-Type": "application/json",
+                        "x-api-key": apiKey,
+                        "anthropic-version": "2023-06-01"
+                    },
+                    body: JSON.stringify({
+                        model: "claude-sonnet-4-20250514",
+                        max_tokens: 2000,
+                        messages: [{ role: "user", content: prompt }]
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`API error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const text = data.content[0].text;
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                return jsonMatch ? JSON.parse(jsonMatch[0]) : { 
+                    description: 'Error generating content',
+                    keywords: { core: [], seasonal: [], usecase: [], longtail: [], intent: [] },
+                    hashtags: { high: [], medium: [], niche: [] },
+                    tags: []
+                };
+                
+            } catch (error) {
+                return { 
+                    description: 'Error: ' + error.message,
+                    keywords: { core: [], seasonal: [], usecase: [], longtail: [], intent: [] },
+                    hashtags: { high: [], medium: [], niche: [] },
+                    tags: []
+                };
+            }
+        }
+        
+        function buildPrompt(product, channel, options) {
+            const limits = PLATFORM_LIMITS[channel];
+            let maxLength = limits.description || limits.caption || 500;
+            
+            let platformGuidance = '';
+            if (channel === 'etsy') {
+                platformGuidance = `Etsy Focus:
+- Artisan, handcrafted emphasis
+- Story behind the product
+- Quality materials and craftsmanship
+- Detailed measurements and specs`;
+            } else if (channel === 'wix') {
+                platformGuidance = `Wix Focus:
+- Concise, value-focused
+- Clean product benefits
+- Professional tone
+- Direct call to action`;
+            } else if (channel === 'wayfair') {
+                platformGuidance = `Wayfair Focus:
+- Practical specifications
+- Room placement suggestions
+- Durability and materials
+- Value for money`;
+            } else if (channel === 'pinterest') {
+                platformGuidance = `Pinterest Focus:
+- Visual, inspirational language
+- Include emojis (2-3)
+- DIY/styling ideas
+- Pin-friendly formatting`;
+            } else if (channel === 'instagram') {
+                platformGuidance = `Instagram Focus:
+- Hook in first line (${limits.visible} chars visible)
+- Engaging, conversational
+- Emojis throughout (5-8)
+- Story-driven`;
+            } else if (channel === 'facebook') {
+                platformGuidance = `Facebook Focus:
+- Conversational, friendly
+- Benefits over features
+- Question or hook opening
+- Moderate emojis (3-5)
+- Community-building language`;
+            }
+            
+            const needsHashtags = ['instagram', 'pinterest'].includes(channel);
+            
+            let prompt = `Generate ${options.tone} ${channel.toUpperCase()} content:
+
+Product: ${product.productName}
+SKU: ${product.sku}
+Category: ${product.category || 'Home Decor'}
+Price: $${product.retailPrice}
+
+${platformGuidance}
+
+${options.customInstructions ? 'Additional: ' + options.customInstructions : ''}
+
+Generate 5-TIER KEYWORD SYSTEM (45-55 total keywords):
+1. Core Keywords (10): Primary product descriptors
+2. Seasonal Keywords (8-10): Current season + holidays
+3. Use Case Keywords (8-10): Room placement, occasions, gifting
+4. Long-Tail Keywords (12-15): Specific phrases people search
+5. Search Intent Keywords (7-10): Style, aesthetic, function
+
+JSON format:
+{
+  "description": "max ${maxLength} chars",
+  "keywords": {
+    "core": ["10 primary keywords"],
+    "seasonal": ["8-10 seasonal keywords"],
+    "usecase": ["8-10 use case keywords"],
+    "longtail": ["12-15 long-tail phrases"],
+    "intent": ["7-10 search intent keywords"]
+  },
+  ${needsHashtags ? `"hashtags": {
+    "high": ["3 broad hashtags 100k+"],
+    "medium": ["7 medium 10k-100k"],
+    "niche": ["10 specific <10k"]
+  },` : ''}
+  "tags": ["10-12 SEO tags"]
+}
+
+Return ONLY JSON, no markdown.`;
+            
+            return prompt;
+        }
+        
+        function switchView(view) {
+            currentView = view;
+            document.querySelectorAll('.view-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            displayResults();
+        }
+        
+        function displayResults() {
+            if (generatedContent.length === 0) {
+                document.getElementById('resultsArea').innerHTML = '<div class="panel"><p style="color: #94a3b8;">No content generated yet.</p></div>';
+                return;
+            }
+            
+            if (currentView === 'list') {
+                displayListView();
+            } else {
+                displayCardView();
+            }
+        }
+        
+        function displayListView() {
+            let html = `
+                <div class="list-table">
+                    <div class="list-header">
+                        <div><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"></div>
+                        <div>SKU</div>
+                        <div>Product</div>
+                        <div>Platforms</div>
+                        <div>Keywords</div>
+                        <div>Status</div>
+                        <div></div>
+                    </div>
+            `;
+            
+            generatedContent.forEach((item, index) => {
+                const platforms = Object.keys(item.content);
+                const totalKeywords = Object.values(item.content[platforms[0]].keywords || {})
+                    .reduce((sum, arr) => sum + arr.length, 0);
+                
+                html += `
+                    <div class="list-row" id="row-${index}">
+                        <div><input type="checkbox" class="row-checkbox" data-index="${index}" onchange="updateBulkActions()"></div>
+                        <div>${item.product.sku}</div>
+                        <div style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.product.productName}</div>
+                        <div class="platform-pills">
+                            ${platforms.map(p => `<span class="platform-pill">${p}</span>`).join('')}
+                        </div>
+                        <div>${totalKeywords} keywords</div>
+                        <div><span class="status-badge">✅ Generated</span></div>
+                        <div class="expand-icon" onclick="toggleExpand(${index})">▶</div>
+                    </div>
+                    <div class="expanded-card" id="expanded-${index}">
+                        ${renderFullCard(item, index)}
+                    </div>
+                `;
+            });
+            
+            html += `</div>`;
+            document.getElementById('resultsArea').innerHTML = html;
+        }
+        
+        function displayCardView() {
+            let html = '<div class="card-view">';
+            
+            generatedContent.forEach((item, index) => {
+                html += createContentCard(item.product, item.content, index);
+            });
+            
+            html += '</div>';
+            document.getElementById('resultsArea').innerHTML = html;
+        }
+        
+        function createContentCard(product, content, index) {
+            const channels = Object.keys(content);
+            const firstChannel = channels[0];
+            
+            return `
+                <div class="result-card" id="card-${index}">
+                    <div class="card-header">
+                        <div class="product-info">
+                            <h4>${product.productName}</h4>
+                            <div class="meta">SKU: ${product.sku} | $${product.retailPrice}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="channel-tabs">
+                        ${channels.map(ch => `
+                            <div class="channel-tab ${ch === firstChannel ? 'active' : ''}" 
+                                 onclick="switchChannel(${index}, '${ch}')">
+                                ${ch.toUpperCase()}
+                            </div>
+                        `).join('')}
+                    </div>
+                    
+                    <div id="content-${index}">
+                        ${renderChannelContent(content[firstChannel], firstChannel, index)}
+                    </div>
+                    
+                    <div class="actions">
+                        <button class="btn btn-success" onclick="copyProduct(${index})">📋 Copy All</button>
+                        <button class="btn btn-primary" onclick="copyDescription(${index})">📋 Description</button>
+                        <button class="btn btn-secondary" onclick="copyHashtags(${index})">🔥 Hashtags</button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderFullCard(item, index) {
+            const product = item.product;
+            const channels = Object.keys(item.content);
+            const firstChannel = channels[0];
+            
+            return `
+                <div class="card-header">
+                    <div class="product-info">
+                        <h4>${product.productName}</h4>
+                        <div class="meta">SKU: ${product.sku} | Category: ${product.category || 'N/A'} | $${product.retailPrice}</div>
+                    </div>
+                </div>
+                
+                <div class="channel-tabs">
+                    ${channels.map(ch => `
+                        <div class="channel-tab ${ch === firstChannel ? 'active' : ''}" 
+                             onclick="switchChannelExpanded(${index}, '${ch}')">
+                            ${ch.toUpperCase()}
+                        </div>
+                    `).join('')}
+                </div>
+                
+                <div id="expanded-content-${index}">
+                    ${renderChannelContent(item.content[firstChannel], firstChannel, index)}
+                </div>
+                
+                <div class="actions">
+                    <button class="btn btn-success" onclick="copyProduct(${index})">📋 Copy All</button>
+                    <button class="btn btn-primary" onclick="copyDescription(${index})">📋 Description</button>
+                    <button class="btn btn-secondary" onclick="copyHashtags(${index})">🔥 Hashtags</button>
+                </div>
+            `;
+        }
+        
+        function renderChannelContent(data, channel, index) {
+            const limits = PLATFORM_LIMITS[channel];
+            let html = '';
+            
+            if (data.description) {
+                const charCount = data.description.length;
+                const maxLength = limits.description || limits.caption || 500;
+                const charClass = charCount <= maxLength ? 'good' : charCount <= maxLength * 1.1 ? 'warning' : 'error';
+                
+                html += `
+                    <div class="content-section">
+                        <div class="section-header">
+                            <h5>📝 ${channel === 'instagram' ? 'Caption' : 'Description'}</h5>
+                            <span class="char-count ${charClass}">${charCount} / ${maxLength}</span>
+                        </div>
+                        <div class="content-box">${data.description}</div>
+                        ${channel === 'instagram' ? `<div class="platform-limits">First ${limits.visible} chars visible without "more"</div>` : ''}
+                    </div>
+                `;
+            }
+            
+            // 5-tier keywords
+            if (data.keywords) {
+                html += `<div class="content-section">
+                    <div class="section-header">
+                        <h5>🎯 5-Tier Keyword System</h5>
+                        <span class="char-count good">${Object.values(data.keywords).reduce((s, a) => s + a.length, 0)} keywords</span>
+                    </div>
+                `;
+                
+                if (data.keywords.core?.length) {
+                    html += `
+                        <div class="keyword-tier">
+                            <div class="tier-header">
+                                <span class="tier-name tier-core">1️⃣ Core Keywords</span>
+                                <span style="color: #94a3b8; font-size: 0.85rem;">${data.keywords.core.length}</span>
+                            </div>
+                            <div class="keyword-container">
+                                ${data.keywords.core.map(k => `<span class="keyword core">${k}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (data.keywords.seasonal?.length) {
+                    html += `
+                        <div class="keyword-tier">
+                            <div class="tier-header">
+                                <span class="tier-name tier-seasonal">2️⃣ Seasonal Keywords</span>
+                                <span style="color: #94a3b8; font-size: 0.85rem;">${data.keywords.seasonal.length}</span>
+                            </div>
+                            <div class="keyword-container">
+                                ${data.keywords.seasonal.map(k => `<span class="keyword seasonal">${k}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (data.keywords.usecase?.length) {
+                    html += `
+                        <div class="keyword-tier">
+                            <div class="tier-header">
+                                <span class="tier-name tier-usecase">3️⃣ Use Case Keywords</span>
+                                <span style="color: #94a3b8; font-size: 0.85rem;">${data.keywords.usecase.length}</span>
+                            </div>
+                            <div class="keyword-container">
+                                ${data.keywords.usecase.map(k => `<span class="keyword usecase">${k}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (data.keywords.longtail?.length) {
+                    html += `
+                        <div class="keyword-tier">
+                            <div class="tier-header">
+                                <span class="tier-name tier-longtail">4️⃣ Long-Tail Keywords</span>
+                                <span style="color: #94a3b8; font-size: 0.85rem;">${data.keywords.longtail.length}</span>
+                            </div>
+                            <div class="keyword-container">
+                                ${data.keywords.longtail.map(k => `<span class="keyword longtail">${k}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                if (data.keywords.intent?.length) {
+                    html += `
+                        <div class="keyword-tier">
+                            <div class="tier-header">
+                                <span class="tier-name tier-intent">5️⃣ Search Intent Keywords</span>
+                                <span style="color: #94a3b8; font-size: 0.85rem;">${data.keywords.intent.length}</span>
+                            </div>
+                            <div class="keyword-container">
+                                ${data.keywords.intent.map(k => `<span class="keyword intent">${k}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                html += `</div>`;
+            }
+            
+            if (data.hashtags) {
+                html += `
+                    <div class="content-section">
+                        <div class="section-header">
+                            <h5>🔥 Strategic Hashtags</h5>
+                            <span class="char-count good">${(data.hashtags.high?.length || 0) + (data.hashtags.medium?.length || 0) + (data.hashtags.niche?.length || 0)} total</span>
+                        </div>
+                `;
+                
+                if (data.hashtags.high?.length) {
+                    html += `<p style="color: #fca5a5; font-size: 0.85rem; margin-bottom: 6px;">HIGH REACH (100k+):</p>
+                             <div class="hashtag-container">${data.hashtags.high.map(h => `<span class="hashtag high-reach">#${h}</span>`).join('')}</div>`;
+                }
+                if (data.hashtags.medium?.length) {
+                    html += `<p style="color: #fcd34d; font-size: 0.85rem; margin: 12px 0 6px;">MEDIUM REACH (10k-100k):</p>
+                             <div class="hashtag-container">${data.hashtags.medium.map(h => `<span class="hashtag medium-reach">#${h}</span>`).join('')}</div>`;
+                }
+                if (data.hashtags.niche?.length) {
+                    html += `<p style="color: #6ee7b7; font-size: 0.85rem; margin: 12px 0 6px;">NICHE REACH (<10k):</p>
+                             <div class="hashtag-container">${data.hashtags.niche.map(h => `<span class="hashtag niche-reach">#${h}</span>`).join('')}</div>`;
+                }
+                
+                html += `</div>`;
+            }
+            
+            if (data.tags?.length) {
+                html += `
+                    <div class="content-section">
+                        <div class="section-header">
+                            <h5>🏷️ SEO Tags</h5>
+                        </div>
+                        <div class="tag-container">
+                            ${data.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return html;
+        }
+        
+        function toggleExpand(index) {
+            const expanded = document.getElementById(`expanded-${index}`);
+            const icon = document.querySelector(`#row-${index} .expand-icon`);
+            
+            if (expanded.classList.contains('active')) {
+                expanded.classList.remove('active');
+                icon.textContent = '▶';
+            } else {
+                // Close all others
+                document.querySelectorAll('.expanded-card').forEach(card => card.classList.remove('active'));
+                document.querySelectorAll('.expand-icon').forEach(i => i.textContent = '▶');
+                
+                expanded.classList.add('active');
+                icon.textContent = '▼';
+            }
+        }
+        
+        function switchChannel(index, channel) {
+            const tabs = document.querySelectorAll(`#card-${index} .channel-tab`);
+            tabs.forEach(tab => {
+                tab.classList.toggle('active', tab.textContent.trim().toLowerCase() === channel);
+            });
+            
+            const content = generatedContent[index].content[channel];
+            document.getElementById(`content-${index}`).innerHTML = renderChannelContent(content, channel, index);
+        }
+        
+        function switchChannelExpanded(index, channel) {
+            const tabs = document.querySelectorAll(`#expanded-${index} .channel-tab`);
+            tabs.forEach(tab => {
+                tab.classList.toggle('active', tab.textContent.trim().toLowerCase() === channel);
+            });
+            
+            const content = generatedContent[index].content[channel];
+            document.getElementById(`expanded-content-${index}`).innerHTML = renderChannelContent(content, channel, index);
+        }
+        
+        function toggleSelectAll() {
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            const selectAll = document.getElementById('selectAll').checked;
+            checkboxes.forEach(cb => cb.checked = selectAll);
+            updateBulkActions();
+        }
+        
+        function updateBulkActions() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            const bulkActions = document.getElementById('bulkActions');
+            const count = document.getElementById('selectedCount');
+            
+            if (checked.length > 0) {
+                bulkActions.classList.add('active');
+                count.textContent = `${checked.length} selected`;
+            } else {
+                bulkActions.classList.remove('active');
+            }
+        }
+        
+        function copyProduct(index) {
+            const item = generatedContent[index];
+            let text = `${item.product.productName} (${item.product.sku})\n${'='.repeat(60)}\n\n`;
+            
+            for (const channel in item.content) {
+                text += `${channel.toUpperCase()}:\n${'-'.repeat(30)}\n`;
+                const c = item.content[channel];
+                
+                if (c.description) text += `${c.description}\n\n`;
+                
+                if (c.keywords) {
+                    text += `KEYWORDS:\n`;
+                    if (c.keywords.core) text += `Core: ${c.keywords.core.join(', ')}\n`;
+                    if (c.keywords.seasonal) text += `Seasonal: ${c.keywords.seasonal.join(', ')}\n`;
+                    if (c.keywords.usecase) text += `Use Case: ${c.keywords.usecase.join(', ')}\n`;
+                    if (c.keywords.longtail) text += `Long-Tail: ${c.keywords.longtail.join(', ')}\n`;
+                    if (c.keywords.intent) text += `Intent: ${c.keywords.intent.join(', ')}\n`;
+                    text += '\n';
+                }
+                
+                if (c.hashtags) {
+                    const allHashtags = [...(c.hashtags.high || []), ...(c.hashtags.medium || []), ...(c.hashtags.niche || [])];
+                    text += `HASHTAGS:\n${allHashtags.map(h => '#' + h).join(' ')}\n\n`;
+                }
+                
+                if (c.tags) text += `TAGS: ${c.tags.join(', ')}\n\n`;
+            }
+            
+            navigator.clipboard.writeText(text);
+            alert('Content copied!');
+        }
+        
+        function copyDescription(index) {
+            const item = generatedContent[index];
+            const activeTab = document.querySelector(`#card-${index} .channel-tab.active, #expanded-${index} .channel-tab.active`);
+            const channel = activeTab.textContent.trim().toLowerCase();
+            const text = item.content[channel]?.description || '';
+            navigator.clipboard.writeText(text);
+            alert('Description copied!');
+        }
+        
+        function copyHashtags(index) {
+            const item = generatedContent[index];
+            const activeTab = document.querySelector(`#card-${index} .channel-tab.active, #expanded-${index} .channel-tab.active`);
+            const channel = activeTab.textContent.trim().toLowerCase();
+            const hashtags = item.content[channel]?.hashtags;
+            
+            if (hashtags) {
+                const all = [...(hashtags.high || []), ...(hashtags.medium || []), ...(hashtags.niche || [])];
+                const text = all.map(h => '#' + h).join(' ');
+                navigator.clipboard.writeText(text);
+                alert('Hashtags copied!');
+            } else {
+                alert('No hashtags for this platform.');
+            }
+        }
+        
+        function bulkCopy() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            let text = 'CONTENT EXPORT\n\n';
+            
+            checked.forEach(cb => {
+                const index = parseInt(cb.dataset.index);
+                const item = generatedContent[index];
+                text += `${item.product.productName}\n${'='.repeat(60)}\n\n`;
+                for (const ch in item.content) {
+                    text += `${ch.toUpperCase()}:\n${item.content[ch].description || ''}\n\n`;
+                }
+            });
+            
+            navigator.clipboard.writeText(text);
+            alert(`Copied ${checked.length} products!`);
+        }
+        
+        function bulkExport() {
+            const checked = document.querySelectorAll('.row-checkbox:checked');
+            if (checked.length === 0) {
+                alert('No items selected');
+                return;
+            }
+            
+            let csv = 'SKU,Product,Platform,Description,Keywords,Hashtags,Tags\n';
+            
+            checked.forEach(cb => {
+                const index = parseInt(cb.dataset.index);
+                const item = generatedContent[index];
+                
+                for (const ch in item.content) {
+                    const c = item.content[ch];
+                    const desc = (c.description || '').replace(/"/g, '""');
+                    
+                    let allKeywords = '';
+                    if (c.keywords) {
+                        const kw = [...(c.keywords.core || []), ...(c.keywords.seasonal || []), 
+                                     ...(c.keywords.usecase || []), ...(c.keywords.longtail || []), 
+                                     ...(c.keywords.intent || [])];
+                        allKeywords = kw.join('; ');
+                    }
+                    
+                    const hashtags = c.hashtags ? 
+                        [...(c.hashtags.high||[]), ...(c.hashtags.medium||[]), ...(c.hashtags.niche||[])].map(h => '#'+h).join(' ') : '';
+                    const tags = c.tags?.join('; ') || '';
+                    
+                    csv += `"${item.product.sku}","${item.product.productName}","${ch}","${desc}","${allKeywords}","${hashtags}","${tags}"\n`;
+                }
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `content-export-${Date.now()}.csv`;
+            a.click();
+        }
+    </script>
+</body>
+</html>
