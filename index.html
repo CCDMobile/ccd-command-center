@@ -918,6 +918,10 @@
                 total: 5,
                 status: 'unknown'
             },
+            heartbeat: {
+                status: 'unknown',
+                age: null
+            },
             lastUpdate: new Date(),
             activities: []
         };
@@ -1080,31 +1084,201 @@
             state.lastUpdate = new Date();
             document.getElementById('lastUpdateStatus').textContent = 'Just now';
             
-            // Check proxies (simulated - in real implementation, call Proxy Monitor)
-            // For now, just show placeholder
+            // Check file connections
+            await checkFileConnectionStatus();
+            
+            // Check proxies if CONFIG is connected
+            await checkProxyHealth();
+            
+            // Check heartbeat
+            await checkHeartbeat();
+            
+            // Update banner with real data
             updateHealthBanner();
+        }
+        
+        /**
+         * Check if files are actually connected in IndexedDB
+         */
+        async function checkFileConnectionStatus() {
+            try {
+                const masterHandle = await getFileHandle('masterFileHandle');
+                const configHandle = await getFileHandle('configFileHandle');
+                const syncHandle = await getFileHandle('syncFileHandle');
+                
+                state.files.master.connected = !!masterHandle;
+                state.files.config.connected = !!configHandle;
+                state.files.sync.connected = !!syncHandle;
+                
+                console.log('[Monitor] Files:', state.files);
+            } catch (error) {
+                console.error('[Monitor] Error checking files:', error);
+                state.files.master.connected = false;
+                state.files.config.connected = false;
+                state.files.sync.connected = false;
+            }
+        }
+        
+        /**
+         * Check proxy health by reading CONFIG and pinging URLs
+         */
+        async function checkProxyHealth() {
+            try {
+                if (!state.files.config.connected) {
+                    state.proxies.status = 'unknown';
+                    state.proxies.healthy = 0;
+                    return;
+                }
+                
+                const configHandle = await getFileHandle('configFileHandle');
+                const file = await configHandle.getFile();
+                const text = await file.text();
+                const config = JSON.parse(text);
+                
+                if (!config.proxies) {
+                    state.proxies.status = 'no_config';
+                    state.proxies.healthy = 0;
+                    return;
+                }
+                
+                // Count proxies
+                const proxyNames = Object.keys(config.proxies);
+                state.proxies.total = proxyNames.length;
+                
+                // Try to ping each proxy (with timeout)
+                let healthy = 0;
+                for (const name of proxyNames) {
+                    const proxy = config.proxies[name];
+                    if (proxy.url) {
+                        try {
+                            const controller = new AbortController();
+                            const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+                            
+                            const response = await fetch(proxy.url, { 
+                                method: 'GET',
+                                signal: controller.signal
+                            });
+                            
+                            clearTimeout(timeoutId);
+                            
+                            if (response.ok || response.status === 405) { // 405 = Method not allowed but server is alive
+                                healthy++;
+                            }
+                        } catch (e) {
+                            // Proxy not responding or timeout
+                            console.log(`[Monitor] Proxy ${name} not responding`);
+                        }
+                    }
+                }
+                
+                state.proxies.healthy = healthy;
+                state.proxies.status = healthy === state.proxies.total ? 'healthy' :
+                                       healthy > 0 ? 'partial' : 'down';
+                
+                console.log('[Monitor] Proxies:', state.proxies);
+                
+            } catch (error) {
+                console.error('[Monitor] Error checking proxies:', error);
+                state.proxies.status = 'error';
+                state.proxies.healthy = 0;
+            }
+        }
+        
+        /**
+         * Check heartbeat by reading MASTER file timestamp
+         */
+        async function checkHeartbeat() {
+            try {
+                if (!state.files.master.connected) {
+                    state.heartbeat = { status: 'unknown', age: null };
+                    return;
+                }
+                
+                const masterHandle = await getFileHandle('masterFileHandle');
+                const file = await masterHandle.getFile();
+                const lastModified = file.lastModified;
+                const now = Date.now();
+                const ageMinutes = Math.floor((now - lastModified) / (1000 * 60));
+                
+                // Heartbeat is "fresh" if < 60 minutes old
+                const status = ageMinutes < 60 ? 'fresh' :
+                              ageMinutes < 1440 ? 'stale' : 'very_stale'; // 1440 min = 24 hours
+                
+                state.heartbeat = { status, age: ageMinutes };
+                
+                console.log('[Monitor] Heartbeat:', state.heartbeat);
+                
+            } catch (error) {
+                console.error('[Monitor] Error checking heartbeat:', error);
+                state.heartbeat = { status: 'error', age: null };
+            }
         }
 
         function updateHealthBanner() {
-            // For now, show "Ready to connect"
-            const allHealthy = false; // Will be true when files connected
+            const filesConnected = state.files.master.connected && 
+                                  state.files.config.connected && 
+                                  state.files.sync.connected;
             
-            document.getElementById('healthIcon').textContent = allHealthy ? '🟢' : '⚪';
-            document.getElementById('healthTitle').textContent = allHealthy ? 'All Systems Operational' : 'Ready to Connect';
-            document.getElementById('healthSubtitle').textContent = allHealthy ? 'All components running normally' : 'Connect files to begin monitoring';
+            const allHealthy = filesConnected && 
+                             state.proxies.status === 'healthy' && 
+                             state.heartbeat?.status === 'fresh';
             
-            // Proxies
-            document.getElementById('proxyDot').className = 'status-dot warning';
-            document.getElementById('proxyStatus').textContent = 'Unknown';
+            // Overall status
+            document.getElementById('healthIcon').textContent = allHealthy ? '🟢' : 
+                                                               filesConnected ? '🟡' : '⚪';
+            document.getElementById('healthTitle').textContent = allHealthy ? 'All Systems Operational' : 
+                                                                filesConnected ? 'Partial Connectivity' : 
+                                                                'Ready to Connect';
+            document.getElementById('healthSubtitle').textContent = allHealthy ? 'All components running normally' : 
+                                                                   filesConnected ? 'Some services may be unavailable' :
+                                                                   'Connect files to begin monitoring';
             
-            // Files
-            const filesConnected = state.files.master.connected && state.files.config.connected && state.files.sync.connected;
-            document.getElementById('filesDot').className = 'status-dot ' + (filesConnected ? 'healthy' : 'warning');
-            document.getElementById('filesStatus').textContent = filesConnected ? 'Connected' : 'Not connected';
+            // Proxies status
+            const proxyDot = document.getElementById('proxyDot');
+            const proxyStatus = document.getElementById('proxyStatus');
+            if (state.proxies.status === 'unknown') {
+                proxyDot.className = 'status-dot warning';
+                proxyStatus.textContent = 'Unknown';
+            } else if (state.proxies.status === 'healthy') {
+                proxyDot.className = 'status-dot healthy';
+                proxyStatus.textContent = `${state.proxies.healthy}/${state.proxies.total} Healthy`;
+            } else if (state.proxies.status === 'partial') {
+                proxyDot.className = 'status-dot warning';
+                proxyStatus.textContent = `${state.proxies.healthy}/${state.proxies.total} Healthy`;
+            } else {
+                proxyDot.className = 'status-dot error';
+                proxyStatus.textContent = 'All Down';
+            }
             
-            // Heartbeat
-            document.getElementById('heartbeatDot').className = 'status-dot warning';
-            document.getElementById('heartbeatStatus').textContent = 'Unknown';
+            // Files status
+            const filesDot = document.getElementById('filesDot');
+            const filesStatus = document.getElementById('filesStatus');
+            if (filesConnected) {
+                filesDot.className = 'status-dot healthy';
+                filesStatus.textContent = 'Connected';
+            } else {
+                filesDot.className = 'status-dot warning';
+                filesStatus.textContent = 'Not connected';
+            }
+            
+            // Heartbeat status
+            const heartbeatDot = document.getElementById('heartbeatDot');
+            const heartbeatStatus = document.getElementById('heartbeatStatus');
+            if (!state.heartbeat || state.heartbeat.status === 'unknown') {
+                heartbeatDot.className = 'status-dot warning';
+                heartbeatStatus.textContent = 'Unknown';
+            } else if (state.heartbeat.status === 'fresh') {
+                heartbeatDot.className = 'status-dot healthy';
+                heartbeatStatus.textContent = `${state.heartbeat.age}m ago`;
+            } else if (state.heartbeat.status === 'stale') {
+                heartbeatDot.className = 'status-dot warning';
+                const hours = Math.floor(state.heartbeat.age / 60);
+                heartbeatStatus.textContent = `${hours}h ago`;
+            } else {
+                heartbeatDot.className = 'status-dot error';
+                const days = Math.floor(state.heartbeat.age / 1440);
+                heartbeatStatus.textContent = `${days}d ago`;
+            }
         }
 
         // ===== QUICK ACTIONS =====
@@ -1506,21 +1680,27 @@
                 if (masterHandle) {
                     document.getElementById('masterStatus').textContent = '✅ Connected';
                     document.getElementById('masterStatus').style.color = 'var(--success)';
+                    state.files.master.connected = true;
                 }
                 
                 if (configHandle) {
                     document.getElementById('configStatus').textContent = '✅ Connected';
                     document.getElementById('configStatus').style.color = 'var(--success)';
+                    state.files.config.connected = true;
                 }
                 
                 if (syncHandle) {
                     document.getElementById('syncStatus').textContent = '✅ Connected';
                     document.getElementById('syncStatus').style.color = 'var(--success)';
+                    state.files.sync.connected = true;
                 }
                 
                 if (masterHandle && configHandle && syncHandle) {
                     logActivity('success', '📁 All files already connected');
                 }
+                
+                // Trigger health check to update status banner
+                checkSystemHealth();
             } catch (error) {
                 console.log('No previous file connections found');
             }
