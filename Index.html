@@ -1108,35 +1108,268 @@
         }
 
         // ===== QUICK ACTIONS =====
+        
+        /**
+         * Sync All - Open Sync Hub with auto-sync
+         */
         function syncAll() {
-            logActivity('info', '🔄 Sync all channels initiated');
-            alert('Sync All: This will trigger sync across all channels.\n\nNot yet implemented - coming soon!');
+            logActivity('info', '🔄 Opening Sync Hub for channel sync');
+            
+            // Check if Sync Hub file exists
+            const syncHubApp = APPS.syncHub;
+            if (syncHubApp && syncHubApp.file) {
+                window.open(syncHubApp.file, '_blank');
+                logActivity('success', '✅ Sync Hub opened - proceed with sync there');
+            } else {
+                logActivity('error', '❌ Sync Hub not found');
+                alert('Sync Hub file not found. Please ensure CCD-SYNC-HUB.html is in the same folder.');
+            }
         }
 
+        /**
+         * Run Health Check - Open Test Suite
+         */
         function runHealthCheck() {
             logActivity('info', '🔍 Health check started');
-            alert('Health Check: Running diagnostics...\n\nRecommendation: Open System Test Suite for comprehensive checks.');
             launchApp('testSuite');
         }
 
-        function exportReport() {
-            logActivity('info', '📊 Exporting system report');
-            alert('Export Report: Generating diagnostic report...\n\nNot yet implemented - coming soon!');
+        /**
+         * Export Report - Generate and download system report
+         */
+        async function exportReport() {
+            logActivity('info', '📊 Generating system report...');
+            
+            try {
+                // Gather system data
+                const report = {
+                    timestamp: new Date().toISOString(),
+                    version: 'v2.0',
+                    
+                    // System Health
+                    systemHealth: {
+                        overall: state.health.overall,
+                        proxyHealth: state.health.proxyHealth,
+                        filesConnected: state.health.filesConnected,
+                        lastCheck: state.lastUpdate.toISOString()
+                    },
+                    
+                    // Apps Status
+                    apps: Object.keys(APPS).map(key => ({
+                        name: APPS[key].name,
+                        version: APPS[key].version,
+                        file: APPS[key].file,
+                        category: APPS[key].category
+                    })),
+                    
+                    // File Connections
+                    fileConnections: {
+                        master: document.getElementById('masterStatus').textContent,
+                        config: document.getElementById('configStatus').textContent,
+                        sync: document.getElementById('syncStatus').textContent
+                    },
+                    
+                    // Recent Activity
+                    recentActivity: state.activities.slice(0, 20)
+                };
+                
+                // Generate CSV format
+                let csv = 'CCD COMMAND CENTER - SYSTEM REPORT\n';
+                csv += `Generated: ${new Date().toLocaleString()}\n\n`;
+                
+                csv += 'SYSTEM HEALTH\n';
+                csv += `Overall Status,${report.systemHealth.overall}\n`;
+                csv += `Proxy Health,${report.systemHealth.proxyHealth}\n`;
+                csv += `Files Connected,${report.systemHealth.filesConnected}\n`;
+                csv += `Last Check,${new Date(report.systemHealth.lastCheck).toLocaleString()}\n\n`;
+                
+                csv += 'FILE CONNECTIONS\n';
+                csv += `MASTER.json,${report.fileConnections.master}\n`;
+                csv += `CONFIG.json,${report.fileConnections.config}\n`;
+                csv += `SYNC.json,${report.fileConnections.sync}\n\n`;
+                
+                csv += 'INSTALLED APPS\n';
+                csv += 'Name,Version,File,Category\n';
+                report.apps.forEach(app => {
+                    csv += `${app.name},${app.version},${app.file},${app.category}\n`;
+                });
+                
+                csv += '\nRECENT ACTIVITY\n';
+                csv += 'Time,Type,Message\n';
+                report.recentActivity.forEach(activity => {
+                    const time = new Date(activity.timestamp).toLocaleString();
+                    csv += `${time},${activity.type},${activity.message}\n`;
+                });
+                
+                // Download CSV
+                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `CCD-System-Report-${new Date().toISOString().split('T')[0]}.csv`;
+                link.click();
+                URL.revokeObjectURL(url);
+                
+                logActivity('success', '✅ System report downloaded');
+                
+            } catch (error) {
+                console.error('Export error:', error);
+                logActivity('error', `❌ Export failed: ${error.message}`);
+                alert('Failed to export report: ' + error.message);
+            }
         }
 
-        function testEmail() {
-            logActivity('info', '✉️ Testing email system');
-            alert('Test Email: Sending test email via Sync Hub...\n\nNot yet implemented - coming soon!');
+        /**
+         * Test Email - Send test notification via Sync Hub
+         */
+        async function testEmail() {
+            logActivity('info', '✉️ Testing email system...');
+            
+            try {
+                // Check if CONFIG is connected
+                const configHandle = await getFileHandle('configFileHandle');
+                if (!configHandle) {
+                    throw new Error('CONFIG.json not connected. Please connect files first.');
+                }
+                
+                // Read CONFIG to get Sync Hub URL
+                const configFile = await configHandle.getFile();
+                const configText = await configFile.text();
+                const config = JSON.parse(configText);
+                
+                const syncHubUrl = config?.proxies?.syncHub?.url;
+                if (!syncHubUrl) {
+                    throw new Error('Sync Hub URL not found in CONFIG.json');
+                }
+                
+                // Send test email via Sync Hub
+                const response = await fetch(syncHubUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'sendTestEmail',
+                        apiKey: config?.proxies?.syncHub?.apiKey || '',
+                        testMessage: 'Test email from CCD Command Center v2.0'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    logActivity('success', '✅ Test email sent successfully');
+                    alert('✅ Test email sent!\n\nCheck your inbox for the test message.');
+                } else {
+                    throw new Error(result.error || 'Unknown error');
+                }
+                
+            } catch (error) {
+                console.error('Email test error:', error);
+                logActivity('error', `❌ Email test failed: ${error.message}`);
+                alert('Email test failed:\n\n' + error.message + '\n\nNote: This requires Sync Hub proxy to be configured with email notifications.');
+            }
         }
 
-        function backupData() {
-            logActivity('info', '💾 Data backup initiated');
-            alert('Backup Data: Download all JSON files...\n\nNot yet implemented - coming soon!');
+        /**
+         * Backup Data - Download all connected JSON files
+         */
+        async function backupData() {
+            logActivity('info', '💾 Starting data backup...');
+            
+            try {
+                let downloaded = 0;
+                
+                // Backup MASTER.json
+                try {
+                    const masterHandle = await getFileHandle('masterFileHandle');
+                    if (masterHandle) {
+                        const file = await masterHandle.getFile();
+                        const content = await file.text();
+                        downloadFile(content, `MASTER-backup-${getDateStamp()}.json`, 'application/json');
+                        downloaded++;
+                        logActivity('success', '✅ MASTER.json backed up');
+                    }
+                } catch (e) {
+                    console.log('MASTER.json not available:', e);
+                }
+                
+                // Backup CONFIG.json
+                try {
+                    const configHandle = await getFileHandle('configFileHandle');
+                    if (configHandle) {
+                        const file = await configHandle.getFile();
+                        const content = await file.text();
+                        downloadFile(content, `CONFIG-backup-${getDateStamp()}.json`, 'application/json');
+                        downloaded++;
+                        logActivity('success', '✅ CONFIG.json backed up');
+                    }
+                } catch (e) {
+                    console.log('CONFIG.json not available:', e);
+                }
+                
+                // Backup SYNC.json
+                try {
+                    const syncHandle = await getFileHandle('syncFileHandle');
+                    if (syncHandle) {
+                        const file = await syncHandle.getFile();
+                        const content = await file.text();
+                        downloadFile(content, `SYNC-backup-${getDateStamp()}.json`, 'application/json');
+                        downloaded++;
+                        logActivity('success', '✅ SYNC.json backed up');
+                    }
+                } catch (e) {
+                    console.log('SYNC.json not available:', e);
+                }
+                
+                if (downloaded === 0) {
+                    throw new Error('No files connected. Please connect files first using "Connect All" button.');
+                }
+                
+                logActivity('success', `🎉 Backup complete! ${downloaded} file(s) downloaded`);
+                alert(`✅ Backup Complete!\n\n${downloaded} file(s) have been downloaded to your Downloads folder.`);
+                
+            } catch (error) {
+                console.error('Backup error:', error);
+                logActivity('error', `❌ Backup failed: ${error.message}`);
+                alert('Backup failed:\n\n' + error.message);
+            }
+        }
+        
+        /**
+         * Helper: Download file
+         */
+        function downloadFile(content, filename, mimeType) {
+            const blob = new Blob([content], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        /**
+         * Helper: Get date stamp for filenames
+         */
+        function getDateStamp() {
+            const now = new Date();
+            return now.toISOString().split('T')[0]; // YYYY-MM-DD
         }
 
+        /**
+         * View Logs - Open Activity Log app
+         */
         function viewLogs() {
-            logActivity('info', '📋 Opening activity logs');
-            alert('View Logs: Open activity log viewer...\n\nNot yet implemented - coming soon!');
+            logActivity('info', '📋 Opening Activity Log');
+            
+            // Check if Activity Log app exists
+            const activityLogFile = 'CCD-ACTIVITY-LOG.html';
+            window.open(activityLogFile, '_blank');
+            
+            logActivity('success', '✅ Activity Log opened');
         }
 
         // ===== FILE CONNECTIONS =====
