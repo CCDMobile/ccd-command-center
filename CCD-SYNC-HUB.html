@@ -3035,6 +3035,11 @@
             // Load auto-sync settings (v3.9)
             loadAutoSyncSettings();
             
+            // Load notification settings from Sync Hub proxy (v3.2.1 fix)
+            setTimeout(() => {
+                loadNotificationSettings();
+            }, 1000); // Delay to ensure connection is established
+            
             console.log('[Init] CCD Sync Hub v3.2.0 initialized successfully');
             addLog('CCD Sync Hub v3.2.0 initialized (Resilient Polling)', 'success');
             
@@ -4909,7 +4914,16 @@
                 toast(`Failed to load settings: ${data.error}`, 'error');
             }
         } catch (error) {
-            toast(`Error loading settings: ${error.message}`, 'error');
+            console.log('[Notifications] Proxy load failed, trying localStorage:', error.message);
+            
+            // Fallback to localStorage (v3.2.1 fix)
+            if (state.settings.emailAddresses) {
+                document.getElementById('emailAddresses').value = state.settings.emailAddresses;
+                document.getElementById('emailEnabled').checked = state.settings.emailEnabled || false;
+                toast('Loaded settings from local storage', 'info');
+            } else {
+                toast(`Error loading settings: ${error.message}`, 'error');
+            }
         }
     }
 
@@ -4928,6 +4942,13 @@
         
         // Save URL to settings
         state.settings.syncHubProxyUrl = url;
+        
+        // BACKUP: Also save email addresses locally (v3.2.1 fix)
+        const emailAddresses = document.getElementById('emailAddresses').value;
+        const emailEnabled = document.getElementById('emailEnabled').checked;
+        state.settings.emailAddresses = emailAddresses;
+        state.settings.emailEnabled = emailEnabled;
+        
         localStorage.setItem('ccd_sync_hub_settings', JSON.stringify(state.settings));
         
         toast('Saving settings...', 'info');
