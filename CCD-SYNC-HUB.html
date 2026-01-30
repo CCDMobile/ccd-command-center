@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.2.1 - Complete Email Notifications</title>
+    <title>CCD Sync Hub v3.2.2 - Improved Persistence</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.2.0 • Build: 2026-01-26 • Resilient Polling</span>
+                <span>CCD Sync Hub v3.2.2 • Build: 2026-01-30 • Improved Persistence</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -4931,27 +4931,11 @@
         const url = getSyncHubUrl();
         const apiKey = getSyncHubApiKey();
         
-        if (!url) {
-            toast('Please enter Sync Hub URL first', 'error');
-            return;
-        }
-        if (!apiKey) {
-            toast('Please enter API Key in Settings first', 'error');
-            return;
-        }
-        
-        // Save URL to settings
-        state.settings.syncHubProxyUrl = url;
-        
-        // BACKUP: Also save email addresses locally (v3.2.1 fix)
+        // ALWAYS save locally first (v3.2.2 fix)
         const emailAddresses = document.getElementById('emailAddresses').value;
         const emailEnabled = document.getElementById('emailEnabled').checked;
-        state.settings.emailAddresses = emailAddresses;
-        state.settings.emailEnabled = emailEnabled;
-        
-        localStorage.setItem('ccd_sync_hub_settings', JSON.stringify(state.settings));
-        
-        toast('Saving settings...', 'info');
+        const digestFrequency = document.getElementById('digestFrequency').value;
+        const digestHour = document.getElementById('digestHour').value;
         
         // Collect event notification preferences
         const eventNotifications = {};
@@ -4960,27 +4944,57 @@
             eventNotifications[eventType] = select.value;
         });
         
+        // Save to localStorage FIRST (always works)
+        state.settings.emailAddresses = emailAddresses;
+        state.settings.emailEnabled = emailEnabled;
+        state.settings.digestFrequency = digestFrequency;
+        state.settings.digestHour = digestHour;
+        state.settings.eventNotifications = eventNotifications;
+        
+        if (url) {
+            state.settings.syncHubProxyUrl = url;
+        }
+        
+        localStorage.setItem('ccd_sync_hub_settings', JSON.stringify(state.settings));
+        
+        console.log('[Notifications] Saved to localStorage:', {
+            emailAddresses: emailAddresses,
+            emailEnabled: emailEnabled
+        });
+        
+        // If URL and API key available, also try to sync to proxy (optional)
+        if (!url || !apiKey) {
+            toast('Settings saved locally (Sync Hub URL not configured)', 'success');
+            return;
+        }
+        
+        toast('Saving to Sync Hub...', 'info');
+        
         const params = {
             action: 'updateSettings',
             key: apiKey,
-            emailEnabled: document.getElementById('emailEnabled').checked.toString(),
-            emailAddresses: document.getElementById('emailAddresses').value,
-            digestFrequency: document.getElementById('digestFrequency').value,
-            digestHour: document.getElementById('digestHour').value,
+            emailEnabled: emailEnabled.toString(),
+            emailAddresses: emailAddresses,
+            digestFrequency: digestFrequency,
+            digestHour: digestHour,
             eventNotifications: JSON.stringify(eventNotifications)
+        };
         };
         
         try {
             const data = await fetchOrJsonp(url, params);
             
             if (data.success) {
-                toast('Settings saved successfully', 'success');
+                toast('Settings saved to Sync Hub', 'success');
                 addLog('Saved notification settings to Sync Hub', 'success');
             } else {
-                toast(`Failed to save: ${data.error}`, 'error');
+                toast(`Settings saved locally (Sync Hub sync failed: ${data.error})`, 'warning');
+                addLog('Settings saved locally only - Sync Hub failed', 'warning');
             }
         } catch (error) {
-            toast(`Error saving settings: ${error.message}`, 'error');
+            console.error('[Notifications] Sync Hub save failed:', error);
+            toast('Settings saved locally (Sync Hub unavailable)', 'warning');
+            addLog('Settings saved locally only - Sync Hub unavailable', 'warning');
         }
     }
 
