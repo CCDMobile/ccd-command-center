@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.0 - Date Filtering & Status Indicators</title>
+    <title>CCD Sync Hub v3.3.2 - Bug Fixes & Debug Logging</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.2.2 • Build: 2026-01-30 • Improved Persistence</span>
+                <span>CCD Sync Hub v3.3.2 • Build: 2026-01-31 • Bug Fixes</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -1422,14 +1422,14 @@
         window.logActivity = logActivity;
         
         // Only log if we have master data loaded
-        if (typeof masterJsonData === 'undefined' || !masterJsonData) {
+        if (typeof window.masterJsonData === 'undefined' || !window.masterJsonData) {
             console.log(`📋 [Activity] ${category}/${action}: ${summary} (not saved - no master file)`);
             return null;
         }
         
         // Initialize _activityLog if it doesn't exist
-        if (!masterJsonData._activityLog) {
-            masterJsonData._activityLog = [];
+        if (!window.masterJsonData._activityLog) {
+            window.masterJsonData._activityLog = [];
         }
         
         const entry = {
@@ -1445,11 +1445,11 @@
         };
         
         // Add to beginning of array (newest first)
-        masterJsonData._activityLog.unshift(entry);
+        window.masterJsonData._activityLog.unshift(entry);
         
         // Keep log at reasonable size (last 5000 entries)
-        if (masterJsonData._activityLog.length > 5000) {
-            masterJsonData._activityLog = masterJsonData._activityLog.slice(0, 5000);
+        if (window.masterJsonData._activityLog.length > 5000) {
+            window.masterJsonData._activityLog = window.masterJsonData._activityLog.slice(0, 5000);
         }
         
         console.log(`📋 [Activity] ${category}/${action}: ${summary}`);
@@ -1483,8 +1483,10 @@
     // =============================================
     // STATE
     // =============================================
+    // MASTER JSON FILE - GLOBAL VARIABLES
+    // =============================================
     let masterJsonFileHandle = null;
-    let masterJsonData = null;
+    window.masterJsonData = null; // Make globally accessible for debugging
     
     // ============================================================
     // SYNC DATA FILE - Orders from all channels (v3.9)
@@ -2049,9 +2051,17 @@
      * Apply settings from config to UI
      */
     function applySettingsFromConfig() {
-        if (!configData || !configData.settings) return;
+        console.log('[Settings] applySettingsFromConfig called');
+        console.log('[Settings] configData:', configData);
+        
+        if (!configData || !configData.settings) {
+            console.warn('[Settings] No config data or settings found');
+            return;
+        }
         
         const settings = configData.settings;
+        console.log('[Settings] Config settings:', settings);
+        console.log('[Settings] Proxy URLs from config:', settings.proxyUrls);
         
         // Merge into state.settings
         state.settings = {
@@ -2075,6 +2085,11 @@
             eventNotifications: settings.eventNotifications || state.settings.eventNotifications || {}
         };
         
+        console.log('[Settings] State after merge:', state.settings);
+        console.log('[Settings] Etsy URL:', state.settings.etsyProxyUrl);
+        console.log('[Settings] Wix URL:', state.settings.wixProxyUrl);
+        console.log('[Settings] Wayfair URL:', state.settings.wayfairProxyUrl);
+        
         // Update UI
         const elements = {
             'ccdApiKey': state.settings.ccdApiKey,
@@ -2088,7 +2103,13 @@
         
         for (const [id, value] of Object.entries(elements)) {
             const el = document.getElementById(id);
-            if (el) el.value = value || '';
+            console.log(`[Settings] Setting ${id} to:`, value);
+            if (el) {
+                el.value = value || '';
+                console.log(`[Settings] Element ${id} updated, current value:`, el.value);
+            } else {
+                console.warn(`[Settings] Element ${id} not found`);
+            }
         }
         
         const autoProcessEl = document.getElementById('autoProcessEnabled');
@@ -2096,6 +2117,8 @@
         
         const retryEl = document.getElementById('retryFailedEnabled');
         if (retryEl) retryEl.checked = state.settings.retryFailedEnabled;
+        
+        console.log('[Settings] applySettingsFromConfig complete');
     }
     
     /**
@@ -3028,7 +3051,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.2.0...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.2...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3097,11 +3120,11 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.2.0 initialized successfully');
-            addLog('CCD Sync Hub v3.2.0 initialized (Resilient Polling)', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.2 initialized successfully');
+            addLog('CCD Sync Hub v3.3.2 initialized - Debug Mode Active', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
-            if (typeof logActivity === 'function' && masterJsonData) {
+            if (typeof logActivity === 'function' && window.masterJsonData) {
                 logActivity('system', 'sync_hub_started', 'system',
                     'Sync Hub v3.2.0 started (Resilient Polling)',
                     { autoProcess: state.settings.autoProcessEnabled, configConnected: configConnected, sharedQueue: configData?.settings?.features?.useSharedQueue ?? false }
@@ -3296,7 +3319,7 @@
         toast(`Pulled ${totalOrders} orders with ${totalItems} items`, totalOrders > 0 ? 'success' : 'info');
         
         // Log to Activity Log
-        if (typeof logActivity === 'function' && masterJsonData) {
+        if (typeof logActivity === 'function' && window.masterJsonData) {
             logActivity('order', 'order_pull_complete', 'system',
                 `Manual pull: ${totalOrders} orders, ${totalItems} items`,
                 { 
@@ -3571,20 +3594,20 @@
             // NEW: Load from Master JSON _syncQueue
             console.log('[Queue] Using shared queue from Master JSON');
             
-            if (!masterJsonData) {
+            if (!window.masterJsonData) {
                 console.warn('[Queue] Master JSON not loaded, cannot access shared queue');
                 state.queue = [];
                 return;
             }
             
             // Ensure _syncQueue exists
-            if (!masterJsonData._syncQueue) {
-                masterJsonData._syncQueue = [];
+            if (!window.masterJsonData._syncQueue) {
+                window.masterJsonData._syncQueue = [];
                 console.log('[Queue] Initialized empty _syncQueue in Master JSON');
             }
             
             // Get queue from Master JSON
-            state.queue = masterJsonData._syncQueue || [];
+            state.queue = window.masterJsonData._syncQueue || [];
             console.log(`[Queue] ✅ Loaded ${state.queue.length} items from Master JSON`);
             
         } else {
@@ -3616,18 +3639,18 @@
             // NEW: Save to Master JSON
             console.log('[Queue] Saving to Master JSON');
             
-            if (!masterJsonData) {
+            if (!window.masterJsonData) {
                 console.error('[Queue] Master JSON not loaded, cannot save shared queue');
                 return false;
             }
             
             // Ensure _syncQueue exists
-            if (!masterJsonData._syncQueue) {
-                masterJsonData._syncQueue = [];
+            if (!window.masterJsonData._syncQueue) {
+                window.masterJsonData._syncQueue = [];
             }
             
             // Update Master JSON
-            masterJsonData._syncQueue = state.queue;
+            window.masterJsonData._syncQueue = state.queue;
             
             // Save file
             try {
@@ -3956,11 +3979,11 @@
      * Use this for manual adjustments outside of order processing
      */
     async function deductInventory(sku, quantity, reason = 'Manual deduction') {
-        if (!masterJsonData) {
+        if (!window.masterJsonData) {
             return { success: false, error: 'Master JSON not loaded' };
         }
         
-        const product = masterJsonData.inventory.find(p => p.sku === sku);
+        const product = window.masterJsonData.inventory.find(p => p.sku === sku);
         if (!product) {
             return { success: false, error: `Product ${sku} not found` };
         }
@@ -5321,11 +5344,11 @@
             const file = await masterJsonFileHandle.getFile();
             const contents = await file.text();
             
-            masterJsonData = JSON.parse(contents);
+            window.masterJsonData = JSON.parse(contents);
             
             // COLLISION DETECTION: Store file timestamp and metadata version
             loadedFileTimestamp = file.lastModified;
-            loadedMetadataVersion = masterJsonData._metadata?.version || 0;
+            loadedMetadataVersion = window.masterJsonData._metadata?.version || 0;
             
             // Update state
             state.masterJson.fileName = file.name;
@@ -5365,23 +5388,23 @@
      * Analyze Master JSON data structure and count linkages
      */
     function analyzeMasterJson() {
-        if (!masterJsonData) return;
+        if (!window.masterJsonData) return;
         
         // Handle different possible structures
         let products = [];
-        if (Array.isArray(masterJsonData)) {
-            products = masterJsonData;
-        } else if (masterJsonData.products && Array.isArray(masterJsonData.products)) {
-            products = masterJsonData.products;
-        } else if (masterJsonData.inventory && Array.isArray(masterJsonData.inventory)) {
-            products = masterJsonData.inventory;
-        } else if (masterJsonData.items && Array.isArray(masterJsonData.items)) {
-            products = masterJsonData.items;
+        if (Array.isArray(window.masterJsonData)) {
+            products = window.masterJsonData;
+        } else if (window.masterJsonData.products && Array.isArray(window.masterJsonData.products)) {
+            products = window.masterJsonData.products;
+        } else if (window.masterJsonData.inventory && Array.isArray(window.masterJsonData.inventory)) {
+            products = window.masterJsonData.inventory;
+        } else if (window.masterJsonData.items && Array.isArray(window.masterJsonData.items)) {
+            products = window.masterJsonData.items;
         } else {
             // Try to find any array in the object
-            for (const key in masterJsonData) {
-                if (Array.isArray(masterJsonData[key]) && masterJsonData[key].length > 0) {
-                    products = masterJsonData[key];
+            for (const key in window.masterJsonData) {
+                if (Array.isArray(window.masterJsonData[key]) && window.masterJsonData[key].length > 0) {
+                    products = window.masterJsonData[key];
                     break;
                 }
             }
@@ -5492,21 +5515,21 @@
      * View products in a modal/expandable section
      */
     function viewMasterJsonProducts() {
-        if (!masterJsonData) {
+        if (!window.masterJsonData) {
             toast('No data loaded', 'warning');
             return;
         }
         
         // Get products array
         let products = [];
-        if (Array.isArray(masterJsonData)) {
-            products = masterJsonData;
-        } else if (masterJsonData.products) {
-            products = masterJsonData.products;
-        } else if (masterJsonData.inventory) {
-            products = masterJsonData.inventory;
-        } else if (masterJsonData.items) {
-            products = masterJsonData.items;
+        if (Array.isArray(window.masterJsonData)) {
+            products = window.masterJsonData;
+        } else if (window.masterJsonData.products) {
+            products = window.masterJsonData.products;
+        } else if (window.masterJsonData.inventory) {
+            products = window.masterJsonData.inventory;
+        } else if (window.masterJsonData.items) {
+            products = window.masterJsonData.items;
         }
         
         // Create a simple modal to display products
@@ -5572,7 +5595,7 @@
      * Export Master JSON as backup
      */
     async function exportMasterJson() {
-        if (!masterJsonData) {
+        if (!window.masterJsonData) {
             toast('No data to export', 'warning');
             return;
         }
@@ -5581,7 +5604,7 @@
             const timestamp = new Date().toISOString().split('T')[0];
             const fileName = `master-inventory-backup-${timestamp}.json`;
             
-            const blob = new Blob([JSON.stringify(masterJsonData, null, 2)], { type: 'application/json' });
+            const blob = new Blob([JSON.stringify(window.masterJsonData, null, 2)], { type: 'application/json' });
             
             if ('showSaveFilePicker' in window) {
                 const handle = await window.showSaveFilePicker({
@@ -5617,7 +5640,7 @@
      * Validate Master JSON data for common issues
      */
     function validateMasterJson() {
-        if (!masterJsonData) {
+        if (!window.masterJsonData) {
             toast('No data to validate', 'warning');
             return;
         }
@@ -5626,14 +5649,14 @@
         let products = [];
         
         // Get products array
-        if (Array.isArray(masterJsonData)) {
-            products = masterJsonData;
-        } else if (masterJsonData.products) {
-            products = masterJsonData.products;
-        } else if (masterJsonData.inventory) {
-            products = masterJsonData.inventory;
-        } else if (masterJsonData.items) {
-            products = masterJsonData.items;
+        if (Array.isArray(window.masterJsonData)) {
+            products = window.masterJsonData;
+        } else if (window.masterJsonData.products) {
+            products = window.masterJsonData.products;
+        } else if (window.masterJsonData.inventory) {
+            products = window.masterJsonData.inventory;
+        } else if (window.masterJsonData.items) {
+            products = window.masterJsonData.items;
         }
         
         const skus = new Set();
@@ -5698,7 +5721,7 @@
     async function saveMasterJson(options = {}) {
         const { isAutoProcess = false, actionDescription = 'Manual save', changes = [] } = options;
         
-        if (!masterJsonFileHandle || !masterJsonData) {
+        if (!masterJsonFileHandle || !window.masterJsonData) {
             toast('No file connected', 'error');
             return false;
         }
@@ -5739,28 +5762,28 @@
             // ============================================================
             // Update metadata
             // ============================================================
-            masterJsonData._metadata = masterJsonData._metadata || {};
-            masterJsonData._metadata.version = (masterJsonData._metadata.version || 0) + 1;
-            masterJsonData._metadata.lastModified = new Date().toISOString();
-            masterJsonData._metadata.lastModifiedBy = getAppIdentifier();
-            masterJsonData._metadata.lastAction = actionDescription;
+            window.masterJsonData._metadata = window.masterJsonData._metadata || {};
+            window.masterJsonData._metadata.version = (window.masterJsonData._metadata.version || 0) + 1;
+            window.masterJsonData._metadata.lastModified = new Date().toISOString();
+            window.masterJsonData._metadata.lastModifiedBy = getAppIdentifier();
+            window.masterJsonData._metadata.lastAction = actionDescription;
             
             // Add changes to change log
-            masterJsonData._changeLog = masterJsonData._changeLog || [];
+            window.masterJsonData._changeLog = window.masterJsonData._changeLog || [];
             if (changes && changes.length > 0) {
                 changes.forEach(change => {
-                    masterJsonData._changeLog.unshift(createChangeLogEntry(change));
+                    window.masterJsonData._changeLog.unshift(createChangeLogEntry(change));
                 });
             }
             
             // Prune old change log entries
-            pruneChangeLog(masterJsonData);
+            pruneChangeLog(window.masterJsonData);
             
             // ============================================================
             // Save to file
             // ============================================================
             const writable = await masterJsonFileHandle.createWritable();
-            await writable.write(JSON.stringify(masterJsonData, null, 2));
+            await writable.write(JSON.stringify(window.masterJsonData, null, 2));
             await writable.close();
             
             // ============================================================
@@ -5768,7 +5791,7 @@
             // ============================================================
             const newFile = await masterJsonFileHandle.getFile();
             loadedFileTimestamp = newFile.lastModified;
-            loadedMetadataVersion = masterJsonData._metadata.version;
+            loadedMetadataVersion = window.masterJsonData._metadata.version;
             
             if (!isAutoProcess) {
                 toast('Master JSON saved', 'success');
@@ -5808,17 +5831,17 @@
      * Update a product in the Master JSON by SKU
      */
     function updateMasterJsonProduct(sku, updates) {
-        if (!masterJsonData) return false;
+        if (!window.masterJsonData) return false;
         
         let products = [];
-        if (Array.isArray(masterJsonData)) {
-            products = masterJsonData;
-        } else if (masterJsonData.products) {
-            products = masterJsonData.products;
-        } else if (masterJsonData.inventory) {
-            products = masterJsonData.inventory;
-        } else if (masterJsonData.items) {
-            products = masterJsonData.items;
+        if (Array.isArray(window.masterJsonData)) {
+            products = window.masterJsonData;
+        } else if (window.masterJsonData.products) {
+            products = window.masterJsonData.products;
+        } else if (window.masterJsonData.inventory) {
+            products = window.masterJsonData.inventory;
+        } else if (window.masterJsonData.items) {
+            products = window.masterJsonData.items;
         }
         
         const product = products.find(p => (p.sku || p.SKU) === sku);
@@ -5833,17 +5856,17 @@
      * Get a product from Master JSON by SKU
      */
     function getMasterJsonProduct(sku) {
-        if (!masterJsonData) return null;
+        if (!window.masterJsonData) return null;
         
         let products = [];
-        if (Array.isArray(masterJsonData)) {
-            products = masterJsonData;
-        } else if (masterJsonData.products) {
-            products = masterJsonData.products;
-        } else if (masterJsonData.inventory) {
-            products = masterJsonData.inventory;
-        } else if (masterJsonData.items) {
-            products = masterJsonData.items;
+        if (Array.isArray(window.masterJsonData)) {
+            products = window.masterJsonData;
+        } else if (window.masterJsonData.products) {
+            products = window.masterJsonData.products;
+        } else if (window.masterJsonData.inventory) {
+            products = window.masterJsonData.inventory;
+        } else if (window.masterJsonData.items) {
+            products = window.masterJsonData.items;
         }
         
         return products.find(p => (p.sku || p.SKU) === sku) || null;
@@ -6146,7 +6169,7 @@
     function checkLowStock() {
         state.lowStockItems = [];
         
-        if (!masterJsonData) return;
+        if (!window.masterJsonData) return;
         
         const products = getProductsArray();
         
@@ -6248,12 +6271,12 @@
      * Get products array from Master JSON (helper)
      */
     function getProductsArray() {
-        if (!masterJsonData) return [];
+        if (!window.masterJsonData) return [];
         
-        if (Array.isArray(masterJsonData)) return masterJsonData;
-        if (masterJsonData.products) return masterJsonData.products;
-        if (masterJsonData.inventory) return masterJsonData.inventory;
-        if (masterJsonData.items) return masterJsonData.items;
+        if (Array.isArray(window.masterJsonData)) return window.masterJsonData;
+        if (window.masterJsonData.products) return window.masterJsonData.products;
+        if (window.masterJsonData.inventory) return window.masterJsonData.inventory;
+        if (window.masterJsonData.items) return window.masterJsonData.items;
         
         return [];
     }
@@ -6538,7 +6561,7 @@
         console.log('[SKU Validation] Checking SKUs for order:', order.id);
         
         // Ensure we have Master JSON loaded
-        if (!masterJsonData || !masterJsonData.inventory) {
+        if (!window.masterJsonData || !window.masterJsonData.inventory) {
             console.warn('[SKU Validation] Master JSON not loaded - cannot validate');
             return { valid: true, invalidSKUs: [], message: 'Master JSON not loaded' };
         }
@@ -6611,8 +6634,8 @@
         }
         
         // Check Master JSON _processedOrders array (persistent)
-        if (masterJsonData && masterJsonData._processedOrders) {
-            const processed = masterJsonData._processedOrders.find(o => o.orderId === orderId);
+        if (window.masterJsonData && window.masterJsonData._processedOrders) {
+            const processed = window.masterJsonData._processedOrders.find(o => o.orderId === orderId);
             
             if (processed) {
                 console.log('[Duplicate Detection] ⚠️ Order already processed:', {
@@ -6652,8 +6675,8 @@
         state.orders.processedIds.add(order.id);
         
         // Add to Master JSON persistent list
-        if (!masterJsonData._processedOrders) {
-            masterJsonData._processedOrders = [];
+        if (!window.masterJsonData._processedOrders) {
+            window.masterJsonData._processedOrders = [];
         }
         
         // Create processed order record
@@ -6667,13 +6690,13 @@
             itemCount: order.items?.length || 0
         };
         
-        masterJsonData._processedOrders.push(record);
+        window.masterJsonData._processedOrders.push(record);
         
         // Trim to last 10,000 orders to prevent bloat
-        if (masterJsonData._processedOrders.length > 10000) {
+        if (window.masterJsonData._processedOrders.length > 10000) {
             console.log('[Duplicate Detection] Trimming processed orders list from', 
-                masterJsonData._processedOrders.length, 'to 10,000');
-            masterJsonData._processedOrders = masterJsonData._processedOrders.slice(-10000);
+                window.masterJsonData._processedOrders.length, 'to 10,000');
+            window.masterJsonData._processedOrders = window.masterJsonData._processedOrders.slice(-10000);
         }
         
         console.log('[Duplicate Detection] ✅ Order marked as processed');
@@ -6683,11 +6706,11 @@
      * Load processed order IDs from Master JSON on startup
      */
     function loadProcessedOrderIds() {
-        if (masterJsonData && masterJsonData._processedOrders) {
+        if (window.masterJsonData && window.masterJsonData._processedOrders) {
             console.log('[Duplicate Detection] Loading processed order IDs from Master JSON');
             state.orders.processedIds.clear();
             
-            for (const record of masterJsonData._processedOrders) {
+            for (const record of window.masterJsonData._processedOrders) {
                 state.orders.processedIds.add(record.orderId);
             }
             
@@ -6769,7 +6792,7 @@
             return;
         }
         
-        if (!masterJsonData) {
+        if (!window.masterJsonData) {
             toast('Please connect Master JSON file first', 'error');
             return;
         }
@@ -7280,7 +7303,7 @@
      * Take a snapshot of current inventory quantities for change detection
      */
     function takeInventorySnapshot() {
-        if (!masterJsonData) {
+        if (!window.masterJsonData) {
             console.log('[Auto-Push] No master JSON data to snapshot');
             return;
         }
@@ -8017,9 +8040,10 @@
             const pullWix = document.getElementById('pullWix').checked;
             const pullWayfair = document.getElementById('pullWayfair').checked;
             
-            // Calculate time range (last poll interval + buffer)
+            // Calculate time range using orderDateRange setting
+            const dateRange = getDateRangeParams(state.settings.orderDateRange || 'last_7days');
             const endDate = new Date();
-            const startDate = new Date(endDate.getTime() - (state.settings.autoPollIntervalMinutes + 5) * 60 * 1000);
+            const startDate = dateRange.from ? new Date(dateRange.from) : new Date(endDate.getTime() - 7 * 24 * 60 * 60 * 1000); // Default to 7 days
             
             let totalOrders = 0;
             let channels = [];
@@ -8207,9 +8231,11 @@
                 const alertZeroStock = document.getElementById('alertZeroStock');
                 const alertMismatch = document.getElementById('alertMismatch');
                 const alertSyncErrors = document.getElementById('alertSyncErrors');
+                const orderDateRange = document.getElementById('orderDateRange');
                 
                 if (autoPollEnabled) autoPollEnabled.checked = settings.autoPollEnabled || false;
                 if (autoPollInterval) autoPollInterval.value = settings.autoPollIntervalMinutes || 15;
+                if (orderDateRange) orderDateRange.value = settings.orderDateRange || 'last_7days';
                 if (autoPushEnabled) autoPushEnabled.checked = settings.autoPushEnabled || false;
                 if (autoPushEtsy) autoPushEtsy.checked = settings.autoPushEtsy !== false;
                 if (autoPushWix) autoPushWix.checked = settings.autoPushWix !== false;
@@ -8227,7 +8253,7 @@
                 if (settings.autoPushEnabled) {
                     // Delay to allow Master JSON to connect first
                     setTimeout(() => {
-                        if (masterJsonFileHandle && masterJsonData) {
+                        if (masterJsonFileHandle && window.masterJsonData) {
                             takeInventorySnapshot();
                             startAutoPushWatcher();
                             addAutoSyncLogEntry('✅ Auto-Push resumed from previous session');
