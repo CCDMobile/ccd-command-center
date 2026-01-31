@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Activity Log v1.1</title>
+    <title>CCD Activity Log v1.2 - Enhanced Filtering</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -50,7 +50,8 @@
         
         /* Stats Grid */
         .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-        .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+        .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; cursor: pointer; transition: all 0.2s; }
+        .stat-card:hover { transform: translateY(-2px); border-color: #8b5cf6; box-shadow: 0 4px 12px rgba(139,92,246,0.2); }
         .stat-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
         .stat-label { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
         .stat-icon { font-size: 1.3rem; opacity: 0.7; }
@@ -204,7 +205,7 @@
     <div class="container">
         <!-- Stats Grid -->
         <div class="stats-grid">
-            <div class="stat-card">
+            <div class="stat-card" onclick="filterByStatCard('all')" title="Click to show all entries">
                 <div class="stat-card-header">
                     <span class="stat-label">Total Entries</span>
                     <span class="stat-icon">📊</span>
@@ -212,7 +213,7 @@
                 <div class="stat-value" id="statTotal">0</div>
                 <div class="stat-subtext" id="statFiltered">Showing all</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="filterByStatCard('success')" title="Click to show only successful actions">
                 <div class="stat-card-header">
                     <span class="stat-label">Success</span>
                     <span class="stat-icon">✅</span>
@@ -220,7 +221,7 @@
                 <div class="stat-value success" id="statSuccess">0</div>
                 <div class="stat-subtext" id="statSuccessRate">0% success rate</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="filterByStatCard('error')" title="Click to show only errors">
                 <div class="stat-card-header">
                     <span class="stat-label">Errors</span>
                     <span class="stat-icon">❌</span>
@@ -228,7 +229,7 @@
                 <div class="stat-value error" id="statErrors">0</div>
                 <div class="stat-subtext" id="statLastError">No recent errors</div>
             </div>
-            <div class="stat-card">
+            <div class="stat-card" onclick="filterByStatCard('recent')" title="Click to show today's activity">
                 <div class="stat-card-header">
                     <span class="stat-label">Last Activity</span>
                     <span class="stat-icon">🕐</span>
@@ -300,6 +301,33 @@
                         <option value="7days" selected>Last 7 Days</option>
                         <option value="30days">Last 30 Days</option>
                         <option value="custom">Custom Range</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">Action Type</span>
+                    <select class="filter-input" id="actionFilter">
+                        <option value="all">All Actions</option>
+                        <optgroup label="System">
+                            <option value="file_saved">File Saved</option>
+                            <option value="backup_success">Backup Success</option>
+                            <option value="backup_complete">Backup Complete</option>
+                        </optgroup>
+                        <optgroup label="Orders">
+                            <option value="order_received">Order Received</option>
+                            <option value="order_processed">Order Processed</option>
+                            <option value="order_pull_complete">Order Pull Complete</option>
+                        </optgroup>
+                        <optgroup label="Sync">
+                            <option value="push_success">Push Success</option>
+                            <option value="push_failed">Push Failed</option>
+                            <option value="cascade_processed">Cascade Processed</option>
+                        </optgroup>
+                        <optgroup label="Inventory">
+                            <option value="item_updated">Item Updated</option>
+                            <option value="item_created">Item Created</option>
+                            <option value="item_deleted">Item Deleted</option>
+                            <option value="qty_reduced">Quantity Reduced</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="filter-group">
@@ -837,6 +865,9 @@
         // Date filter
         document.getElementById('dateFilter').addEventListener('change', applyFilters);
         
+        // Action filter
+        document.getElementById('actionFilter').addEventListener('change', applyFilters);
+        
         // Search filter (debounced)
         let searchTimeout;
         document.getElementById('searchInput').addEventListener('input', () => {
@@ -853,6 +884,7 @@
             .map(cb => cb.dataset.channel);
         
         const dateFilter = document.getElementById('dateFilter').value;
+        const actionFilter = document.getElementById('actionFilter').value;
         const searchTerm = document.getElementById('searchInput').value.toLowerCase();
         
         // Calculate date range
@@ -883,6 +915,9 @@
             
             // Date filter
             if (startDate && new Date(entry.timestamp) < startDate) return false;
+            
+            // Action filter
+            if (actionFilter !== 'all' && entry.action !== actionFilter) return false;
             
             // Search filter
             if (searchTerm) {
@@ -921,10 +956,65 @@
         // Reset date filter
         document.getElementById('dateFilter').value = '7days';
         
+        // Reset action filter
+        document.getElementById('actionFilter').value = 'all';
+        
         // Clear search
         document.getElementById('searchInput').value = '';
         
         applyFilters();
+    }
+
+    /**
+     * Quick filter by stat card click
+     */
+    function filterByStatCard(type) {
+        switch(type) {
+            case 'all':
+                // Reset all filters
+                clearFilters();
+                break;
+                
+            case 'success':
+                // Show only successful actions (not error category)
+                document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
+                    if (cb.dataset.category === 'error') {
+                        cb.classList.remove('active');
+                        cb.querySelector('input').checked = false;
+                    } else {
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    }
+                });
+                document.getElementById('dateFilter').value = '7days';
+                applyFilters();
+                break;
+                
+            case 'error':
+                // Show only errors
+                document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
+                    if (cb.dataset.category === 'error') {
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    } else {
+                        cb.classList.remove('active');
+                        cb.querySelector('input').checked = false;
+                    }
+                });
+                document.getElementById('dateFilter').value = '7days';
+                applyFilters();
+                break;
+                
+            case 'recent':
+                // Show today only
+                clearFilters();
+                document.getElementById('dateFilter').value = 'today';
+                applyFilters();
+                break;
+        }
+        
+        // Scroll to log table
+        document.querySelector('.log-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     // =============================================

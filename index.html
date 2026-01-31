@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Command Center v2.0</title>
+    <title>CCD Command Center v2.1 - Activity Log Integration</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🎯</text></svg>">
     <style>
         * {
@@ -929,6 +929,73 @@
 
         let refreshTimer = null;
 
+        // ===== ACTIVITY LOG INTEGRATION =====
+        // Shared logging to MASTER.json _activityLog
+        let masterJsonData = null;
+        
+        /**
+         * Log to MASTER.json Activity Log (persistent across all apps)
+         * @param {string} category - order|sync|inventory|payment|system|error
+         * @param {string} action - Specific action
+         * @param {string} summary - Human-readable description
+         * @param {object} details - Additional data
+         */
+        async function logToMasterActivityLog(category, action, summary, details = {}) {
+            try {
+                const masterHandle = await getFileHandle('masterFileHandle');
+                if (!masterHandle) {
+                    console.log('[Activity] No MASTER file connected');
+                    return null;
+                }
+                
+                // Read current MASTER file
+                const file = await masterHandle.getFile();
+                const text = await file.text();
+                masterJsonData = JSON.parse(text);
+                
+                // Initialize _activityLog if needed
+                if (!masterJsonData._activityLog) {
+                    masterJsonData._activityLog = [];
+                }
+                
+                // Create entry
+                const entry = {
+                    id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+                    timestamp: new Date().toISOString(),
+                    category: category,
+                    action: action,
+                    channel: 'system',
+                    summary: summary,
+                    details: details,
+                    device: localStorage.getItem('ccd_hostname') || 'CommandCenter',
+                    user: localStorage.getItem('ccdUsername') || 'Unknown'
+                };
+                
+                // Add to beginning of array
+                masterJsonData._activityLog.unshift(entry);
+                
+                // Keep last 5000 entries
+                if (masterJsonData._activityLog.length > 5000) {
+                    masterJsonData._activityLog = masterJsonData._activityLog.slice(0, 5000);
+                }
+                
+                // Save back to file
+                const writable = await masterHandle.createWritable();
+                await writable.write(JSON.stringify(masterJsonData, null, 2));
+                await writable.close();
+                
+                console.log(`📋 [Activity] ${category}/${action}: ${summary}`);
+                return entry;
+                
+            } catch (error) {
+                console.log('[Activity] Failed to log:', error.message);
+                return null;
+            }
+        }
+        
+        // Make globally accessible
+        window.logToMasterActivityLog = logToMasterActivityLog;
+
         // ===== INITIALIZATION =====
         function init() {
             console.log('[Command Center] Initializing v2.0...');
@@ -1504,6 +1571,13 @@
                 }
                 
                 logActivity('success', `🎉 Backup complete! ${downloaded} file(s) downloaded`);
+                
+                // Log to MASTER Activity Log
+                await logToMasterActivityLog('system', 'backup_complete', 
+                    `Data backup completed (${downloaded} files)`,
+                    { filesDownloaded: downloaded }
+                );
+                
                 alert(`✅ Backup Complete!\n\n${downloaded} file(s) have been downloaded to your Downloads folder.`);
                 
             } catch (error) {
