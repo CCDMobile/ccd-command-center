@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.2.4 - Activity Log Enhancement</title>
+    <title>CCD Sync Hub v3.3.0 - Date Filtering & Status Indicators</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -424,6 +424,21 @@
                                 <option value="60">60 minutes</option>
                             </select>
                         </div>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-top: 12px;">
+                            <label style="font-size: 0.85rem; color: var(--text-dim);">Order range:</label>
+                            <select class="form-input" id="orderDateRange" style="width: auto; min-width: 180px;" onchange="saveOrderDateRange()">
+                                <option value="last_24h">Last 24 hours</option>
+                                <option value="last_72h">Last 72 hours</option>
+                                <option value="last_7days" selected>Last 7 days (recommended)</option>
+                                <option value="last_30days">Last 30 days</option>
+                                <option value="month_to_date">Month to date</option>
+                                <option value="year_to_date">Year to date</option>
+                                <option value="all">All orders</option>
+                            </select>
+                        </div>
+                        <p style="font-size: 0.75rem; color: var(--text-dim); margin-top: 8px; font-style: italic;">
+                            💡 Limiting date range prevents timeouts and speeds up order pulling
+                        </p>
                         <div id="autoPollStatus" style="margin-top: 12px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 0.8rem; display: none;">
                             <span id="autoPollStatusText">Next poll: --</span>
                         </div>
@@ -992,7 +1007,7 @@
             <!-- SHARED CONFIGURATION - NEW SECTION -->
             <div class="card" style="border: 2px solid #8b5cf6;">
                 <div class="card-header">
-                    <span class="card-title">🔗 Shared Configuration (Multi-PC Sync)</span>
+                    <span class="card-title">🔗 Shared Configuration (Multi-PC Sync) <span id="configConnStatus" style="margin-left: 12px; font-size: 0.85rem; color: #94a3b8;">● Not Connected</span></span>
                     <span id="configModeBadge" class="mode-badge local">LOCAL MODE</span>
                 </div>
                 <p style="color: var(--text-dim); font-size: 0.85rem; margin-bottom: 16px;">
@@ -1004,6 +1019,10 @@
                     <span class="config-status-dot yellow"></span>
                     <strong>Local Mode</strong> - Using browser storage only
                     <br><small style="color: var(--text-dim);">Settings and logs are not shared with other PCs</small>
+                    <div id="configConnectionStatus" style="margin-top: 8px; font-size: 0.9rem;">
+                        <span style="color: var(--text-dim);">📄 CONFIG.json: </span>
+                        <span id="configConnStatusText" style="font-weight: 600; color: var(--warning);">Not Connected</span>
+                    </div>
                 </div>
                 
                 <div style="display: flex; gap: 12px; flex-wrap: wrap;">
@@ -1033,7 +1052,7 @@
             <!-- MASTER JSON FILE - CRITICAL SECTION -->
             <div class="card" style="border: 2px solid var(--info);">
                 <div class="card-header">
-                    <span class="card-title">📁 Master JSON File (Source of Truth)</span>
+                    <span class="card-title">📁 Master JSON File (Source of Truth) <span id="masterJsonHeaderStatus" style="margin-left: 12px; font-size: 0.85rem; color: #94a3b8;">● Not Connected</span></span>
                     <div style="display: flex; gap: 8px;">
                         <button class="btn btn-primary" onclick="selectMasterJsonFile()">📂 Select File</button>
                         <button class="btn btn-secondary" onclick="loadMasterJson()">🔄 Reload</button>
@@ -1085,7 +1104,7 @@
             <!-- SYNC DATA FILE - v3.9 -->
             <div class="card" style="border: 2px solid #22c55e;">
                 <div class="card-header">
-                    <span class="card-title">📊 Sync Data File (Orders)</span>
+                    <span class="card-title">📊 Sync Data File (Orders) <span id="syncDataHeaderStatus" style="margin-left: 12px; font-size: 0.85rem; color: #94a3b8;">● Not Connected</span></span>
                     <div style="display: flex; gap: 8px;">
                         <button class="btn btn-primary" onclick="connectSyncDataFile()">📂 Select File</button>
                         <button class="btn btn-secondary" onclick="createSyncDataFile()">➕ Create New</button>
@@ -2038,14 +2057,22 @@
         state.settings = {
             ...state.settings,
             ccdApiKey: settings.ccdApiKey || state.settings.ccdApiKey,
-            etsyProxyUrl: settings.proxyUrls?.etsy || '',
-            wixProxyUrl: settings.proxyUrls?.wix || state.settings.wixProxyUrl,
-            wayfairProxyUrl: settings.proxyUrls?.wayfair || '',
-            shippoProxyUrl: settings.proxyUrls?.shippo || '',
-            syncHubProxyUrl: settings.proxyUrls?.syncHub || state.settings.syncHubProxyUrl,
+            etsyProxyUrl: settings.proxyUrls?.etsy || state.settings.etsyProxyUrl || '',
+            wixProxyUrl: settings.proxyUrls?.wix || state.settings.wixProxyUrl || '',
+            wayfairProxyUrl: settings.proxyUrls?.wayfair || state.settings.wayfairProxyUrl || '',
+            shippoProxyUrl: settings.proxyUrls?.shippo || state.settings.shippoProxyUrl || '',
+            syncHubProxyUrl: settings.proxyUrls?.syncHub || state.settings.syncHubProxyUrl || '',
             autoProcessEnabled: settings.autoProcessEnabled || false,
             retryFailedEnabled: settings.retryFailedEnabled !== false,
-            maxRetries: settings.maxRetries || 3
+            maxRetries: settings.maxRetries || 3,
+            // Order date range filter
+            orderDateRange: settings.orderDateRange || state.settings.orderDateRange || 'last_7days',
+            // Email notification settings
+            emailAddresses: settings.emailAddresses || state.settings.emailAddresses || '',
+            emailEnabled: settings.emailEnabled !== undefined ? settings.emailEnabled : (state.settings.emailEnabled || false),
+            digestFrequency: settings.digestFrequency || state.settings.digestFrequency || 'daily',
+            digestHour: settings.digestHour || state.settings.digestHour || 8,
+            eventNotifications: settings.eventNotifications || state.settings.eventNotifications || {}
         };
         
         // Update UI
@@ -2152,6 +2179,7 @@
         const createBtn = document.getElementById('btnCreateConfig');
         const disconnectBtn = document.getElementById('btnDisconnectConfig');
         const errorPanel = document.getElementById('sharedErrorLogPanel');
+        const headerStatus = document.getElementById('configConnStatus');
         
         if (connected) {
             if (statusEl) {
@@ -2165,6 +2193,10 @@
             if (modeBadge) {
                 modeBadge.className = 'mode-badge shared';
                 modeBadge.textContent = 'SHARED MODE';
+            }
+            if (headerStatus) {
+                headerStatus.style.color = '#22c55e';
+                headerStatus.innerHTML = '● Connected';
             }
             if (connectBtn) connectBtn.style.display = 'none';
             if (createBtn) createBtn.style.display = 'none';
@@ -2182,6 +2214,10 @@
             if (modeBadge) {
                 modeBadge.className = 'mode-badge local';
                 modeBadge.textContent = 'LOCAL MODE';
+            }
+            if (headerStatus) {
+                headerStatus.style.color = '#94a3b8';
+                headerStatus.innerHTML = '● Not Connected';
             }
             if (connectBtn) connectBtn.style.display = 'inline-flex';
             if (createBtn) createBtn.style.display = 'inline-flex';
@@ -2558,8 +2594,8 @@
             // Auto-sync settings - v3.9
             autoPollEnabled: false,
             autoPollIntervalMinutes: 15,
+            orderDateRange: 'last_7days', // NEW: Default to last 7 days
             autoPushEnabled: false,
-            autoPushEtsy: true,
             autoPushWix: true,
             autoPushWayfair: true,
             alertZeroStock: true,
@@ -2813,6 +2849,7 @@
         const nameEl = document.getElementById('syncDataFileName');
         const detailsEl = document.getElementById('syncDataDetails');
         const statsEl = document.getElementById('syncDataStats');
+        const headerStatus = document.getElementById('syncDataHeaderStatus');
         
         if (statusEl) {
             const dot = statusEl.querySelector('.connection-dot');
@@ -2831,6 +2868,10 @@
             document.getElementById('syncDataEtsyOrders').textContent = syncDataCache.etsy?.orders?.length || 0;
             document.getElementById('syncDataWixOrders').textContent = syncDataCache.wix?.orders?.length || 0;
             document.getElementById('syncDataWayfairOrders').textContent = syncDataCache.wayfair?.orders?.length || 0;
+        }
+        if (headerStatus) {
+            headerStatus.style.color = connected ? '#22c55e' : '#94a3b8';
+            headerStatus.innerHTML = connected ? '● Connected' : '● Not Connected';
         }
     }
     
@@ -4710,10 +4751,18 @@
                 autoProcessEnabled: state.settings.autoProcessEnabled,
                 retryFailedEnabled: state.settings.retryFailedEnabled,
                 maxRetries: state.settings.maxRetries,
+                // Order date range filter
+                orderDateRange: state.settings.orderDateRange || 'last_7days',
                 // Channel sync toggles
                 enableEtsySync: state.settings.enableEtsySync,
                 enableWixSync: state.settings.enableWixSync,
-                enableWayfairSync: state.settings.enableWayfairSync
+                enableWayfairSync: state.settings.enableWayfairSync,
+                // Email notification settings
+                emailAddresses: state.settings.emailAddresses || '',
+                emailEnabled: state.settings.emailEnabled || false,
+                digestFrequency: state.settings.digestFrequency || 'daily',
+                digestHour: state.settings.digestHour || 8,
+                eventNotifications: state.settings.eventNotifications || {}
             };
             
             await saveConfigFile({ actionDescription: 'Settings updated' });
@@ -5378,6 +5427,7 @@
         const dotEl = document.getElementById('masterJsonConnectionDot');
         const statsEl = document.getElementById('masterJsonStats');
         const connStatusEl = document.getElementById('masterJsonConnStatus');
+        const headerStatus = document.getElementById('masterJsonHeaderStatus');
         
         if (fileNameEl) {
             fileNameEl.textContent = connected ? state.masterJson.fileName : 'No file selected';
@@ -5404,6 +5454,11 @@
             connStatusEl.innerHTML = connected 
                 ? `<span class="connection-dot connected"></span>Connected (${state.masterJson.productCount} products)`
                 : `<span class="connection-dot disconnected"></span>Not connected`;
+        }
+        
+        if (headerStatus) {
+            headerStatus.style.color = connected ? '#22c55e' : '#94a3b8';
+            headerStatus.innerHTML = connected ? '● Connected' : '● Not Connected';
         }
         
         // Show/hide stats
@@ -7573,6 +7628,64 @@
         }
         
         saveAutoSyncSettings();
+    }
+    
+    /**
+     * Save order date range preference
+     */
+    function saveOrderDateRange() {
+        const range = document.getElementById('orderDateRange').value;
+        state.settings.orderDateRange = range;
+        localStorage.setItem('ccd_order_date_range', range);
+        
+        // Save to CONFIG if connected
+        if (isSharedMode && configData) {
+            configData.settings = configData.settings || {};
+            configData.settings.orderDateRange = range;
+            saveConfigFile({ actionDescription: 'Order date range updated' }).catch(err => {
+                console.error('[Settings] Failed to save order date range to CONFIG:', err);
+            });
+        }
+        
+        const rangeLabels = {
+            'last_24h': 'Last 24 hours',
+            'last_72h': 'Last 72 hours',
+            'last_7days': 'Last 7 days',
+            'last_30days': 'Last 30 days',
+            'month_to_date': 'Month to date',
+            'year_to_date': 'Year to date',
+            'all': 'All orders'
+        };
+        
+        addAutoSyncLogEntry('📅 Order range changed to: ' + (rangeLabels[range] || range));
+    }
+    
+    /**
+     * Get date range parameters for API calls
+     */
+    function getDateRangeParams(rangeType) {
+        const now = Date.now();
+        const oneDayMs = 86400000;
+        
+        switch(rangeType) {
+            case 'last_24h':
+                return { from: now - oneDayMs, to: now };
+            case 'last_72h':
+                return { from: now - (3 * oneDayMs), to: now };
+            case 'last_7days':
+                return { from: now - (7 * oneDayMs), to: now };
+            case 'last_30days':
+                return { from: now - (30 * oneDayMs), to: now };
+            case 'month_to_date':
+                const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+                return { from: monthStart.getTime(), to: now };
+            case 'year_to_date':
+                const yearStart = new Date(new Date().getFullYear(), 0, 1);
+                return { from: yearStart.getTime(), to: now };
+            case 'all':
+            default:
+                return { from: null, to: null }; // No filter
+        }
     }
     
     /**
