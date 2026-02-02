@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.4 - Auto-Poll Queue Bug Fix</title>
+    <title>CCD Sync Hub v3.3.5 - Order Processing Integration & Enhanced Logging</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.4 • Build: 2026-02-02 • Auto-Poll Queue Fix</span>
+                <span>CCD Sync Hub v3.3.5 • Build: 2026-02-02 • Order Processing Integration</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -3051,7 +3051,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.4 - Auto-Poll Queue Fix...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5 - Order Processing Integration & Enhanced Logging...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3120,8 +3120,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.4 initialized successfully - Auto-Poll Queue Fix Active');
-            addLog('CCD Sync Hub v3.3.4 initialized - Auto-Poll Queue Fix Active', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5 initialized successfully - Order Processing Integration Active');
+            addLog('CCD Sync Hub v3.3.5 initialized - Order Processing Integration Active', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -3333,6 +3333,58 @@
             );
         }
         
+        // ===== NEW v3.3.5: ORDER STATE INTEGRATION =====
+        // Add orders to state.orders.all if feature enabled
+        if (isFeatureEnabled('enableOrderStateManagement')) {
+            console.log('[Order Integration] Feature enabled - populating state.orders.all');
+            
+            let totalAdded = 0;
+            let totalDuplicates = 0;
+            
+            // Add Etsy orders
+            if (pullEtsy && results.etsy.success && results.etsy.orders && Array.isArray(results.etsy.orders) && results.etsy.orders.length > 0) {
+                const result = addOrdersToState(results.etsy.orders, 'etsy');
+                totalAdded += result.added;
+                totalDuplicates += result.duplicates;
+            }
+            
+            // Add Wix orders  
+            if (pullWix && results.wix.success && results.wix.orders && Array.isArray(results.wix.orders) && results.wix.orders.length > 0) {
+                const result = addOrdersToState(results.wix.orders, 'wix');
+                totalAdded += result.added;
+                totalDuplicates += result.duplicates;
+            }
+            
+            // Add Wayfair orders
+            if (pullWayfair && results.wayfair.success && results.wayfair.orders && Array.isArray(results.wayfair.orders) && results.wayfair.orders.length > 0) {
+                const result = addOrdersToState(results.wayfair.orders, 'wayfair');
+                totalAdded += result.added;
+                totalDuplicates += result.duplicates;
+            }
+            
+            if (totalAdded > 0) {
+                // Update display
+                updateOrderStats();
+                renderOrders();
+                
+                addLog(`✅ Added ${totalAdded} NEW orders to queue (${totalDuplicates} duplicates skipped)`, 'success');
+                console.log(`[Order Integration] Added ${totalAdded} orders, skipped ${totalDuplicates} duplicates`);
+                
+                // Auto-process if enabled
+                if (state.settings.autoProcessEnabled) {
+                    addLog(`🔄 Auto-processing ${totalAdded} new orders...`, 'info');
+                    setTimeout(async () => {
+                        await processAllOrders();
+                    }, 500);
+                }
+            } else if (totalDuplicates > 0) {
+                addLog(`⏭️ All ${totalDuplicates} orders already processed (no new orders)`, 'info');
+            }
+        } else {
+            console.log('[Order Integration] Feature disabled - orders fetched but not added to state');
+        }
+        // ===== END ORDER STATE INTEGRATION =====
+        
         // Send sync.completed notification
         if (totalOrders > 0) {
             sendEventNotification(
@@ -3416,7 +3468,7 @@
             }
             
             console.log('[Etsy Pull] Success - Orders:', orders.length, 'Items:', itemCount);
-            return { success: true, orders: orders.length, items: itemCount, details: orderDetails };
+            return { success: true, orders: orders, items: itemCount, details: orderDetails };
             
         } catch (e) {
             console.error('[Etsy Pull] Fetch error:', e.message);
@@ -3438,7 +3490,7 @@
                 }
                 
                 const orders = result.orders || result.receipts || [];
-                return { success: true, orders: orders.length, items: orders.reduce((sum, o) => sum + (o.transactions?.length || 0), 0), details: [] };
+                return { success: true, orders: orders, items: orders.reduce((sum, o) => sum + (o.transactions?.length || 0), 0), details: [] };
             } catch (jsonpError) {
                 console.error('[Etsy Pull] JSONP error:', jsonpError.message);
                 throw new Error(e.message || jsonpError.message);
@@ -3489,7 +3541,7 @@
             orderDetails.push(orderInfo);
         }
         
-        return { success: true, orders: orders.length, items: itemCount, details: orderDetails };
+        return { success: true, orders: orders, items: itemCount, details: orderDetails };
     }
     
     async function pullWayfairOrders(startDate, endDate) {
@@ -3553,7 +3605,7 @@
             );
         }
         
-        return { success: true, orders: orders.length, items: itemCount, details: orderDetails };
+        return { success: true, orders: orders, items: itemCount, details: orderDetails };
     }
     
     function showOrderDetails(results) {
@@ -6077,6 +6129,148 @@
     }
     
     /**
+     * Add fetched orders to state.orders.all and channel-specific arrays
+     * Handles deduplication and formats orders for display
+     * GAP FIX: Order Processing Integration (v3.3.5)
+     * 
+     * @param {Array} orders - Array of raw orders from proxy
+     * @param {string} channel - Channel name ('etsy', 'wix', 'wayfair')
+     * @returns {Object} - { added: number, duplicates: number, formatted: Array }
+     */
+    function addOrdersToState(orders, channel) {
+        if (!orders || orders.length === 0) {
+            return { added: 0, duplicates: 0, formatted: [] };
+        }
+        
+        const isEnhancedLogging = isFeatureEnabled('enhancedActivityLogging');
+        
+        if (isEnhancedLogging) {
+            console.log(`[Order Integration] Processing ${orders.length} ${channel} orders...`);
+        }
+        
+        const formatted = [];
+        let duplicateCount = 0;
+        
+        for (const order of orders) {
+            let formattedOrder;
+            
+            // Format based on channel
+            if (channel === 'etsy') {
+                const orderId = 'ETSY-' + (order.receipt_id || order.id);
+                
+                // Check if already exists
+                if (state.orders.processedIds.has(orderId)) {
+                    duplicateCount++;
+                    if (isEnhancedLogging) {
+                        console.log(`   ⏭️ Skipped duplicate: ${orderId}`);
+                    }
+                    continue;
+                }
+                
+                formattedOrder = {
+                    id: orderId,
+                    channel: 'etsy',
+                    date: new Date((order.create_timestamp || order.created_timestamp) * 1000).toISOString(),
+                    buyer: order.buyer_email || order.name || 'Unknown',
+                    total: (order.grandtotal?.amount || order.total || 0) / 100,
+                    status: order.status || 'pending',
+                    processed: false,
+                    items: (order.transactions || []).map(item => ({
+                        sku: item.sku || 'UNKNOWN',
+                        title: item.title || 'Unknown Item',
+                        qty: item.quantity || 1,
+                        price: (item.price?.amount || 0) / 100
+                    }))
+                };
+                
+            } else if (channel === 'wix') {
+                const orderId = 'WIX-' + (order.id || order.number);
+                
+                if (state.orders.processedIds.has(orderId)) {
+                    duplicateCount++;
+                    if (isEnhancedLogging) {
+                        console.log(`   ⏭️ Skipped duplicate: ${orderId}`);
+                    }
+                    continue;
+                }
+                
+                formattedOrder = {
+                    id: orderId,
+                    channel: 'wix',
+                    date: order.createdDate || order.dateCreated || new Date().toISOString(),
+                    buyer: order.buyerInfo?.email || order.billingInfo?.contactDetails?.email || 'Unknown',
+                    total: order.priceSummary?.total?.amount || order.totals?.total || 0,
+                    status: 'pending',
+                    processed: false,
+                    items: (order.lineItems || []).map(item => ({
+                        sku: item.sku || item.catalogReference?.options?.sku || 'UNKNOWN',
+                        title: item.name || item.productName?.original || 'Unknown Item',
+                        qty: item.quantity || 1,
+                        price: item.price?.amount || 0
+                    }))
+                };
+                
+            } else if (channel === 'wayfair') {
+                const orderId = 'WAYFAIR-' + order.poNumber;
+                
+                if (state.orders.processedIds.has(orderId)) {
+                    duplicateCount++;
+                    if (isEnhancedLogging) {
+                        console.log(`   ⏭️ Skipped duplicate: ${orderId}`);
+                    }
+                    continue;
+                }
+                
+                formattedOrder = {
+                    id: orderId,
+                    channel: 'wayfair',
+                    date: order.poDate || new Date().toISOString(),
+                    buyer: order.customerName || 'Unknown',
+                    total: (order.products || []).reduce((sum, p) => sum + (p.price * parseInt(p.quantity)), 0),
+                    status: 'pending',
+                    processed: false,
+                    items: (order.products || []).map(p => ({
+                        sku: p.partNumber || 'UNKNOWN',
+                        title: p.name || 'Unknown Item',
+                        qty: parseInt(p.quantity) || 1,
+                        price: p.price || 0
+                    }))
+                };
+            }
+            
+            if (formattedOrder) {
+                formatted.push(formattedOrder);
+                
+                if (isEnhancedLogging) {
+                    const itemCount = formattedOrder.items.length;
+                    const totalValue = formattedOrder.total.toFixed(2);
+                    console.log(`   ✅ Added: ${formattedOrder.id} (${itemCount} item${itemCount !== 1 ? 's' : ''}, $${totalValue})`);
+                }
+            }
+        }
+        
+        // Add to channel-specific array
+        state.orders[channel] = [...(state.orders[channel] || []), ...formatted];
+        
+        // Add to combined array (avoiding duplicates)
+        const existingIds = new Set(state.orders.all.map(o => o.id));
+        const newOrders = formatted.filter(o => !existingIds.has(o.id));
+        
+        state.orders.all = [...state.orders.all, ...newOrders]
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+        
+        if (isEnhancedLogging && newOrders.length > 0) {
+            console.log(`[Order Integration] Summary: ${newOrders.length} new, ${duplicateCount} duplicates, ${state.orders.all.length} total in state`);
+        }
+        
+        return {
+            added: newOrders.length,
+            duplicates: duplicateCount,
+            formatted: newOrders
+        };
+    }
+    
+    /**
      * Update order statistics
      */
     function updateOrderStats() {
@@ -8047,10 +8241,12 @@
             
             let totalOrders = 0;
             let channels = [];
+            const orderResults = { etsy: null, wix: null, wayfair: null };
             
             if (pullEtsy && state.settings.enableEtsySync && state.settings.etsyProxyUrl) {
                 try {
                     const result = await pullEtsyOrders(startDate, endDate);
+                    orderResults.etsy = result;
                     if (result.success && result.orders) {
                         totalOrders += result.orders.length;
                         if (result.orders.length > 0) channels.push(`Etsy: ${result.orders.length}`);
@@ -8065,6 +8261,7 @@
             if (pullWix && state.settings.enableWixSync && state.settings.wixProxyUrl) {
                 try {
                     const result = await pullWixOrders(startDate, endDate);
+                    orderResults.wix = result;
                     if (result.success && result.orders) {
                         totalOrders += result.orders.length;
                         if (result.orders.length > 0) channels.push(`Wix: ${result.orders.length}`);
@@ -8079,6 +8276,7 @@
             if (pullWayfair && state.settings.enableWayfairSync && state.settings.wayfairProxyUrl) {
                 try {
                     const result = await pullWayfairOrders(startDate, endDate);
+                    orderResults.wayfair = result;
                     if (result.success && result.orders) {
                         totalOrders += result.orders.length;
                         if (result.orders.length > 0) channels.push(`Wayfair: ${result.orders.length}`);
@@ -8090,17 +8288,86 @@
                 }
             }
             
-            if (totalOrders > 0) {
-                addAutoSyncLogEntry(`✅ Found ${totalOrders} new orders (${channels.join(', ')})`);
-                toast(`Auto-Poll: Found ${totalOrders} new orders`, 'success');
+            // ===== NEW v3.3.5: ORDER STATE INTEGRATION FOR AUTO-POLL =====
+            if (isFeatureEnabled('enableOrderStateManagement') && totalOrders > 0) {
+                const isEnhancedLogging = isFeatureEnabled('enhancedActivityLogging');
                 
-                // Auto-process if enabled
-                if (state.settings.autoProcessEnabled) {
-                    await processQueue();
+                if (isEnhancedLogging) {
+                    console.log(`[Auto-Poll] Fetched ${totalOrders} total orders from ${channels.length} channel(s)`);
                 }
+                
+                let totalAdded = 0;
+                let totalDuplicates = 0;
+                
+                // Add Etsy orders to state
+                if (orderResults.etsy && orderResults.etsy.success && Array.isArray(orderResults.etsy.orders) && orderResults.etsy.orders.length > 0) {
+                    const result = addOrdersToState(orderResults.etsy.orders, 'etsy');
+                    totalAdded += result.added;
+                    totalDuplicates += result.duplicates;
+                    
+                    if (isEnhancedLogging && result.added > 0) {
+                        console.log(`[Auto-Poll] Etsy: ${result.added} new, ${result.duplicates} duplicates`);
+                    }
+                }
+                
+                // Add Wix orders to state
+                if (orderResults.wix && orderResults.wix.success && Array.isArray(orderResults.wix.orders) && orderResults.wix.orders.length > 0) {
+                    const result = addOrdersToState(orderResults.wix.orders, 'wix');
+                    totalAdded += result.added;
+                    totalDuplicates += result.duplicates;
+                    
+                    if (isEnhancedLogging && result.added > 0) {
+                        console.log(`[Auto-Poll] Wix: ${result.added} new, ${result.duplicates} duplicates`);
+                    }
+                }
+                
+                // Add Wayfair orders to state
+                if (orderResults.wayfair && orderResults.wayfair.success && Array.isArray(orderResults.wayfair.orders) && orderResults.wayfair.orders.length > 0) {
+                    const result = addOrdersToState(orderResults.wayfair.orders, 'wayfair');
+                    totalAdded += result.added;
+                    totalDuplicates += result.duplicates;
+                    
+                    if (isEnhancedLogging && result.added > 0) {
+                        console.log(`[Auto-Poll] Wayfair: ${result.added} new, ${result.duplicates} duplicates`);
+                    }
+                }
+                
+                if (totalAdded > 0) {
+                    // Update display
+                    updateOrderStats();
+                    renderOrders();
+                    
+                    const duplicateMsg = totalDuplicates > 0 ? ` (${totalDuplicates} already processed)` : '';
+                    addAutoSyncLogEntry(`✅ Found ${totalOrders} orders: ${totalAdded} NEW${duplicateMsg} (${channels.join(', ')})`);
+                    toast(`Auto-Poll: ${totalAdded} new orders added`, 'success');
+                    
+                    if (isEnhancedLogging) {
+                        console.log(`[Auto-Poll] Integration complete: ${totalAdded} new orders added to state`);
+                    }
+                    
+                    // Auto-process if enabled
+                    if (state.settings.autoProcessEnabled) {
+                        addAutoSyncLogEntry(`🔄 Auto-processing ${totalAdded} new orders...`);
+                        if (isEnhancedLogging) {
+                            console.log(`[Auto-Poll] Triggering auto-process for ${totalAdded} orders`);
+                        }
+                        setTimeout(async () => {
+                            await processAllOrders();
+                        }, 500);
+                    }
+                } else if (totalDuplicates > 0) {
+                    addAutoSyncLogEntry(`⏭️ Found ${totalOrders} orders (all already processed)`);
+                } else {
+                    addAutoSyncLogEntry(`✓ No new orders found`);
+                }
+            } else if (totalOrders > 0) {
+                // Feature disabled - show old behavior
+                addAutoSyncLogEntry(`✅ Found ${totalOrders} orders (${channels.join(', ')}) - enableOrderStateManagement disabled`);
+                toast(`Auto-Poll: Found ${totalOrders} orders (not added to queue)`, 'info');
             } else {
                 addAutoSyncLogEntry(`✓ No new orders found`);
             }
+            // ===== END ORDER STATE INTEGRATION =====
             
             // Update poll time after successful completion
             state.lastPollTime = Date.now();
