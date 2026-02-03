@@ -4,7 +4,7 @@
 CCD INVENTORY MANAGEMENT SYSTEM - VERSION HISTORY
 ================================================================================
 
-v23.3.4 (February 3, 2026) - UX Improvements & Bug Fixes
+v23.3.5 (February 3, 2026) - Category Manager + UX Improvements
 ------------------------------------------------------------------------
 NEW FEATURES:
 - Full ecosystem compatibility with Sync Hub & Channel Manager
@@ -7675,7 +7675,7 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.4 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 3 - UX Improvements</span></h1>
+                            <h1>CCD Inventory System v23.3.5 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 3 - Category Manager</span></h1>
                             <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-01-20 21:10</p>
                         </div>
                     </div>
@@ -132252,6 +132252,73 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
             </div>
         </div>
         
+        <!-- Category Management Section -->
+        <div class="settings-section">
+            <div class="settings-section-header">
+                <span>📁 Category Management</span>
+            </div>
+            <div class="settings-section-content">
+                <p class="settings-help" style="margin-bottom: 12px;">
+                    Manage product categories used in the dropdown. Categories are saved to CONFIG.json and synced across all CCD apps.
+                </p>
+                
+                <!-- Category Stats -->
+                <div id="categoryStats" style="padding: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 6px; color: white; margin-bottom: 15px;">
+                    <div style="font-weight: 600; margin-bottom: 5px;">📊 Category Statistics</div>
+                    <div id="categoryStatsContent" style="font-size: 13px;">
+                        Loading...
+                    </div>
+                </div>
+                
+                <!-- Categories Table -->
+                <div style="max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 15px;">
+                    <table id="categoriesTable" style="width: 100%; border-collapse: collapse;">
+                        <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+                            <tr>
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-weight: 600;">Category Name</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-weight: 600; width: 100px;">Items</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-weight: 600; width: 120px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="categoriesTableBody">
+                            <!-- Populated by JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Add New Category -->
+                <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+                    <input type="text" id="newCategoryName" placeholder="Enter new category name..." 
+                           style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"
+                           onkeypress="if(event.key==='Enter') addCategory()">
+                    <button onclick="addCategory()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; white-space: nowrap;">
+                        ➕ Add Category
+                    </button>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div style="display: flex; gap: 8px; margin-top: 15px;">
+                    <button onclick="saveCategoriestoConfig()" style="flex: 1; padding: 12px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        💾 Save to CONFIG.json
+                    </button>
+                    <button onclick="refreshCategoryList()" style="padding: 12px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        🔄 Refresh
+                    </button>
+                </div>
+                
+                <!-- Info Box -->
+                <div style="margin-top: 15px; padding: 12px; background: #e7f3ff; border-left: 4px solid #007bff; border-radius: 4px;">
+                    <div style="font-weight: 600; color: #007bff; margin-bottom: 5px;">ℹ️ How it works:</div>
+                    <ul style="margin: 5px 0 0 20px; font-size: 13px; color: #333;">
+                        <li>Categories are saved to CONFIG.json for sync across apps</li>
+                        <li>Editing a category updates all items using it</li>
+                        <li>Deleting requires moving items to another category</li>
+                        <li>Changes take effect immediately in the item form</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
         <!-- Automation Section -->
         <div class="settings-section">
             <div class="settings-section-header">
@@ -132761,6 +132828,13 @@ async function initializeSyncDataFile() {
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(initializeSyncDataFile, 1000);
     
+    // === v23.3.5: INITIALIZE CATEGORY DROPDOWN ===
+    setTimeout(function() {
+        loadManagedCategories();
+        updateCategoryDropdown();
+        console.log('[Init] Category dropdown initialized');
+    }, 500);
+    
     // === STATUS WIDGETS TOGGLE (v23.2.8) ===
     const statusWidgetsBtn = document.getElementById('statusWidgetsBtn');
     if (statusWidgetsBtn) {
@@ -132787,6 +132861,420 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// ============================================================================
+// CATEGORY MANAGEMENT FUNCTIONS (v23.3.5)
+// ============================================================================
+
+/**
+ * Global categories array - loaded from CONFIG or defaults
+ */
+let managedCategories = [];
+
+/**
+ * Get categories from CONFIG or use defaults
+ */
+function loadManagedCategories() {
+    // Try to load from CONFIG first
+    if (configData && configData.settings && configData.settings.categories) {
+        managedCategories = [...configData.settings.categories];
+        console.log('[Categories] Loaded from CONFIG:', managedCategories.length, 'categories');
+    } else {
+        // Fallback to hardcoded defaults
+        managedCategories = [
+            "Christmas",
+            "Decor",
+            "Garden",
+            "Kitchen",
+            "Seasonal",
+            "Furniture",
+            "Wall Art",
+            "Lighting",
+            "Textiles",
+            "Outdoor",
+            "Holiday",
+            "Gifts",
+            "Other"
+        ];
+        console.log('[Categories] Using default categories');
+    }
+    return managedCategories;
+}
+
+/**
+ * Get usage count for each category
+ */
+function getCategoryUsageCounts() {
+    const counts = {};
+    
+    // Initialize all categories with 0
+    managedCategories.forEach(cat => {
+        counts[cat] = 0;
+    });
+    
+    // Count items in each category
+    inventory.forEach(item => {
+        if (item.category && counts[item.category] !== undefined) {
+            counts[item.category]++;
+        }
+    });
+    
+    return counts;
+}
+
+/**
+ * Render the categories table
+ */
+function renderCategoriesTable() {
+    const tbody = document.getElementById('categoriesTableBody');
+    if (!tbody) return;
+    
+    const counts = getCategoryUsageCounts();
+    
+    // Sort categories alphabetically
+    const sorted = [...managedCategories].sort();
+    
+    tbody.innerHTML = sorted.map(category => {
+        const count = counts[category] || 0;
+        return `
+            <tr>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;">
+                    <strong>${category}</strong>
+                </td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                    <span style="background: ${count > 0 ? '#28a745' : '#6c757d'}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">
+                        ${count}
+                    </span>
+                </td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                    <button onclick="editCategoryName('${category.replace(/'/g, "\\'")}')" 
+                            style="padding: 6px 12px; background: #ffc107; color: #333; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 4px;"
+                            title="Edit category">
+                        ✏️
+                    </button>
+                    <button onclick="deleteCategory('${category.replace(/'/g, "\\'")}')" 
+                            style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
+                            title="Delete category">
+                        🗑️
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    // Update stats
+    updateCategoryStats(counts);
+}
+
+/**
+ * Update category statistics
+ */
+function updateCategoryStats(counts) {
+    const statsContent = document.getElementById('categoryStatsContent');
+    if (!statsContent) return;
+    
+    const total = managedCategories.length;
+    const totalItems = Object.values(counts).reduce((a, b) => a + b, 0);
+    const empty = managedCategories.filter(cat => (counts[cat] || 0) === 0).length;
+    
+    // Find most/least used
+    const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const mostUsed = sortedCounts[0];
+    const leastUsed = sortedCounts[sortedCounts.length - 1];
+    
+    statsContent.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px;">
+            <div><strong>Total Categories:</strong> ${total}</div>
+            <div><strong>Total Items:</strong> ${totalItems}</div>
+            <div><strong>Most Used:</strong> ${mostUsed[0]} (${mostUsed[1]})</div>
+            <div><strong>Empty:</strong> ${empty}</div>
+        </div>
+    `;
+}
+
+/**
+ * Add a new category
+ */
+function addCategory() {
+    const input = document.getElementById('newCategoryName');
+    if (!input) return;
+    
+    const newCategory = input.value.trim();
+    
+    // Validation
+    if (!newCategory) {
+        alert('⚠️ Please enter a category name');
+        return;
+    }
+    
+    if (managedCategories.includes(newCategory)) {
+        alert('⚠️ Category "' + newCategory + '" already exists');
+        return;
+    }
+    
+    if (newCategory.length > 50) {
+        alert('⚠️ Category name too long (max 50 characters)');
+        return;
+    }
+    
+    // Add to array
+    managedCategories.push(newCategory);
+    console.log('[Categories] Added:', newCategory);
+    
+    // Clear input
+    input.value = '';
+    
+    // Refresh table
+    renderCategoriesTable();
+    
+    // Show success message
+    showToast(`✅ Category "${newCategory}" added. Click "Save to CONFIG" to persist.`, 'success');
+}
+
+/**
+ * Edit category name
+ */
+function editCategoryName(oldName) {
+    const counts = getCategoryUsageCounts();
+    const itemCount = counts[oldName] || 0;
+    
+    const newName = prompt(
+        `Edit category: "${oldName}"\n\n` +
+        `${itemCount} item(s) currently use this category.\n\n` +
+        `Enter new name:`,
+        oldName
+    );
+    
+    if (!newName || newName === oldName) {
+        return; // Cancelled or unchanged
+    }
+    
+    const trimmedName = newName.trim();
+    
+    // Validation
+    if (!trimmedName) {
+        alert('⚠️ Category name cannot be empty');
+        return;
+    }
+    
+    if (managedCategories.includes(trimmedName)) {
+        alert('⚠️ Category "' + trimmedName + '" already exists');
+        return;
+    }
+    
+    // Update in managedCategories array
+    const index = managedCategories.indexOf(oldName);
+    if (index !== -1) {
+        managedCategories[index] = trimmedName;
+    }
+    
+    // Update all items using this category
+    if (itemCount > 0) {
+        let updated = 0;
+        inventory.forEach(item => {
+            if (item.category === oldName) {
+                item.category = trimmedName;
+                updated++;
+            }
+        });
+        
+        console.log('[Categories] Renamed:', oldName, '→', trimmedName, '(' + updated + ' items updated)');
+        
+        // Auto-save inventory
+        autoSave();
+        
+        showToast(`✅ Renamed "${oldName}" → "${trimmedName}" (${updated} items updated)`, 'success');
+    } else {
+        console.log('[Categories] Renamed:', oldName, '→', trimmedName, '(no items affected)');
+        showToast(`✅ Renamed "${oldName}" → "${trimmedName}"`, 'success');
+    }
+    
+    // Refresh table and dropdown
+    renderCategoriesTable();
+    updateCategoryDropdown();
+}
+
+/**
+ * Delete a category
+ */
+function deleteCategory(categoryName) {
+    const counts = getCategoryUsageCounts();
+    const itemCount = counts[categoryName] || 0;
+    
+    if (itemCount > 0) {
+        // Category is in use - require migration
+        const otherCategories = managedCategories.filter(c => c !== categoryName);
+        
+        if (otherCategories.length === 0) {
+            alert('⚠️ Cannot delete the last category!');
+            return;
+        }
+        
+        const moveToCategory = prompt(
+            `⚠️ WARNING: "${categoryName}" is used by ${itemCount} item(s).\n\n` +
+            `You must move these items to another category before deleting.\n\n` +
+            `Available categories:\n${otherCategories.join(', ')}\n\n` +
+            `Enter category to move items to (or Cancel):`,
+            otherCategories[0]
+        );
+        
+        if (!moveToCategory) {
+            return; // Cancelled
+        }
+        
+        if (!managedCategories.includes(moveToCategory)) {
+            alert('⚠️ Invalid category: ' + moveToCategory);
+            return;
+        }
+        
+        // Move all items
+        let moved = 0;
+        inventory.forEach(item => {
+            if (item.category === categoryName) {
+                item.category = moveToCategory;
+                moved++;
+            }
+        });
+        
+        console.log('[Categories] Moved', moved, 'items from', categoryName, 'to', moveToCategory);
+        
+        // Auto-save inventory
+        autoSave();
+    } else {
+        // Category not in use - confirm deletion
+        if (!confirm(`Delete category "${categoryName}"?\n\nThis category is not currently in use.`)) {
+            return;
+        }
+    }
+    
+    // Remove from array
+    const index = managedCategories.indexOf(categoryName);
+    if (index !== -1) {
+        managedCategories.splice(index, 1);
+        console.log('[Categories] Deleted:', categoryName);
+    }
+    
+    // Refresh table and dropdown
+    renderCategoriesTable();
+    updateCategoryDropdown();
+    
+    showToast(`✅ Category "${categoryName}" deleted${itemCount > 0 ? ' and ' + itemCount + ' items migrated' : ''}`, 'success');
+}
+
+/**
+ * Save categories to CONFIG.json
+ */
+async function saveCategoriestoConfig() {
+    if (!configFileHandle) {
+        alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
+        return;
+    }
+    
+    try {
+        // Read current CONFIG
+        const file = await configFileHandle.getFile();
+        const text = await file.text();
+        const config = JSON.parse(text);
+        
+        // Update categories
+        if (!config.settings) {
+            config.settings = {};
+        }
+        config.settings.categories = managedCategories;
+        
+        // Write back to file
+        const writable = await configFileHandle.createWritable();
+        await writable.write(JSON.stringify(config, null, 2));
+        await writable.close();
+        
+        console.log('[Categories] Saved to CONFIG.json:', managedCategories.length, 'categories');
+        
+        // Update global configData
+        configData = config;
+        
+        showToast(`✅ ${managedCategories.length} categories saved to CONFIG.json`, 'success');
+        
+        // Update dropdown
+        updateCategoryDropdown();
+        
+    } catch (err) {
+        console.error('[Categories] Error saving to CONFIG:', err);
+        alert('❌ Error saving to CONFIG.json:\n\n' + err.message);
+    }
+}
+
+/**
+ * Refresh category list
+ */
+function refreshCategoryList() {
+    loadManagedCategories();
+    renderCategoriesTable();
+    updateCategoryDropdown();
+    showToast('🔄 Category list refreshed', 'info');
+}
+
+/**
+ * Update the category dropdown in the item form
+ */
+function updateCategoryDropdown() {
+    const dropdown = document.getElementById('category');
+    if (!dropdown) return;
+    
+    // Get current value
+    const currentValue = dropdown.value;
+    
+    // Clear existing options
+    dropdown.innerHTML = '<option value="">Select Category...</option>';
+    
+    // Add categories (sorted)
+    const sorted = [...managedCategories].sort();
+    sorted.forEach(cat => {
+        const option = document.createElement('option');
+        option.value = cat;
+        option.textContent = cat;
+        dropdown.appendChild(option);
+    });
+    
+    // Restore selected value if it still exists
+    if (currentValue && managedCategories.includes(currentValue)) {
+        dropdown.value = currentValue;
+    }
+    
+    console.log('[Categories] Dropdown updated with', managedCategories.length, 'categories');
+}
+
+/**
+ * Initialize category management on settings open
+ */
+function initializeCategoryManagement() {
+    loadManagedCategories();
+    renderCategoriesTable();
+}
+
+// Call this when settings modal opens
+const originalOpenSettings = openSettings;
+if (typeof originalOpenSettings === 'function') {
+    window.openSettings = function() {
+        originalOpenSettings();
+        // Small delay to ensure modal is rendered
+        setTimeout(initializeCategoryManagement, 100);
+    };
+} else {
+    // If openSettings doesn't exist yet, wrap it when it does
+    Object.defineProperty(window, 'openSettings', {
+        set: function(fn) {
+            this._openSettings = function() {
+                fn();
+                setTimeout(initializeCategoryManagement, 100);
+            };
+        },
+        get: function() {
+            return this._openSettings;
+        }
+    });
+}
+
+console.log('📁 Category Management module loaded (v23.3.5)');
 
 console.log('📊 Sync Data File module loaded (Direct OneDrive Access - v23.0.6)');
 </script>
