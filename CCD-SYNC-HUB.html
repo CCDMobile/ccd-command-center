@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.2 - Number Safety Fix</title>
+    <title>CCD Sync Hub v3.3.5.4 - Allocation Adjustment + Manual Cascade</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.2 • Build: 2026-02-02 • Number Safety Fix</span>
+                <span>CCD Sync Hub v3.3.5.4 • Build: 2026-02-03 • Allocation Updates + Manual Cascade</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -3088,7 +3088,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.2 - Number Safety Fix...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.4 - Allocation Updates + Manual Cascade...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3157,8 +3157,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.2 initialized successfully - All Systems Operational');
-            addLog('CCD Sync Hub v3.3.5.2 initialized - Number Safety Fix Applied', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.4 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.4 initialized - Allocation Updates + Manual Cascade', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -6386,7 +6386,8 @@
                 </div>
                 ${!order.processed ? `
                     <div class="order-actions">
-                        <button class="btn btn-sm btn-success" onclick="processOrder('${order.id}')">✅ Process & Deduct Inventory</button>
+                        <button class="btn btn-sm btn-success" onclick="processOrder('${order.id}')">✅ Process & Deduct Only</button>
+                        <button class="btn btn-sm btn-primary" onclick="processOrderWithCascade('${order.id}')">🚀 Process, Deduct & Push to Channels</button>
                         <button class="btn btn-sm btn-secondary" onclick="markOrderProcessed('${order.id}')">🏷️ Mark Processed (No Deduct)</button>
                     </div>
                 ` : ''}
@@ -7191,8 +7192,69 @@
                 }
                 // ===== END INVENTORY DEDUCTION =====
                 
-                // Queue updates for OTHER channels
+                // ===== UPDATE ALLOCATIONS IN MASTER.json =====
+                // v3.3.5.4: Update channel allocations locally (before pushing to websites)
+                // This keeps MASTER.json internally consistent even when autoCascade is false
                 const sourceChannel = order.channel;
+                
+                if (isFeatureEnabled('inventoryDeduction')) {
+                    // Update allocations for OTHER channels (not the source)
+                    // Source channel already updated by the sale itself
+                    
+                    if (sourceChannel !== 'etsy' && (product.etsyListing || product.etsyListingId)) {
+                        const oldEtsyQty = product.etsyQty || product.warehouseQty || 0;
+                        product.etsyQty = newQty;
+                        console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${newQty}`);
+                        
+                        changes.push({
+                            changeType: 'allocation',
+                            sku: sku,
+                            field: 'etsyQty',
+                            before: oldEtsyQty,
+                            after: newQty,
+                            reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
+                            user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
+                        });
+                    }
+                    
+                    if (sourceChannel !== 'wix' && (product.wixProductId || product.wixId)) {
+                        const oldWixQty = product.wixQty || product.warehouseQty || 0;
+                        product.wixQty = newQty;
+                        console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${newQty}`);
+                        
+                        changes.push({
+                            changeType: 'allocation',
+                            sku: sku,
+                            field: 'wixQty',
+                            before: oldWixQty,
+                            after: newQty,
+                            reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
+                            user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
+                        });
+                    }
+                    
+                    if (sourceChannel !== 'wayfair' && (product.wayfairSku || product.supplierPartNumber)) {
+                        const oldWayfairQty = product.wayfairQty || product.warehouseQty || 0;
+                        product.wayfairQty = newQty;
+                        console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newQty}`);
+                        
+                        changes.push({
+                            changeType: 'allocation',
+                            sku: sku,
+                            field: 'wayfairQty',
+                            before: oldWayfairQty,
+                            after: newQty,
+                            reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
+                            user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
+                        });
+                    }
+                    
+                    console.log(`[Allocation] Summary for ${sku}: warehouse=${newQty}, etsy=${product.etsyQty || 'N/A'}, wix=${product.wixQty || 'N/A'}, wayfair=${product.wayfairQty || 'N/A'}`);
+                }
+                // ===== END ALLOCATION UPDATE =====
+                
+                // Queue updates for OTHER channels
+
                 
                 // If has Etsy listing and order wasn't from Etsy
                 if ((product.etsyListing || product.etsyListingId) && sourceChannel !== 'etsy') {
@@ -7440,6 +7502,48 @@
         
         updateOrderStats();
         renderOrders();
+    }
+    
+    /**
+     * Process order AND immediately push cascade updates to channels
+     * v3.3.5.3 - New function for manual cascade control
+     * 
+     * @param {string} orderId - Order ID to process
+     */
+    async function processOrderWithCascade(orderId) {
+        try {
+            // First, process the order (deduct inventory, queue cascade)
+            await processOrder(orderId, false);
+            
+            // Get the order to check if processing succeeded
+            const order = state.orders.all.find(o => o.id === orderId);
+            
+            // Only proceed with cascade if order was successfully processed
+            if (order && order.processed && order.status !== 'failed' && order.status !== 'duplicate') {
+                // Small delay to ensure queue is populated
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Get current queue length
+                const queueBefore = state.queue ? state.queue.length : 0;
+                
+                if (queueBefore > 0) {
+                    toast(`🚀 Processing order and pushing ${queueBefore} update(s) to channels...`, 'info');
+                    
+                    // Immediately process the queue (push to channels)
+                    await processQueue();
+                    
+                    toast(`✅ Order processed and updates sent to channels!`, 'success');
+                } else {
+                    toast(`✅ Order processed (no cascade updates needed)`, 'success');
+                }
+            } else {
+                // Order processing failed or was duplicate
+                console.log('[processOrderWithCascade] Order processing failed or duplicate, skipping cascade');
+            }
+        } catch (error) {
+            console.error('[processOrderWithCascade] Error:', error);
+            toast(`❌ Error processing order with cascade: ${error.message}`, 'error');
+        }
     }
     
     /**
