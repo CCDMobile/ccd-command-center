@@ -4,7 +4,7 @@
 CCD INVENTORY MANAGEMENT SYSTEM - VERSION HISTORY
 ================================================================================
 
-v23.3.2 (February 3, 2026) - Treasure Marts Formula Fix + Feature Toggles + Penny Increments
+v23.3.3 (February 3, 2026) - Added CONFIG File Connection UI + All Fixes
 ------------------------------------------------------------------------
 NEW FEATURES:
 - Full ecosystem compatibility with Sync Hub & Channel Manager
@@ -7675,7 +7675,7 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.2 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #e65100; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 3 - Treasure Marts Fix</span></h1>
+                            <h1>CCD Inventory System v23.3.3 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #3b82f6; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 3 - CONFIG UI Added</span></h1>
                             <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-01-20 21:10</p>
                         </div>
                     </div>
@@ -69870,6 +69870,49 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             if (overlay) overlay.remove();
         }
         
+        // Update CONFIG File Status UI
+        function updateConfigFileStatusUI() {
+            const statusDiv = document.getElementById('configFileStatus');
+            const connectedDiv = document.getElementById('configFileConnected');
+            
+            if (!statusDiv) return; // Settings panel not open yet
+            
+            const isConfigured = localStorage.getItem('ccdConfigFileConfigured') === 'true';
+            const configFileName = localStorage.getItem('ccdConfigFileName') || 'CONFIG.json';
+            
+            if (configFileHandle || isConfigured) {
+                // CONFIG is connected
+                statusDiv.style.background = '#d1fae5';
+                statusDiv.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">✅</span>
+                        <div>
+                            <strong style="color: #065f46;">Connected to ${configFileName}</strong>
+                            <div style="font-size: 11px; color: #047857; margin-top: 2px;">
+                                Feature flags will sync across CCD ecosystem
+                            </div>
+                        </div>
+                    </div>
+                `;
+                if (connectedDiv) connectedDiv.style.display = 'block';
+            } else {
+                // CONFIG not connected
+                statusDiv.style.background = '#fee2e2';
+                statusDiv.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 24px;">⚠️</span>
+                        <div>
+                            <strong style="color: #991b1b;">CONFIG file not connected</strong>
+                            <div style="font-size: 11px; color: #b91c1c; margin-top: 2px;">
+                                Feature flags saving to localStorage only
+                            </div>
+                        </div>
+                    </div>
+                `;
+                if (connectedDiv) connectedDiv.style.display = 'none';
+            }
+        }
+        
         // Load current settings into form
         function loadSettingsValues() {
             // API URLs
@@ -69918,6 +69961,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             if (document.getElementById('settingsCloudSyncApiKey')) {
                 document.getElementById('settingsCloudSyncApiKey').value = localStorage.getItem('ccd_cloud_sync_api_key') || '';
             }
+            
+            // ========== UPDATE CONFIG FILE STATUS UI ==========
+            updateConfigFileStatusUI();
             
             // ========== FEB 3, 2026: Load Feature Flags from CONFIG ==========
             // Load feature flag checkboxes with current values from CONFIG or localStorage
@@ -127223,6 +127269,11 @@ async function selectConfigFile() {
         await loadSettingsFromConfigFile();
         showNotification('✅ CONFIG file connected - settings loaded!', 'success');
         
+        // Update UI in Settings panel
+        if (typeof updateConfigFileStatusUI === 'function') {
+            updateConfigFileStatusUI();
+        }
+        
         return true;
         
     } catch (error) {
@@ -132021,6 +132072,58 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
                 <div style="margin-top: 15px; padding: 10px; background: #fef3c7; border-radius: 6px;">
                     <strong>💡 Tip:</strong> Enable features one at a time and test each before enabling the next.
                     All flags default to OFF for safety.
+                </div>
+            </div>
+        </div>
+        
+        <!-- CONFIG File Connection Section -->
+        <div class="settings-section">
+            <div class="settings-section-header">
+                <span>📁 System Configuration File</span>
+            </div>
+            <div class="settings-section-content">
+                <p class="settings-help" style="margin-bottom: 12px;">
+                    Connect to CONFIG.json to enable feature flag persistence and settings sync across all CCD apps.
+                </p>
+                
+                <div id="configFileStatus" style="padding: 10px; border-radius: 6px; margin-bottom: 12px;">
+                    <!-- Will be populated by JavaScript -->
+                </div>
+                
+                <div class="settings-field">
+                    <button onclick="selectConfigFile()" class="settings-btn" style="padding: 10px 20px; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        📁 Connect CONFIG.json
+                    </button>
+                    <span class="settings-hint">Select CONFIG file from OneDrive/CCD-System/</span>
+                </div>
+                
+                <div id="configFileConnected" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                    <div style="padding: 10px; background: #d1fae5; border-radius: 6px; margin-bottom: 12px;">
+                        <strong style="color: #065f46;">✅ CONFIG.json Connected</strong>
+                        <p style="margin: 4px 0 0 0; font-size: 12px; color: #047857;">
+                            Feature flags and settings will sync across CCD ecosystem
+                        </p>
+                    </div>
+                    
+                    <div class="settings-field">
+                        <button onclick="loadSettingsFromConfigFile()" class="settings-test-btn" style="padding: 10px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                            🔄 Reload Settings from CONFIG
+                        </button>
+                    </div>
+                    
+                    <div id="configFileLastUpdate" style="margin-top: 10px; font-size: 12px; color: #666;">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+                
+                <div style="margin-top: 15px; padding: 10px; background: #dbeafe; border-radius: 6px;">
+                    <strong style="color: #1e40af;">ℹ️ What CONFIG enables:</strong>
+                    <ul style="margin: 8px 0 0 20px; font-size: 12px; color: #1e3a8a;">
+                        <li>Feature flags persist across sessions</li>
+                        <li>Settings sync to Sync Hub</li>
+                        <li>Pricing formulas shared across apps</li>
+                        <li>Channel overhead/surcharge settings</li>
+                    </ul>
                 </div>
             </div>
         </div>
