@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.1 - CRITICAL PATCH: isFeatureEnabled Function</title>
+    <title>CCD Sync Hub v3.3.5.2 - Number Safety Fix</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.1 • Build: 2026-02-02 • CRITICAL PATCH</span>
+                <span>CCD Sync Hub v3.3.5.2 • Build: 2026-02-02 • Number Safety Fix</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -3088,7 +3088,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.1 - CRITICAL PATCH: isFeatureEnabled Added...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.2 - Number Safety Fix...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3157,8 +3157,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.1 initialized successfully - Order Processing Active (PATCHED)');
-            addLog('CCD Sync Hub v3.3.5.1 initialized - CRITICAL PATCH Applied', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.2 initialized successfully - All Systems Operational');
+            addLog('CCD Sync Hub v3.3.5.2 initialized - Number Safety Fix Applied', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -6209,14 +6209,14 @@
                     channel: 'etsy',
                     date: new Date((order.create_timestamp || order.created_timestamp) * 1000).toISOString(),
                     buyer: order.buyer_email || order.name || 'Unknown',
-                    total: (order.grandtotal?.amount || order.total || 0) / 100,
+                    total: Number((order.grandtotal?.amount || order.total || 0) / 100) || 0,
                     status: order.status || 'pending',
                     processed: false,
                     items: (order.transactions || []).map(item => ({
                         sku: item.sku || 'UNKNOWN',
                         title: item.title || 'Unknown Item',
                         qty: item.quantity || 1,
-                        price: (item.price?.amount || 0) / 100
+                        price: Number((item.price?.amount || 0) / 100) || 0
                     }))
                 };
                 
@@ -6236,14 +6236,14 @@
                     channel: 'wix',
                     date: order.createdDate || order.dateCreated || new Date().toISOString(),
                     buyer: order.buyerInfo?.email || order.billingInfo?.contactDetails?.email || 'Unknown',
-                    total: order.priceSummary?.total?.amount || order.totals?.total || 0,
+                    total: Number(order.priceSummary?.total?.amount || order.totals?.total || 0) || 0,
                     status: 'pending',
                     processed: false,
                     items: (order.lineItems || []).map(item => ({
                         sku: item.sku || item.catalogReference?.options?.sku || 'UNKNOWN',
                         title: item.name || item.productName?.original || 'Unknown Item',
                         qty: item.quantity || 1,
-                        price: item.price?.amount || 0
+                        price: Number(item.price?.amount || 0) || 0
                     }))
                 };
                 
@@ -6263,14 +6263,14 @@
                     channel: 'wayfair',
                     date: order.poDate || new Date().toISOString(),
                     buyer: order.customerName || 'Unknown',
-                    total: (order.products || []).reduce((sum, p) => sum + (p.price * parseInt(p.quantity)), 0),
+                    total: Number((order.products || []).reduce((sum, p) => sum + (Number(p.price) * parseInt(p.quantity || 0)), 0)) || 0,
                     status: 'pending',
                     processed: false,
                     items: (order.products || []).map(p => ({
                         sku: p.partNumber || 'UNKNOWN',
                         title: p.name || 'Unknown Item',
                         qty: parseInt(p.quantity) || 1,
-                        price: p.price || 0
+                        price: Number(p.price) || 0
                     }))
                 };
             }
@@ -6280,7 +6280,7 @@
                 
                 if (isEnhancedLogging) {
                     const itemCount = formattedOrder.items.length;
-                    const totalValue = formattedOrder.total.toFixed(2);
+                    const totalValue = (Number(formattedOrder.total) || 0).toFixed(2);
                     console.log(`   ✅ Added: ${formattedOrder.id} (${itemCount} item${itemCount !== 1 ? 's' : ''}, $${totalValue})`);
                 }
             }
