@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.4 - Allocation Adjustment + Manual Cascade</title>
+    <title>CCD Sync Hub v3.3.5.5 - Fixed Manual Cascade Logic</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.4 • Build: 2026-02-03 • Allocation Updates + Manual Cascade</span>
+                <span>CCD Sync Hub v3.3.5.5 • Build: 2026-02-03 • Fixed Manual Cascade</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -3088,7 +3088,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.4 - Allocation Updates + Manual Cascade...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.5 - Fixed Manual Cascade Logic...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3157,8 +3157,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.4 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.4 initialized - Allocation Updates + Manual Cascade', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.5 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.5 initialized - Fixed Manual Cascade', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -7512,33 +7512,44 @@
      */
     async function processOrderWithCascade(orderId) {
         try {
-            // First, process the order (deduct inventory, queue cascade)
+            console.log('[processOrderWithCascade] Starting cascade for order:', orderId);
+            
+            // Get queue length BEFORE processing
+            const queueBefore = state.queue ? state.queue.length : 0;
+            console.log('[processOrderWithCascade] Queue length before:', queueBefore);
+            
+            // Process the order (deduct inventory, queue cascade updates)
             await processOrder(orderId, false);
             
-            // Get the order to check if processing succeeded
-            const order = state.orders.all.find(o => o.id === orderId);
+            // Small delay to ensure queue is populated
+            await new Promise(resolve => setTimeout(resolve, 200));
             
-            // Only proceed with cascade if order was successfully processed
-            if (order && order.processed && order.status !== 'failed' && order.status !== 'duplicate') {
-                // Small delay to ensure queue is populated
-                await new Promise(resolve => setTimeout(resolve, 100));
+            // Get queue length AFTER processing
+            const queueAfter = state.queue ? state.queue.length : 0;
+            console.log('[processOrderWithCascade] Queue length after:', queueAfter);
+            
+            // Calculate how many new items were added to queue
+            const newQueueItems = queueAfter - queueBefore;
+            
+            if (newQueueItems > 0) {
+                console.log(`[processOrderWithCascade] Found ${newQueueItems} new queue items, processing cascade...`);
+                toast(`🚀 Processing order and pushing ${newQueueItems} update(s) to channels...`, 'info');
                 
-                // Get current queue length
-                const queueBefore = state.queue ? state.queue.length : 0;
+                // Immediately process the queue (push to channels)
+                await processQueue();
                 
-                if (queueBefore > 0) {
-                    toast(`🚀 Processing order and pushing ${queueBefore} update(s) to channels...`, 'info');
-                    
-                    // Immediately process the queue (push to channels)
-                    await processQueue();
-                    
-                    toast(`✅ Order processed and updates sent to channels!`, 'success');
+                toast(`✅ Order processed and ${newQueueItems} update(s) sent to channels!`, 'success');
+                console.log('[processOrderWithCascade] Cascade complete');
+            } else {
+                // Check if order exists and was processed
+                const order = state.orders.all.find(o => o.id === orderId);
+                
+                if (order && (order.status === 'duplicate' || order.status === 'failed')) {
+                    console.log('[processOrderWithCascade] Order marked as duplicate or failed, no cascade needed');
                 } else {
+                    console.log('[processOrderWithCascade] No new queue items added, cascade may not be needed');
                     toast(`✅ Order processed (no cascade updates needed)`, 'success');
                 }
-            } else {
-                // Order processing failed or was duplicate
-                console.log('[processOrderWithCascade] Order processing failed or duplicate, skipping cascade');
             }
         } catch (error) {
             console.error('[processOrderWithCascade] Error:', error);
