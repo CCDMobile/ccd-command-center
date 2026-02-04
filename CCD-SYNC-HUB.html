@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.8 - Wayfair Cascade Fix (No Date Params)</title>
+    <title>CCD Sync Hub v3.3.5.9 - SKU Matching & Wayfair Cascade Fix</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.8 • Build: 2026-02-04 • Wayfair Cascade Fix</span>
+                <span>CCD Sync Hub v3.3.5.9 • Build: 2026-02-04 • SKU Matching & Wayfair Cascade</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -1500,6 +1500,12 @@
     };
     
     // ============================================================
+    // SKU MAPPINGS FILE - Wayfair SKU to Master SKU translations (v3.3.5.9)
+    // ============================================================
+    let skuMappingsFileHandle = null;
+    window.skuMappingsData = null; // Make globally accessible
+    
+    // ============================================================
     // COLLISION DETECTION - Tracking variables
     // ============================================================
     let loadedFileTimestamp = null;     // File's lastModified when loaded
@@ -2591,6 +2597,13 @@
         lowStockItems: [],
         lowStockNotificationSent: false, // Prevent spam - only notify once per session
         currentOrdersTab: 'all',
+        // SKU Mappings - v3.3.5.9
+        skuMappings: {
+            mappings: {}, // wayfairSku -> masterSku mappings
+            fileName: null,
+            lastLoaded: null,
+            totalMappings: 0
+        },
         masterJson: {
             fileName: null,
             lastLoaded: null,
@@ -3088,7 +3101,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.8 - Wayfair Cascade Fix (Client-Side Date Filtering)...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.9 - SKU Matching & Wayfair Cascade Fix...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3107,6 +3120,9 @@
             
             // Try to auto-reconnect to Master JSON (needed for shared queue)
             await tryReconnectMasterJson();
+            
+            // Try to auto-reconnect to SKU Mappings file (v3.3.5.9)
+            await tryReconnectSkuMappings();
             
             // Load queue (GAP 1 - now async to support shared queue)
             await loadQueue();
@@ -3157,8 +3173,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.8 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.8 initialized - Wayfair Cascade Fix', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.9 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.9 initialized - SKU Matching & Wayfair Cascade', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -3436,6 +3452,288 @@
                 }
             );
         }
+    }
+    
+    // =============================================
+    // SKU MAPPINGS SYSTEM - v3.3.5.9
+    // =============================================
+    
+    /**
+     * Try to reconnect to SKU-MAPPINGS.json file (similar to Master JSON)
+     */
+    async function tryReconnectSkuMappings() {
+        try {
+            const handle = await getFileHandle('skuMappingsFile');
+            if (handle) {
+                console.log('[SKU Mappings] Found saved file handle, checking permission...');
+                const permission = await handle.queryPermission({ mode: 'readwrite' });
+                console.log('[SKU Mappings] Permission status:', permission);
+                
+                if (permission === 'granted') {
+                    skuMappingsFileHandle = handle;
+                    await loadSkuMappings();
+                    console.log('[SKU Mappings] ✅ Auto-reconnected successfully');
+                    return true;
+                }
+            }
+        } catch (error) {
+            console.log('[SKU Mappings] No saved file or permission denied:', error.message);
+        }
+        return false;
+    }
+    
+    /**
+     * Connect to SKU-MAPPINGS.json file
+     */
+    async function connectSkuMappingsFile() {
+        try {
+            // Try to reconnect first
+            if (await tryReconnectSkuMappings()) {
+                toast('Reconnected to SKU mappings file', 'success');
+                return;
+            }
+            
+            // Open file picker
+            [skuMappingsFileHandle] = await window.showOpenFilePicker({
+                types: [{
+                    description: 'SKU Mappings',
+                    accept: { 'application/json': ['.json'] }
+                }],
+                multiple: false
+            });
+            
+            // Save handle
+            await saveFileHandle('skuMappingsFile', skuMappingsFileHandle);
+            
+            // Load the file
+            await loadSkuMappings();
+            
+            toast('Connected to SKU mappings file', 'success');
+            addLog('SKU mappings file connected', 'success');
+            
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.error('[SKU Mappings] Connection error:', error);
+                toast(`Error connecting: ${error.message}`, 'error');
+            }
+        }
+    }
+    
+    /**
+     * Load SKU mappings from file
+     */
+    async function loadSkuMappings() {
+        if (!skuMappingsFileHandle) {
+            console.log('[SKU Mappings] No file handle, creating empty mappings');
+            window.skuMappingsData = {
+                version: "1.0",
+                mappings: {},
+                _metadata: {
+                    lastModified: new Date().toISOString(),
+                    lastModifiedBy: localStorage.getItem('ccd_hostname') || 'Unknown'
+                }
+            };
+            state.skuMappings.mappings = {};
+            state.skuMappings.totalMappings = 0;
+            return;
+        }
+        
+        try {
+            const file = await skuMappingsFileHandle.getFile();
+            const contents = await file.text();
+            
+            window.skuMappingsData = JSON.parse(contents);
+            
+            // Ensure structure
+            if (!window.skuMappingsData.mappings) {
+                window.skuMappingsData.mappings = {};
+            }
+            
+            // Update state
+            state.skuMappings.mappings = window.skuMappingsData.mappings;
+            state.skuMappings.fileName = file.name;
+            state.skuMappings.lastLoaded = new Date().toISOString();
+            state.skuMappings.totalMappings = Object.keys(window.skuMappingsData.mappings).length;
+            
+            console.log(`[SKU Mappings] Loaded ${state.skuMappings.totalMappings} mappings from ${file.name}`);
+            
+            if (state.skuMappings.totalMappings > 0) {
+                addLog(`SKU mappings loaded: ${state.skuMappings.totalMappings} mappings`, 'success');
+            }
+            
+        } catch (error) {
+            console.error('[SKU Mappings] Load error:', error);
+            // Create empty mappings on error
+            window.skuMappingsData = {
+                version: "1.0",
+                mappings: {},
+                _metadata: {
+                    lastModified: new Date().toISOString(),
+                    lastModifiedBy: localStorage.getItem('ccd_hostname') || 'Unknown'
+                }
+            };
+            state.skuMappings.mappings = {};
+            state.skuMappings.totalMappings = 0;
+        }
+    }
+    
+    /**
+     * Save SKU mappings to file
+     */
+    async function saveSkuMappings() {
+        if (!skuMappingsFileHandle) {
+            console.log('[SKU Mappings] No file handle, cannot save');
+            return false;
+        }
+        
+        try {
+            // Update metadata
+            window.skuMappingsData._metadata = {
+                lastModified: new Date().toISOString(),
+                lastModifiedBy: localStorage.getItem('ccd_hostname') || 'Unknown',
+                version: (window.skuMappingsData._metadata?.version || 0) + 1
+            };
+            
+            const writable = await skuMappingsFileHandle.createWritable();
+            await writable.write(JSON.stringify(window.skuMappingsData, null, 2));
+            await writable.close();
+            
+            console.log('[SKU Mappings] File saved successfully');
+            return true;
+            
+        } catch (error) {
+            console.error('[SKU Mappings] Save error:', error);
+            toast('Error saving SKU mappings', 'error');
+            return false;
+        }
+    }
+    
+    /**
+     * Add a new SKU mapping
+     */
+    async function addSkuMapping(wayfairSku, masterSku, source = 'manual') {
+        if (!window.skuMappingsData) {
+            window.skuMappingsData = { version: "1.0", mappings: {}, _metadata: {} };
+        }
+        
+        // Add or update mapping
+        window.skuMappingsData.mappings[wayfairSku] = {
+            masterSku: masterSku,
+            confidence: 100,
+            source: source, // 'manual' or 'auto-learned'
+            addedBy: localStorage.getItem('ccd_hostname') || 'Unknown',
+            addedDate: new Date().toISOString(),
+            usageCount: window.skuMappingsData.mappings[wayfairSku]?.usageCount || 0,
+            lastUsed: new Date().toISOString()
+        };
+        
+        // Update state
+        state.skuMappings.mappings = window.skuMappingsData.mappings;
+        state.skuMappings.totalMappings = Object.keys(window.skuMappingsData.mappings).length;
+        
+        // Save to file
+        await saveSkuMappings();
+        
+        console.log(`[SKU Mappings] Added mapping: ${wayfairSku} → ${masterSku}`);
+        addLog(`SKU mapping added: ${wayfairSku} → ${masterSku}`, 'info');
+    }
+    
+    /**
+     * Update usage count for a mapping
+     */
+    function incrementMappingUsage(wayfairSku) {
+        if (window.skuMappingsData?.mappings[wayfairSku]) {
+            window.skuMappingsData.mappings[wayfairSku].usageCount++;
+            window.skuMappingsData.mappings[wayfairSku].lastUsed = new Date().toISOString();
+        }
+    }
+    
+    /**
+     * Multi-stage SKU matching algorithm
+     * Returns: { product, confidence, method, matchedSku } or null
+     */
+    function findProductByWayfairSku(wayfairSku, masterData) {
+        if (!wayfairSku || !masterData) return null;
+        
+        // Get products array
+        let products = Array.isArray(masterData) ? masterData : 
+                      (masterData.products || masterData.inventory || masterData.items || []);
+        
+        // Stage 0: Check saved mappings (100% confidence)
+        if (state.skuMappings.mappings[wayfairSku]) {
+            const mappedSku = state.skuMappings.mappings[wayfairSku].masterSku;
+            const product = products.find(p => (p.sku || p.SKU) === mappedSku);
+            if (product) {
+                incrementMappingUsage(wayfairSku);
+                console.log(`[SKU Match] Stage 0 - Saved mapping: ${wayfairSku} → ${mappedSku} (100%)`);
+                return { product, confidence: 100, method: 'saved_mapping', matchedSku: mappedSku };
+            }
+        }
+        
+        // Stage 1: Exact match (100% confidence)
+        let product = products.find(p => (p.sku || p.SKU) === wayfairSku);
+        if (product) {
+            console.log(`[SKU Match] Stage 1 - Exact match: ${wayfairSku} (100%)`);
+            return { product, confidence: 100, method: 'exact', matchedSku: wayfairSku };
+        }
+        
+        // Stage 2: Strip "CCD" prefix + vendor code (95% confidence)
+        // CCDPBK109953 → PBK109953
+        if (wayfairSku.startsWith('CCD')) {
+            const stripped = wayfairSku.substring(3);
+            product = products.find(p => (p.sku || p.SKU) === stripped);
+            if (product) {
+                console.log(`[SKU Match] Stage 2 - Strip CCD: ${wayfairSku} → ${stripped} (95%)`);
+                return { product, confidence: 95, method: 'strip_ccd', matchedSku: stripped };
+            }
+        }
+        
+        // Stage 3: Strip ALL leading alpha (85% confidence)
+        // CCDPBK109953 → 109953
+        // CCDCWIG60492 → 60492
+        const numericMatch = wayfairSku.match(/\d.*/);
+        if (numericMatch) {
+            const numericSku = numericMatch[0];
+            product = products.find(p => (p.sku || p.SKU) === numericSku);
+            if (product) {
+                console.log(`[SKU Match] Stage 3 - Strip all alpha: ${wayfairSku} → ${numericSku} (85%)`);
+                return { product, confidence: 85, method: 'strip_alpha', matchedSku: numericSku };
+            }
+        }
+        
+        // Stage 4: Add dash variations (80% confidence)
+        // CCDPD20127 → 20-127, 201-27
+        if (numericMatch) {
+            const numericSku = numericMatch[0];
+            // Try adding dash at different positions
+            for (let i = 2; i < numericSku.length - 1; i++) {
+                const withDash = numericSku.slice(0, i) + '-' + numericSku.slice(i);
+                product = products.find(p => (p.sku || p.SKU) === withDash);
+                if (product) {
+                    console.log(`[SKU Match] Stage 4 - Add dash: ${wayfairSku} → ${withDash} (80%)`);
+                    return { product, confidence: 80, method: 'add_dash', matchedSku: withDash };
+                }
+            }
+        }
+        
+        // Stage 5: Numeric-only partial match (70% confidence)
+        // CCDCWIG60492 → Find SKUs ending with "60492" like "G60492"
+        if (numericMatch) {
+            const numericPart = numericMatch[0];
+            product = products.find(p => {
+                const sku = p.sku || p.SKU;
+                return sku && sku.endsWith(numericPart) && sku !== numericPart;
+            });
+            if (product) {
+                const matchedSku = product.sku || product.SKU;
+                console.log(`[SKU Match] Stage 5 - Partial numeric: ${wayfairSku} → ${matchedSku} (70%)`);
+                return { product, confidence: 70, method: 'partial_numeric', matchedSku };
+            }
+        }
+        
+        // No match found
+        console.log(`[SKU Match] No match found for: ${wayfairSku}`);
+        return null;
     }
     
     async function pullEtsyOrders(startDate, endDate) {
@@ -7114,8 +7412,115 @@
                 const sku = item.sku;
                 if (sku === 'UNKNOWN') continue;
                 
-                // Find product in Master JSON
-                const product = products.find(p => (p.sku || p.SKU) === sku);
+                // ===== SKU MATCHING - v3.3.5.9 =====
+                let product;
+                let skuMatchInfo = null;
+                
+                if (order.channel === 'wayfair') {
+                    // Use multi-stage SKU matching for Wayfair
+                    const matchResult = findProductByWayfairSku(sku, window.masterJsonData);
+                    
+                    if (matchResult) {
+                        product = matchResult.product;
+                        skuMatchInfo = {
+                            wayfairSku: sku,
+                            masterSku: matchResult.matchedSku,
+                            confidence: matchResult.confidence,
+                            method: matchResult.method
+                        };
+                        
+                        console.log(`[SKU Match] ${sku} → ${matchResult.matchedSku} (${matchResult.confidence}% via ${matchResult.method})`);
+                        
+                        // If confidence < 85%, flag for manual review
+                        if (matchResult.confidence < 85) {
+                            addLog(`⚠️ SKU mismatch (${matchResult.confidence}%): ${sku} → ${matchResult.matchedSku}`, 'warning');
+                            
+                            // Mark order as needing manual review
+                            order.status = 'sku_mismatch';
+                            order.skuMismatchInfo = {
+                                items: [{
+                                    wayfairSku: sku,
+                                    suggestedSku: matchResult.matchedSku,
+                                    confidence: matchResult.confidence,
+                                    method: matchResult.method,
+                                    productName: matchResult.product.productName || matchResult.product.name || 'Unknown'
+                                }]
+                            };
+                            
+                            // Send email notification
+                            sendEventNotification(
+                                'sku.mismatch',
+                                `Wayfair order ${orderId} has SKU mismatch - Manual review needed`,
+                                {
+                                    orderId: orderId,
+                                    wayfairSku: sku,
+                                    suggestedSku: matchResult.matchedSku,
+                                    confidence: matchResult.confidence,
+                                    method: matchResult.method
+                                }
+                            );
+                            
+                            toast(
+                                `⚠️ SKU Mismatch - Order ${orderId} held for review\n\n` +
+                                `Wayfair SKU: ${sku}\n` +
+                                `Suggested: ${matchResult.matchedSku} (${matchResult.confidence}% confidence)\n\n` +
+                                `Please review in the Orders tab and correct the SKU if needed.`,
+                                'warning',
+                                10000
+                            );
+                            
+                            updateOrdersDisplay();
+                            return; // HOLD ORDER COMPLETELY - do not process
+                        }
+                        
+                        // If confidence >= 85%, auto-learn the mapping
+                        if (matchResult.confidence >= 85 && matchResult.confidence < 100) {
+                            await addSkuMapping(sku, matchResult.matchedSku, 'auto-learned');
+                        }
+                    } else {
+                        // No match found at all
+                        addLog(`❌ SKU ${sku} not found in Master JSON (no match)`, 'error');
+                        
+                        // Mark order as SKU mismatch with no suggestion
+                        order.status = 'sku_mismatch';
+                        order.skuMismatchInfo = {
+                            items: [{
+                                wayfairSku: sku,
+                                suggestedSku: null,
+                                confidence: 0,
+                                method: 'no_match',
+                                productName: item.title || 'Unknown'
+                            }]
+                        };
+                        
+                        // Send email notification
+                        sendEventNotification(
+                            'sku.not_found',
+                            `Wayfair order ${orderId} has unknown SKU - Manual entry required`,
+                            {
+                                orderId: orderId,
+                                wayfairSku: sku,
+                                productName: item.title
+                            }
+                        );
+                        
+                        toast(
+                            `❌ SKU Not Found - Order ${orderId} held for review\n\n` +
+                            `Wayfair SKU: ${sku}\n` +
+                            `Product: ${item.title}\n\n` +
+                            `No matching product found in Master JSON.\n` +
+                            `Please manually enter the correct SKU.`,
+                            'error',
+                            12000
+                        );
+                        
+                        updateOrdersDisplay();
+                        return; // HOLD ORDER COMPLETELY - do not process
+                    }
+                } else {
+                    // For Etsy/Wix, use exact match (existing behavior)
+                    product = products.find(p => (p.sku || p.SKU) === sku);
+                }
                 
                 if (!product) {
                     addLog(`⚠️ SKU ${sku} not found in Master JSON`, 'warning');
