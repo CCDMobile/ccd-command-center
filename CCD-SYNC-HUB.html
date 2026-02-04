@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.9 - SKU Matching & Wayfair Cascade Fix</title>
+    <title>CCD Sync Hub v3.3.5.10 - SKU Matching UI & Visual Indicators</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -283,7 +283,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.9 • Build: 2026-02-04 • SKU Matching & Wayfair Cascade</span>
+                <span>CCD Sync Hub v3.3.5.10 • Build: 2026-02-04 • SKU Matching UI</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -3101,7 +3101,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.9 - SKU Matching & Wayfair Cascade Fix...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.10 - SKU Matching UI & Visual Indicators...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3173,8 +3173,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.9 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.9 initialized - SKU Matching & Wayfair Cascade', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.10 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.10 initialized - SKU Matching UI', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -6564,20 +6564,88 @@
                     continue;
                 }
                 
+                // ===== SKU PRE-MATCHING v3.3.5.10 =====
+                // Match SKUs when fetching orders (not just when processing)
+                // 100% BACKWARD COMPATIBLE: Only runs if Master JSON is loaded
+                const matchedItems = (order.products || []).map(p => {
+                    const wayfairSku = p.partNumber || 'UNKNOWN';
+                    let matchInfo = null;
+                    
+                    // Only attempt matching if Master JSON is loaded
+                    if (wayfairSku !== 'UNKNOWN' && window.masterJsonData) {
+                        const matchResult = findProductByWayfairSku(wayfairSku, window.masterJsonData);
+                        
+                        if (matchResult) {
+                            matchInfo = {
+                                matched: true,
+                                masterSku: matchResult.matchedSku,
+                                confidence: matchResult.confidence,
+                                method: matchResult.method,
+                                productName: matchResult.product.productName || matchResult.product.name || 'Unknown'
+                            };
+                        } else {
+                            matchInfo = {
+                                matched: false,
+                                masterSku: null,
+                                confidence: 0,
+                                method: 'no_match',
+                                productName: null
+                            };
+                        }
+                    }
+                    
+                    return {
+                        sku: wayfairSku,
+                        title: p.name || 'Unknown Item',
+                        qty: parseInt(p.quantity) || 1,
+                        price: Number(p.price) || 0,
+                        skuMatch: matchInfo  // Add match info to item (null if no Master JSON)
+                    };
+                });
+                
+                // Determine order-level match status
+                let lowestConfidence = 100;
+                let hasUnmatched = false;
+                
+                // Only calculate if we have match info (Master JSON loaded)
+                if (matchedItems.some(i => i.skuMatch !== null)) {
+                    const confidences = matchedItems
+                        .filter(i => i.skuMatch)
+                        .map(i => i.skuMatch.confidence);
+                    if (confidences.length > 0) {
+                        lowestConfidence = Math.min(...confidences);
+                    }
+                    hasUnmatched = matchedItems.some(i => i.skuMatch && !i.skuMatch.matched);
+                }
+                
+                // Determine status based on match results
+                let orderStatus = 'pending';  // Default for backward compatibility
+                if (matchedItems.some(i => i.skuMatch !== null)) {
+                    // Only change status if we have match info
+                    if (hasUnmatched) {
+                        orderStatus = 'sku_mismatch';  // Red: No match found
+                    } else if (lowestConfidence < 85) {
+                        orderStatus = 'sku_review';  // Orange: Low confidence match
+                    }
+                    // else: stays 'pending' (green: high confidence or exact match)
+                }
+                
                 formattedOrder = {
                     id: orderId,
                     channel: 'wayfair',
                     date: order.poDate || new Date().toISOString(),
                     buyer: order.customerName || 'Unknown',
                     total: Number((order.products || []).reduce((sum, p) => sum + (Number(p.price) * parseInt(p.quantity || 0)), 0)) || 0,
-                    status: 'pending',
+                    status: orderStatus,
                     processed: false,
-                    items: (order.products || []).map(p => ({
-                        sku: p.partNumber || 'UNKNOWN',
-                        title: p.name || 'Unknown Item',
-                        qty: parseInt(p.quantity) || 1,
-                        price: Number(p.price) || 0
-                    }))
+                    items: matchedItems,
+                    skuMatchSummary: {  // Add summary for UI display (null-safe for backward compatibility)
+                        lowestConfidence: lowestConfidence,
+                        hasUnmatched: hasUnmatched,
+                        allMatched: !hasUnmatched && lowestConfidence >= 85,
+                        needsReview: lowestConfidence < 85 || hasUnmatched,
+                        hasMatchInfo: matchedItems.some(i => i.skuMatch !== null)
+                    }
                 };
             }
             
@@ -6668,6 +6736,18 @@
                         <span class="order-id">${order.id}</span>
                         <span class="order-channel ${order.channel}">${order.channel.toUpperCase()}</span>
                         ${order.processed ? '<span style="color: var(--success); margin-left: 8px;">✅ Processed</span>' : ''}
+                        ${
+                            // v3.3.5.10: Show SKU match indicator for Wayfair orders
+                            order.channel === 'wayfair' && order.skuMatchSummary && order.skuMatchSummary.hasMatchInfo ? 
+                                order.skuMatchSummary.hasUnmatched ?
+                                    '<span style="background: #dc3545; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">❌ SKU Not Found</span>' :
+                                order.skuMatchSummary.lowestConfidence < 85 ?
+                                    `<span style="background: #fd7e14; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">⚠️ Review (${order.skuMatchSummary.lowestConfidence}%)</span>` :
+                                order.skuMatchSummary.lowestConfidence < 100 ?
+                                    `<span style="background: #28a745; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">✅ Matched (${order.skuMatchSummary.lowestConfidence}%)</span>` :
+                                    '<span style="background: #28a745; color: white; padding: 3px 8px; border-radius: 4px; font-size: 11px; margin-left: 8px;">✅ Exact Match</span>'
+                            : ''
+                        }
                     </div>
                     <span style="font-weight: 600; color: var(--success);">$${(parseFloat(order.total) || 0).toFixed(2)}</span>
                 </div>
@@ -6682,6 +6762,14 @@
                             <div>
                                 <span>${item.title.substring(0, 50)}${item.title.length > 50 ? '...' : ''}</span>
                                 <span class="order-line-sku">${item.sku}</span>
+                                ${
+                                    // v3.3.5.10: Show SKU match details for Wayfair items
+                                    order.channel === 'wayfair' && item.skuMatch ? 
+                                        item.skuMatch.matched ?
+                                            `<span style="color: #28a745; font-size: 11px; margin-left: 8px;">→ ${item.skuMatch.masterSku} (${item.skuMatch.confidence}%)</span>` :
+                                            '<span style="color: #dc3545; font-size: 11px; margin-left: 8px;">→ ❌ No match</span>'
+                                    : ''
+                                }
                             </div>
                             <div>
                                 <span class="order-line-qty">×${item.qty}</span>
@@ -6690,6 +6778,21 @@
                         </div>
                     `).join('')}
                 </div>
+                ${
+                    // v3.3.5.10: Show warning banner for mismatched orders
+                    !order.processed && order.channel === 'wayfair' && order.skuMatchSummary && order.skuMatchSummary.needsReview ?
+                        `<div style="background: ${order.skuMatchSummary.hasUnmatched ? '#fff3cd' : '#ffe5d1'}; border: 1px solid ${order.skuMatchSummary.hasUnmatched ? '#ffc107' : '#fd7e14'}; border-radius: 6px; padding: 12px; margin: 12px 0;">
+                            <div style="font-weight: 600; color: #856404; margin-bottom: 6px;">
+                                ${order.skuMatchSummary.hasUnmatched ? '❌ Manual SKU Entry Required' : '⚠️ Low Confidence Match - Review Needed'}
+                            </div>
+                            <div style="font-size: 12px; color: #856404;">
+                                ${order.skuMatchSummary.hasUnmatched ? 
+                                    'One or more SKUs could not be matched. Please verify SKU mappings before processing.' :
+                                    `Match confidence is ${order.skuMatchSummary.lowestConfidence}%. Please review suggested mappings before processing.`
+                                }
+                            </div>
+                        </div>` : ''
+                }
                 ${!order.processed ? `
                     <div class="order-actions">
                         <button class="btn btn-sm btn-success" onclick="processOrder('${order.id}')">✅ Process & Deduct Only</button>
@@ -7412,110 +7515,138 @@
                 const sku = item.sku;
                 if (sku === 'UNKNOWN') continue;
                 
-                // ===== SKU MATCHING - v3.3.5.9 =====
+                // ===== SKU MATCHING - v3.3.5.9/v3.3.5.10 =====
                 let product;
                 let skuMatchInfo = null;
                 
                 if (order.channel === 'wayfair') {
-                    // Use multi-stage SKU matching for Wayfair
-                    const matchResult = findProductByWayfairSku(sku, window.masterJsonData);
-                    
-                    if (matchResult) {
-                        product = matchResult.product;
-                        skuMatchInfo = {
-                            wayfairSku: sku,
-                            masterSku: matchResult.matchedSku,
-                            confidence: matchResult.confidence,
-                            method: matchResult.method
-                        };
+                    // v3.3.5.10: Check if we have pre-matched data (from order fetch)
+                    if (item.skuMatch && item.skuMatch.matched) {
+                        // Use pre-matched data - find product by master SKU
+                        const masterSku = item.skuMatch.masterSku;
+                        product = products.find(p => (p.sku || p.SKU) === masterSku);
                         
-                        console.log(`[SKU Match] ${sku} → ${matchResult.matchedSku} (${matchResult.confidence}% via ${matchResult.method})`);
-                        
-                        // If confidence < 85%, flag for manual review
-                        if (matchResult.confidence < 85) {
-                            addLog(`⚠️ SKU mismatch (${matchResult.confidence}%): ${sku} → ${matchResult.matchedSku}`, 'warning');
+                        if (product) {
+                            skuMatchInfo = {
+                                wayfairSku: sku,
+                                masterSku: masterSku,
+                                confidence: item.skuMatch.confidence,
+                                method: item.skuMatch.method + '_cached'
+                            };
+                            console.log(`[SKU Match] Using cached match: ${sku} → ${masterSku} (${item.skuMatch.confidence}%)`);
                             
-                            // Mark order as needing manual review
+                            // Increment usage count for this mapping
+                            incrementMappingUsage(sku);
+                            
+                            // Auto-learn if >= 85% confidence and not 100%
+                            if (item.skuMatch.confidence >= 85 && item.skuMatch.confidence < 100) {
+                                await addSkuMapping(sku, masterSku, 'auto-learned');
+                            }
+                        }
+                    }
+                    
+                    // If no pre-match or pre-match failed, run matching now
+                    if (!product) {
+                        // Use multi-stage SKU matching for Wayfair
+                        const matchResult = findProductByWayfairSku(sku, window.masterJsonData);
+                        
+                        if (matchResult) {
+                            product = matchResult.product;
+                            skuMatchInfo = {
+                                wayfairSku: sku,
+                                masterSku: matchResult.matchedSku,
+                                confidence: matchResult.confidence,
+                                method: matchResult.method
+                            };
+                            
+                            console.log(`[SKU Match] ${sku} → ${matchResult.matchedSku} (${matchResult.confidence}% via ${matchResult.method})`);
+                            
+                            // If confidence < 85%, flag for manual review
+                            if (matchResult.confidence < 85) {
+                                addLog(`⚠️ SKU mismatch (${matchResult.confidence}%): ${sku} → ${matchResult.matchedSku}`, 'warning');
+                                
+                                // Mark order as needing manual review
+                                order.status = 'sku_mismatch';
+                                order.skuMismatchInfo = {
+                                    items: [{
+                                        wayfairSku: sku,
+                                        suggestedSku: matchResult.matchedSku,
+                                        confidence: matchResult.confidence,
+                                        method: matchResult.method,
+                                        productName: matchResult.product.productName || matchResult.product.name || 'Unknown'
+                                    }]
+                                };
+                                
+                                // Send email notification
+                                sendEventNotification(
+                                    'sku.mismatch',
+                                    `Wayfair order ${orderId} has SKU mismatch - Manual review needed`,
+                                    {
+                                        orderId: orderId,
+                                        wayfairSku: sku,
+                                        suggestedSku: matchResult.matchedSku,
+                                        confidence: matchResult.confidence,
+                                        method: matchResult.method
+                                    }
+                                );
+                                
+                                toast(
+                                    `⚠️ SKU Mismatch - Order ${orderId} held for review\n\n` +
+                                    `Wayfair SKU: ${sku}\n` +
+                                    `Suggested: ${matchResult.matchedSku} (${matchResult.confidence}% confidence)\n\n` +
+                                    `Please review in the Orders tab and correct the SKU if needed.`,
+                                    'warning',
+                                    10000
+                                );
+                                
+                                updateOrdersDisplay();
+                                return; // HOLD ORDER COMPLETELY - do not process
+                            }
+                            
+                            // If confidence >= 85%, auto-learn the mapping
+                            if (matchResult.confidence >= 85 && matchResult.confidence < 100) {
+                                await addSkuMapping(sku, matchResult.matchedSku, 'auto-learned');
+                            }
+                        } else {
+                            // No match found at all
+                            addLog(`❌ SKU ${sku} not found in Master JSON (no match)`, 'error');
+                            
+                            // Mark order as SKU mismatch with no suggestion
                             order.status = 'sku_mismatch';
                             order.skuMismatchInfo = {
                                 items: [{
                                     wayfairSku: sku,
-                                    suggestedSku: matchResult.matchedSku,
-                                    confidence: matchResult.confidence,
-                                    method: matchResult.method,
-                                    productName: matchResult.product.productName || matchResult.product.name || 'Unknown'
+                                    suggestedSku: null,
+                                    confidence: 0,
+                                    method: 'no_match',
+                                    productName: item.title || 'Unknown'
                                 }]
                             };
                             
                             // Send email notification
                             sendEventNotification(
-                                'sku.mismatch',
-                                `Wayfair order ${orderId} has SKU mismatch - Manual review needed`,
+                                'sku.not_found',
+                                `Wayfair order ${orderId} has unknown SKU - Manual entry required`,
                                 {
                                     orderId: orderId,
                                     wayfairSku: sku,
-                                    suggestedSku: matchResult.matchedSku,
-                                    confidence: matchResult.confidence,
-                                    method: matchResult.method
+                                    productName: item.title
                                 }
                             );
                             
                             toast(
-                                `⚠️ SKU Mismatch - Order ${orderId} held for review\n\n` +
+                                `❌ SKU Not Found - Order ${orderId} held for review\n\n` +
                                 `Wayfair SKU: ${sku}\n` +
-                                `Suggested: ${matchResult.matchedSku} (${matchResult.confidence}% confidence)\n\n` +
-                                `Please review in the Orders tab and correct the SKU if needed.`,
-                                'warning',
-                                10000
+                                `Product: ${item.title}\n\n` +
+                                `No matching product found in Master JSON.\n` +
+                                `Please manually enter the correct SKU.`,
+                                'error',
+                                12000
                             );
                             
                             updateOrdersDisplay();
                             return; // HOLD ORDER COMPLETELY - do not process
                         }
-                        
-                        // If confidence >= 85%, auto-learn the mapping
-                        if (matchResult.confidence >= 85 && matchResult.confidence < 100) {
-                            await addSkuMapping(sku, matchResult.matchedSku, 'auto-learned');
-                        }
-                    } else {
-                        // No match found at all
-                        addLog(`❌ SKU ${sku} not found in Master JSON (no match)`, 'error');
-                        
-                        // Mark order as SKU mismatch with no suggestion
-                        order.status = 'sku_mismatch';
-                        order.skuMismatchInfo = {
-                            items: [{
-                                wayfairSku: sku,
-                                suggestedSku: null,
-                                confidence: 0,
-                                method: 'no_match',
-                                productName: item.title || 'Unknown'
-                            }]
-                        };
-                        
-                        // Send email notification
-                        sendEventNotification(
-                            'sku.not_found',
-                            `Wayfair order ${orderId} has unknown SKU - Manual entry required`,
-                            {
-                                orderId: orderId,
-                                wayfairSku: sku,
-                                productName: item.title
-                            }
-                        );
-                        
-                        toast(
-                            `❌ SKU Not Found - Order ${orderId} held for review\n\n` +
-                            `Wayfair SKU: ${sku}\n` +
-                            `Product: ${item.title}\n\n` +
-                            `No matching product found in Master JSON.\n` +
-                            `Please manually enter the correct SKU.`,
-                            'error',
-                            12000
-                        );
-                        
-                        updateOrdersDisplay();
-                        return; // HOLD ORDER COMPLETELY - do not process
                     }
                 } else {
                     // For Etsy/Wix, use exact match (existing behavior)
