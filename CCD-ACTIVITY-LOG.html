@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Activity Log v1.2 - Enhanced Filtering</title>
+    <title>CCD Activity Log v1.3.1 - Enhanced Filters & Diagnostics</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -67,11 +67,13 @@
         .filter-group { display: flex; flex-direction: column; gap: 6px; }
         .filter-label { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
         .filter-checkboxes { display: flex; flex-wrap: wrap; gap: 8px; }
-        .filter-checkbox { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
-        .filter-checkbox:hover { background: var(--bg-hover); }
-        .filter-checkbox.active { border-color: #8b5cf6; background: rgba(139,92,246,0.15); }
+        .filter-checkbox { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; opacity: 0.4; }
+        .filter-checkbox:hover { background: var(--bg-hover); opacity: 0.6; }
+        .filter-checkbox.active { border-color: #8b5cf6; background: rgba(139,92,246,0.15); opacity: 1; font-weight: 600; }
+        .filter-checkbox.active:hover { transform: translateY(-1px); box-shadow: 0 2px 8px rgba(139,92,246,0.3); }
         .filter-checkbox input { display: none; }
-        .filter-checkbox .dot { width: 8px; height: 8px; border-radius: 50%; }
+        .filter-checkbox .dot { width: 8px; height: 8px; border-radius: 50%; transition: all 0.2s; }
+        .filter-checkbox:not(.active) .dot { opacity: 0.5; }
         .filter-checkbox .dot.order { background: var(--info); }
         .filter-checkbox .dot.sync { background: var(--success); }
         .filter-checkbox .dot.inventory { background: var(--warning); }
@@ -181,7 +183,10 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">📋</div>
-                <span>CCD Activity Log</span>
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-size: 1.1rem; font-weight: 700;">CCD Activity Log</span>
+                    <span style="font-size: 0.7rem; color: var(--text-dim); font-weight: 400;">v1.3.1 • Build: 2026-02-05 • Enhanced Filters</span>
+                </div>
             </div>
         </div>
         <div class="header-right">
@@ -243,7 +248,7 @@
         <div class="filter-bar">
             <div class="filter-row">
                 <div class="filter-group">
-                    <span class="filter-label">Categories</span>
+                    <span class="filter-label">Categories <span style="font-weight: 400; opacity: 0.6; font-size: 0.7rem;">(Click to filter, Ctrl+Click to multi-select)</span></span>
                     <div class="filter-checkboxes" id="categoryFilters">
                         <label class="filter-checkbox active" data-category="order">
                             <input type="checkbox" checked>
@@ -272,7 +277,7 @@
                     </div>
                 </div>
                 <div class="filter-group">
-                    <span class="filter-label">Channels</span>
+                    <span class="filter-label">Channels <span style="font-weight: 400; opacity: 0.6; font-size: 0.7rem;">(Click to filter, Ctrl+Click to multi-select)</span></span>
                     <div class="filter-checkboxes" id="channelFilters">
                         <label class="filter-checkbox active" data-channel="wayfair">
                             <input type="checkbox" checked>
@@ -492,9 +497,13 @@
     // INITIALIZATION
     // =============================================
     async function init() {
+        console.log('🚀 [Activity Log] Initializing CCD Activity Log v1.3.1...');
+        console.log('📅 [Activity Log] Build: 2026-02-05');
+        
         // Initialize IndexedDB first
         try {
             await initDB();
+            console.log('✅ [Activity Log] IndexedDB initialized');
         } catch (err) {
             console.warn('⚠️ [Activity Log] IndexedDB unavailable:', err);
         }
@@ -503,6 +512,8 @@
         setupAutoRefresh();
         renderLog();
         updateStats();
+        
+        console.log('✅ [Activity Log] Initialization complete - Ready to display logs');
         
         // Try to restore file handle
         await tryRestoreFileHandle();
@@ -844,20 +855,90 @@
     // FILTERING
     // =============================================
     function setupFilterListeners() {
-        // Category filters
+        // Category filters - Enhanced with exclusive mode
         document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
-            cb.addEventListener('click', () => {
-                cb.classList.toggle('active');
-                cb.querySelector('input').checked = cb.classList.contains('active');
+            cb.addEventListener('click', (e) => {
+                // Ctrl/Cmd + click = toggle mode (add/remove individual filters)
+                // Regular click = exclusive mode (show ONLY this category)
+                if (e.ctrlKey || e.metaKey) {
+                    // Toggle mode - just flip this one filter
+                    cb.classList.toggle('active');
+                    cb.querySelector('input').checked = cb.classList.contains('active');
+                    
+                    // Don't allow all filters to be off - keep at least one active
+                    const anyActive = document.querySelectorAll('#categoryFilters .filter-checkbox.active').length > 0;
+                    if (!anyActive) {
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    }
+                } else {
+                    // Exclusive mode - deactivate all others, activate only this one
+                    const wasActive = cb.classList.contains('active');
+                    const allCheckboxes = document.querySelectorAll('#categoryFilters .filter-checkbox');
+                    
+                    // If this is the only active filter and we click it again, activate all
+                    const activeCount = document.querySelectorAll('#categoryFilters .filter-checkbox.active').length;
+                    if (wasActive && activeCount === 1) {
+                        // Clicking the only active filter = show all
+                        allCheckboxes.forEach(checkbox => {
+                            checkbox.classList.add('active');
+                            checkbox.querySelector('input').checked = true;
+                        });
+                    } else {
+                        // Make this the only active filter
+                        allCheckboxes.forEach(checkbox => {
+                            checkbox.classList.remove('active');
+                            checkbox.querySelector('input').checked = false;
+                        });
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    }
+                }
+                
                 applyFilters();
             });
         });
         
-        // Channel filters
+        // Channel filters - Enhanced with exclusive mode
         document.querySelectorAll('#channelFilters .filter-checkbox').forEach(cb => {
-            cb.addEventListener('click', () => {
-                cb.classList.toggle('active');
-                cb.querySelector('input').checked = cb.classList.contains('active');
+            cb.addEventListener('click', (e) => {
+                // Ctrl/Cmd + click = toggle mode (add/remove individual filters)
+                // Regular click = exclusive mode (show ONLY this channel)
+                if (e.ctrlKey || e.metaKey) {
+                    // Toggle mode - just flip this one filter
+                    cb.classList.toggle('active');
+                    cb.querySelector('input').checked = cb.classList.contains('active');
+                    
+                    // Don't allow all filters to be off - keep at least one active
+                    const anyActive = document.querySelectorAll('#channelFilters .filter-checkbox.active').length > 0;
+                    if (!anyActive) {
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    }
+                } else {
+                    // Exclusive mode - deactivate all others, activate only this one
+                    const wasActive = cb.classList.contains('active');
+                    const allCheckboxes = document.querySelectorAll('#channelFilters .filter-checkbox');
+                    
+                    // If this is the only active filter and we click it again, activate all
+                    const activeCount = document.querySelectorAll('#channelFilters .filter-checkbox.active').length;
+                    if (wasActive && activeCount === 1) {
+                        // Clicking the only active filter = show all
+                        allCheckboxes.forEach(checkbox => {
+                            checkbox.classList.add('active');
+                            checkbox.querySelector('input').checked = true;
+                        });
+                    } else {
+                        // Make this the only active filter
+                        allCheckboxes.forEach(checkbox => {
+                            checkbox.classList.remove('active');
+                            checkbox.querySelector('input').checked = false;
+                        });
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    }
+                }
+                
                 applyFilters();
             });
         });
@@ -1025,12 +1106,16 @@
         const emptyState = document.getElementById('emptyState');
         const container = document.querySelector('.log-table');
         
+        console.log(`📊 [Activity Log] Rendering ${state.filteredLog.length} of ${state.activityLog.length} total entries`);
+        
         if (state.filteredLog.length === 0) {
+            console.log('ℹ️ [Activity Log] No entries to display (filtered or empty)');
             container.style.display = 'none';
             emptyState.style.display = 'block';
             return;
         }
         
+        console.log(`✅ [Activity Log] Displaying entries in table`);
         container.style.display = 'table';
         emptyState.style.display = 'none';
         
