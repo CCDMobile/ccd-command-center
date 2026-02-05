@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.10 - SKU Matching UI & Visual Indicators</title>
+    <title>CCD Sync Hub v3.3.5.11 - Enhanced Cascade Logging & TreasureMarts Protection</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -4250,6 +4250,31 @@
             try {
                 item.status = 'processing';
                 renderQueue();
+                
+                // Log API push attempt with complete details
+                logActivity('sync', 'api_push_attempt', item.channel,
+                    `🔌 Attempting API push to ${item.channel}: ${item.product?.sku}`,
+                    {
+                        sku: item.product?.sku,
+                        channel: item.channel,
+                        action: item.action || 'update',
+                        targetQty: item.product?.qty,
+                        channelId: item.listingId || item.productId || item.product?.wayfairSku,
+                        queueItemId: item.id,
+                        attemptNumber: (item.retryCount || 0) + 1,
+                        reason: item.reason,
+                        proxyUrl: item.channel === 'etsy' ? state.settings.etsyProxyUrl :
+                                  item.channel === 'wix' ? state.settings.wixProxyUrl :
+                                  item.channel === 'wayfair' ? state.settings.wayfairProxyUrl : 'unknown',
+                        timestamp: new Date().toISOString()
+                    }
+                );
+                
+                console.log(`🔌 API PUSH ATTEMPT [${item.channel}]:`, {
+                    sku: item.product?.sku,
+                    qty: item.product?.qty,
+                    channelId: item.listingId || item.productId || item.product?.wayfairSku
+                });
 
                 const result = await processQueueItem(item);
                 
@@ -4265,11 +4290,36 @@
                     succeeded++;
                     addLog(`✓ ${item.product?.productName || item.product?.name || 'Item'} ${item.action || 'synced'} to ${item.channel}`, 'success');
                     
-                    // Log success to activity log
-                    logActivity('sync', 'push_success', item.channel,
-                        `Pushed ${item.product?.sku || 'item'} qty=${item.product?.qty} to ${item.channel}`,
-                        { sku: item.product?.sku, channel: item.channel, quantity: item.product?.qty, reason: item.reason }
+                    // Enhanced success logging with API response details
+                    logActivity('sync', 'api_push_success', item.channel,
+                        `✅ API push successful: ${item.product?.sku || 'item'} → ${item.channel}`,
+                        {
+                            sku: item.product?.sku,
+                            productName: item.product?.productName || item.product?.name,
+                            channel: item.channel,
+                            pushedQty: item.product?.qty,
+                            channelId: result.listingId || result.productId || item.listingId || item.productId,
+                            responseMessage: result.message,
+                            completedAt: new Date().toISOString(),
+                            reason: item.reason,
+                            queueItemId: item.id,
+                            attemptNumber: (item.retryCount || 0) + 1,
+                            apiResponse: {
+                                success: result.success,
+                                message: result.message,
+                                returnedIds: {
+                                    listingId: result.listingId,
+                                    productId: result.productId
+                                }
+                            }
+                        }
                     );
+                    
+                    console.log(`✅ API PUSH SUCCESS [${item.channel}]:`, {
+                        sku: item.product?.sku,
+                        qty: item.product?.qty,
+                        result: result
+                    });
                 } else {
                     throw new Error(result.error || 'Unknown error');
                 }
@@ -4280,11 +4330,36 @@
                 failed++;
                 addLog(`✗ Failed: ${item.product?.productName || item.product?.name || 'Item'} - ${error.message}`, 'error');
                 
-                // Log failure to activity log
-                logActivity('error', 'push_failed', item.channel,
-                    `Failed to push ${item.product?.sku || 'item'} to ${item.channel}: ${error.message}`,
-                    { sku: item.product?.sku, channel: item.channel, error: error.message, reason: item.reason }
+                // Enhanced failure logging with error details
+                logActivity('error', 'api_push_failed', item.channel,
+                    `❌ API push failed: ${item.product?.sku || 'item'} → ${item.channel}`,
+                    {
+                        sku: item.product?.sku,
+                        productName: item.product?.productName || item.product?.name,
+                        channel: item.channel,
+                        targetQty: item.product?.qty,
+                        channelId: item.listingId || item.productId || item.product?.wayfairSku,
+                        error: error.message,
+                        errorStack: error.stack,
+                        reason: item.reason,
+                        queueItemId: item.id,
+                        attemptNumber: (item.retryCount || 0) + 1,
+                        willRetry: state.settings.retryFailedEnabled && item.retryCount < state.settings.maxRetries,
+                        maxRetries: state.settings.maxRetries,
+                        failedAt: new Date().toISOString(),
+                        proxyConfiguration: {
+                            etsyProxy: state.settings.etsyProxyUrl,
+                            wixProxy: state.settings.wixProxyUrl,
+                            wayfairProxy: state.settings.wayfairProxyUrl
+                        }
+                    }
                 );
+                
+                console.error(`❌ API PUSH FAILED [${item.channel}]:`, {
+                    sku: item.product?.sku,
+                    error: error.message,
+                    willRetry: state.settings.retryFailedEnabled && item.retryCount < state.settings.maxRetries
+                });
                 
                 // Auto-retry if enabled and under max retries
                 if (state.settings.retryFailedEnabled && item.retryCount < state.settings.maxRetries) {
@@ -6931,12 +7006,52 @@
     // - TreasureMarts is physical location, separate from warehouse
     // ============================================================================
     
+    // ============================================================================
+    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v3.3.5.11 - ENHANCED DEBUG LOGGING)
+    // Ensures channel allocations stay valid after order processing
+    // Rules:
+    // - Etsy = Wix always (they sync together)
+    // - Online channels (Etsy, Wix, Wayfair) cannot exceed Warehouse Qty
+    // - TreasureMarts is physical location, separate from warehouse
+    // ============================================================================
     function autoAdjustChannelAllocations(product, sourceChannel = null) {
         if (!product) return { adjusted: false, changes: [], parAlerts: [] };
+        
+        // ==========================================================================
+        // DEBUG LOGGING v3.3.5.11 - Track channels object for treasuremarts bug
+        // ==========================================================================
+        const debugLog = {
+            sku: product?.sku || product?.SKU || 'UNKNOWN',
+            sourceChannel: sourceChannel,
+            timestamp: new Date().toISOString()
+        };
+        
+        // Capture BEFORE state
+        debugLog.before = {
+            channelsExists: !!product.channels,
+            channelsType: typeof product.channels,
+            channelsIsNull: product.channels === null,
+            channelsIsUndefined: product.channels === undefined,
+            channelsValue: product.channels ? JSON.parse(JSON.stringify(product.channels)) : null,
+            warehouseQty: product.warehouseQty || product.qty || product.quantity || 0
+        };
+        
+        // Track if treasuremarts exists before adjustment
+        if (product.channels?.treasuremarts !== undefined) {
+            debugLog.before.treasuremarts = product.channels.treasuremarts;
+            debugLog.before.treasuremartsType = typeof product.channels.treasuremarts;
+        }
+        // ==========================================================================
         
         // Initialize channels if missing
         if (!product.channels) {
             product.channels = {};
+            debugLog.channelsWasInitialized = true;
+            console.warn(`⚠️ [${debugLog.sku}] Channels object initialized (was falsy)`, {
+                before: debugLog.before.channelsType,
+                wasNull: debugLog.before.channelsIsNull,
+                wasUndefined: debugLog.before.channelsIsUndefined
+            });
         }
         
         const adjustments = {
@@ -6951,6 +7066,19 @@
         
         // Available for online = warehouse qty (TM is separate physical location)
         const availableForOnline = warehouseQty;
+        
+        // ==========================================================================
+        // VALIDATION v3.3.5.11 - Snapshot physical location allocations
+        // ==========================================================================
+        const physicalLocations = ['treasuremarts', 'crazychicks'];
+        const physicalLocationSnapshot = {};
+        
+        physicalLocations.forEach(location => {
+            if (product.channels && product.channels[location] !== undefined) {
+                physicalLocationSnapshot[location] = product.channels[location];
+            }
+        });
+        // ==========================================================================
         
         // Rule 1: Etsy and Wix always sync together
         let etsyQty = parseInt(channels.etsy) || 0;
@@ -7037,6 +7165,93 @@
                 min: product.minParLevel
             });
         }
+        
+        // ==========================================================================
+        // VALIDATION v3.3.5.11 - Verify physical locations unchanged
+        // ==========================================================================
+        Object.keys(physicalLocationSnapshot).forEach(location => {
+            const beforeValue = physicalLocationSnapshot[location];
+            const afterValue = product.channels?.[location];
+            
+            if (beforeValue !== afterValue) {
+                console.error(`🚨 PHYSICAL LOCATION MODIFIED: ${location}`, {
+                    sku: product.sku || product.SKU,
+                    location: location,
+                    before: beforeValue,
+                    after: afterValue,
+                    delta: afterValue - beforeValue
+                });
+                
+                // Log to activity
+                if (typeof logActivity === 'function') {
+                    logActivity('error', 'physical_location_modified', sourceChannel || 'unknown',
+                        `🚨 Physical location "${location}" was modified during online order processing!`,
+                        {
+                            sku: product.sku || product.SKU,
+                            location: location,
+                            before: beforeValue,
+                            after: afterValue,
+                            delta: afterValue - beforeValue,
+                            sourceChannel: sourceChannel
+                        }
+                    );
+                }
+            }
+        });
+        // ==========================================================================
+        
+        // ==========================================================================
+        // DEBUG LOGGING v3.3.5.11 - Capture AFTER state
+        // ==========================================================================
+        debugLog.after = {
+            channelsExists: !!product.channels,
+            channelsValue: product.channels ? JSON.parse(JSON.stringify(product.channels)) : null,
+            adjustmentsApplied: adjustments.changes.length
+        };
+        
+        // Track if treasuremarts changed
+        if (product.channels?.treasuremarts !== undefined) {
+            debugLog.after.treasuremarts = product.channels.treasuremarts;
+            
+            // CRITICAL: Flag if treasuremarts changed
+            if (debugLog.before.treasuremarts !== undefined && 
+                debugLog.before.treasuremarts !== debugLog.after.treasuremarts) {
+                
+                debugLog.TREASUREMARTS_CHANGED = true;
+                debugLog.tmChange = {
+                    before: debugLog.before.treasuremarts,
+                    after: debugLog.after.treasuremarts,
+                    delta: debugLog.after.treasuremarts - debugLog.before.treasuremarts
+                };
+                
+                // Log to console with alert
+                console.error('🚨 TREASUREMARTS CHANGED IN autoAdjustChannelAllocations!', debugLog);
+                
+                // Log to activity log
+                if (typeof logActivity === 'function') {
+                    logActivity('error', 'treasuremarts_modified', sourceChannel || 'unknown',
+                        `⚠️ TreasureMarts allocation changed during channel adjustment!`,
+                        {
+                            sku: debugLog.sku,
+                            before: debugLog.before.treasuremarts,
+                            after: debugLog.after.treasuremarts,
+                            delta: debugLog.tmChange.delta,
+                            fullDebugLog: debugLog
+                        }
+                    );
+                }
+            }
+        }
+        
+        // Log channels initialization if it was triggered
+        if (!debugLog.before.channelsExists && debugLog.after.channelsExists) {
+            debugLog.CHANNELS_INITIALIZED = true;
+            console.warn(`⚠️ Channels object was initialized (did not exist before) for ${debugLog.sku}`, debugLog);
+        }
+        
+        // Always log the complete debug info to console
+        console.log(`[autoAdjustChannelAllocations] ${debugLog.sku}:`, debugLog);
+        // ==========================================================================
         
         return adjustments;
     }
@@ -7695,8 +7910,29 @@
                     
                     // v2.1.0: Auto-adjust channel allocations after order
                     adjustResult = autoAdjustChannelAllocations(product, order.channel);
-                    if (adjustResult.adjusted) {
+                    
+                    // Log each channel adjustment individually for detailed tracking
+                    if (adjustResult.adjusted && adjustResult.changes.length > 0) {
                         addLog(`🔄 Auto-adjusted channels for ${sku}: ${adjustResult.changes.map(c => `${c.channel} ${c.from}→${c.to}`).join(', ')}`, 'info');
+                        
+                        // Create detailed activity log entry for channel adjustments
+                        logActivity('inventory', 'channel_auto_adjust', order.channel,
+                            `🔄 Channel allocations auto-adjusted for ${sku}`,
+                            {
+                                sku: sku,
+                                sourceChannel: order.channel,
+                                orderId: orderId,
+                                warehouseQty: newQty,
+                                adjustments: adjustResult.changes.map(change => ({
+                                    channel: change.channel,
+                                    before: change.from,
+                                    after: change.to,
+                                    delta: change.to - change.from,
+                                    reason: change.reason
+                                })),
+                                finalChannelState: product.channels ? JSON.parse(JSON.stringify(product.channels)) : null
+                            }
+                        );
                     }
                     
                     updates.push({
@@ -7718,16 +7954,31 @@
                         user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                     });
                     
-                    // Log deduction to activity log
+                    // Enhanced inventory deduction log with complete state capture
                     logActivity('inventory', 'order_deduction', order.channel,
-                        `Deducted ${item.qty} units of ${sku} for order ${orderId}`,
+                        `📉 Inventory deducted: ${sku} (${currentQty} → ${newQty})`,
                         { 
-                            sku: sku, 
-                            quantity: item.qty, 
-                            oldQty: currentQty, 
-                            newQty: newQty, 
+                            sku: sku,
+                            productName: product.productName || product.title,
                             orderId: orderId,
-                            channel: order.channel 
+                            channel: order.channel,
+                            beforeState: {
+                                warehouseQty: currentQty,
+                                channels: product.channels ? JSON.parse(JSON.stringify(product.channels)) : null,
+                                flatAllocations: {
+                                    etsyQty: product.etsyQty,
+                                    wixQty: product.wixQty,
+                                    wayfairQty: product.wayfairQty
+                                }
+                            },
+                            afterState: {
+                                warehouseQty: newQty,
+                                channels: null  // Will be populated after autoAdjust
+                            },
+                            deduction: {
+                                quantity: item.qty,
+                                delta: newQty - currentQty
+                            }
                         }
                     );
                 } else {
@@ -7956,16 +8207,42 @@
             await saveQueue();
             addLog(`📤 Queued ${cascadeQueue.length} inventory updates to other channels`, 'info');
             
-            // Log cascade queued to activity log
+            // Enhanced cascade queue logging with complete queue details
             logActivity('sync', 'cascade_queued', order.channel,
-                `Queued ${cascadeQueue.length} channel updates from ${order.channel} order ${orderId}`,
+                `📤 Cascade queue created from ${order.channel} order ${orderId}`,
                 { 
                     orderId: orderId,
                     sourceChannel: order.channel,
                     cascadeCount: cascadeQueue.length,
-                    targets: cascadeQueue.map(c => ({ channel: c.channel, sku: c.sku, qty: c.qty }))
+                    autoProcessScheduled: true,
+                    targets: cascadeQueue.map(c => ({
+                        channel: c.channel,
+                        sku: c.sku,
+                        qty: c.qty,
+                        channelId: c.listingId || c.productId || c.wayfairSku,
+                        reason: `Cascade from ${order.channel} order`,
+                        queuedAt: new Date().toISOString()
+                    })),
+                    autoPushSettings: {
+                        etsy: state.settings.autoPushEtsy,
+                        wix: state.settings.autoPushWix,
+                        wayfair: state.settings.autoPushWayfair
+                    },
+                    // Flag if auto-push disabled
+                    warnings: [
+                        !state.settings.autoPushEtsy ? 'Etsy auto-push DISABLED' : null,
+                        !state.settings.autoPushWix ? 'Wix auto-push DISABLED' : null,
+                        !state.settings.autoPushWayfair ? 'Wayfair auto-push DISABLED' : null
+                    ].filter(Boolean)
                 }
             );
+            
+            // Also log to console for immediate visibility
+            console.log('📤 CASCADE QUEUE CREATED:', {
+                orderId: orderId,
+                sourceChannel: order.channel,
+                queue: cascadeQueue
+            });
             
             // ========== AUTO-PROCESS CASCADE IMMEDIATELY ==========
             // Don't wait for the 5-minute interval - process now!
@@ -7977,6 +8254,28 @@
             }, 1000); // 1 second delay to let UI update
         }
         
+        // Log auto-cascade status for visibility
+        if (cascadeQueue.length > 0) {
+            const disabledChannels = [];
+            if (!state.settings.autoPushEtsy) disabledChannels.push('Etsy');
+            if (!state.settings.autoPushWix) disabledChannels.push('Wix');
+            if (!state.settings.autoPushWayfair) disabledChannels.push('Wayfair');
+            
+            if (disabledChannels.length > 0) {
+                console.warn(`⚠️ AUTO-PUSH DISABLED for: ${disabledChannels.join(', ')}`);
+                console.warn('Queue items will not be pushed to these channels automatically');
+                
+                logActivity('warning', 'auto_push_disabled', 'system',
+                    `⚠️ Auto-push disabled for some channels: ${disabledChannels.join(', ')}`,
+                    {
+                        disabledChannels: disabledChannels,
+                        cascadeQueue: cascadeQueue.map(c => c.channel),
+                        note: 'Items queued but will not auto-push to disabled channels'
+                    }
+                );
+            }
+        }
+        
         // Mark order as processed
         markOrderProcessed(orderId);
         
@@ -7985,13 +8284,27 @@
         
         // Log order processed to activity log
         const itemsSummary = order.items.map(i => `${i.sku}(${i.qty})`).join(', ');
+        // Enhanced order processing log
         logActivity('order', 'order_processed', order.channel,
-            `Order ${orderId} processed - inventory deducted`,
+            `📦 Order ${orderId} processed - Complete transaction log`,
             { 
                 orderId: orderId,
                 channel: order.channel,
-                items: order.items?.map(i => ({ sku: i.sku, qty: i.qty })),
-                isAutoProcess: isAutoProcess
+                orderTotal: order.total,
+                orderDate: order.date || order.timestamp,
+                items: order.items?.map(i => ({
+                    sku: i.sku,
+                    title: i.title,
+                    qty: i.qty,
+                    price: i.price
+                })),
+                isAutoProcess: isAutoProcess,
+                featureFlags: {
+                    inventoryDeduction: isFeatureEnabled('inventoryDeduction'),
+                    autoPushEtsy: state.settings.autoPushEtsy,
+                    autoPushWix: state.settings.autoPushWix,
+                    autoPushWayfair: state.settings.autoPushWayfair
+                }
             }
         );
         
