@@ -9902,35 +9902,65 @@
             const listings = result.listings || [];
             console.log(`[Etsy ID Sync] Retrieved ${listings.length} listings from Etsy`);
             
+            // Build reverse lookup: SKU → listing (including all variant SKUs)
+            const skuToListing = new Map();
+            for (const listing of listings) {
+                // Index primary SKU
+                if (listing.sku) {
+                    skuToListing.set(listing.sku, listing);
+                    skuToListing.set(listing.sku.toLowerCase(), listing);
+                }
+                // Index ALL variant SKUs (new skus array from updated proxy)
+                if (listing.skus && listing.skus.length > 0) {
+                    for (const s of listing.skus) {
+                        if (s) {
+                            skuToListing.set(s, listing);
+                            skuToListing.set(s.toLowerCase(), listing);
+                        }
+                    }
+                }
+            }
+            
+            console.log(`[Etsy ID Sync] Built lookup with ${skuToListing.size} SKU entries from ${listings.length} listings`);
+            
             let found = 0;
             let notFound = 0;
             
-            // Match products by SKU
+            // Match products with multi-stage matching
             for (const product of productsNeedingIds) {
                 const sku = product.sku || product.SKU;
                 if (!sku) continue;
                 
-                // Find matching listing
-                const listing = listings.find(l => 
-                    l.sku === sku || 
-                    l.productSku === sku ||
-                    (l.products && l.products.some(p => p.sku === sku))
-                );
+                // Stage 1: Exact match
+                let listing = skuToListing.get(sku);
+                
+                // Stage 2: Case-insensitive
+                if (!listing) {
+                    listing = skuToListing.get(sku.toLowerCase());
+                }
+                
+                // Stage 3: Strip variant suffix (" - Large", " (Lg)", etc.)
+                if (!listing) {
+                    const baseSku = sku
+                        .replace(/\s*[-–]\s.*$/, '')     // "8D4459 - Large" → "8D4459"
+                        .replace(/\s*\(.*\)$/, '')        // "E203702 (Lg)" → "E203702"
+                        .trim();
+                    if (baseSku !== sku) {
+                        listing = skuToListing.get(baseSku) || skuToListing.get(baseSku.toLowerCase());
+                        if (listing) {
+                            console.log(`[Etsy ID Sync] ✅ Variant match: ${sku} → base ${baseSku} → Listing ${listing.listing_id}`);
+                        }
+                    }
+                }
                 
                 if (listing) {
-                    // Found! Save the listing ID
                     product.etsyListingId = listing.listing_id;
                     found++;
-                    
                     console.log(`[Etsy ID Sync] ✅ Matched ${sku} → Listing ID: ${listing.listing_id}`);
                     
                     logActivity('sync', 'etsy_id_found', 'etsy',
                         `✅ Found Etsy listing ID for ${sku}`,
-                        { 
-                            sku: sku, 
-                            listingId: listing.listing_id,
-                            title: listing.title 
-                        }
+                        { sku: sku, listingId: listing.listing_id, title: listing.title }
                     );
                 } else {
                     notFound++;
@@ -9980,31 +10010,73 @@
             const wixProducts = result.products || [];
             console.log(`[Wix ID Sync] Retrieved ${wixProducts.length} products from Wix`);
             
+            // Build Wix SKU lookup map
+            const wixSkuMap = new Map();
+            for (const wp of wixProducts) {
+                if (wp.sku) {
+                    wixSkuMap.set(wp.sku, wp);
+                    wixSkuMap.set(wp.sku.toLowerCase(), wp);
+                }
+            }
+            
+            console.log(`[Wix ID Sync] Built lookup with ${wixSkuMap.size} SKU entries`);
+            
             let found = 0;
             let notFound = 0;
             
-            // Match products by SKU
+            // Match products with multi-stage matching
             for (const product of productsNeedingIds) {
                 const sku = product.sku || product.SKU;
                 if (!sku) continue;
                 
-                // Find matching Wix product
-                const wixProduct = wixProducts.find(wp => wp.sku === sku);
+                let wixProduct = null;
+                
+                // Stage 1: Exact match
+                wixProduct = wixSkuMap.get(sku);
+                
+                // Stage 2: Case-insensitive match
+                if (!wixProduct) {
+                    wixProduct = wixSkuMap.get(sku.toLowerCase());
+                }
+                
+                // Stage 3: Strip variant suffix from MASTER SKU
+                //   "109189 - Med." → "109189"
+                //   "E203702 (Lg)" → "E203702"  
+                //   "8D5107 - Go Local" → "8D5107"
+                //   "530350 - Large" → "530350"
+                if (!wixProduct) {
+                    const baseSku = sku
+                        .replace(/\s*[-–]\s.*$/, '')     // strip " - anything"
+                        .replace(/\s*\(.*\)$/, '')        // strip " (anything)"
+                        .trim();
+                    if (baseSku !== sku) {
+                        wixProduct = wixSkuMap.get(baseSku) || wixSkuMap.get(baseSku.toLowerCase());
+                        if (wixProduct) {
+                            console.log(`[Wix ID Sync] ✅ Variant match: ${sku} → base ${baseSku} → ${wixProduct.id}`);
+                        }
+                    }
+                }
+                
+                // Stage 4: Reverse check — strip suffix from Wix SKU
+                if (!wixProduct) {
+                    wixProduct = wixProducts.find(wp => {
+                        if (!wp.sku) return false;
+                        const wixBase = wp.sku
+                            .replace(/\s*[-–]\s.*$/, '')
+                            .replace(/\s*\(.*\)$/, '')
+                            .trim();
+                        return wixBase === sku || wixBase.toLowerCase() === sku.toLowerCase();
+                    });
+                }
                 
                 if (wixProduct) {
-                    // Found! Save the product ID
                     product.wixProductId = wixProduct.id;
                     found++;
-                    
                     console.log(`[Wix ID Sync] ✅ Matched ${sku} → Product ID: ${wixProduct.id}`);
                     
                     logActivity('sync', 'wix_id_found', 'wix',
                         `✅ Found Wix product ID for ${sku}`,
-                        { 
-                            sku: sku, 
-                            productId: wixProduct.id,
-                            name: wixProduct.name 
-                        }
+                        { sku: sku, productId: wixProduct.id, name: wixProduct.name }
                     );
                 } else {
                     notFound++;
@@ -10033,96 +10105,48 @@
      */
     async function fetchWayfairSkus(productsNeedingIds) {
         try {
-            console.log('[Wayfair ID Sync] Fetching inventory from Wayfair...');
-            
-            const url = state.settings.wayfairProxyUrl;
-            const key = state.settings.ccdApiKey;
-            
-            if (!url) {
-                console.warn('[Wayfair ID Sync] Proxy not configured');
-                return { found: 0, notFound: productsNeedingIds.length, errors: 0 };
-            }
-            
-            // Call Wayfair proxy to get inventory
-            const response = await fetch(`${url}?action=getInventory&key=${key}`);
-            const result = await response.json();
-            
-            if (!result.success) {
-                throw new Error(result.error || 'Failed to fetch Wayfair inventory');
-            }
-            
-            const wayfairProducts = result.inventory || [];
-            console.log(`[Wayfair ID Sync] Retrieved ${wayfairProducts.length} products from Wayfair`);
+            console.log('[Wayfair ID Sync] Mapping Wayfair SKUs from channel assignments...');
             
             let found = 0;
             let notFound = 0;
             
-            // Match products by SKU (using multi-stage matching)
+            // Wayfair's supplierPartNumber IS the SKU — no API call needed.
+            // Wayfair's GraphQL API does not support listing inventory parts.
+            // Use the channels.wayfair flag in MASTER.json to identify Wayfair products.
             for (const product of productsNeedingIds) {
                 const sku = product.sku || product.SKU;
                 if (!sku) continue;
                 
-                // Try to find matching Wayfair product
-                let wayfairProduct = null;
+                const channels = product.channels || {};
+                const isOnWayfair = channels.wayfair && channels.wayfair > 0;
                 
-                // Stage 1: Exact match
-                wayfairProduct = wayfairProducts.find(wp => wp.supplierPartNumber === sku);
-                
-                // Stage 2: Match with CCD prefix
-                if (!wayfairProduct) {
-                    const withPrefix = `CCD${sku}`;
-                    wayfairProduct = wayfairProducts.find(wp => wp.supplierPartNumber === withPrefix);
-                }
-                
-                // Stage 3: Strip CCD prefix from Wayfair SKU
-                if (!wayfairProduct) {
-                    wayfairProduct = wayfairProducts.find(wp => {
-                        const cleaned = wp.supplierPartNumber.replace(/^CCD/, '');
-                        return cleaned === sku;
-                    });
-                }
-                
-                // Stage 4: Strip all alpha chars (keep only numbers)
-                if (!wayfairProduct) {
-                    const numericSku = sku.replace(/[^0-9]/g, '');
-                    wayfairProduct = wayfairProducts.find(wp => {
-                        const numericWayfair = wp.supplierPartNumber.replace(/[^0-9]/g, '');
-                        return numericWayfair === numericSku && numericSku.length > 0;
-                    });
-                }
-                
-                if (wayfairProduct) {
-                    // Found! Save the Wayfair SKU
-                    product.wayfairSku = wayfairProduct.supplierPartNumber;
+                if (isOnWayfair) {
+                    // supplierPartNumber === SKU for your Wayfair account
+                    product.wayfairSku = sku;
                     found++;
-                    
-                    console.log(`[Wayfair ID Sync] ✅ Matched ${sku} → Wayfair SKU: ${wayfairProduct.supplierPartNumber}`);
+                    console.log(`[Wayfair ID Sync] ✅ Mapped ${sku} (listed on Wayfair channel)`);
                     
                     logActivity('sync', 'wayfair_id_found', 'wayfair',
-                        `✅ Found Wayfair SKU for ${sku}`,
-                        { 
-                            sku: sku, 
-                            wayfairSku: wayfairProduct.supplierPartNumber
-                        }
+                        `✅ Mapped Wayfair SKU for ${sku}`,
+                        { sku: sku, wayfairSku: sku }
                     );
                 } else {
                     notFound++;
-                    console.log(`[Wayfair ID Sync] ⚠️ No product found for SKU: ${sku}`);
+                    // Don't log each one — these products aren't on Wayfair
                 }
             }
             
-            console.log(`[Wayfair ID Sync] Results: ${found} found, ${notFound} not found`);
+            console.log(`[Wayfair ID Sync] Results: ${found} mapped, ${notFound} not on Wayfair`);
+            toast(`🏠 Wayfair: ${found} SKUs mapped from channel assignments`, 'info');
             
             return { found, notFound, errors: 0 };
             
         } catch (error) {
             console.error('[Wayfair ID Sync] Error:', error);
-            
             logActivity('error', 'wayfair_id_sync_error', 'wayfair',
                 `❌ Wayfair ID sync error: ${error.message}`,
                 { error: error.message }
             );
-            
             return { found: 0, notFound: 0, errors: productsNeedingIds.length };
         }
     }
