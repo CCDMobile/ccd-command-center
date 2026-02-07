@@ -4169,13 +4169,13 @@
         }
         
         // ✅ v3.3.5.14: Only send notification for truly NEW orders (not already processed)
-        // Previous bug: notified for ALL orders in date range on every poll cycle
+        // FIXED: Use 'WF-' prefix to match format in fetchWayfairOrdersForView/processedIds
         const newOrders = orders.filter(o => {
-            const orderId = 'WAYFAIR-' + o.poNumber;
+            const orderId = 'WF-' + (o.poNumber || o.id);
             return !state.orders.processedIds || !state.orders.processedIds.has(orderId);
         });
         const newOrderDetails = orderDetails.filter(o => {
-            const orderId = 'WAYFAIR-' + o.id;
+            const orderId = 'WF-' + o.id;
             return !state.orders.processedIds || !state.orders.processedIds.has(orderId);
         });
         
@@ -6887,7 +6887,7 @@
                 };
                 
             } else if (channel === 'wayfair') {
-                const orderId = 'WAYFAIR-' + order.poNumber;
+                const orderId = 'WF-' + (order.poNumber || order.id);
                 
                 if (state.orders.processedIds.has(orderId)) {
                     duplicateCount++;
@@ -7848,14 +7848,17 @@
      */
     function loadProcessedOrderIds() {
         if (window.masterJsonData && window.masterJsonData._processedOrders) {
-            console.log('[Duplicate Detection] Loading processed order IDs from Master JSON');
-            state.orders.processedIds.clear();
+            console.log('[Duplicate Detection] Merging processed order IDs from Master JSON');
+            // ✅ v3.3.5.14 FIX: MERGE with localStorage data instead of clearing
+            // Previous bug: clear() wiped localStorage-loaded IDs, causing notification spam
+            const beforeCount = state.orders.processedIds.size;
             
             for (const record of window.masterJsonData._processedOrders) {
                 state.orders.processedIds.add(record.orderId);
             }
             
-            console.log('[Duplicate Detection] Loaded', state.orders.processedIds.size, 'processed order IDs');
+            const added = state.orders.processedIds.size - beforeCount;
+            console.log('[Duplicate Detection] Merged', added, 'new IDs from Master JSON (total:', state.orders.processedIds.size, ')');
         }
     }
     
