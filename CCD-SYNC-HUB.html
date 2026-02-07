@@ -469,7 +469,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.12 • Build: 2026-02-05 • Channel ID Sync</span>
+                <span>CCD Sync Hub v3.3.5.14 • Build: 2026-02-07 • Enhanced Activity Logging</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -2831,6 +2831,7 @@
             autoPollIntervalMinutes: 15,
             orderDateRange: 'last_7days', // NEW: Default to last 7 days
             autoPushEnabled: false,
+            autoPushEtsy: true,
             autoPushWix: true,
             autoPushWayfair: true,
             alertZeroStock: true,
@@ -3300,7 +3301,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.12 - Channel ID Sync Tool...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.14 - Enhanced Activity Logging...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3372,8 +3373,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.12 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.12 initialized - Channel ID Sync Tool', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.14 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.14 initialized - Enhanced Activity Logging', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -7926,6 +7927,7 @@
             const products = getProductsArray();
             const updates = [];
             const changes = []; // For change log
+            const cascadeQueue = [];
             
             // ===== GAP 3: INVENTORY DEDUCTION WRAPPER =====
             // Check if inventory deduction is enabled via feature flag
@@ -8895,6 +8897,24 @@
         if (queuedCount > 0) {
             addAutoSyncLogEntry(`📤 Queued ${queuedCount} channel updates from Inventory System`);
             toast(`Auto-Push: Queued ${queuedCount} updates`, 'info');
+            
+            // ✅ v3.3.5.14: Log to Activity Log for audit trail
+            logActivity('sync', 'auto_push_queued', 'system',
+                `📤 Auto-Push: Queued ${queuedCount} channel update(s) from Inventory System`,
+                {
+                    queuedCount: queuedCount,
+                    changes: changes.map(c => ({
+                        sku: c.sku,
+                        etsy: c.changes.channels.etsy.old !== c.changes.channels.etsy.new ? 
+                            `${c.changes.channels.etsy.old} → ${c.changes.channels.etsy.new}` : null,
+                        wix: c.changes.channels.wix.old !== c.changes.channels.wix.new ?
+                            `${c.changes.channels.wix.old} → ${c.changes.channels.wix.new}` : null,
+                        wayfair: c.changes.channels.wayfair.old !== c.changes.channels.wayfair.new ?
+                            `${c.changes.channels.wayfair.old} → ${c.changes.channels.wayfair.new}` : null
+                    })),
+                    source: 'inventory_system_auto_push'
+                }
+            );
             
             // Auto-process the queue
             if (!state.processing) {

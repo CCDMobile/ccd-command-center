@@ -4,32 +4,6 @@
 CCD INVENTORY MANAGEMENT SYSTEM - VERSION HISTORY
 ================================================================================
 
-v23.3.7 (February 6, 2026) - Auto-Sync on Allocation + ID Preservation Fix
-- CRITICAL FIX: Channel platform IDs (etsyListingId, wixProductId, wayfairSku) now preserved on save
-  Previously, every edit-and-save wiped these fields, causing constant "missing ID" reports
-- Auto-sync on allocation: When a product is allocated to a channel, the system automatically
-  attempts to look up the platform ID via the proxy APIs (non-blocking, background)
-- In-memory 5-minute cache for proxy responses to avoid redundant API calls during batch edits
-- Wayfair auto-mapping: supplierPartNumber = SKU, no API call needed
-
-v23.3.6 (February 5, 2026) - Channel Sync Verification System
-------------------------------------------------------------------------
-NEW FEATURES:
-- Sync Status Dots on channel tags: Green = has platform ID, Yellow = missing ID
-- Hover over any channel tag to see the actual platform ID or sync status
-- Channel ID Badges in edit form: Shows actual ID or "Not Synced" warning
-- Sync Verification Report (🔄 button in header): Full sync coverage dashboard
-  - Per-channel breakdown: allocated vs synced vs missing
-  - Progress bars with percentage indicators
-  - Filterable missing items list by channel
-  - Export to CSV for auditing
-- Visual indicators work across Etsy, Wix, and Wayfair channels
-
-CHANNEL ID FIELDS USED:
-- Etsy: item.etsyListingId
-- Wix: item.wixProductId
-- Wayfair: item.wayfairSku
-
 v23.3.5.1 (February 3, 2026) - Category Manager (Bug Fix)
 ------------------------------------------------------------------------
 NEW FEATURES:
@@ -7727,7 +7701,7 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.8 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 7 - Activity Logging</span></h1>
+                            <h1>CCD Inventory System v23.3.5.1 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 3 - Category Manager</span></h1>
                             <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-01-20 21:10</p>
                         </div>
                     </div>
@@ -7750,7 +7724,7 @@ Previous versions documented in development guide.
                             <span>🔧</span>
                         </button>
                         <button class="header-icon-btn" id="syncVerifyBtn" title="Channel Sync Verification Report" onclick="openSyncVerificationReport()" style="background: linear-gradient(135deg, #00bcd4, #0097a7); color: white;">
-                            <span>🔄</span>
+                            🔄
                         </button>
                         <button class="header-icon-btn" id="notificationBtn" title="Notifications">
                             <span>🔔</span>
@@ -11739,59 +11713,15 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 
                 if (productIndex >= 0) {
                     const product = products[productIndex];
-                    const currentQty = product.warehouseQty || product.qty || 0;
-                    const newQty = Math.max(0, currentQty - qty);
-                    
-                    // ✅ v23.3.7: Capture before state for activity logging
-                    const writeOffBeforeState = {
-                        warehouseQty: currentQty,
-                        channels: product.channels ? JSON.parse(JSON.stringify(product.channels)) : null
-                    };
+                    const newQty = Math.max(0, (product.warehouseQty || product.qty || 0) - qty);
                     
                     product.warehouseQty = newQty;
                     product.qty = newQty;
                     
-                    // Also reduce legacy channel quantities (backward compat)
+                    // Also reduce channel quantities proportionally
                     if (product.etsyQty) product.etsyQty = Math.max(0, product.etsyQty - qty);
                     if (product.wixQty) product.wixQty = Math.max(0, product.wixQty - qty);
                     if (product.wayfairQty) product.wayfairQty = Math.max(0, product.wayfairQty - qty);
-                    
-                    // ✅ v23.3.7: Reduce LIVE channel allocations (channels.* is the actual system)
-                    if (product.channels) {
-                        if (product.channels.etsy > 0) {
-                            product.channels.etsy = Math.max(0, product.channels.etsy - qty);
-                            if (product.channels.etsy === 0) delete product.channels.etsy;
-                        }
-                        if (product.channels.wix > 0) {
-                            product.channels.wix = Math.max(0, product.channels.wix - qty);
-                            if (product.channels.wix === 0) delete product.channels.wix;
-                        }
-                        if (product.channels.wayfair > 0) {
-                            product.channels.wayfair = Math.max(0, product.channels.wayfair - qty);
-                            if (product.channels.wayfair === 0) delete product.channels.wayfair;
-                        }
-                        // Etsy=Wix sync rule
-                        if (product.channels.etsy !== undefined || product.channels.wix !== undefined) {
-                            const syncedQty = Math.min(product.channels.etsy || 0, product.channels.wix || 0);
-                            if (syncedQty > 0) {
-                                product.channels.etsy = syncedQty;
-                                product.channels.wix = syncedQty;
-                            } else {
-                                delete product.channels.etsy;
-                                delete product.channels.wix;
-                            }
-                        }
-                        // Cap all channels at new warehouse qty
-                        ['etsy', 'wix', 'wayfair'].forEach(ch => {
-                            if (product.channels[ch] > newQty) {
-                                product.channels[ch] = newQty;
-                                if (product.channels[ch] === 0) delete product.channels[ch];
-                            }
-                        });
-                    }
-                    
-                    // ✅ v23.3.7: Update totalActual
-                    product.totalActual = (product.qty || 0) + (product.channels?.treasuremarts || 0);
                     
                     // Queue for channel sync
                     if (typeof queueInventoryUpdate === 'function') {
@@ -11802,24 +11732,11 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 }
             }
             
-            // Log activity with full channel state
+            // Log activity
             if (typeof logActivity === 'function') {
                 logActivity('inventory', 'write_off', 'system',
-                    `Write-off: ${qty}x ${item.sku} (${category}) - warehouse ${writeOffBeforeState?.warehouseQty || '?'} → ${Math.max(0, (writeOffBeforeState?.warehouseQty || 0) - qty)}`,
-                    {
-                        writeOffId: writeOff.id,
-                        sku: item.sku,
-                        qty,
-                        category,
-                        totalLoss: writeOff.totalLoss,
-                        beforeState: writeOffBeforeState || null,
-                        afterState: {
-                            warehouseQty: Math.max(0, (writeOffBeforeState?.warehouseQty || 0) - qty),
-                            channels: products[productIndex]?.channels ? JSON.parse(JSON.stringify(products[productIndex].channels)) : null,
-                            totalActual: products[productIndex]?.totalActual
-                        },
-                        source: 'inventory_system'
-                    }
+                    `Write-off: ${qty}x ${item.sku} (${category})`,
+                    { writeOffId: writeOff.id, sku: item.sku, qty, category, totalLoss: writeOff.totalLoss }
                 );
             }
             
@@ -73694,6 +73611,36 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 
                 console.log('[Sync Hub Notify] Change queued for:', newItem.sku, change.changes);
                 
+                // ✅ v23.3.8: Log channel sync push to Activity Log
+                const pushTargets = [];
+                if (change.etsyListingId && change.changes.channels.etsy.old !== change.changes.channels.etsy.new) {
+                    pushTargets.push(`Etsy: ${change.changes.channels.etsy.old} → ${change.changes.channels.etsy.new}`);
+                }
+                if (change.wixProductId && change.changes.channels.wix.old !== change.changes.channels.wix.new) {
+                    pushTargets.push(`Wix: ${change.changes.channels.wix.old} → ${change.changes.channels.wix.new}`);
+                }
+                if (change.wayfairSku && change.changes.channels.wayfair.old !== change.changes.channels.wayfair.new) {
+                    pushTargets.push(`Wayfair: ${change.changes.channels.wayfair.old} → ${change.changes.channels.wayfair.new}`);
+                }
+                
+                if (pushTargets.length > 0 && typeof logActivity === 'function') {
+                    logActivity('sync', 'channel_push_queued', 'system',
+                        `📤 ${newItem.sku}: Queued for channel sync → ${pushTargets.join(', ')}`,
+                        {
+                            sku: newItem.sku,
+                            productName: newItem.productName,
+                            targets: pushTargets,
+                            channelIds: {
+                                etsyListingId: change.etsyListingId,
+                                wixProductId: change.wixProductId,
+                                wayfairSku: change.wayfairSku
+                            },
+                            changes: change.changes,
+                            source: 'inventory_system_notify'
+                        }
+                    );
+                }
+                
             } catch (e) {
                 console.warn('[Sync Hub Notify] Error queuing change:', e);
             }
@@ -74074,13 +74021,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 // ✅ v23.3.7: PRESERVE channel platform IDs (critical — these are set by Sync Hub)
                 etsyListingId: existingItem?.etsyListingId || null,
                 wixProductId: existingItem?.wixProductId || existingItem?.wixId || null,
-                wayfairSku: existingItem?.wayfairSku || existingItem?.supplierPartNumber || null,
-                
-                // ✅ v23.3.7: PRESERVE Etsy platform data (set by Etsy data mapping, used in pricing)
-                etsyPrice: existingItem?.etsyPrice || null,
-                etsyTitle: existingItem?.etsyTitle || null,
-                etsyQuantity: existingItem?.etsyQuantity || null,
-                etsyQty: existingItem?.etsyQty || null
+                wayfairSku: existingItem?.wayfairSku || existingItem?.supplierPartNumber || null
             };
             
             // v22.1.0: Calculate totalActual (warehouse + TM)
@@ -74199,7 +74140,49 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                             changes.push(`wholesale: $${existingItem.wholesalePrice} → $${item.wholesalePrice}`);
                         }
                         if (JSON.stringify(existingItem.channels) !== JSON.stringify(item.channels)) {
-                            changes.push(`channels updated`);
+                            // ✅ v23.3.8: Detailed per-channel allocation logging
+                            const allChannels = new Set([
+                                ...Object.keys(existingItem.channels || {}),
+                                ...Object.keys(item.channels || {})
+                            ]);
+                            const channelChanges = [];
+                            allChannels.forEach(ch => {
+                                const oldQty = existingItem.channels?.[ch] || 0;
+                                const newQty = item.channels?.[ch] || 0;
+                                if (oldQty !== newQty) {
+                                    if (oldQty === 0) {
+                                        channelChanges.push(`${ch.toUpperCase()} added (${newQty})`);
+                                    } else if (newQty === 0) {
+                                        channelChanges.push(`${ch.toUpperCase()} removed (was ${oldQty})`);
+                                    } else {
+                                        channelChanges.push(`${ch.toUpperCase()}: ${oldQty} → ${newQty}`);
+                                    }
+                                }
+                            });
+                            if (channelChanges.length > 0) {
+                                changes.push(`channels: ${channelChanges.join(', ')}`);
+                                
+                                // Dedicated channel allocation log entry
+                                logActivity('inventory', 'channel_allocation_changed', 'system',
+                                    `📦 ${item.sku}: ${channelChanges.join(', ')}`,
+                                    {
+                                        sku: item.sku,
+                                        productName: item.productName,
+                                        channelChanges: channelChanges,
+                                        before: existingItem.channels ? JSON.parse(JSON.stringify(existingItem.channels)) : {},
+                                        after: item.channels ? JSON.parse(JSON.stringify(item.channels)) : {},
+                                        warehouseQty: item.qty,
+                                        platformIds: {
+                                            etsyListingId: item.etsyListingId || null,
+                                            wixProductId: item.wixProductId || null,
+                                            wayfairSku: item.wayfairSku || null
+                                        },
+                                        source: 'inventory_system_save'
+                                    }
+                                );
+                            } else {
+                                changes.push('channels updated');
+                            }
                         }
                         
                         if (changes.length > 0) {
@@ -74209,8 +74192,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                                     sku: item.sku, 
                                     productName: item.productName,
                                     changes: changes,
-                                    before: { qty: existingItem.qty, retail: existingItem.retailPrice, wholesale: existingItem.wholesalePrice },
-                                    after: { qty: item.qty, retail: item.retailPrice, wholesale: item.wholesalePrice }
+                                    before: { qty: existingItem.qty, retail: existingItem.retailPrice, wholesale: existingItem.wholesalePrice, channels: existingItem.channels || {} },
+                                    after: { qty: item.qty, retail: item.retailPrice, wholesale: item.wholesalePrice, channels: item.channels || {} }
                                 }
                             );
                         }
@@ -74258,13 +74241,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 notifySyncHubOfChange(item, existingItem);
             }
             
-            // Also notify if channel quantities changed directly
-            if (existingItem && JSON.stringify(existingItem.channels) !== JSON.stringify(item.channels)) {
-                console.log('📢 Channel quantities changed, notifying Sync Hub');
-                notifySyncHubOfChange(item, existingItem);
-                
-                // v23.3.7: AUTO-SYNC ON ALLOCATION
-                // Detect new channel allocations (went from 0/undefined to >0) and try to look up the platform ID
+            // ✅ v23.3.7: Auto-sync channel IDs when allocating to new channels
+            if (typeof autoSyncOnAllocation === 'function') {
                 autoSyncOnAllocation(item, existingItem);
             }
             
@@ -74326,12 +74304,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             
             // Save to inventory
             const isEdit = !!document.getElementById('editId').value;
-            const existingBeforeSave = isEdit ? inventory.find(i => i.id == formData.id) : null;
-            const existingChannelsCopy = existingBeforeSave ? JSON.parse(JSON.stringify(existingBeforeSave.channels || {})) : {};
-            
-            // v23.3.7: Compute totalActual
-            formData.totalActual = (formData.qty || 0) + (formData.channels?.treasuremarts || 0);
-            
             if (isEdit) {
                 const index = inventory.findIndex(i => i.id == formData.id);
                 if (index !== -1) {
@@ -74349,9 +74321,56 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             // Save to localStorage
             autoSave();
             
-            // v23.3.7: Auto-sync on allocation for Save & Continue path
-            if (isEdit && JSON.stringify(existingChannelsCopy) !== JSON.stringify(formData.channels || {})) {
-                autoSyncOnAllocation(formData, { channels: existingChannelsCopy });
+            // ✅ v23.3.8: Notify Sync Hub of changes (was missing — Save & Continue never pushed to channels)
+            if (isEdit) {
+                const existingItem = inventory.find(i => i.id == formData.id);
+                const oldItem = originalItemState || null;
+                
+                // ✅ v23.3.8: Log channel allocation changes to Activity Log
+                if (oldItem && typeof logActivity === 'function') {
+                    const allChannels = new Set([
+                        ...Object.keys(oldItem.channels || {}),
+                        ...Object.keys(formData.channels || {})
+                    ]);
+                    const channelChanges = [];
+                    allChannels.forEach(ch => {
+                        const oldQty = oldItem.channels?.[ch] || 0;
+                        const newQty = formData.channels?.[ch] || 0;
+                        if (oldQty !== newQty) {
+                            if (oldQty === 0) {
+                                channelChanges.push(`${ch.toUpperCase()} added (${newQty})`);
+                            } else if (newQty === 0) {
+                                channelChanges.push(`${ch.toUpperCase()} removed (was ${oldQty})`);
+                            } else {
+                                channelChanges.push(`${ch.toUpperCase()}: ${oldQty} → ${newQty}`);
+                            }
+                        }
+                    });
+                    if (channelChanges.length > 0) {
+                        logActivity('inventory', 'channel_allocation_changed', 'system',
+                            `📦 ${formData.sku}: ${channelChanges.join(', ')}`,
+                            {
+                                sku: formData.sku,
+                                productName: formData.productName,
+                                channelChanges: channelChanges,
+                                before: oldItem.channels ? JSON.parse(JSON.stringify(oldItem.channels)) : {},
+                                after: formData.channels ? JSON.parse(JSON.stringify(formData.channels)) : {},
+                                warehouseQty: formData.qty,
+                                source: 'inventory_system_save_continue'
+                            }
+                        );
+                    }
+                }
+                
+                // Notify Sync Hub for auto-push to channel websites
+                if (typeof notifySyncHubOfChange === 'function') {
+                    notifySyncHubOfChange(formData, oldItem);
+                }
+                
+                // Auto-sync channel IDs when allocating to new channels
+                if (typeof autoSyncOnAllocation === 'function') {
+                    autoSyncOnAllocation(formData, oldItem);
+                }
             }
             
             // Update the baseline for undo
@@ -74432,39 +74451,17 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                     orderDate: document.getElementById('orderDate').value || null,
                     orderNumber: document.getElementById('orderNumber').value || '',
                     photographed: document.getElementById('photographed').checked || false,
-                    
-                    // 🆕 v26.3: Simple description last updated date
-                    descriptionLastUpdated: document.getElementById('descriptionLastUpdated')?.value || existingItem?.descriptionLastUpdated || null,
-                    
-                    // v20.28: Channel price adjustments
-                    channelPriceAdjustments: {
-                        etsy: parseFloat(document.getElementById('adjustmentEtsy')?.value) || 0,
-                        wix: parseFloat(document.getElementById('adjustmentWix')?.value) || 0,
-                        wayfair: parseFloat(document.getElementById('adjustmentWayfair')?.value) || 0,
-                        crazychicks: parseFloat(document.getElementById('adjustmentCrazyChicks')?.value) || 0,
-                        treasuremarts: parseFloat(document.getElementById('adjustmentTreasureMarts')?.value) || 0
-                    },
-                    
-                    // Backward compat PAR fields
-                    monitorLowStock: document.getElementById('masterParToggle')?.classList.contains('active') || false,
-                    
                     isActive: existingItem?.isActive !== undefined ? existingItem.isActive : true,
                     dateAdded: existingItem?.dateAdded || new Date().toISOString(),
                     lastSoldDate: existingItem?.lastSoldDate || null,
                     purchaseHistory: existingItem?.purchaseHistory || [],
-                    // ✅ v23.3.7: PRESERVE shipping history
+                    // ✅ v21.0.0: PRESERVE shipping history
                     shippingHistory: existingItem?.shippingHistory || [],
                     
-                    // ✅ v23.3.7: PRESERVE channel platform IDs
+                    // ✅ v23.3.7: PRESERVE channel platform IDs (critical — set by Sync Hub)
                     etsyListingId: existingItem?.etsyListingId || null,
                     wixProductId: existingItem?.wixProductId || existingItem?.wixId || null,
-                    wayfairSku: existingItem?.wayfairSku || existingItem?.supplierPartNumber || null,
-                    
-                    // ✅ v23.3.7: PRESERVE Etsy platform data
-                    etsyPrice: existingItem?.etsyPrice || null,
-                    etsyTitle: existingItem?.etsyTitle || null,
-                    etsyQuantity: existingItem?.etsyQuantity || null,
-                    etsyQty: existingItem?.etsyQty || null
+                    wayfairSku: existingItem?.wayfairSku || existingItem?.supplierPartNumber || null
                 };
             } catch (error) {
                 console.error('Error collecting form data:', error);
@@ -76286,22 +76283,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 totalCost = metrics.baseCost + metrics.obShipping;
             }
             
-            // v23.3.6: Determine sync status for this channel
-            let channelSyncDot = '';
-            if (channel === 'etsy') {
-                channelSyncDot = item.etsyListingId 
-                    ? `<span class="sync-dot synced" title="Etsy ID: ${item.etsyListingId}"></span>` 
-                    : `<span class="sync-dot unsynced" title="No Etsy Listing ID - Not synced"></span>`;
-            } else if (channel === 'wix') {
-                channelSyncDot = item.wixProductId 
-                    ? `<span class="sync-dot synced" title="Wix ID: ${item.wixProductId}"></span>` 
-                    : `<span class="sync-dot unsynced" title="No Wix Product ID - Not synced"></span>`;
-            } else if (channel === 'wayfair') {
-                channelSyncDot = item.wayfairSku 
-                    ? `<span class="sync-dot synced" title="Wayfair SKU: ${item.wayfairSku}"></span>` 
-                    : `<span class="sync-dot unsynced" title="No Wayfair SKU - Not synced"></span>`;
-            }
-            
             let cellsHTML = '';
             columns
                 .filter(col => visibleColumns.includes(col.id))
@@ -76329,7 +76310,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                             cellContent = highlightSearchTerm(item.productName, searchTerm);
                             break;
                         case 'sku':
-                            cellContent = channelSyncDot + highlightSearchTerm(item.sku, searchTerm);
+                            cellContent = highlightSearchTerm(item.sku, searchTerm);
                             break;
                         case 'qty':
                             cellContent = item.channels[channel];
@@ -77461,9 +77442,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                         console.warn(`Channel elements not found for ${ch}`);
                     }
                 });
-                
-                // v23.3.6: Update channel sync ID badges
-                updateChannelSyncBadges(item);
 
                 // Update markup calculator
                 updateMarkupCalculator();
@@ -77501,6 +77479,11 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 
                 // Update allocation status bar
                 updateAllocationStatusBar();
+                
+                // v23.3.6: Update channel sync badges
+                if (typeof updateChannelSyncBadges === 'function') {
+                    updateChannelSyncBadges(item);
+                }
                 
                 // Display purchase history if available
                 displayFormPurchaseHistory(item);
@@ -80835,11 +80818,17 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             }
 
             const oldQty = channelQty;
-            const oldWarehouseQty = item.qty;
-            const channelsBefore = JSON.parse(JSON.stringify(item.channels || {}));
             
             // Reduce channel quantity by 1
             item.channels[channel] = Math.max(0, item.channels[channel] - 1);
+            
+            // Log the channel sale
+            if (typeof logActivity === 'function') {
+                logActivity('order', 'channel_sale', channel,
+                    `${item.sku}: ${channel} qty ${oldQty} → ${item.channels[channel]}`,
+                    { sku: item.sku, productName: item.productName, channel: channel, oldQty: oldQty, newQty: item.channels[channel] }
+                );
+            }
             
             // ETSY/WIX SYNC: If selling on Etsy, also reduce Wix. If selling on Wix, also reduce Etsy
             if (channel === 'etsy' && item.channels.wix !== undefined) {
@@ -80856,35 +80845,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             // Remove channel if qty reaches 0
             if (item.channels[channel] === 0) {
                 delete item.channels[channel];
-            }
-            
-            // ✅ v23.3.7: Run full allocation adjustment (caps at warehouse, PAR refill, etc.)
-            autoAdjustChannelAllocations(item, channel);
-            
-            // ✅ v23.3.7: Update lastSoldDate (was missing - affects aging/slow-stock reports)
-            item.lastSoldDate = new Date().toISOString();
-            
-            // ✅ v23.3.7: Update totalActual
-            item.totalActual = (item.qty || 0) + (item.channels?.treasuremarts || 0);
-            
-            // ✅ v23.3.8: Log channel sale with complete before/after state
-            if (typeof logActivity === 'function') {
-                logActivity('order', 'channel_sale', channel,
-                    `${item.sku}: ${channel} ${oldQty} → ${item.channels?.[channel] || 0}, warehouse ${oldWarehouseQty} → ${item.qty}`,
-                    {
-                        sku: item.sku,
-                        productName: item.productName,
-                        channel: channel,
-                        beforeState: { warehouseQty: oldWarehouseQty, channels: channelsBefore },
-                        afterState: {
-                            warehouseQty: item.qty,
-                            channels: JSON.parse(JSON.stringify(item.channels || {})),
-                            totalActual: item.totalActual,
-                            lastSoldDate: item.lastSoldDate
-                        },
-                        source: 'quick_sell'
-                    }
-                );
             }
 
             // Check if below par level and show warning
@@ -80945,14 +80905,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             if (!item.channels[channel]) {
                 item.channels[channel] = 0;
             }
-            
-            // ✅ v23.3.7: Capture before state for activity logging
-            const undoBeforeState = {
-                warehouseQty: item.qty,
-                channels: JSON.parse(JSON.stringify(item.channels || {})),
-                status: item.status
-            };
-            
             item.channels[channel] += 1;
 
             // ETSY/WIX SYNC: If undoing Etsy, also add back to Wix. If undoing Wix, also add back to Etsy
@@ -80971,42 +80923,11 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             if (item.status === 'sold-out') {
                 item.status = 'active';
             }
-            
-            // ✅ v23.3.7: Run allocation adjustment (ensures Etsy=Wix sync, caps at warehouse)
-            autoAdjustChannelAllocations(item, null);
-            
-            // ✅ v23.3.7: Update totalActual
-            item.totalActual = (item.qty || 0) + (item.channels?.treasuremarts || 0);
 
             // Remove the sale from history
             const saleIndex = salesHistory.findIndex(sale => sale.id === lastSale.id);
             if (saleIndex !== -1) {
                 salesHistory.splice(saleIndex, 1);
-            }
-            
-            // ✅ v23.3.7: Log the undo with full before/after state
-            if (typeof logActivity === 'function') {
-                logActivity('order', 'sale_undone', channel,
-                    `↩️ Sale undone: ${item.sku} +1 to ${channel} (qty ${undoBeforeState.warehouseQty} → ${item.qty})`,
-                    {
-                        sku: item.sku,
-                        productName: item.productName,
-                        channel: channel,
-                        beforeState: undoBeforeState,
-                        afterState: {
-                            warehouseQty: item.qty,
-                            channels: JSON.parse(JSON.stringify(item.channels || {})),
-                            status: item.status,
-                            totalActual: item.totalActual
-                        },
-                        undonesale: {
-                            saleId: lastSale.id,
-                            originalTimestamp: lastSale.timestamp,
-                            saleChannel: lastSale.saleChannel
-                        },
-                        source: 'inventory_system'
-                    }
-                );
             }
 
             autoSave();
@@ -81126,9 +81047,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
             
             // Update last sold date
             item.lastSoldDate = new Date().toISOString();
-            
-            // ✅ v23.3.7: Update totalActual
-            item.totalActual = (item.qty || 0) + (item.channels?.treasuremarts || 0);
 
             // Check if below par level (Master PAR)
             if (item.minParLevel > 0 && item.qty < item.minParLevel && item.qty > 0) {
@@ -133700,7 +133618,7 @@ async function lookupEtsyListingId(sku) {
         
         // Multi-stage SKU matching (same logic as Sync Hub)
         const skuLower = sku.toLowerCase();
-        const baseSku = sku.replace(/\s*[-–]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
+        const baseSku = sku.replace(/\s*[-\u2013]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
         
         for (const listing of listings) {
             const allSkus = [listing.sku, ...(listing.skus || [])].filter(Boolean);
@@ -133749,16 +133667,13 @@ async function lookupWixProductId(sku) {
         
         // Multi-stage SKU matching (same logic as Sync Hub)
         const skuLower = sku.toLowerCase();
-        const baseSku = sku.replace(/\s*[-–]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
+        const baseSku = sku.replace(/\s*[-\u2013]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
         
         for (const wp of products) {
             if (!wp.sku) continue;
-            // Exact or case-insensitive
             if (wp.sku === sku || wp.sku.toLowerCase() === skuLower) return wp.id;
-            // Base SKU match (strip variant suffix from master SKU)
             if (baseSku !== sku && (wp.sku === baseSku || wp.sku.toLowerCase() === baseSku.toLowerCase())) return wp.id;
-            // Reverse: strip variant suffix from Wix SKU
-            const wixBase = wp.sku.replace(/\s*[-–]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
+            const wixBase = wp.sku.replace(/\s*[-\u2013]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
             if (wixBase === sku || wixBase.toLowerCase() === skuLower) return wp.id;
         }
         
@@ -133776,7 +133691,7 @@ console.log('🔗 Auto-Sync on Allocation module loaded (v23.3.7)');
 // ============================================
 
 /**
- * Update channel sync ID badges in the edit form
+ * Update sync status badges in the edit form
  * Shows whether each channel has a platform ID synced
  */
 function updateChannelSyncBadges(item) {
@@ -133821,7 +133736,6 @@ function updateChannelSyncBadges(item) {
  * Shows a comprehensive overview of sync status across all channels
  */
 function openSyncVerificationReport() {
-    // Gather sync stats
     const stats = {
         etsy: { allocated: 0, synced: 0, missing: [], total: 0 },
         wix: { allocated: 0, synced: 0, missing: [], total: 0 },
@@ -133829,41 +133743,25 @@ function openSyncVerificationReport() {
     };
     
     inventory.forEach(item => {
-        // Etsy
         if (item.channels && item.channels.etsy > 0) {
             stats.etsy.allocated++;
-            if (item.etsyListingId) {
-                stats.etsy.synced++;
-            } else {
-                stats.etsy.missing.push({ sku: item.sku, name: item.productName, qty: item.channels.etsy });
-            }
+            if (item.etsyListingId) { stats.etsy.synced++; } else { stats.etsy.missing.push({ sku: item.sku, name: item.productName, qty: item.channels.etsy }); }
         }
         if (item.etsyListingId) stats.etsy.total++;
         
-        // Wix
         if (item.channels && item.channels.wix > 0) {
             stats.wix.allocated++;
-            if (item.wixProductId) {
-                stats.wix.synced++;
-            } else {
-                stats.wix.missing.push({ sku: item.sku, name: item.productName, qty: item.channels.wix });
-            }
+            if (item.wixProductId) { stats.wix.synced++; } else { stats.wix.missing.push({ sku: item.sku, name: item.productName, qty: item.channels.wix }); }
         }
         if (item.wixProductId) stats.wix.total++;
         
-        // Wayfair
         if (item.channels && item.channels.wayfair > 0) {
             stats.wayfair.allocated++;
-            if (item.wayfairSku) {
-                stats.wayfair.synced++;
-            } else {
-                stats.wayfair.missing.push({ sku: item.sku, name: item.productName, qty: item.channels.wayfair });
-            }
+            if (item.wayfairSku) { stats.wayfair.synced++; } else { stats.wayfair.missing.push({ sku: item.sku, name: item.productName, qty: item.channels.wayfair }); }
         }
         if (item.wayfairSku) stats.wayfair.total++;
     });
     
-    // Build modal HTML
     const channelConfigs = [
         { key: 'etsy', name: 'Etsy', color: '#f16521', icon: '🛒' },
         { key: 'wix', name: 'Wix', color: '#0c6efd', icon: '🌐' },
@@ -133879,31 +133777,16 @@ function openSyncVerificationReport() {
         return `
             <div class="sync-report-card">
                 <h4><span style="color:${ch.color}">${ch.icon}</span> ${ch.name}</h4>
-                <div class="sync-stat">
-                    <span>Allocated to Channel</span>
-                    <strong>${s.allocated}</strong>
-                </div>
-                <div class="sync-stat">
-                    <span>✅ Synced (Has ID)</span>
-                    <strong style="color:#28a745;">${s.synced}</strong>
-                </div>
-                <div class="sync-stat">
-                    <span>⚠️ Missing ID</span>
-                    <strong style="color:${missingCount > 0 ? '#dc3545' : '#28a745'};">${missingCount}</strong>
-                </div>
-                <div class="sync-stat">
-                    <span>Total with IDs</span>
-                    <strong>${s.total}</strong>
-                </div>
-                <div class="sync-report-bar">
-                    <div class="sync-report-bar-fill" style="width:${pct}%; background:${barColor};"></div>
-                </div>
+                <div class="sync-stat"><span>Allocated to Channel</span><strong>${s.allocated}</strong></div>
+                <div class="sync-stat"><span>✅ Synced (Has ID)</span><strong style="color:#28a745;">${s.synced}</strong></div>
+                <div class="sync-stat"><span>⚠️ Missing ID</span><strong style="color:${missingCount > 0 ? '#dc3545' : '#28a745'};">${missingCount}</strong></div>
+                <div class="sync-stat"><span>Total with IDs</span><strong>${s.total}</strong></div>
+                <div class="sync-report-bar"><div class="sync-report-bar-fill" style="width:${pct}%; background:${barColor};"></div></div>
                 <div style="text-align:center; font-size:12px; margin-top:4px; color:#666;">${pct}% synced</div>
             </div>
         `;
     }).join('');
     
-    // Build missing items list
     let allMissing = [];
     channelConfigs.forEach(ch => {
         stats[ch.key].missing.forEach(item => {
@@ -133948,7 +133831,6 @@ function openSyncVerificationReport() {
         `;
     }
     
-    // Create modal
     const existingModal = document.getElementById('syncVerificationModal');
     if (existingModal) existingModal.remove();
     
@@ -133992,9 +133874,6 @@ function openSyncVerificationReport() {
     console.log('[Sync Report] Opened verification report');
 }
 
-/**
- * Filter the sync report items by channel
- */
 function filterSyncReport(channel) {
     const items = document.querySelectorAll('#syncReportItems .sync-report-item');
     const tabs = document.querySelectorAll('#syncFilterTabs .sync-filter-tab');
@@ -134011,9 +133890,6 @@ function filterSyncReport(channel) {
     });
 }
 
-/**
- * Export sync report as CSV
- */
 function exportSyncReport() {
     let csv = 'SKU,Product Name,Channel,Allocation Qty,Has ID,Channel ID\n';
     
