@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Activity Log v1.3.1 - Enhanced Filters & Diagnostics</title>
+    <title>CCD Activity Log v1.4.1 - Deep Dive Hardened</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     <style>
         :root {
@@ -80,10 +80,13 @@
         .filter-checkbox .dot.payment { background: #22d3ee; }
         .filter-checkbox .dot.system { background: var(--system); }
         .filter-checkbox .dot.error { background: var(--error); }
+        .filter-checkbox .dot.warning { background: var(--warning); }
+        .filter-checkbox .dot.settings { background: #a78bfa; }
         .filter-checkbox .dot.etsy { background: var(--etsy); }
         .filter-checkbox .dot.wix { background: var(--wix); }
         .filter-checkbox .dot.wayfair { background: var(--wayfair); }
         .filter-checkbox .dot.systemchan { background: var(--system); }
+        .filter-checkbox .dot.treasuremarts { background: #f472b6; }
         
         .filter-input { padding: 8px 12px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 0.85rem; min-width: 150px; }
         .filter-input:focus { outline: none; border-color: #8b5cf6; }
@@ -117,12 +120,15 @@
         .log-category.payment { background: rgba(34,211,238,0.15); color: #22d3ee; }
         .log-category.system { background: var(--system-bg); color: var(--system); }
         .log-category.error { background: var(--error-bg); color: var(--error); }
+        .log-category.warning { background: rgba(234,179,8,0.1); color: #facc15; }
+        .log-category.settings { background: rgba(167,139,250,0.15); color: #a78bfa; }
         
         .log-channel { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
         .log-channel.etsy { background: var(--etsy-bg); color: var(--etsy); }
         .log-channel.wix { background: var(--wix-bg); color: var(--wix); }
         .log-channel.wayfair { background: var(--wayfair-bg); color: var(--wayfair); }
         .log-channel.system { background: var(--system-bg); color: var(--system); }
+        .log-channel.treasuremarts { background: rgba(244,114,182,0.15); color: #f472b6; }
         
         .log-summary { max-width: 400px; }
         .log-time { font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim); white-space: nowrap; }
@@ -185,7 +191,7 @@
                 <div class="logo-icon">📋</div>
                 <div style="display: flex; flex-direction: column; gap: 2px;">
                     <span style="font-size: 1.1rem; font-weight: 700;">CCD Activity Log</span>
-                    <span style="font-size: 0.7rem; color: var(--text-dim); font-weight: 400;">v1.3.1 • Build: 2026-02-05 • Enhanced Filters</span>
+                    <span style="font-size: 0.7rem; color: var(--text-dim); font-weight: 400;">v1.4.1 • Build: 2026-02-07 • Deep Dive Hardened</span>
                 </div>
             </div>
         </div>
@@ -234,6 +240,14 @@
                 <div class="stat-value error" id="statErrors">0</div>
                 <div class="stat-subtext" id="statLastError">No recent errors</div>
             </div>
+            <div class="stat-card" onclick="filterByStatCard('warning')" title="Click to show warnings">
+                <div class="stat-card-header">
+                    <span class="stat-label">Warnings</span>
+                    <span class="stat-icon">⚠️</span>
+                </div>
+                <div class="stat-value warning" id="statWarnings">0</div>
+                <div class="stat-subtext" id="statLastWarning">No warnings</div>
+            </div>
             <div class="stat-card" onclick="filterByStatCard('recent')" title="Click to show today's activity">
                 <div class="stat-card-header">
                     <span class="stat-label">Last Activity</span>
@@ -270,6 +284,14 @@
                             <input type="checkbox" checked>
                             <span class="dot system"></span> System
                         </label>
+                        <label class="filter-checkbox active" data-category="settings">
+                            <input type="checkbox" checked>
+                            <span class="dot settings"></span> Settings
+                        </label>
+                        <label class="filter-checkbox active" data-category="warning">
+                            <input type="checkbox" checked>
+                            <span class="dot warning"></span> Warnings
+                        </label>
                         <label class="filter-checkbox active" data-category="error">
                             <input type="checkbox" checked>
                             <span class="dot error"></span> Errors
@@ -295,6 +317,10 @@
                             <input type="checkbox" checked>
                             <span class="dot systemchan"></span> System
                         </label>
+                        <label class="filter-checkbox active" data-channel="treasuremarts">
+                            <input type="checkbox" checked>
+                            <span class="dot treasuremarts"></span> TreasureMarts
+                        </label>
                     </div>
                 </div>
                 <div class="filter-group">
@@ -305,33 +331,69 @@
                         <option value="yesterday">Yesterday</option>
                         <option value="7days" selected>Last 7 Days</option>
                         <option value="30days">Last 30 Days</option>
-                        <option value="custom">Custom Range</option>
                     </select>
                 </div>
                 <div class="filter-group">
                     <span class="filter-label">Action Type</span>
                     <select class="filter-input" id="actionFilter">
                         <option value="all">All Actions</option>
-                        <optgroup label="System">
-                            <option value="file_saved">File Saved</option>
-                            <option value="backup_success">Backup Success</option>
-                            <option value="backup_complete">Backup Complete</option>
-                        </optgroup>
                         <optgroup label="Orders">
                             <option value="order_received">Order Received</option>
                             <option value="order_processed">Order Processed</option>
                             <option value="order_pull_complete">Order Pull Complete</option>
+                            <option value="channel_sale">Channel Sale</option>
+                            <option value="quick_sale">Quick Sale</option>
+                            <option value="sale_undone">Sale Undone</option>
+                        </optgroup>
+                        <optgroup label="Inventory">
+                            <option value="order_deduction">Order Deduction</option>
+                            <option value="source_channel_reduced">Source Channel Reduced</option>
+                            <option value="channel_auto_adjust">Channel Auto-Adjust</option>
+                            <option value="qty_adjusted">Qty Adjusted</option>
+                            <option value="manual_deduction">Manual Deduction</option>
+                            <option value="item_updated">Item Updated</option>
+                            <option value="item_created">Item Created</option>
+                            <option value="item_deleted">Item Deleted</option>
+                            <option value="write_off">Write-Off</option>
+                            <option value="par_triggered">PAR Triggered</option>
+                            <option value="bulk_price_edit">Bulk Price Edit</option>
+                            <option value="bulk_markup_edit">Bulk Markup Edit</option>
+                            <option value="bulk_channel_change">Bulk Channel Change</option>
+                            <option value="bulk_delete">Bulk Delete</option>
                         </optgroup>
                         <optgroup label="Sync">
                             <option value="push_success">Push Success</option>
                             <option value="push_failed">Push Failed</option>
+                            <option value="api_push_attempt">API Push Attempt</option>
+                            <option value="api_push_success">API Push Success</option>
+                            <option value="api_push_failed">API Push Failed</option>
+                            <option value="bulk_push_success">Bulk Push Success</option>
+                            <option value="bulk_push_failed">Bulk Push Failed</option>
+                            <option value="bulk_push_partial">Bulk Push Partial</option>
+                            <option value="cascade_queued">Cascade Queued</option>
                             <option value="cascade_processed">Cascade Processed</option>
+                            <option value="auto_sync_allocation">Auto-Sync Allocation</option>
+                            <option value="channel_id_sync">Channel ID Sync</option>
+                            <option value="channel_id_sync_failed">Channel ID Sync Failed</option>
+                            <option value="etsy_id_found">Etsy ID Found</option>
+                            <option value="wix_id_found">Wix ID Found</option>
+                            <option value="wayfair_id_found">Wayfair ID Found</option>
                         </optgroup>
-                        <optgroup label="Inventory">
-                            <option value="item_updated">Item Updated</option>
-                            <option value="item_created">Item Created</option>
-                            <option value="item_deleted">Item Deleted</option>
-                            <option value="qty_reduced">Quantity Reduced</option>
+                        <optgroup label="System">
+                            <option value="file_saved">File Saved</option>
+                            <option value="file_connected">File Connected</option>
+                            <option value="sync_hub_started">Sync Hub Started</option>
+                            <option value="data_imported">Data Imported</option>
+                            <option value="save_failed">Save Failed</option>
+                        </optgroup>
+                        <optgroup label="Settings">
+                            <option value="pricing_updated">Pricing Updated</option>
+                            <option value="shipping_services_updated">Shipping Updated</option>
+                        </optgroup>
+                        <optgroup label="Warnings/Errors">
+                            <option value="auto_push_disabled">Auto-Push Disabled</option>
+                            <option value="physical_location_modified">Physical Location Modified</option>
+                            <option value="treasuremarts_modified">TreasureMarts Modified</option>
                         </optgroup>
                     </select>
                 </div>
@@ -497,8 +559,8 @@
     // INITIALIZATION
     // =============================================
     async function init() {
-        console.log('🚀 [Activity Log] Initializing CCD Activity Log v1.3.1...');
-        console.log('📅 [Activity Log] Build: 2026-02-05');
+        console.log('🚀 [Activity Log] Initializing CCD Activity Log v1.4.1...');
+        console.log('📅 [Activity Log] Build: 2026-02-07');
         
         // Initialize IndexedDB first
         try {
@@ -586,6 +648,10 @@
         }
     }
 
+    // ⚠️ WARNING: saveFile() writes state.masterData which may be STALE.
+    // Only use this for Activity Log's own data (_activityLog).
+    // For safety, prefer re-reading fresh file data before any write operation.
+    // clearActivityLog() uses the safe re-read pattern instead.
     async function saveFile() {
         if (!state.fileHandle || !state.masterData) return;
         
@@ -609,14 +675,14 @@
         }
         
         console.log('🔄 [Activity Log] Attempting to restore file handle for:', savedName);
-        document.getElementById('connectionText').textContent = `Reconnecting: ${savedName}...`;
+        document.getElementById('connectionText').textContent = 'Reconnecting: ' + savedName + '...';
         
         try {
             const handle = await restoreFileHandleFromDB();
             
             if (!handle) {
                 console.log('⚠️ [Activity Log] No handle in IndexedDB');
-                document.getElementById('connectionText').textContent = `Reconnect: ${savedName}`;
+                document.getElementById('connectionText').textContent = 'Reconnect: ' + savedName;
                 return;
             }
             
@@ -650,11 +716,11 @@
                 toast('Reconnected to ' + handle.name, 'success');
             } else {
                 console.log('⚠️ [Activity Log] Permission denied');
-                document.getElementById('connectionText').textContent = `Reconnect: ${savedName}`;
+                document.getElementById('connectionText').textContent = 'Reconnect: ' + savedName;
             }
         } catch (err) {
             console.error('❌ [Activity Log] Restore error:', err);
-            document.getElementById('connectionText').textContent = `Reconnect: ${savedName}`;
+            document.getElementById('connectionText').textContent = 'Reconnect: ' + savedName;
         }
     }
 
@@ -683,7 +749,7 @@
      */
     function logActivity(category, action, channel, summary, details = {}) {
         const entry = {
-            id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
+            id: 'act_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
             timestamp: new Date().toISOString(),
             category: category,
             action: action,
@@ -707,16 +773,34 @@
         return entry;
     }
 
-    function clearActivityLog() {
+    async function clearActivityLog() {
         if (!confirm('Are you sure you want to clear all activity log entries? This cannot be undone.')) {
             return;
         }
         
         state.activityLog = [];
         
-        if (state.masterData) {
-            state.masterData._activityLog = [];
-            saveFile();
+        // ✅ v1.4.1: Re-read fresh file before saving to avoid overwriting
+        // inventory changes made by Sync Hub or Inventory System since last load
+        if (state.fileHandle) {
+            try {
+                const file = await state.fileHandle.getFile();
+                const text = await file.text();
+                const freshData = JSON.parse(text);
+                
+                // Only clear the activity log, preserve ALL other data
+                freshData._activityLog = [];
+                state.masterData = freshData;
+                
+                const writable = await state.fileHandle.createWritable();
+                await writable.write(JSON.stringify(freshData, null, 2));
+                await writable.close();
+                
+                console.log('✅ [Activity Log] Cleared log with fresh file re-read (safe write)');
+            } catch (err) {
+                console.error('❌ [Activity Log] Safe clear failed:', err);
+                toast('Failed to save cleared log: ' + err.message, 'error');
+            }
         }
         
         applyFilters();
@@ -725,7 +809,7 @@
     }
 
     // =============================================
-    // SAMPLE DATA
+    // SAMPLE DATA - v1.4.0: Covers all real action types
     // =============================================
     function loadSampleData() {
         const now = Date.now();
@@ -734,8 +818,8 @@
         
         const sampleData = [
             {
-                id: `act_${now}_x7k2`,
-                timestamp: new Date(now - hour * 0.5).toISOString(),
+                id: 'act_' + now + '_x7k2',
+                timestamp: new Date(now - hour * 0.1).toISOString(),
                 category: 'order',
                 action: 'order_received',
                 channel: 'wayfair',
@@ -745,62 +829,150 @@
                 user: 'auto'
             },
             {
-                id: `act_${now}_m3p9`,
-                timestamp: new Date(now - hour * 0.4).toISOString(),
+                id: 'act_' + now + '_d1a3',
+                timestamp: new Date(now - hour * 0.09).toISOString(),
                 category: 'inventory',
-                action: 'qty_reduced',
+                action: 'order_deduction',
                 channel: 'wayfair',
-                summary: 'CTW460425: 10 → 9 (Order CS627804955)',
-                details: { sku: 'CTW460425', productName: 'Galvanized Pole Barn', before: 10, after: 9, reason: 'Order CS627804955' },
+                summary: '📉 Inventory deducted: CTW460425 (10 → 9)',
+                details: { sku: 'CTW460425', orderId: 'CS627804955', beforeState: { warehouseQty: 10, channels: { wayfair: 5, etsy: 8, wix: 8 } }, afterState: { warehouseQty: 9, channels: { wayfair: 4, etsy: 8, wix: 8 }, lastSoldDate: new Date().toISOString(), totalActual: 9 } },
+                device: 'SYNC-HUB',
+                user: 'auto-process'
+            },
+            {
+                id: 'act_' + now + '_s1b4',
+                timestamp: new Date(now - hour * 0.085).toISOString(),
+                category: 'inventory',
+                action: 'source_channel_reduced',
+                channel: 'wayfair',
+                summary: '📉 wayfair allocation reduced: CTW460425 (5 → 4)',
+                details: { sku: 'CTW460425', orderId: 'CS627804955', sourceChannel: 'wayfair', before: 5, after: 4, deducted: 1, source: 'sync_hub_order' },
+                device: 'SYNC-HUB',
+                user: 'auto-process'
+            },
+            {
+                id: 'act_' + now + '_a2c5',
+                timestamp: new Date(now - hour * 0.08).toISOString(),
+                category: 'inventory',
+                action: 'channel_auto_adjust',
+                channel: 'wayfair',
+                summary: '🔄 Channel allocations auto-adjusted for CTW460425',
+                details: { sku: 'CTW460425', orderId: 'CS627804955', adjustments: [{ channel: 'etsy', before: 8, after: 8, reason: 'Within warehouse cap' }], finalChannelState: { wayfair: 4, etsy: 8, wix: 8 } },
+                device: 'SYNC-HUB',
+                user: 'auto-process'
+            },
+            {
+                id: 'act_' + now + '_q1w4',
+                timestamp: new Date(now - hour * 0.07).toISOString(),
+                category: 'sync',
+                action: 'cascade_queued',
+                channel: 'wayfair',
+                summary: '📤 Cascade queued: CTW460425 → Etsy(8), Wix(8)',
+                details: { sku: 'CTW460425', targets: ['etsy', 'wix'], quantities: { etsy: 8, wix: 8 } },
+                device: 'SYNC-HUB',
+                user: 'auto-process'
+            },
+            {
+                id: 'act_' + now + '_p1s6',
+                timestamp: new Date(now - hour * 0.06).toISOString(),
+                category: 'sync',
+                action: 'api_push_success',
+                channel: 'etsy',
+                summary: 'Pushed CTW460425 qty=8 to Etsy listing 1234567890',
+                details: { sku: 'CTW460425', listingId: '1234567890', quantity: 8, responseTime: 234 },
+                device: 'SYNC-HUB',
+                user: 'auto-push'
+            },
+            {
+                id: 'act_' + now + '_p2s7',
+                timestamp: new Date(now - hour * 0.05).toISOString(),
+                category: 'sync',
+                action: 'api_push_success',
+                channel: 'wix',
+                summary: 'Pushed CTW460425 qty=8 to Wix',
+                details: { sku: 'CTW460425', productId: 'wix-prod-123', quantity: 8, responseTime: 189 },
+                device: 'SYNC-HUB',
+                user: 'auto-push'
+            },
+            {
+                id: 'act_' + now + '_o1p8',
+                timestamp: new Date(now - hour * 0.04).toISOString(),
+                category: 'order',
+                action: 'order_processed',
+                channel: 'wayfair',
+                summary: '✅ Order CS627804955 fully processed (1 item)',
+                details: { orderId: 'CS627804955', itemsProcessed: 1, cascadePushed: true },
+                device: 'SYNC-HUB',
+                user: 'auto-process'
+            },
+            {
+                id: 'act_' + now + '_e8r2',
+                timestamp: new Date(now - hour * 2).toISOString(),
+                category: 'error',
+                action: 'api_push_failed',
+                channel: 'wayfair',
+                summary: 'Failed to push 90969 to Wayfair: Invalid environment',
+                details: { sku: '90969', error: 'Invalid environment for application', errorCode: '401', willRetry: false },
+                device: 'SYNC-HUB',
+                user: 'auto-push'
+            },
+            {
+                id: 'act_' + now + '_w1n9',
+                timestamp: new Date(now - hour * 3).toISOString(),
+                category: 'warning',
+                action: 'auto_push_disabled',
+                channel: 'system',
+                summary: '⚠️ Auto-push is disabled - cascade queue items waiting',
+                details: { queueLength: 3, reason: 'Feature flag disabled' },
+                device: 'SYNC-HUB',
+                user: 'system'
+            },
+            {
+                id: 'act_' + now + '_cs10',
+                timestamp: new Date(now - hour * 5).toISOString(),
+                category: 'order',
+                action: 'channel_sale',
+                channel: 'etsy',
+                summary: '90969: etsy 12 → 11, warehouse 15 → 14',
+                details: { sku: '90969', productName: 'Farmhouse Wall Decor', channel: 'etsy', beforeState: { warehouseQty: 15, channels: { etsy: 12, wix: 12, wayfair: 8 } }, afterState: { warehouseQty: 14, channels: { etsy: 11, wix: 11, wayfair: 8 }, totalActual: 14, lastSoldDate: new Date().toISOString() }, source: 'quick_sell' },
                 device: 'PC-OFFICE',
                 user: 'MSmith'
             },
             {
-                id: `act_${now}_q1w4`,
-                timestamp: new Date(now - hour * 0.3).toISOString(),
-                category: 'sync',
-                action: 'push_success',
+                id: 'act_' + now + '_un11',
+                timestamp: new Date(now - hour * 4.5).toISOString(),
+                category: 'order',
+                action: 'sale_undone',
                 channel: 'etsy',
-                summary: 'Pushed CTW460425 qty=9 to Etsy listing 1234567890',
-                details: { sku: 'CTW460425', listingId: '1234567890', quantity: 9, responseTime: 234 },
+                summary: '↩️ Sale undone: 90969 +1 to etsy (qty 14 → 15)',
+                details: { sku: '90969', productName: 'Farmhouse Wall Decor', channel: 'etsy', beforeState: { warehouseQty: 14, channels: { etsy: 11, wix: 11, wayfair: 8 } }, afterState: { warehouseQty: 15, channels: { etsy: 12, wix: 12, wayfair: 8 }, totalActual: 15 }, source: 'inventory_system' },
                 device: 'PC-OFFICE',
-                user: 'auto-push'
+                user: 'MSmith'
             },
             {
-                id: `act_${now}_w2e5`,
-                timestamp: new Date(now - hour * 0.25).toISOString(),
-                category: 'sync',
-                action: 'push_success',
-                channel: 'wix',
-                summary: 'Pushed CTW460425 qty=9 to Wix',
-                details: { sku: 'CTW460425', productId: 'wix-prod-123', quantity: 9, responseTime: 189 },
-                device: 'PC-OFFICE',
-                user: 'auto-push'
-            },
-            {
-                id: `act_${now}_e8r2`,
-                timestamp: new Date(now - hour * 0.2).toISOString(),
-                category: 'error',
-                action: 'push_failed',
-                channel: 'wayfair',
-                summary: 'Failed to push CTW460425 to Wayfair: Invalid environment',
-                details: { sku: 'CTW460425', error: 'Invalid environment for application', errorCode: '401', willRetry: false },
-                device: 'PC-OFFICE',
-                user: 'auto-push'
-            },
-            {
-                id: `act_${now - day}_p5k7`,
+                id: 'act_' + (now - day) + '_wo12',
                 timestamp: new Date(now - day).toISOString(),
-                category: 'payment',
-                action: 'remittance_received',
-                channel: 'wayfair',
-                summary: 'Payment $31.83 received for order CS627804955',
-                details: { orderId: 'CS627804955', grossAmount: 44.76, fees: 12.93, netAmount: 31.83 },
-                device: 'BACKGROUND-SYNC',
-                user: 'email-parser'
+                category: 'inventory',
+                action: 'write_off',
+                channel: 'system',
+                summary: 'Write-off: 2x 91025 (damaged) - warehouse 20 → 18',
+                details: { writeOffId: 'wo_123', sku: '91025', qty: 2, category: 'damaged', totalLoss: 24.50, beforeState: { warehouseQty: 20, channels: { etsy: 15, wix: 15 } }, afterState: { warehouseQty: 18, channels: { etsy: 13, wix: 13 } } },
+                device: 'PC-OFFICE',
+                user: 'MSmith'
             },
             {
-                id: `act_${now - day * 2}_sys1`,
+                id: 'act_' + (now - day) + '_st13',
+                timestamp: new Date(now - day - hour * 2).toISOString(),
+                category: 'settings',
+                action: 'pricing_updated',
+                channel: 'system',
+                summary: 'Pricing rules updated: Etsy markup 2.5x → 2.8x',
+                details: { field: 'etsyMarkup', oldValue: 2.5, newValue: 2.8 },
+                device: 'PC-OFFICE',
+                user: 'MSmith'
+            },
+            {
+                id: 'act_' + (now - day * 2) + '_sys1',
                 timestamp: new Date(now - day * 2).toISOString(),
                 category: 'system',
                 action: 'file_connected',
@@ -809,46 +981,13 @@
                 details: { filename: 'ccd-inventory-MASTER.json', size: '2.4 MB' },
                 device: 'PC-OFFICE',
                 user: 'MSmith'
-            },
-            {
-                id: `act_${now - day * 3}_ord2`,
-                timestamp: new Date(now - day * 3).toISOString(),
-                category: 'order',
-                action: 'order_received',
-                channel: 'etsy',
-                summary: 'Order #2847561234 received - 2 items, $89.50',
-                details: { orderId: '2847561234', items: [{ sku: '90969', qty: 1, price: 45.00 }, { sku: '91025', qty: 1, price: 44.50 }] },
-                device: 'BACKGROUND-SYNC',
-                user: 'auto'
-            },
-            {
-                id: `act_${now - day * 3}_inv2`,
-                timestamp: new Date(now - day * 3 + hour).toISOString(),
-                category: 'inventory',
-                action: 'qty_adjusted',
-                channel: 'system',
-                summary: '90969: Manual adjustment 15 → 20 (Restock)',
-                details: { sku: '90969', before: 15, after: 20, reason: 'Manual restock', adjustedBy: 'MSmith' },
-                device: 'PC-OFFICE',
-                user: 'MSmith'
-            },
-            {
-                id: `act_${now - day * 5}_sync3`,
-                timestamp: new Date(now - day * 5).toISOString(),
-                category: 'sync',
-                action: 'pull_complete',
-                channel: 'wix',
-                summary: 'Pulled 342 products from Wix',
-                details: { totalProducts: 342, updated: 12, new: 0, responseTime: 4521 },
-                device: 'PC-OFFICE',
-                user: 'MSmith'
             }
         ];
         
         state.activityLog = sampleData;
         applyFilters();
         updateStats();
-        toast('Sample data loaded - 10 entries', 'success');
+        toast('Sample data loaded - ' + sampleData.length + ' entries covering all action types', 'success');
     }
 
     // =============================================
@@ -858,34 +997,26 @@
         // Category filters - Enhanced with exclusive mode
         document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
             cb.addEventListener('click', (e) => {
-                // Ctrl/Cmd + click = toggle mode (add/remove individual filters)
-                // Regular click = exclusive mode (show ONLY this category)
                 if (e.ctrlKey || e.metaKey) {
-                    // Toggle mode - just flip this one filter
                     cb.classList.toggle('active');
                     cb.querySelector('input').checked = cb.classList.contains('active');
                     
-                    // Don't allow all filters to be off - keep at least one active
                     const anyActive = document.querySelectorAll('#categoryFilters .filter-checkbox.active').length > 0;
                     if (!anyActive) {
                         cb.classList.add('active');
                         cb.querySelector('input').checked = true;
                     }
                 } else {
-                    // Exclusive mode - deactivate all others, activate only this one
                     const wasActive = cb.classList.contains('active');
                     const allCheckboxes = document.querySelectorAll('#categoryFilters .filter-checkbox');
-                    
-                    // If this is the only active filter and we click it again, activate all
                     const activeCount = document.querySelectorAll('#categoryFilters .filter-checkbox.active').length;
+                    
                     if (wasActive && activeCount === 1) {
-                        // Clicking the only active filter = show all
                         allCheckboxes.forEach(checkbox => {
                             checkbox.classList.add('active');
                             checkbox.querySelector('input').checked = true;
                         });
                     } else {
-                        // Make this the only active filter
                         allCheckboxes.forEach(checkbox => {
                             checkbox.classList.remove('active');
                             checkbox.querySelector('input').checked = false;
@@ -902,34 +1033,26 @@
         // Channel filters - Enhanced with exclusive mode
         document.querySelectorAll('#channelFilters .filter-checkbox').forEach(cb => {
             cb.addEventListener('click', (e) => {
-                // Ctrl/Cmd + click = toggle mode (add/remove individual filters)
-                // Regular click = exclusive mode (show ONLY this channel)
                 if (e.ctrlKey || e.metaKey) {
-                    // Toggle mode - just flip this one filter
                     cb.classList.toggle('active');
                     cb.querySelector('input').checked = cb.classList.contains('active');
                     
-                    // Don't allow all filters to be off - keep at least one active
                     const anyActive = document.querySelectorAll('#channelFilters .filter-checkbox.active').length > 0;
                     if (!anyActive) {
                         cb.classList.add('active');
                         cb.querySelector('input').checked = true;
                     }
                 } else {
-                    // Exclusive mode - deactivate all others, activate only this one
                     const wasActive = cb.classList.contains('active');
                     const allCheckboxes = document.querySelectorAll('#channelFilters .filter-checkbox');
-                    
-                    // If this is the only active filter and we click it again, activate all
                     const activeCount = document.querySelectorAll('#channelFilters .filter-checkbox.active').length;
+                    
                     if (wasActive && activeCount === 1) {
-                        // Clicking the only active filter = show all
                         allCheckboxes.forEach(checkbox => {
                             checkbox.classList.add('active');
                             checkbox.querySelector('input').checked = true;
                         });
                     } else {
-                        // Make this the only active filter
                         allCheckboxes.forEach(checkbox => {
                             checkbox.classList.remove('active');
                             checkbox.querySelector('input').checked = false;
@@ -968,9 +1091,10 @@
         const actionFilter = document.getElementById('actionFilter').value;
         const searchTerm = document.getElementById('searchInput').value.toLowerCase();
         
-        // Calculate date range
+        // ✅ v1.4.0: Fixed date range calculation - yesterday now has proper endDate
         const now = new Date();
         let startDate = null;
+        let endDate = null;
         
         switch (dateFilter) {
             case 'today':
@@ -978,6 +1102,7 @@
                 break;
             case 'yesterday':
                 startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+                endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
                 break;
             case '7days':
                 startDate = new Date(now.getTime() - 7 * 86400000);
@@ -994,8 +1119,10 @@
             // Channel filter
             if (!activeChannels.includes(entry.channel)) return false;
             
-            // Date filter
-            if (startDate && new Date(entry.timestamp) < startDate) return false;
+            // Date filter - ✅ v1.4.0: Check both start AND end dates
+            const entryDate = new Date(entry.timestamp);
+            if (startDate && entryDate < startDate) return false;
+            if (endDate && entryDate >= endDate) return false;
             
             // Action filter
             if (actionFilter !== 'all' && entry.action !== actionFilter) return false;
@@ -1052,14 +1179,12 @@
     function filterByStatCard(type) {
         switch(type) {
             case 'all':
-                // Reset all filters
                 clearFilters();
                 break;
                 
             case 'success':
-                // Show only successful actions (not error category)
                 document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
-                    if (cb.dataset.category === 'error') {
+                    if (cb.dataset.category === 'error' || cb.dataset.category === 'warning') {
                         cb.classList.remove('active');
                         cb.querySelector('input').checked = false;
                     } else {
@@ -1072,7 +1197,6 @@
                 break;
                 
             case 'error':
-                // Show only errors
                 document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
                     if (cb.dataset.category === 'error') {
                         cb.classList.add('active');
@@ -1085,16 +1209,28 @@
                 document.getElementById('dateFilter').value = '7days';
                 applyFilters();
                 break;
+            
+            case 'warning':
+                document.querySelectorAll('#categoryFilters .filter-checkbox').forEach(cb => {
+                    if (cb.dataset.category === 'warning') {
+                        cb.classList.add('active');
+                        cb.querySelector('input').checked = true;
+                    } else {
+                        cb.classList.remove('active');
+                        cb.querySelector('input').checked = false;
+                    }
+                });
+                document.getElementById('dateFilter').value = '7days';
+                applyFilters();
+                break;
                 
             case 'recent':
-                // Show today only
                 clearFilters();
                 document.getElementById('dateFilter').value = 'today';
                 applyFilters();
                 break;
         }
         
-        // Scroll to log table
         document.querySelector('.log-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
@@ -1106,62 +1242,72 @@
         const emptyState = document.getElementById('emptyState');
         const container = document.querySelector('.log-table');
         
-        console.log(`📊 [Activity Log] Rendering ${state.filteredLog.length} of ${state.activityLog.length} total entries`);
+        console.log('[Activity Log] Rendering ' + state.filteredLog.length + ' of ' + state.activityLog.length + ' total entries');
         
         if (state.filteredLog.length === 0) {
-            console.log('ℹ️ [Activity Log] No entries to display (filtered or empty)');
             container.style.display = 'none';
             emptyState.style.display = 'block';
+            document.getElementById('logCount').textContent = '(0 entries)';
             return;
         }
         
-        console.log(`✅ [Activity Log] Displaying entries in table`);
         container.style.display = 'table';
         emptyState.style.display = 'none';
         
-        tbody.innerHTML = state.filteredLog.map(entry => {
+        // ✅ v1.4.0: Use data-index for details button instead of inline JSON (XSS-safe)
+        tbody.innerHTML = state.filteredLog.map((entry, index) => {
             const date = new Date(entry.timestamp);
             const timeStr = formatTime(date);
             const status = getStatusFromAction(entry.action);
             
-            return `
-                <tr>
-                    <td><span class="log-status ${status}"></span></td>
-                    <td class="log-time">${timeStr}</td>
-                    <td><span class="log-category ${entry.category}">${entry.category}</span></td>
-                    <td><span class="log-channel ${entry.channel}">${entry.channel}</span></td>
-                    <td class="log-summary">${escapeHtml(entry.summary)}</td>
-                    <td class="log-device">${escapeHtml(entry.device || '--')}</td>
-                    <td><button class="log-details-btn" onclick='showDetails(${JSON.stringify(entry).replace(/'/g, "&#39;")})'>Details</button></td>
-                </tr>
-            `;
+            return '<tr>' +
+                '<td><span class="log-status ' + status + '"></span></td>' +
+                '<td class="log-time">' + timeStr + '</td>' +
+                '<td><span class="log-category ' + escapeHtml(entry.category) + '">' + escapeHtml(entry.category) + '</span></td>' +
+                '<td><span class="log-channel ' + escapeHtml(entry.channel) + '">' + escapeHtml(entry.channel) + '</span></td>' +
+                '<td class="log-summary">' + escapeHtml(entry.summary) + '</td>' +
+                '<td class="log-device">' + escapeHtml(entry.device || '--') + '</td>' +
+                '<td><button class="log-details-btn" data-index="' + index + '">Details</button></td>' +
+                '</tr>';
         }).join('');
         
-        document.getElementById('logCount').textContent = `(${state.filteredLog.length} entries)`;
+        // ✅ v1.4.0: Attach click handlers via delegation (safer than inline onclick)
+        tbody.querySelectorAll('.log-details-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const idx = parseInt(this.getAttribute('data-index'));
+                if (state.filteredLog[idx]) {
+                    showDetails(state.filteredLog[idx]);
+                }
+            });
+        });
+        
+        document.getElementById('logCount').textContent = '(' + state.filteredLog.length + ' entries)';
     }
 
     function formatTime(date) {
         const now = new Date();
-        const diffDays = Math.floor((now - date) / 86400000);
+        // ✅ v1.4.1: Use calendar-day comparison instead of ms math to handle DST
+        const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterdayStart = new Date(todayStart.getTime() - 86400000);
         
         const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
         
-        if (diffDays === 0) {
-            return `Today ${timeStr}`;
-        } else if (diffDays === 1) {
-            return `Yesterday ${timeStr}`;
+        if (date >= todayStart) {
+            return 'Today ' + timeStr;
+        } else if (date >= yesterdayStart) {
+            return 'Yesterday ' + timeStr;
         } else {
             const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-            return `${dateStr} ${timeStr}`;
+            return dateStr + ' ' + timeStr;
         }
     }
 
     function getStatusFromAction(action) {
-        if (action.includes('success') || action.includes('complete') || action.includes('received')) {
+        if (action.includes('success') || action.includes('complete') || action.includes('received') || action.includes('processed') || action.includes('found')) {
             return 'success';
-        } else if (action.includes('failed') || action.includes('error')) {
+        } else if (action.includes('failed') || action.includes('error') || action.includes('save_failed')) {
             return 'error';
-        } else if (action.includes('warning') || action.includes('skipped')) {
+        } else if (action.includes('warning') || action.includes('skipped') || action.includes('disabled') || action.includes('modified')) {
             return 'warning';
         }
         return 'info';
@@ -1175,24 +1321,31 @@
     }
 
     // =============================================
-    // STATISTICS
+    // STATISTICS - v1.4.0: Added warnings counter
     // =============================================
     function updateStats() {
         const total = state.activityLog.length;
         const filtered = state.filteredLog.length;
         const errors = state.activityLog.filter(e => e.category === 'error' || e.action.includes('failed')).length;
-        const success = state.activityLog.filter(e => e.action.includes('success') || e.action.includes('complete') || e.action.includes('received')).length;
+        const warnings = state.activityLog.filter(e => e.category === 'warning' || e.action.includes('disabled') || e.action.includes('modified')).length;
+        const success = state.activityLog.filter(e => e.action.includes('success') || e.action.includes('complete') || e.action.includes('received') || e.action.includes('processed') || e.action.includes('found')).length;
         
         document.getElementById('statTotal').textContent = total;
-        document.getElementById('statFiltered').textContent = filtered === total ? 'Showing all' : `Showing ${filtered} of ${total}`;
+        document.getElementById('statFiltered').textContent = filtered === total ? 'Showing all' : 'Showing ' + filtered + ' of ' + total;
         
         document.getElementById('statSuccess').textContent = success;
-        const successRate = total > 0 ? Math.round((success / (success + errors)) * 100) : 0;
-        document.getElementById('statSuccessRate').textContent = `${successRate}% success rate`;
+        // ✅ v1.4.1: Guard against division by zero when all entries are info
+        const successRate = (success + errors) > 0 ? Math.round((success / (success + errors)) * 100) : (total > 0 ? 100 : 0);
+        document.getElementById('statSuccessRate').textContent = successRate + '% success rate';
         
         document.getElementById('statErrors').textContent = errors;
         const lastError = state.activityLog.find(e => e.category === 'error' || e.action.includes('failed'));
         document.getElementById('statLastError').textContent = lastError ? formatTimeAgo(new Date(lastError.timestamp)) : 'No errors';
+        
+        // ✅ v1.4.0: Warnings stat
+        document.getElementById('statWarnings').textContent = warnings;
+        const lastWarning = state.activityLog.find(e => e.category === 'warning' || e.action.includes('disabled'));
+        document.getElementById('statLastWarning').textContent = lastWarning ? formatTimeAgo(new Date(lastWarning.timestamp)) : 'No warnings';
         
         // Last activity
         if (state.activityLog.length > 0) {
@@ -1206,10 +1359,12 @@
     function formatTimeAgo(date) {
         const seconds = Math.floor((new Date() - date) / 1000);
         
+        // ✅ v1.4.1: Handle future timestamps (clock skew)
+        if (seconds < 0) return 'Just now';
         if (seconds < 60) return 'Just now';
-        if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
-        if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
-        return `${Math.floor(seconds / 86400)} days ago`;
+        if (seconds < 3600) return Math.floor(seconds / 60) + ' min ago';
+        if (seconds < 86400) return Math.floor(seconds / 3600) + ' hours ago';
+        return Math.floor(seconds / 86400) + ' days ago';
     }
 
     // =============================================
@@ -1219,44 +1374,63 @@
         const modal = document.getElementById('detailModal');
         const body = document.getElementById('modalBody');
         
-        body.innerHTML = `
-            <div class="detail-row">
-                <div class="detail-label">ID</div>
-                <div class="detail-value" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">${entry.id}</div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Timestamp</div>
-                <div class="detail-value">${new Date(entry.timestamp).toLocaleString()}</div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Category</div>
-                <div class="detail-value"><span class="log-category ${entry.category}">${entry.category}</span></div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Action</div>
-                <div class="detail-value">${entry.action}</div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Channel</div>
-                <div class="detail-value"><span class="log-channel ${entry.channel}">${entry.channel}</span></div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Summary</div>
-                <div class="detail-value">${escapeHtml(entry.summary)}</div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Details</div>
-                <div class="detail-value"><pre>${JSON.stringify(entry.details || {}, null, 2)}</pre></div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">Device</div>
-                <div class="detail-value">${escapeHtml(entry.device || '--')}</div>
-            </div>
-            <div class="detail-row">
-                <div class="detail-label">User</div>
-                <div class="detail-value">${escapeHtml(entry.user || '--')}</div>
-            </div>
-        `;
+        // ✅ v1.4.0: Build DOM safely instead of innerHTML with embedded data
+        body.innerHTML = '';
+        
+        const fields = [
+            { label: 'ID', value: entry.id, mono: true },
+            { label: 'Timestamp', value: new Date(entry.timestamp).toLocaleString() },
+            { label: 'Category', value: entry.category, badge: 'log-category' },
+            { label: 'Action', value: entry.action },
+            { label: 'Channel', value: entry.channel, badge: 'log-channel' },
+            { label: 'Summary', value: entry.summary },
+            { label: 'Device', value: entry.device || '--' },
+            { label: 'User', value: entry.user || '--' }
+        ];
+        
+        fields.forEach(field => {
+            const row = document.createElement('div');
+            row.className = 'detail-row';
+            
+            const label = document.createElement('div');
+            label.className = 'detail-label';
+            label.textContent = field.label;
+            
+            const value = document.createElement('div');
+            value.className = 'detail-value';
+            
+            if (field.badge) {
+                const span = document.createElement('span');
+                span.className = field.badge + ' ' + field.value;
+                span.textContent = field.value;
+                value.appendChild(span);
+            } else if (field.mono) {
+                value.style.fontFamily = "'JetBrains Mono', monospace";
+                value.style.fontSize = '0.8rem';
+                value.textContent = field.value;
+            } else {
+                value.textContent = field.value;
+            }
+            
+            row.appendChild(label);
+            row.appendChild(value);
+            body.appendChild(row);
+        });
+        
+        // Details JSON (special handling)
+        const detailRow = document.createElement('div');
+        detailRow.className = 'detail-row';
+        const detailLabel = document.createElement('div');
+        detailLabel.className = 'detail-label';
+        detailLabel.textContent = 'Details';
+        const detailValue = document.createElement('div');
+        detailValue.className = 'detail-value';
+        const pre = document.createElement('pre');
+        pre.textContent = JSON.stringify(entry.details || {}, null, 2);
+        detailValue.appendChild(pre);
+        detailRow.appendChild(detailLabel);
+        detailRow.appendChild(detailValue);
+        body.appendChild(detailRow);
         
         modal.classList.add('active');
     }
@@ -1283,21 +1457,24 @@
         
         const headers = ['Timestamp', 'Category', 'Action', 'Channel', 'Summary', 'Device', 'User', 'Details'];
         
+        // ✅ v1.4.1: All fields properly quoted for RFC 4180 compliance
+        const csvQuote = (val) => '"' + String(val || '').replace(/"/g, '""') + '"';
+        
         const rows = state.filteredLog.map(entry => [
-            entry.timestamp,
-            entry.category,
-            entry.action,
-            entry.channel,
-            `"${(entry.summary || '').replace(/"/g, '""')}"`,
-            entry.device || '',
-            entry.user || '',
-            `"${JSON.stringify(entry.details || {}).replace(/"/g, '""')}"`
+            csvQuote(entry.timestamp),
+            csvQuote(entry.category),
+            csvQuote(entry.action),
+            csvQuote(entry.channel),
+            csvQuote(entry.summary),
+            csvQuote(entry.device),
+            csvQuote(entry.user),
+            csvQuote(JSON.stringify(entry.details || {}))
         ]);
         
         const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
         
-        downloadFile(csv, `ccd-activity-log-${formatDateForFilename()}.csv`, 'text/csv');
-        toast(`Exported ${state.filteredLog.length} entries to CSV`, 'success');
+        downloadFile(csv, 'ccd-activity-log-' + formatDateForFilename() + '.csv', 'text/csv');
+        toast('Exported ' + state.filteredLog.length + ' entries to CSV', 'success');
     }
 
     function exportExcel() {
@@ -1306,43 +1483,28 @@
             return;
         }
         
-        // Create simple HTML table that Excel can open
-        let html = `
-            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-            <head><meta charset="UTF-8"></head>
-            <body>
-            <table border="1">
-                <tr style="background: #4a5568; color: white; font-weight: bold;">
-                    <th>Timestamp</th>
-                    <th>Category</th>
-                    <th>Action</th>
-                    <th>Channel</th>
-                    <th>Summary</th>
-                    <th>Device</th>
-                    <th>User</th>
-                    <th>Details</th>
-                </tr>
-        `;
+        let html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+            '<head><meta charset="UTF-8"></head><body><table border="1">' +
+            '<tr style="background: #4a5568; color: white; font-weight: bold;">' +
+            '<th>Timestamp</th><th>Category</th><th>Action</th><th>Channel</th><th>Summary</th><th>Device</th><th>User</th><th>Details</th></tr>';
         
         state.filteredLog.forEach(entry => {
-            html += `
-                <tr>
-                    <td>${new Date(entry.timestamp).toLocaleString()}</td>
-                    <td>${entry.category}</td>
-                    <td>${entry.action}</td>
-                    <td>${entry.channel}</td>
-                    <td>${escapeHtml(entry.summary)}</td>
-                    <td>${escapeHtml(entry.device || '')}</td>
-                    <td>${escapeHtml(entry.user || '')}</td>
-                    <td>${escapeHtml(JSON.stringify(entry.details || {}))}</td>
-                </tr>
-            `;
+            html += '<tr>' +
+                '<td>' + new Date(entry.timestamp).toLocaleString() + '</td>' +
+                '<td>' + escapeHtml(entry.category) + '</td>' +
+                '<td>' + escapeHtml(entry.action) + '</td>' +
+                '<td>' + escapeHtml(entry.channel) + '</td>' +
+                '<td>' + escapeHtml(entry.summary) + '</td>' +
+                '<td>' + escapeHtml(entry.device || '') + '</td>' +
+                '<td>' + escapeHtml(entry.user || '') + '</td>' +
+                '<td>' + escapeHtml(JSON.stringify(entry.details || {})) + '</td>' +
+                '</tr>';
         });
         
         html += '</table></body></html>';
         
-        downloadFile(html, `ccd-activity-log-${formatDateForFilename()}.xls`, 'application/vnd.ms-excel');
-        toast(`Exported ${state.filteredLog.length} entries to Excel`, 'success');
+        downloadFile(html, 'ccd-activity-log-' + formatDateForFilename() + '.xls', 'application/vnd.ms-excel');
+        toast('Exported ' + state.filteredLog.length + ' entries to Excel', 'success');
     }
 
     function downloadFile(content, filename, mimeType) {
@@ -1359,7 +1521,7 @@
 
     function formatDateForFilename() {
         const now = new Date();
-        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
     }
 
     // =============================================
@@ -1381,6 +1543,10 @@
     }
 
     function startAutoRefresh() {
+        // ✅ v1.4.1: Clear any existing interval to prevent leaks
+        if (state.refreshInterval) {
+            clearInterval(state.refreshInterval);
+        }
         state.refreshCountdown = 30;
         updateCountdown();
         
@@ -1404,7 +1570,7 @@
     }
 
     function updateCountdown() {
-        document.getElementById('refreshCountdown').textContent = `${state.refreshCountdown}s`;
+        document.getElementById('refreshCountdown').textContent = state.refreshCountdown + 's';
     }
 
     async function refreshLog() {
@@ -1421,20 +1587,21 @@
     // =============================================
     // TOAST NOTIFICATIONS
     // =============================================
-    function toast(message, type = 'info') {
+    function toast(message, type) {
+        type = type || 'info';
         const container = document.getElementById('toastContainer');
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
+        const toastEl = document.createElement('div');
+        toastEl.className = 'toast ' + type;
         
         const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
-        toast.innerHTML = `<span>${icons[type] || 'ℹ️'}</span><span>${message}</span>`;
+        toastEl.innerHTML = '<span>' + (icons[type] || 'ℹ️') + '</span><span>' + escapeHtml(message) + '</span>';
         
-        container.appendChild(toast);
+        container.appendChild(toastEl);
         
         setTimeout(() => {
-            toast.style.opacity = '0';
-            toast.style.transform = 'translateX(100%)';
-            setTimeout(() => toast.remove(), 300);
+            toastEl.style.opacity = '0';
+            toastEl.style.transform = 'translateX(100%)';
+            setTimeout(() => toastEl.remove(), 300);
         }, 3000);
     }
 
@@ -1442,18 +1609,13 @@
     // KEYBOARD SHORTCUTS
     // =============================================
     document.addEventListener('keydown', (e) => {
-        // Escape to close modal
         if (e.key === 'Escape') {
             closeModal();
         }
-        
-        // Ctrl+R to refresh
         if (e.ctrlKey && e.key === 'r') {
             e.preventDefault();
             refreshLog();
         }
-        
-        // Ctrl+F to focus search
         if (e.ctrlKey && e.key === 'f') {
             e.preventDefault();
             document.getElementById('searchInput').focus();

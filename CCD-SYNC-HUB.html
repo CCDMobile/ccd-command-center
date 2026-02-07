@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.12 - Channel ID Sync Tool</title>
+    <title>CCD Sync Hub v3.3.5.14 - Enhanced Activity Logging</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -4739,10 +4739,11 @@
             // ============ UPDATE EXISTING LISTING ============
             if (action === 'update') {
                 // Check what fields to update
+                // v3.3.5.13: Accept generic 'listingId' from cascade queue items
                 const updateData = {
                     key: key,
                     action: 'updateListing',
-                    listing_id: product.etsyListing || product.etsyListingId
+                    listing_id: product.etsyListing || product.etsyListingId || product.listingId
                 };
 
                 if (!updateData.listing_id) {
@@ -4810,8 +4811,9 @@
         const data = {
             key: key,
             action: 'updateInventory',
-            listing_id: product.etsyListing || product.etsyListingId,
-            quantity: parseInt(product.wixQty || product.etsyQty || product.quantity || 0),
+            // v3.3.5.13: Accept generic 'listingId' and 'qty' from cascade queue items
+            listing_id: product.etsyListing || product.etsyListingId || product.listingId,
+            quantity: parseInt(product.qty || product.wixQty || product.etsyQty || product.quantity || 0),
             sku: product.sku
         };
         return await etsyPostRequest(url, data);
@@ -4870,7 +4872,8 @@
                 const updateData = {
                     key: key,
                     action: 'updateProduct',
-                    productId: product.wixProductId
+                    // v3.3.5.13: Accept generic 'productId' from cascade queue items
+                    productId: product.wixProductId || product.productId
                 };
 
                 if (!updateData.productId) {
@@ -4916,9 +4919,10 @@
             body: JSON.stringify({
                 key: key,
                 action: 'updateInventory',
-                productId: product.wixProductId,
+                // v3.3.5.13: Accept generic 'productId' and 'qty' from cascade queue items
+                productId: product.wixProductId || product.productId,
                 sku: product.sku,
-                quantity: parseInt(product.wixQty || product.quantity || 0)
+                quantity: parseInt(product.qty || product.wixQty || product.quantity || 0)
             })
         });
         return await response.json();
@@ -7922,7 +7926,6 @@
             const products = getProductsArray();
             const updates = [];
             const changes = []; // For change log
-            const cascadeQueue = [];
             
             // ===== GAP 3: INVENTORY DEDUCTION WRAPPER =====
             // Check if inventory deduction is enabled via feature flag
@@ -8115,6 +8118,33 @@
                         product.quantity = newQty;
                     }
                     
+                    // ✅ v3.3.5.13: Reduce SOURCE channel allocation in MASTER.json
+                    // Without this, channels.* was never decremented during order processing.
+                    // autoAdjust only CAPS at warehouse qty - it doesn't subtract the sold amount.
+                    // This caused stale allocations and incorrect cascade pushes to other channels.
+                    const srcCh = order.channel;
+                    if (product.channels && product.channels[srcCh] !== undefined) {
+                        const oldChQty = product.channels[srcCh];
+                        product.channels[srcCh] = Math.max(0, (product.channels[srcCh] || 0) - item.qty);
+                        if (product.channels[srcCh] === 0) delete product.channels[srcCh];
+                        console.log(`[v3.3.5.13] Reduced ${srcCh} allocation: ${oldChQty} → ${product.channels[srcCh] || 0}`);
+                        
+                        // ✅ v3.3.5.14: Log source channel reduction to Activity Log
+                        logActivity('inventory', 'source_channel_reduced', srcCh,
+                            `📉 ${srcCh} allocation reduced: ${sku} (${oldChQty} → ${product.channels[srcCh] || 0})`,
+                            {
+                                sku: sku,
+                                productName: product.productName || product.title,
+                                orderId: orderId,
+                                sourceChannel: srcCh,
+                                before: oldChQty,
+                                after: product.channels[srcCh] || 0,
+                                deducted: item.qty,
+                                source: 'sync_hub_order'
+                            }
+                        );
+                    }
+                    
                     // v2.1.0: Auto-adjust channel allocations after order
                     adjustResult = autoAdjustChannelAllocations(product, order.channel);
                     
@@ -8141,6 +8171,12 @@
                             }
                         );
                     }
+                    
+                    // ✅ v3.3.5.13: Update lastSoldDate (was missing - affects aging/slow-stock reports)
+                    product.lastSoldDate = new Date().toISOString();
+                    
+                    // ✅ v3.3.5.13: Update totalActual
+                    product.totalActual = (product.qty || product.warehouseQty || 0) + (product.channels?.treasuremarts || 0);
                     
                     updates.push({
                         sku: sku,
@@ -8180,7 +8216,9 @@
                             },
                             afterState: {
                                 warehouseQty: newQty,
-                                channels: null  // Will be populated after autoAdjust
+                                channels: product.channels ? JSON.parse(JSON.stringify(product.channels)) : null,
+                                lastSoldDate: product.lastSoldDate,
+                                totalActual: product.totalActual
                             },
                             deduction: {
                                 quantity: item.qty,
@@ -8257,41 +8295,10 @@
                 }
                 // ===== END ALLOCATION UPDATE =====
                 
-                // Queue updates for OTHER channels
-
-                
-                // If has Etsy listing and order wasn't from Etsy
-                if ((product.etsyListing || product.etsyListingId) && sourceChannel !== 'etsy') {
-                    cascadeQueue.push({
-                        channel: 'etsy',
-                        sku: sku,
-                        qty: newQty,
-                        listingId: product.etsyListing || product.etsyListingId
-                    });
-                }
-                
-                // If has Wix product and order wasn't from Wix
-                if ((product.wixProductId || product.wixId) && sourceChannel !== 'wix') {
-                    cascadeQueue.push({
-                        channel: 'wix',
-                        sku: sku,
-                        qty: newQty,
-                        productId: product.wixProductId || product.wixId
-                    });
-                }
-                
-                // 🆕 v3.3.5.7: WAYFAIR SPECIAL CASE
-                // Wayfair does NOT auto-reduce inventory when items sell on Wayfair.com
-                // So we ALWAYS push updates to Wayfair, even when order is from Wayfair
-                // (Unlike Etsy/Wix which DO auto-reduce, so we skip pushing to source channel)
-                if (product.wayfairSku || product.supplierPartNumber) {
-                    cascadeQueue.push({
-                        channel: 'wayfair',
-                        sku: sku,
-                        qty: newQty,
-                        wayfairSku: product.wayfairSku || product.supplierPartNumber
-                    });
-                }
+                // v3.3.5.13: Removed dead cascade queue code that was here.
+                // It pushed warehouse qty (newQty) to all channels, but the cascadeQueue
+                // variable was scoped to the while loop and discarded on break.
+                // The ACTIVE cascade queue (post-loop) correctly uses channels.* values.
                 
                 // Check for low stock and PAR alerts
                 const parLevel = product.parLevel || product.par || product.minParLevel || 0;
