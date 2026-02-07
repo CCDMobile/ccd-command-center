@@ -988,7 +988,7 @@
                         <div class="event-group-title">
                             <span class="icon">🏪</span>
                             <span>Wayfair</span>
-                            <span class="event-group-badge">2 events</span>
+                            <span class="event-group-badge">4 events</span>
                         </div>
                         <span class="event-group-toggle">▼</span>
                     </div>
@@ -1012,6 +1012,28 @@
                             <select class="event-select" id="notify_wayfair.sync">
                                 <option value="immediate">📱 Immediate</option>
                                 <option value="digest" selected>📋 Digest</option>
+                                <option value="none">🔇 None</option>
+                            </select>
+                        </div>
+                        <div class="event-row">
+                            <div class="event-info">
+                                <div class="name">⚠️ SKU Mismatch</div>
+                                <div class="desc">Wayfair SKU matched with low confidence - manual review</div>
+                            </div>
+                            <select class="event-select" id="notify_sku.mismatch">
+                                <option value="immediate" selected>📱 Immediate</option>
+                                <option value="digest">📋 Digest</option>
+                                <option value="none">🔇 None</option>
+                            </select>
+                        </div>
+                        <div class="event-row">
+                            <div class="event-info">
+                                <div class="name">❌ SKU Not Found</div>
+                                <div class="desc">Wayfair SKU not found in inventory - manual entry needed</div>
+                            </div>
+                            <select class="event-select" id="notify_sku.not_found">
+                                <option value="immediate" selected>📱 Immediate</option>
+                                <option value="digest">📋 Digest</option>
                                 <option value="none">🔇 None</option>
                             </select>
                         </div>
@@ -1082,7 +1104,7 @@
                         <div class="event-group-title">
                             <span class="icon">🚨</span>
                             <span>Errors & Failures</span>
-                            <span class="event-group-badge">4 events</span>
+                            <span class="event-group-badge">5 events</span>
                         </div>
                         <span class="event-group-toggle">▼</span>
                     </div>
@@ -1126,6 +1148,17 @@
                                 <div class="desc">Automated backup failed</div>
                             </div>
                             <select class="event-select" id="notify_backup.failed">
+                                <option value="immediate" selected>📱 Immediate</option>
+                                <option value="digest">📋 Digest</option>
+                                <option value="none">🔇 None</option>
+                            </select>
+                        </div>
+                        <div class="event-row">
+                            <div class="event-info">
+                                <div class="name">☁️ Cloud Save Failed</div>
+                                <div class="desc">Master JSON save to cloud failed</div>
+                            </div>
+                            <select class="event-select" id="notify_cloud.save.failed">
                                 <option value="immediate" selected>📱 Immediate</option>
                                 <option value="digest">📋 Digest</option>
                                 <option value="none">🔇 None</option>
@@ -4135,15 +4168,26 @@
             orderDetails.push(orderInfo);
         }
         
-        // Send notification for new Wayfair orders
-        if (orders.length > 0) {
+        // ✅ v3.3.5.14: Only send notification for truly NEW orders (not already processed)
+        // Previous bug: notified for ALL orders in date range on every poll cycle
+        const newOrders = orders.filter(o => {
+            const orderId = 'WAYFAIR-' + o.poNumber;
+            return !state.orders.processedIds || !state.orders.processedIds.has(orderId);
+        });
+        const newOrderDetails = orderDetails.filter(o => {
+            const orderId = 'WAYFAIR-' + o.id;
+            return !state.orders.processedIds || !state.orders.processedIds.has(orderId);
+        });
+        
+        if (newOrders.length > 0) {
+            const newItemCount = newOrders.reduce((sum, o) => sum + (o.products || o.lineItems || []).length, 0);
             sendEventNotification(
                 'wayfair.order',
-                `${orders.length} new Wayfair order(s) found with ${itemCount} items`,
+                `${newOrders.length} new Wayfair order(s) found with ${newItemCount} items`,
                 {
-                    orderCount: orders.length,
-                    itemCount: itemCount,
-                    orders: orderDetails.slice(0, 5).map(o => ({
+                    orderCount: newOrders.length,
+                    itemCount: newItemCount,
+                    orders: newOrderDetails.slice(0, 5).map(o => ({
                         id: o.id,
                         buyer: o.buyer,
                         total: o.total,
@@ -4151,6 +4195,8 @@
                     }))
                 }
             );
+        } else if (orders.length > 0) {
+            console.log(`[Wayfair Pull] ${orders.length} orders in range but all already processed - skipping notification`);
         }
         
         return { success: true, orders: orders, items: itemCount, details: orderDetails };
@@ -7522,6 +7568,33 @@
         const config = configData || {};
         const settings = config.settings || {};
         
+        // ✅ v3.3.5.14: Check user notification preferences before sending
+        // Users can set each event to 'immediate', 'digest', or 'none'
+        const userPrefs = state.settings?.eventNotifications || {};
+        const prefSetting = userPrefs[eventType];
+        
+        if (prefSetting === 'none') {
+            console.log(`[Email] Skipping ${eventType} - user preference set to 'none'`);
+            return false;
+        }
+        
+        if (prefSetting === 'digest') {
+            // Queue for digest instead of sending immediately
+            console.log(`[Email] Queuing ${eventType} for digest delivery`);
+            if (configData) {
+                configData.notificationQueue = configData.notificationQueue || [];
+                configData.notificationQueue.push({
+                    eventType,
+                    message,
+                    data,
+                    timestamp: new Date().toISOString()
+                });
+            }
+            return true;
+        }
+        
+        // 'immediate' or unset (default to immediate)
+        
         // Get values from existing CONFIG structure
         const proxyUrl = config.syncHubProxyUrl || settings.proxyUrls?.syncHub;
         const apiKey = config.ccdApiKey || settings.ccdApiKey;
@@ -8532,30 +8605,33 @@
         renderQueue();
         
         // Send order processed notification
-        sendEventNotification(
-            'order.created',
-            `Order processed from ${order.channel}`,
-            {
-                orderId: orderId,
-                channel: order.channel,
-                sku: order.items?.[0]?.sku || 'Multiple',
-                productName: order.items?.[0]?.title || 'Multiple items',
-                qty: order.items?.reduce((sum, item) => sum + (item.qty || 1), 0) || 0,
-                total: order.total || 0
-            }
-        );
-        
-        // Send wayfair.sync notification specifically for Wayfair orders
-        if (order.channel === 'wayfair') {
+        // ✅ v3.3.5.14: Skip per-order notifications during batch processing
+        if (!state._batchProcessing) {
             sendEventNotification(
-                'wayfair.sync',
-                `Wayfair order ${orderId} synced to inventory`,
+                'order.created',
+                `Order processed from ${order.channel}`,
                 {
                     orderId: orderId,
-                    items: order.items?.map(i => ({ sku: i.sku, qty: i.qty, title: i.title })),
+                    channel: order.channel,
+                    sku: order.items?.[0]?.sku || 'Multiple',
+                    productName: order.items?.[0]?.title || 'Multiple items',
+                    qty: order.items?.reduce((sum, item) => sum + (item.qty || 1), 0) || 0,
                     total: order.total || 0
                 }
             );
+            
+            // Send wayfair.sync notification specifically for Wayfair orders
+            if (order.channel === 'wayfair') {
+                sendEventNotification(
+                    'wayfair.sync',
+                    `Wayfair order ${orderId} synced to inventory`,
+                    {
+                        orderId: orderId,
+                        items: order.items?.map(i => ({ sku: i.sku, qty: i.qty, title: i.title })),
+                        total: order.total || 0
+                    }
+                );
+            }
         }
         
         toast(`Order ${orderId} processed successfully`, 'success');
@@ -8655,8 +8731,33 @@
         
         addLog(`Processing ${pending.length} orders...`, 'info');
         
+        // ✅ v3.3.5.14: Suppress per-order notifications during batch processing
+        state._batchProcessing = true;
+        
         for (const order of pending) {
             await processOrder(order.id);
+        }
+        
+        state._batchProcessing = false;
+        
+        // Send single batch notification instead of per-order spam
+        const processed = pending.filter(o => o.processed || o.status === 'completed');
+        if (processed.length > 0) {
+            const channels = {};
+            processed.forEach(o => {
+                channels[o.channel] = (channels[o.channel] || 0) + 1;
+            });
+            const channelSummary = Object.entries(channels).map(([ch, ct]) => `${ch}: ${ct}`).join(', ');
+            
+            sendEventNotification(
+                'order.created',
+                `Batch processed ${processed.length} orders (${channelSummary})`,
+                {
+                    orderCount: processed.length,
+                    channels: channels,
+                    orderIds: processed.map(o => o.id).slice(0, 10)
+                }
+            );
         }
         
         toast(`Processed ${pending.length} orders`, 'success');
