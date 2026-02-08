@@ -70075,7 +70075,6 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 const setFeatureCheckbox = (checkboxId, featureName) => {
                     const checkbox = document.getElementById(checkboxId);
                     if (checkbox) {
-                        // Check CONFIG first, then localStorage, then default to false
                         const enabled = features[featureName] ?? 
                                        (localStorage.getItem(`feature_${featureName}`) === 'true') ?? 
                                        false;
@@ -70083,18 +70082,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                     }
                 };
                 
-                // Phase 2 features
-                setFeatureCheckbox('featureConfigIntegration', 'enableFullConfigIntegration');
-                setFeatureCheckbox('featureDataNormalization', 'enableDataNormalization');
-                setFeatureCheckbox('featureActivityLog', 'enableActivityLogIntegration');
-                setFeatureCheckbox('featureCollisionDetection', 'enableCollisionDetection');
+                // Active feature flags
+                setFeatureCheckbox('flag_enableBulkOperations', 'enableBulkOperations');
                 
-                // Phase 3 features
-                setFeatureCheckbox('featureChannelDelegation', 'enableChannelDelegation');
-                setFeatureCheckbox('featureOrderFeedback', 'enableOrderFeedback');
-                setFeatureCheckbox('featureEmailCoordination', 'enableEmailCoordination');
-                setFeatureCheckbox('featureBulkOperations', 'enableBulkOperations');
-                setFeatureCheckbox('featureExport', 'enableExport');
+                console.log('[Settings] Feature flags loaded');
             }
             
             // Load feature flags asynchronously
@@ -70135,7 +70126,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
         }
         
         // Save all settings
-        function saveAllSettings() {
+        async function saveAllSettings() {
             // API URLs
             const shippoUrl = document.getElementById('settingsShippoUrl').value.trim();
             const shippoApiKey = document.getElementById('settingsShippoApiKey')?.value.trim() || '';
@@ -70202,6 +70193,40 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 if (typeof cloudSyncConfig !== 'undefined') cloudSyncConfig.apiKey = '';
             }
             // ========== END BUG FIX ==========
+            
+            // ========== v23.3.9: Save Feature Flags to localStorage ==========
+            const featureFlags = ['enableBulkOperations'];
+            featureFlags.forEach(flag => {
+                const checkbox = document.getElementById('flag_' + flag);
+                if (checkbox) {
+                    localStorage.setItem(`feature_${flag}`, checkbox.checked.toString());
+                }
+            });
+            
+            // Also save to CONFIG.json if connected
+            if (configFileHandle) {
+                try {
+                    const file = await configFileHandle.getFile();
+                    const text = await file.text();
+                    const cfgData = JSON.parse(text);
+                    if (!cfgData.settings) cfgData.settings = {};
+                    if (!cfgData.settings.features) cfgData.settings.features = {};
+                    featureFlags.forEach(flag => {
+                        const checkbox = document.getElementById('flag_' + flag);
+                        if (checkbox) cfgData.settings.features[flag] = checkbox.checked;
+                    });
+                    cfgData._metadata = cfgData._metadata || {};
+                    cfgData._metadata.lastModified = new Date().toISOString();
+                    cfgData._metadata.lastModifiedBy = 'CCD-INVENTORY-SYSTEM Settings Save All';
+                    const writable = await configFileHandle.createWritable();
+                    await writable.write(JSON.stringify(cfgData, null, 2));
+                    await writable.close();
+                    console.log('[Settings] Feature flags saved to CONFIG.json');
+                } catch (err) {
+                    console.warn('[Settings] Could not save features to CONFIG:', err.message);
+                }
+            }
+            // ========== END Feature Flag Save ==========
             
             showNotification('✅ Settings saved successfully', 'success');
             closeSettingsPanel();
@@ -132358,104 +132383,16 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
             </div>
         </div>
         
-        <!-- Phase 2 Feature Flags Section -->
+        <!-- Future Features Section -->
         <div class="settings-section">
             <div class="settings-section-header">
-                <span>🚀 Phase 2: Data Synchronization</span>
+                <span>🚀 Future Features</span>
             </div>
             <div class="settings-section-content">
                 <p class="settings-help" style="margin-bottom: 15px;">
-                    Phase 2 features - all optional and independently toggleable. 
-                    Changes save immediately to CONFIG.json.
+                    Optional features under development. Enable to activate when ready.
+                    Saved to localStorage and CONFIG.json (if connected).
                 </p>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableFullConfigIntegration" 
-                               onchange="toggleFeature('enableFullConfigIntegration', this.checked)">
-                        <span><strong>CONFIG Integration</strong> (INV-22)</span>
-                    </label>
-                    <p class="settings-help">Move pricing formulas and settings to CONFIG.json</p>
-                </div>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableDataNormalization" 
-                               onchange="toggleFeature('enableDataNormalization', this.checked)">
-                        <span><strong>Data Normalization</strong> (INV-13)</span>
-                    </label>
-                    <p class="settings-help">Support both old and new field names (e.g., name ↔ productName)</p>
-                </div>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableActivityLogIntegration" 
-                               onchange="toggleFeature('enableActivityLogIntegration', this.checked)">
-                        <span><strong>Activity Log Integration</strong> (INV-4)</span>
-                    </label>
-                    <p class="settings-help">Enhanced activity logging with severity levels</p>
-                </div>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableCollisionDetection" 
-                               onchange="toggleFeature('enableCollisionDetection', this.checked)">
-                        <span><strong>Collision Detection</strong> (INV-14)</span>
-                    </label>
-                    <p class="settings-help">Detect when two devices edit the same product</p>
-                </div>
-                
-                <div style="margin-top: 15px; padding: 10px; background: #f0f9ff; border-radius: 6px;">
-                    <strong>📦 Phase 2 Tools:</strong>
-                    <button onclick="migrateAllProductsToCanonical()" 
-                            style="margin-left: 10px; padding: 6px 12px; background: #3b82f6; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                        🔄 Migrate Field Names
-                    </button>
-                    <p class="settings-help" style="margin-top: 5px; margin-bottom: 0;">
-                        One-time migration to standardize field names (safe - keeps old names too). 
-                        Only works when Data Normalization is enabled.
-                    </p>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Phase 3 Feature Flags Section -->
-        <div class="settings-section">
-            <div class="settings-section-header">
-                <span>⭐ Phase 3: UX Enhancements</span>
-            </div>
-            <div class="settings-section-content">
-                <p class="settings-help" style="margin-bottom: 15px;">
-                    Phase 3 features - all optional and independently toggleable.
-                    Changes save immediately to CONFIG.json.
-                </p>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableChannelDelegation" 
-                               onchange="toggleFeature('enableChannelDelegation', this.checked)">
-                        <span><strong>Channel Delegation</strong> (INV-3)</span>
-                    </label>
-                    <p class="settings-help">Queue channel pushes for Channel Manager instead of direct API calls</p>
-                </div>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableOrderFeedback" 
-                               onchange="toggleFeature('enableOrderFeedback', this.checked)">
-                        <span><strong>Order Feedback</strong> (INV-8)</span>
-                    </label>
-                    <p class="settings-help">Show real-time order processing updates and highlight affected products</p>
-                </div>
-                
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableEmailCoordination" 
-                               onchange="toggleFeature('enableEmailCoordination', this.checked)">
-                        <span><strong>Email Coordination</strong> (INV-12)</span>
-                    </label>
-                    <p class="settings-help">Centralized email queue for notifications (prevents duplicates)</p>
-                </div>
                 
                 <div class="settings-toggle">
                     <label>
@@ -132466,18 +132403,11 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
                     <p class="settings-help">Multi-select products and bulk edit prices, quantities, or delete</p>
                 </div>
                 
-                <div class="settings-toggle">
-                    <label>
-                        <input type="checkbox" id="flag_enableExport" 
-                               onchange="toggleFeature('enableExport', this.checked)">
-                        <span><strong>⭐ Export Tools</strong> (INV-29)</span>
-                    </label>
-                    <p class="settings-help">Export inventory to CSV or Excel with custom columns</p>
-                </div>
-                
-                <div style="margin-top: 15px; padding: 10px; background: #fef3c7; border-radius: 6px;">
-                    <strong>💡 Tip:</strong> Enable features one at a time and test each before enabling the next.
-                    All flags default to OFF for safety.
+                <div style="margin-top: 15px; padding: 10px; background: #dbeafe; border-radius: 6px;">
+                    <strong style="color: #1e40af;">ℹ️ Note:</strong>
+                    <span style="font-size: 12px; color: #1e3a8a;">
+                        Activity logging, email notifications, channel sync, and export tools are already built into the system and no longer require feature flags.
+                    </span>
                 </div>
             </div>
         </div>
