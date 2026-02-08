@@ -77741,6 +77741,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                         wayfairOHFee = data.wayfairOH || 10.0;
                         treasureMartsRentFee = data.treasureMartsRent || 10.0;
                         
+                        // ✅ v23.3.9: Also set window.masterData on JSON import
+                        window.masterData = data;
+                        if (!window.masterData._activityLog) window.masterData._activityLog = [];
+                        
                         document.getElementById('surchargeSlider').value = globalSurcharge;
                         document.getElementById('surchargeValue').textContent = globalSurcharge + '%';
                         document.getElementById('etsyOHSlider').value = etsyOHFee;
@@ -77787,7 +77791,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                     etsyOH: etsyOHFee,
                     wixOH: wixOHFee,
                     wayfairOH: wayfairOHFee,
-                    treasureMartsRent: treasureMartsRentFee
+                    treasureMartsRent: treasureMartsRentFee,
+                    _activityLog: (window.masterData?._activityLog || []).slice(0, 500),
+                    _processedOrders: window.masterData?._processedOrders || [],
+                    _syncQueue: window.masterData?._syncQueue || []
                 };
                 
                 console.log('Saving', inventory.length, 'items to localStorage');
@@ -77852,6 +77859,15 @@ console.log('✅ CCDSharedFiles helper loaded (v23.0.6)');
                 wixOHFee = data.wixOH || 10.0;
                 wayfairOHFee = data.wayfairOH || 10.0;
                 treasureMartsRentFee = data.treasureMartsRent || 10.0;
+                
+                // ✅ v23.3.9: Initialize window.masterData for activity logging
+                // Previously only set when loading from master file on disk
+                // This caused ALL logActivity() calls to silently exit after localStorage load
+                window.masterData = data;
+                if (!window.masterData._activityLog) {
+                    window.masterData._activityLog = [];
+                }
+                console.log('📋 [autoLoad] window.masterData initialized for activity logging (' + (data._activityLog?.length || 0) + ' existing entries)');
                 
                 document.getElementById('surchargeSlider').value = globalSurcharge;
                 document.getElementById('surchargeValue').textContent = globalSurcharge + '%';
@@ -126582,9 +126598,42 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
                 lastAction: trigger === 'unknown' ? 'Manual save' : trigger + (itemSKU ? ` (${itemSKU})` : '')
             },
             _changeLog: existingData._changeLog || [],
-            _activityLog: window.masterData?._activityLog || existingData._activityLog || [],
+            // ✅ v23.3.9 FIX: Merge activity logs from memory AND file
+            // Previously: empty [] from localStorage was truthy, wiping Sync Hub entries
+            // Now: merge both sources, deduplicate by ID, keep newest first
+            _activityLog: (function() {
+                const memoryLog = window.masterData?._activityLog || [];
+                const fileLog = existingData._activityLog || [];
+                if (memoryLog.length === 0) return fileLog;
+                if (fileLog.length === 0) return memoryLog;
+                // Merge and deduplicate by ID
+                const seen = new Set();
+                const merged = [];
+                for (const entry of [...memoryLog, ...fileLog]) {
+                    const key = entry.id || entry.timestamp;
+                    if (!seen.has(key)) {
+                        seen.add(key);
+                        merged.push(entry);
+                    }
+                }
+                // Sort newest first and cap at 5000
+                merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                return merged.slice(0, 5000);
+            })(),
             _processedOrders: existingData._processedOrders || [],
-            _syncQueue: window.masterData?._syncQueue || existingData._syncQueue || [],
+            _syncQueue: (function() {
+                const memQ = window.masterData?._syncQueue || [];
+                const fileQ = existingData._syncQueue || [];
+                if (memQ.length === 0) return fileQ;
+                if (fileQ.length === 0) return memQ;
+                const seen = new Set();
+                const merged = [];
+                for (const entry of [...memQ, ...fileQ]) {
+                    const key = entry.id || (entry.sku + entry.timestamp);
+                    if (!seen.has(key)) { seen.add(key); merged.push(entry); }
+                }
+                return merged.slice(-500);
+            })(),
             inventory: inventory,
             salesHistory: salesHistory,
             surcharge: globalSurcharge,
