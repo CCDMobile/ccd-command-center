@@ -10028,6 +10028,26 @@
                 return;
             }
             
+            // v3.3.5.21: Re-read Master JSON from disk to pick up changes from Inventory System
+            if (masterJsonFileHandle) {
+                try {
+                    const freshFile = await masterJsonFileHandle.getFile();
+                    const freshText = await freshFile.text();
+                    const freshData = JSON.parse(freshText);
+                    
+                    // Merge: keep in-memory _activityLog, take everything else from disk
+                    const memoryLog = window.masterJsonData._activityLog || [];
+                    window.masterJsonData = freshData;
+                    if (memoryLog.length > 0) {
+                        window.masterJsonData._activityLog = memoryLog;
+                    }
+                    
+                    console.log(`[Channel ID Sync] ✅ Refreshed Master JSON from disk (${(freshData.inventory || []).length} products)`);
+                } catch (refreshErr) {
+                    console.warn('[Channel ID Sync] Could not refresh from disk, using in-memory data:', refreshErr.message);
+                }
+            }
+            
             // Scan for missing IDs
             const products = window.masterJsonData.inventory || [];
             const missingEtsy = products.filter(p => !p.etsyListingId);
