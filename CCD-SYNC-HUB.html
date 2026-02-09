@@ -10067,6 +10067,9 @@
                 wayfair: { found: 0, notFound: 0, errors: 0 }
             };
             
+            // v3.3.5.22: Collect SKU mismatch data for report
+            window._skuMismatchData = { etsy: [], wix: [], etsyListings: null, wixProducts: null };
+            
             // Fetch from each channel (only if needed)
             if (missingEtsy.length > 0) {
                 toast(`🛍️ Fetching Etsy listings...`, 'info');
@@ -10224,6 +10227,35 @@
                 } else {
                     notFound++;
                     console.log(`[Etsy ID Sync] ⚠️ No listing found for SKU: ${sku}`);
+                    
+                    // v3.3.5.22: Find near-matches for mismatch report
+                    const baseSku = sku
+                        .replace(/\s*[-–]\s.*$/, '')
+                        .replace(/\s*\(.*\)$/, '')
+                        .trim();
+                    const nearMatches = [];
+                    for (const [etsySku, etsyListing] of skuToListing) {
+                        // Skip lowercase duplicate entries in map
+                        if (etsySku !== etsySku.toUpperCase() && skuToListing.has(etsySku.toUpperCase())) continue;
+                        const etsyBase = etsySku
+                            .replace(/\s*[-–]\s.*$/, '')
+                            .replace(/\s*\(.*\)$/, '')
+                            .replace(/-[A-Za-z]+$/, '')  // "8D4459-L" → "8D4459"
+                            .trim();
+                        if (etsyBase === baseSku || etsyBase.toLowerCase() === baseSku.toLowerCase()) {
+                            if (!nearMatches.find(n => n.sku.toLowerCase() === etsySku.toLowerCase())) {
+                                nearMatches.push({ sku: etsySku, title: etsyListing.title, listingId: etsyListing.listing_id });
+                            }
+                        }
+                    }
+                    if (window._skuMismatchData) {
+                        window._skuMismatchData.etsy.push({
+                            productName: product.name || product.title || '',
+                            inventorySku: sku,
+                            baseSku: baseSku !== sku ? baseSku : '',
+                            nearMatches: nearMatches
+                        });
+                    }
                 }
             }
             
@@ -10427,6 +10459,35 @@
                 } else {
                     notFound++;
                     console.log(`[Wix ID Sync] ⚠️ No match for SKU: ${sku}`);
+                    
+                    // v3.3.5.22: Find near-matches for mismatch report
+                    const baseSku = sku
+                        .replace(/\s*[-–]\s.*$/, '')
+                        .replace(/\s*\(.*\)$/, '')
+                        .trim();
+                    const nearMatches = [];
+                    for (const [wixSku, entry] of wixSkuMap) {
+                        // Skip lowercase duplicate entries in map
+                        if (wixSku !== wixSku.toUpperCase() && wixSkuMap.has(wixSku.toUpperCase())) continue;
+                        const wixBase = wixSku
+                            .replace(/\s*[-–]\s.*$/, '')
+                            .replace(/\s*\(.*\)$/, '')
+                            .replace(/-[A-Za-z]+$/, '')  // "8D4459-L" → "8D4459"
+                            .trim();
+                        if (wixBase === baseSku || wixBase.toLowerCase() === baseSku.toLowerCase()) {
+                            if (!nearMatches.find(n => n.sku.toLowerCase() === wixSku.toLowerCase())) {
+                                nearMatches.push({ sku: wixSku, name: entry.name, productId: entry.id, isVariant: entry.isVariant });
+                            }
+                        }
+                    }
+                    if (window._skuMismatchData) {
+                        window._skuMismatchData.wix.push({
+                            productName: product.name || product.title || '',
+                            inventorySku: sku,
+                            baseSku: baseSku !== sku ? baseSku : '',
+                            nearMatches: nearMatches
+                        });
+                    }
                 }
             }
             
@@ -10694,6 +10755,7 @@
                 <div class="sync-report-actions">
                     <button class="btn btn-primary" onclick="closeSyncReport()">Close</button>
                     <button class="btn btn-secondary" onclick="switchView('activity'); closeSyncReport();">View Activity Log</button>
+                    ${totalNotFound > 0 ? `<button class="btn btn-secondary" onclick="exportSkuMismatchReport()" style="background: #2a6f97; color: white;">📋 Download SKU Mismatch Report</button>` : ''}
                 </div>
             </div>
         `;
@@ -10712,6 +10774,138 @@
     function closeSyncReport() {
         const modal = document.getElementById('syncReportModal');
         if (modal) modal.remove();
+    }
+    
+    // v3.3.5.22: Export SKU Mismatch Report as CSV
+    function exportSkuMismatchReport() {
+        const data = window._skuMismatchData;
+        if (!data) {
+            toast('No mismatch data available. Run Channel ID Sync first.', 'warning');
+            return;
+        }
+        
+        // Build a map keyed by inventory SKU, merging Etsy + Wix data
+        const skuMap = new Map();  // inventorySku → { productName, baseSku, etsy: [...], wix: [...] }
+        
+        for (const item of data.etsy) {
+            const key = item.inventorySku;
+            if (!skuMap.has(key)) {
+                skuMap.set(key, { 
+                    productName: item.productName, 
+                    inventorySku: item.inventorySku,
+                    baseSku: item.baseSku || item.inventorySku,
+                    etsy: [], 
+                    wix: [],
+                    etsyMissing: true,
+                    wixMissing: false
+                });
+            }
+            const entry = skuMap.get(key);
+            entry.etsyMissing = true;
+            for (const nm of item.nearMatches) {
+                if (!entry.etsy.find(e => e.toLowerCase() === nm.sku.toLowerCase())) {
+                    entry.etsy.push(nm.sku);
+                }
+            }
+        }
+        
+        for (const item of data.wix) {
+            const key = item.inventorySku;
+            if (!skuMap.has(key)) {
+                skuMap.set(key, { 
+                    productName: item.productName, 
+                    inventorySku: item.inventorySku,
+                    baseSku: item.baseSku || item.inventorySku,
+                    etsy: [], 
+                    wix: [],
+                    etsyMissing: false,
+                    wixMissing: true
+                });
+            }
+            const entry = skuMap.get(key);
+            entry.wixMissing = true;
+            for (const nm of item.nearMatches) {
+                if (!entry.wix.find(e => e.toLowerCase() === nm.sku.toLowerCase())) {
+                    entry.wix.push(nm.sku);
+                }
+            }
+        }
+        
+        // Build rows
+        const rows = [];
+        rows.push([
+            'Product Name', 
+            'Inventory SKU', 
+            'Base SKU',
+            'Etsy Status',
+            'Etsy SKU(s) Found',
+            'Wix Status', 
+            'Wix SKU(s) Found',
+            'Action Needed'
+        ]);
+        
+        // Convert to array and sort: near-matches first, then by product name
+        const entries = Array.from(skuMap.values());
+        entries.sort((a, b) => {
+            const aHasMatch = a.etsy.length > 0 || a.wix.length > 0;
+            const bHasMatch = b.etsy.length > 0 || b.wix.length > 0;
+            if (aHasMatch !== bHasMatch) return aHasMatch ? -1 : 1;
+            return a.productName.localeCompare(b.productName);
+        });
+        
+        for (const entry of entries) {
+            let action = '';
+            if (entry.etsy.length > 0 || entry.wix.length > 0) {
+                // Figure out suggested SKU
+                const channelSkus = [...entry.etsy, ...entry.wix];
+                // Find the most common channel SKU
+                const skuCounts = {};
+                channelSkus.forEach(s => { skuCounts[s] = (skuCounts[s] || 0) + 1; });
+                const suggested = Object.entries(skuCounts).sort((a, b) => b[1] - a[1])[0];
+                if (suggested) {
+                    action = `Consider changing to: ${suggested[0]}`;
+                }
+            } else if (entry.etsyMissing && entry.wixMissing) {
+                action = 'Not found on either channel — verify listing exists';
+            } else if (entry.etsyMissing) {
+                action = 'Not found on Etsy — verify listing exists';
+            } else if (entry.wixMissing) {
+                action = 'Not found on Wix — verify listing exists';
+            }
+            
+            rows.push([
+                entry.productName,
+                entry.inventorySku,
+                entry.baseSku,
+                entry.etsyMissing ? (entry.etsy.length > 0 ? 'NEAR MATCH' : 'NO MATCH') : 'OK',
+                entry.etsy.join(' | ') || (entry.etsyMissing ? '(none found)' : '(already matched)'),
+                entry.wixMissing ? (entry.wix.length > 0 ? 'NEAR MATCH' : 'NO MATCH') : 'OK',
+                entry.wix.join(' | ') || (entry.wixMissing ? '(none found)' : '(already matched)'),
+                action
+            ]);
+        }
+        
+        // Generate CSV
+        const csvContent = rows.map(row => 
+            row.map(cell => {
+                const str = String(cell).replace(/"/g, '""');
+                return str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('|') ? `"${str}"` : str;
+            }).join(',')
+        ).join('\n');
+        
+        // Download
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const timestamp = new Date().toISOString().slice(0, 10);
+        link.href = URL.createObjectURL(blob);
+        link.download = `CCD-SKU-Mismatch-Report-${timestamp}.csv`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        
+        const nearMatchCount = entries.filter(e => e.etsy.length > 0 || e.wix.length > 0).length;
+        const noMatchCount = entries.filter(e => e.etsy.length === 0 && e.wix.length === 0).length;
+        toast(`📋 Report downloaded: ${nearMatchCount} with near-matches, ${noMatchCount} with no match`, 'success');
+        console.log(`[SKU Mismatch Report] Exported ${entries.length} products (${nearMatchCount} near-matches, ${noMatchCount} no match)`);
     }
 
     // =============================================
