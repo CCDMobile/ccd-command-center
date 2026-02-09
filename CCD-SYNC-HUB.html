@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.19 - Activity Log Merge + CORS Fix + Notification Throttle</title>
+    <title>CCD Sync Hub v3.3.5.20 - Activity Log Scope Fix + Merge + CORS Fix</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -469,7 +469,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.19 • Build: 2026-02-07 • Enhanced Activity Logging</span>
+                <span>CCD Sync Hub v3.3.5.20 • Build: 2026-02-07 • Enhanced Activity Logging</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -1642,6 +1642,9 @@
     
     function clearErrors() {
         errorLog.length = 0;
+        updateErrorPanel();
+        if (typeof toast === 'function') toast('Errors cleared', 'success');
+    }
     
     // =============================================
     // ACTIVITY LOG INTEGRATION (v3.9)
@@ -1663,9 +1666,14 @@
         window._realLogActivity = logActivity;
         window.logActivity = logActivity;
         
-        // Only log if we have master data loaded
+        // Buffer if master data not loaded yet (will replay when it connects)
         if (typeof window.masterJsonData === 'undefined' || !window.masterJsonData) {
-            console.log(`📋 [Activity] ${category}/${action}: ${summary} (not saved - no master file)`);
+            if (typeof _activityBuffer !== 'undefined') {
+                _activityBuffer.push([category, action, channel, summary, details]);
+                console.log(`📋 [Activity] Buffered (master file not connected yet): ${summary}`);
+            } else {
+                console.log(`📋 [Activity] ${category}/${action}: ${summary} (not saved - no master file)`);
+            }
             return null;
         }
         
@@ -1728,9 +1736,6 @@
     // =============================================
     // END ACTIVITY LOG INTEGRATION
     // =============================================
-        updateErrorPanel();
-        if (typeof toast === 'function') toast('Errors cleared', 'success');
-    }
 
     // =============================================
     // STATE
@@ -3354,7 +3359,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.19 - Enhanced Activity Logging...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.20 - Enhanced Activity Logging...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3426,8 +3431,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.19 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.19 initialized - Enhanced Activity Logging', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.20 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.20 initialized - Enhanced Activity Logging', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -4188,7 +4193,7 @@
             orderDetails.push(orderInfo);
         }
         
-        // ✅ v3.3.5.19: Only send notification for truly NEW orders (not already processed)
+        // ✅ v3.3.5.20: Only send notification for truly NEW orders (not already processed)
         // FIXED: Use 'WF-' prefix to match format in fetchWayfairOrdersForView/processedIds
         const newOrders = orders.filter(o => {
             const orderId = 'WF-' + (o.poNumber || o.id);
@@ -4663,7 +4668,7 @@
                 { succeeded: succeeded, failed: failed, total: processed }
             );
             
-            // ✅ v3.3.5.19: Flush activity log entries to disk after queue processing
+            // ✅ v3.3.5.20: Flush activity log entries to disk after queue processing
             if (window.masterJsonData && typeof saveMasterJson === 'function') {
                 try {
                     await saveMasterJson({ 
@@ -4690,7 +4695,7 @@
             }
             
             // Send sync failed notification if there were partial failures
-            // v3.3.5.19: Skip notification when ALL items fail (config/retry noise)
+            // v3.3.5.20: Skip notification when ALL items fail (config/retry noise)
             // Only notify when some succeed and some fail (actual sync issues)
             if (failed > 0 && succeeded > 0) {
                 sendEventNotification(
@@ -4862,7 +4867,7 @@
     }
     
     // Helper for Etsy POST requests (handles CORS via form submission workaround)
-    // v3.3.5.19: Now a generic CORS-safe POST used by all channel push functions
+    // v3.3.5.20: Now a generic CORS-safe POST used by all channel push functions
     async function corsSafePost(url, data) {
         try {
             // Try regular fetch POST first
@@ -6087,7 +6092,7 @@
             
             window.masterJsonData = JSON.parse(contents);
             
-            // ✅ v3.3.5.19: Ensure _activityLog exists and replay buffered entries
+            // ✅ v3.3.5.20: Ensure _activityLog exists and replay buffered entries
             if (!window.masterJsonData._activityLog) {
                 window.masterJsonData._activityLog = [];
             }
@@ -6537,7 +6542,7 @@
             
             // ============================================================
             // MERGE _activityLog from file before saving
-            // v3.3.5.19: Prevents Sync Hub from overwriting Inventory System entries
+            // v3.3.5.20: Prevents Sync Hub from overwriting Inventory System entries
             // The Inventory System writes entries to the file independently.
             // Without this merge, Sync Hub's stale in-memory copy overwrites them.
             // ============================================================
@@ -7634,12 +7639,12 @@
      * v3.10.1 - Added 2026-01-21
      * Note: Email enabled/disabled is controlled by proxy settings (toggle in Email Settings UI)
      */
-    // v3.3.5.19: Track sent notifications to prevent spam
+    // v3.3.5.20: Track sent notifications to prevent spam
     const _notificationThrottle = {};
     const NOTIFICATION_THROTTLE_MS = 10 * 60 * 1000; // 10 minutes between same event type
     
     async function sendEventNotification(eventType, message, data) {
-        // v3.3.5.19: Throttle repeated notifications of the same type
+        // v3.3.5.20: Throttle repeated notifications of the same type
         const now = Date.now();
         const lastSent = _notificationThrottle[eventType] || 0;
         if (now - lastSent < NOTIFICATION_THROTTLE_MS) {
@@ -7650,7 +7655,7 @@
         const config = configData || {};
         const settings = config.settings || {};
         
-        // ✅ v3.3.5.19: Check user notification preferences before sending
+        // ✅ v3.3.5.20: Check user notification preferences before sending
         // Users can set each event to 'immediate', 'digest', or 'none'
         const userPrefs = state.settings?.eventNotifications || {};
         const prefSetting = userPrefs[eventType];
@@ -7940,7 +7945,7 @@
     function loadProcessedOrderIds() {
         if (window.masterJsonData && window.masterJsonData._processedOrders) {
             console.log('[Duplicate Detection] Merging processed order IDs from Master JSON');
-            // ✅ v3.3.5.19 FIX: MERGE with localStorage data instead of clearing
+            // ✅ v3.3.5.20 FIX: MERGE with localStorage data instead of clearing
             // Previous bug: clear() wiped localStorage-loaded IDs, causing notification spam
             const beforeCount = state.orders.processedIds.size;
             
@@ -8298,7 +8303,7 @@
                         if (product.channels[srcCh] === 0) delete product.channels[srcCh];
                         console.log(`[v3.3.5.13] Reduced ${srcCh} allocation: ${oldChQty} → ${product.channels[srcCh] || 0}`);
                         
-                        // ✅ v3.3.5.19: Log source channel reduction to Activity Log
+                        // ✅ v3.3.5.20: Log source channel reduction to Activity Log
                         logActivity('inventory', 'source_channel_reduced', srcCh,
                             `📉 ${srcCh} allocation reduced: ${sku} (${oldChQty} → ${product.channels[srcCh] || 0})`,
                             {
@@ -8699,7 +8704,7 @@
         renderQueue();
         
         // Send order processed notification
-        // ✅ v3.3.5.19: Skip per-order notifications during batch processing
+        // ✅ v3.3.5.20: Skip per-order notifications during batch processing
         if (!state._batchProcessing) {
             sendEventNotification(
                 'order.created',
@@ -8819,7 +8824,7 @@
             return;
         }
         
-        // ✅ v3.3.5.19: Skip confirm for auto-triggered processing
+        // ✅ v3.3.5.20: Skip confirm for auto-triggered processing
         if (!isAutoTriggered) {
             if (!confirm(`Process ${pending.length} orders and deduct inventory?`)) {
                 return;
@@ -8828,7 +8833,7 @@
         
         addLog(`Processing ${pending.length} orders...`, 'info');
         
-        // ✅ v3.3.5.19: Suppress per-order notifications during batch processing
+        // ✅ v3.3.5.20: Suppress per-order notifications during batch processing
         state._batchProcessing = true;
         
         for (const order of pending) {
@@ -8837,7 +8842,7 @@
         
         state._batchProcessing = false;
         
-        // ✅ v3.3.5.19: Final save to flush remaining activity log entries
+        // ✅ v3.3.5.20: Final save to flush remaining activity log entries
         // processOrder's post-save logActivity calls (cascade_queued, order_processed)
         // from the LAST order in the batch are in memory but not yet on disk
         if (window.masterJsonData) {
@@ -9112,7 +9117,7 @@
             addAutoSyncLogEntry(`📤 Queued ${queuedCount} channel updates from Inventory System`);
             toast(`Auto-Push: Queued ${queuedCount} updates`, 'info');
             
-            // ✅ v3.3.5.19: Log to Activity Log for audit trail
+            // ✅ v3.3.5.20: Log to Activity Log for audit trail
             logActivity('sync', 'auto_push_queued', 'system',
                 `📤 Auto-Push: Queued ${queuedCount} channel update(s) from Inventory System`,
                 {
@@ -9834,7 +9839,7 @@
             }
             // ===== END ORDER STATE INTEGRATION =====
             
-            // ✅ v3.3.5.19: Flush activity log entries to disk after polling
+            // ✅ v3.3.5.20: Flush activity log entries to disk after polling
             if (window.masterJsonData && window.masterJsonData._activityLog?.length > 0 && typeof saveMasterJson === 'function') {
                 try {
                     await saveMasterJson({ 
@@ -10080,7 +10085,7 @@
                 results.wayfair = wayfairResults;
             }
             
-            // ✅ v3.3.5.19: Always save (moved after logActivity so the log entry persists)
+            // ✅ v3.3.5.20: Always save (moved after logActivity so the log entry persists)
             const totalFound = results.etsy.found + results.wix.found + results.wayfair.found;
             
             // Log to Activity Log FIRST
