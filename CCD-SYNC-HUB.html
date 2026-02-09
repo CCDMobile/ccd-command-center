@@ -11032,6 +11032,38 @@
         const wixIdMap = data.wixIdToProduct || new Map();
         const products = window.masterJsonData?.inventory || [];
         
+        // Diagnostic logging
+        console.log(`[Channel SKU Comparison] === DIAGNOSTIC ===`);
+        console.log(`[Channel SKU Comparison] Products: ${products.length}`);
+        console.log(`[Channel SKU Comparison] etsyIdToListing map size: ${etsyIdMap.size}`);
+        console.log(`[Channel SKU Comparison] wixIdToProduct map size: ${wixIdMap.size}`);
+        
+        // Sample products with channel IDs
+        let withEtsyId = 0, withWixId = 0, etsyLookupHit = 0, wixLookupHit = 0;
+        for (const p of products) {
+            if (p.etsyListingId) {
+                withEtsyId++;
+                if (etsyIdMap.get(String(p.etsyListingId))) etsyLookupHit++;
+            }
+            if (p.wixProductId || p.wixId) {
+                withWixId++;
+                if (wixIdMap.get(p.wixProductId || p.wixId)) wixLookupHit++;
+            }
+        }
+        console.log(`[Channel SKU Comparison] Products with etsyListingId: ${withEtsyId}, lookup hits: ${etsyLookupHit}`);
+        console.log(`[Channel SKU Comparison] Products with wixProductId: ${withWixId}, lookup hits: ${wixLookupHit}`);
+        
+        // Show first 3 etsy map keys vs first 3 product etsyListingIds for format comparison
+        const etsyMapKeys = [...etsyIdMap.keys()].slice(0, 3);
+        const etsyProductIds = products.filter(p => p.etsyListingId).slice(0, 3).map(p => ({ stored: p.etsyListingId, type: typeof p.etsyListingId }));
+        console.log(`[Channel SKU Comparison] Etsy map sample keys:`, etsyMapKeys);
+        console.log(`[Channel SKU Comparison] Product etsyListingId samples:`, etsyProductIds);
+        
+        const wixMapKeys = [...wixIdMap.keys()].slice(0, 3);
+        const wixProductIds = products.filter(p => p.wixProductId).slice(0, 3).map(p => ({ stored: p.wixProductId, type: typeof p.wixProductId }));
+        console.log(`[Channel SKU Comparison] Wix map sample keys:`, wixMapKeys);
+        console.log(`[Channel SKU Comparison] Product wixProductId samples:`, wixProductIds);
+        
         if (etsyIdMap.size === 0 && wixIdMap.size === 0) {
             toast('No channel data to compare. Run Channel ID Sync first.', 'warning');
             return;
@@ -11055,6 +11087,7 @@
         let matchCount = 0;
         let mismatchCount = 0;
         let channelMatchInvDiff = 0;
+        let _diagSkippedNotAllocated = 0, _diagSkippedNoChannelSkus = 0, _diagAllMatch = 0, _diagIncluded = 0;
         
         for (const product of products) {
             const sku = product.sku || product.SKU || '';
@@ -11066,7 +11099,7 @@
             // Only include products that are on at least one channel
             const etsyAllocated = !!(product.channels?.etsy);
             const wixAllocated = !!(product.channels?.wix);
-            if (!etsyAllocated && !wixAllocated) continue;
+            if (!etsyAllocated && !wixAllocated) { _diagSkippedNotAllocated++; continue; }
             
             // Get Etsy SKU(s) for this product's stored listing ID
             let etsySkus = [];
@@ -11087,7 +11120,7 @@
             }
             
             // Skip products with no channel data to compare
-            if (etsySkus.length === 0 && wixSkus.length === 0) continue;
+            if (etsySkus.length === 0 && wixSkus.length === 0) { _diagSkippedNoChannelSkus++; continue; }
             
             const etsyStr = etsySkus.join(' | ') || '(no ID)';
             const wixStr = wixSkus.join(' | ') || '(no ID)';
@@ -11150,6 +11183,7 @@
             const needsRow = !invMatchesChannel || etsyWixMatch.includes('NO');
             
             if (needsRow) {
+                _diagIncluded++;
                 rows.push([
                     name,
                     sku,
@@ -11162,6 +11196,13 @@
                 ]);
             }
         }
+        
+        // Diagnostic summary
+        console.log(`[Channel SKU Comparison] === LOOP SUMMARY ===`);
+        console.log(`[Channel SKU Comparison] Skipped (not allocated): ${_diagSkippedNotAllocated}`);
+        console.log(`[Channel SKU Comparison] Skipped (no channel SKUs found): ${_diagSkippedNoChannelSkus}`);
+        console.log(`[Channel SKU Comparison] Included in report: ${_diagIncluded}`);
+        console.log(`[Channel SKU Comparison] All matched (filtered out): ${matchCount}`);
         
         // Sort: channels agree but inventory differs first (easy fixes), then channel disagreements
         const header = rows.shift();
