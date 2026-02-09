@@ -10249,83 +10249,239 @@
             const wixProducts = result.products || [];
             console.log(`[Wix ID Sync] Retrieved ${wixProducts.length} products from Wix`);
             
-            // Build Wix SKU lookup map
-            const wixSkuMap = new Map();
-            for (const wp of wixProducts) {
-                if (wp.sku) {
-                    wixSkuMap.set(wp.sku, wp);
-                    wixSkuMap.set(wp.sku.toLowerCase(), wp);
+            // Diagnostic: show first product structure to verify variant data is present
+            if (wixProducts.length > 0) {
+                const sample = wixProducts[0];
+                const hasVariants = !!(sample.variants || sample.productOptions?.variants);
+                const variantCount = (sample.variants || sample.productOptions?.variants || []).length;
+                console.log(`[Wix ID Sync] 📋 Sample product structure:`, {
+                    id: sample.id,
+                    name: sample.name,
+                    sku: sample.sku,
+                    hasVariantsArray: hasVariants,
+                    variantCount: variantCount,
+                    topLevelKeys: Object.keys(sample).join(', ')
+                });
+                if (!hasVariants) {
+                    console.warn(`[Wix ID Sync] ⚠️ Wix proxy does not include variant data - proxy may need updating to return product.variants[]`);
                 }
             }
             
-            console.log(`[Wix ID Sync] Built lookup with ${wixSkuMap.size} SKU entries`);
+            // =============================================
+            // v3.3.5.21: VARIANT-AWARE SKU MATCHING
+            // Build lookup map from BOTH parent SKUs AND variant SKUs
+            // =============================================
+            
+            const wixSkuMap = new Map();  // sku → { id: wixProductId, name, sku, isVariant, parentName }
+            let parentSkuCount = 0;
+            let variantSkuCount = 0;
+            
+            for (const wp of wixProducts) {
+                // Index parent product SKU
+                if (wp.sku) {
+                    const entry = { id: wp.id, name: wp.name, sku: wp.sku, isVariant: false };
+                    wixSkuMap.set(wp.sku, entry);
+                    wixSkuMap.set(wp.sku.toLowerCase(), entry);
+                    parentSkuCount++;
+                }
+                
+                // Index variant SKUs (Wix returns variants array on each product)
+                const variants = wp.variants || wp.productOptions?.variants || [];
+                if (Array.isArray(variants)) {
+                    for (const v of variants) {
+                        const vSku = v.sku || v.variantSku;
+                        if (vSku && vSku !== wp.sku) {  // Skip if same as parent
+                            const entry = { 
+                                id: wp.id,  // Use PARENT product ID (needed for Wix API updates)
+                                name: wp.name, 
+                                sku: vSku, 
+                                isVariant: true, 
+                                parentName: wp.name,
+                                variantId: v.id || v.variantId,
+                                variantChoices: v.choices || v.title || null
+                            };
+                            if (!wixSkuMap.has(vSku)) {
+                                wixSkuMap.set(vSku, entry);
+                                wixSkuMap.set(vSku.toLowerCase(), entry);
+                                variantSkuCount++;
+                            }
+                        }
+                    }
+                }
+                
+                // Also check manageVariants / options format (alternative Wix API shapes)
+                const options = wp.options || wp.choices || [];
+                if (Array.isArray(options) && options.length > 0 && !variants.length) {
+                    // Some Wix responses nest variant info differently
+                    for (const opt of options) {
+                        const optVariants = opt.variants || opt.values || [];
+                        for (const v of optVariants) {
+                            const vSku = v.sku || v.variantSku;
+                            if (vSku && vSku !== wp.sku && !wixSkuMap.has(vSku)) {
+                                const entry = {
+                                    id: wp.id,
+                                    name: wp.name,
+                                    sku: vSku,
+                                    isVariant: true,
+                                    parentName: wp.name,
+                                    variantId: v.id || null
+                                };
+                                wixSkuMap.set(vSku, entry);
+                                wixSkuMap.set(vSku.toLowerCase(), entry);
+                                variantSkuCount++;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            console.log(`[Wix ID Sync] Built lookup: ${parentSkuCount} parent SKUs + ${variantSkuCount} variant SKUs = ${wixSkuMap.size} total entries`);
             
             let found = 0;
             let notFound = 0;
             
-            // Match products with multi-stage matching
+            // =============================================
+            // MATCH inventory products against expanded SKU map
+            // =============================================
+            
             for (const product of productsNeedingIds) {
                 const sku = product.sku || product.SKU;
                 if (!sku) continue;
                 
-                let wixProduct = null;
+                let wixMatch = null;
+                let matchStage = '';
                 
-                // Stage 1: Exact match
-                wixProduct = wixSkuMap.get(sku);
+                // Stage 1: Exact match (parent or variant SKU)
+                wixMatch = wixSkuMap.get(sku);
+                if (wixMatch) matchStage = 'exact';
                 
                 // Stage 2: Case-insensitive match
-                if (!wixProduct) {
-                    wixProduct = wixSkuMap.get(sku.toLowerCase());
+                if (!wixMatch) {
+                    wixMatch = wixSkuMap.get(sku.toLowerCase());
+                    if (wixMatch) matchStage = 'case-insensitive';
                 }
                 
                 // Stage 3: Strip variant suffix from MASTER SKU
                 //   "109189 - Med." → "109189"
                 //   "E203702 (Lg)" → "E203702"  
-                //   "8D5107 - Go Local" → "8D5107"
                 //   "530350 - Large" → "530350"
-                if (!wixProduct) {
+                if (!wixMatch) {
                     const baseSku = sku
                         .replace(/\s*[-–]\s.*$/, '')     // strip " - anything"
                         .replace(/\s*\(.*\)$/, '')        // strip " (anything)"
                         .trim();
                     if (baseSku !== sku) {
-                        wixProduct = wixSkuMap.get(baseSku) || wixSkuMap.get(baseSku.toLowerCase());
-                        if (wixProduct) {
-                            console.log(`[Wix ID Sync] ✅ Variant match: ${sku} → base ${baseSku} → ${wixProduct.id}`);
-                        }
+                        wixMatch = wixSkuMap.get(baseSku) || wixSkuMap.get(baseSku.toLowerCase());
+                        if (wixMatch) matchStage = `variant-strip(${baseSku})`;
                     }
                 }
                 
                 // Stage 4: Reverse check — strip suffix from Wix SKU
-                if (!wixProduct) {
-                    wixProduct = wixProducts.find(wp => {
-                        if (!wp.sku) return false;
-                        const wixBase = wp.sku
+                if (!wixMatch) {
+                    for (const [wixSku, entry] of wixSkuMap) {
+                        const wixBase = wixSku
                             .replace(/\s*[-–]\s.*$/, '')
                             .replace(/\s*\(.*\)$/, '')
                             .trim();
-                        return wixBase === sku || wixBase.toLowerCase() === sku.toLowerCase();
-                    });
+                        if (wixBase === sku || wixBase.toLowerCase() === sku.toLowerCase()) {
+                            wixMatch = entry;
+                            matchStage = `reverse-strip(${wixSku}→${wixBase})`;
+                            break;
+                        }
+                    }
                 }
                 
-                if (wixProduct) {
-                    product.wixProductId = wixProduct.id;
+                if (wixMatch) {
+                    product.wixProductId = wixMatch.id;
+                    if (wixMatch.variantId) {
+                        product.wixVariantId = wixMatch.variantId;
+                    }
                     found++;
-                    console.log(`[Wix ID Sync] ✅ Matched ${sku} → Product ID: ${wixProduct.id}`);
+                    const variantNote = wixMatch.isVariant ? ` [variant of "${wixMatch.parentName}"]` : '';
+                    console.log(`[Wix ID Sync] ✅ Matched ${sku} → ${wixMatch.id} (${matchStage})${variantNote}`);
                     
                     logActivity('sync', 'wix_id_found', 'wix',
-                        `✅ Found Wix product ID for ${sku}`,
-                        { sku: sku, productId: wixProduct.id, name: wixProduct.name }
+                        `✅ Found Wix ID for ${sku}${variantNote}`,
+                        { sku: sku, productId: wixMatch.id, name: wixMatch.name, matchStage, isVariant: wixMatch.isVariant }
                     );
                 } else {
                     notFound++;
-                    console.log(`[Wix ID Sync] ⚠️ No product found for SKU: ${sku}`);
+                    console.log(`[Wix ID Sync] ⚠️ No match for SKU: ${sku}`);
                 }
+            }
+            
+            // =============================================
+            // DIAGNOSTIC: Flag Wix parent products with no inventory match
+            // (These are products in Wix that aren't tracked in inventory)
+            // =============================================
+            
+            const inventorySkus = new Set();
+            const allProducts = window.masterJsonData?.inventory || [];
+            for (const p of allProducts) {
+                const s = p.sku || p.SKU;
+                if (s) {
+                    inventorySkus.add(s);
+                    inventorySkus.add(s.toLowerCase());
+                    // Also add base SKU
+                    const base = s.replace(/\s*[-–]\s.*$/, '').replace(/\s*\(.*\)$/, '').trim();
+                    if (base !== s) {
+                        inventorySkus.add(base);
+                        inventorySkus.add(base.toLowerCase());
+                    }
+                }
+            }
+            
+            let unmatchedParents = 0;
+            let unmatchedVariants = 0;
+            const unmatchedParentList = [];
+            
+            for (const wp of wixProducts) {
+                const parentSku = wp.sku;
+                const parentMatched = parentSku && (inventorySkus.has(parentSku) || inventorySkus.has(parentSku.toLowerCase()));
+                
+                // Check if ANY variant of this product matches inventory
+                const variants = wp.variants || wp.productOptions?.variants || [];
+                let anyVariantMatched = false;
+                let unmatchedVariantSkus = [];
+                
+                if (Array.isArray(variants)) {
+                    for (const v of variants) {
+                        const vSku = v.sku || v.variantSku;
+                        if (vSku) {
+                            if (inventorySkus.has(vSku) || inventorySkus.has(vSku.toLowerCase())) {
+                                anyVariantMatched = true;
+                            } else {
+                                unmatchedVariantSkus.push(vSku);
+                            }
+                        }
+                    }
+                }
+                
+                if (!parentMatched && !anyVariantMatched) {
+                    unmatchedParents++;
+                    unmatchedParentList.push({ name: wp.name, sku: parentSku || '(no SKU)', id: wp.id });
+                }
+                
+                // Silently count unmatched variants (promo combos) — don't flag them
+                unmatchedVariants += unmatchedVariantSkus.length;
+            }
+            
+            if (unmatchedParents > 0) {
+                console.log(`[Wix ID Sync] ℹ️ ${unmatchedParents} Wix products have no matching inventory SKU:`);
+                unmatchedParentList.slice(0, 20).forEach(p => {
+                    console.log(`   📦 "${p.name}" (SKU: ${p.sku}, ID: ${p.id})`);
+                });
+                if (unmatchedParentList.length > 20) {
+                    console.log(`   ... and ${unmatchedParentList.length - 20} more`);
+                }
+            }
+            if (unmatchedVariants > 0) {
+                console.log(`[Wix ID Sync] ℹ️ ${unmatchedVariants} Wix variant SKUs skipped (promo combos / no inventory match)`);
             }
             
             console.log(`[Wix ID Sync] Results: ${found} found, ${notFound} not found`);
             
-            return { found, notFound, errors: 0 };
+            return { found, notFound, errors: 0, unmatchedParents, unmatchedVariants, unmatchedParentList };
             
         } catch (error) {
             console.error('[Wix ID Sync] Error:', error);
@@ -10487,6 +10643,14 @@
                             ${results.wix.notFound > 0 ? `<span class="stat-warning">⚠️ ${results.wix.notFound} not found</span>` : ''}
                             ${results.wix.errors > 0 ? `<span class="stat-error">❌ ${results.wix.errors} errors</span>` : ''}
                         </div>
+                        ${results.wix.unmatchedVariants > 0 ? `
+                        <div style="font-size: 0.85rem; color: #8b8fa3; margin-top: 4px; padding-left: 8px;">
+                            ℹ️ ${results.wix.unmatchedVariants} Wix variant SKUs skipped (promo combos)
+                        </div>` : ''}
+                        ${results.wix.unmatchedParents > 0 ? `
+                        <div style="font-size: 0.85rem; color: #e8a838; margin-top: 4px; padding-left: 8px;">
+                            ⚠️ ${results.wix.unmatchedParents} Wix products have no matching inventory SKU — check console for details
+                        </div>` : ''}
                     </div>
                     
                     <div class="channel-result">
@@ -10502,7 +10666,8 @@
                 ${totalNotFound > 0 ? `
                 <div class="sync-report-note">
                     <strong>Note:</strong> Products not found may not be listed on those channels yet, 
-                    or their SKUs may not match. Check Activity Log for details.
+                    or their SKUs may not match. Wix variant SKUs are matched automatically — 
+                    unmatched variants (promo combos) are safely skipped. Check console for unmatched Wix parent products.
                 </div>
                 ` : ''}
                 
