@@ -11068,37 +11068,51 @@
             let suggestedSku = '';
             let reason = '';
             
-            // Priority 1: SKU both channels share (exact)
+            // Helper: simple similarity score between two SKUs (0-1)
+            function skuSimilarity(a, b) {
+                const al = a.toLowerCase(), bl = b.toLowerCase();
+                if (al === bl) return 1;
+                // Shared prefix length
+                let prefix = 0;
+                for (let i = 0; i < Math.min(al.length, bl.length); i++) {
+                    if (al[i] === bl[i]) prefix++; else break;
+                }
+                // Length similarity
+                const lenSim = 1 - Math.abs(al.length - bl.length) / Math.max(al.length, bl.length);
+                return (prefix / Math.max(al.length, bl.length)) * 0.7 + lenSim * 0.3;
+            }
+            
+            // Find SKUs that exist on BOTH channels (strongest signal)
+            let sharedSkus = [];
             if (etsySkus.length > 0 && wixSkus.length > 0) {
-                const etsySet = new Set(etsySkus);
-                const shared = wixSkus.find(ws => etsySet.has(ws));
-                if (shared) {
-                    suggestedSku = shared;
-                    reason = 'Etsy & Wix both use this SKU';
-                }
+                const etsyNormSet = new Set(etsySkus.map(normalize));
+                sharedSkus = wixSkus.filter(ws => etsyNormSet.has(normalize(ws)));
             }
             
-            // Priority 2: Normalized match (spacing only)
-            if (!suggestedSku) {
-                const invNorm = normalize(sku);
-                const match = allChannelSkus.find(cs => normalize(cs) === invNorm);
-                if (match) {
-                    suggestedSku = match;
-                    reason = 'Spacing/formatting difference only';
-                }
-            }
-            
-            // Priority 3: Best available channel SKU
-            if (!suggestedSku) {
-                if (etsySkus.length > 0 && wixSkus.length > 0) {
-                    const etsyNormSet = new Set(etsySkus.map(normalize));
-                    const shared = wixSkus.find(ws => etsyNormSet.has(normalize(ws)));
-                    suggestedSku = shared || etsySkus[0];
-                    reason = shared ? 'Channels agree (normalized)' : 'Using Etsy SKU — channels differ';
+            // Pick best suggestion: most similar to inventory SKU
+            if (sharedSkus.length > 0) {
+                // Best: SKU that both channels agree on AND is most similar to inventory
+                sharedSkus.sort((a, b) => skuSimilarity(b, sku) - skuSimilarity(a, sku));
+                suggestedSku = sharedSkus[0];
+                reason = 'Etsy & Wix both use this SKU';
+            } else if (allChannelSkus.length > 0) {
+                // No shared SKU — pick most similar from any channel
+                const ranked = [...allChannelSkus].sort((a, b) => skuSimilarity(b, sku) - skuSimilarity(a, sku));
+                suggestedSku = ranked[0];
+                const fromEtsy = etsySkus.includes(suggestedSku);
+                const fromWix = wixSkus.includes(suggestedSku);
+                if (fromEtsy && fromWix) {
+                    reason = 'Best match from both channels';
+                } else if (etsySkus.length === 0 || wixSkus.length === 0) {
+                    reason = fromEtsy ? 'From Etsy (only channel with data)' : 'From Wix (only channel with data)';
                 } else {
-                    suggestedSku = etsySkus[0] || wixSkus[0];
-                    reason = etsySkus.length > 0 ? 'From Etsy' : 'From Wix';
+                    reason = 'Channels have different SKUs — review manually';
                 }
+            }
+            
+            // Check if the suggestion is just a spacing fix
+            if (suggestedSku && normalize(suggestedSku) === normalize(sku)) {
+                reason = 'Spacing/formatting difference only';
             }
             
             if (suggestedSku && suggestedSku !== sku) {
