@@ -10801,6 +10801,7 @@
                     <button class="btn btn-secondary" onclick="switchView('activity'); closeSyncReport();">View Activity Log</button>
                     ${totalNotFound > 0 ? `<button class="btn btn-secondary" onclick="exportSkuMismatchReport()" style="background: #2a6f97; color: white;">📋 Download SKU Mismatch Report</button>` : ''}
                     <button class="btn btn-secondary" onclick="exportChannelSkuComparison()" style="background: #5a8a3c; color: white;">📊 Download Channel SKU Comparison</button>
+                    <button class="btn btn-secondary" onclick="openSkuFixUtility()" style="background: #d4740e; color: white;">🔧 Fix Inventory SKUs</button>
                 </div>
             </div>
         `;
@@ -11018,6 +11019,350 @@
         console.log(`[SKU Mismatch Report] Exported ${rows.length - 1} rows: ${mismatchCount} mismatches, ${missingCount} missing, ${idNotFoundCount} dead IDs`);
     }
 
+    // v3.3.5.22: SKU Fix Utility — Review and approve inventory SKU corrections
+    function openSkuFixUtility() {
+        const data = window._skuMismatchData;
+        if (!data) {
+            toast('No data available. Run Channel ID Sync first.', 'warning');
+            return;
+        }
+        
+        const etsyIdMap = data.etsyIdToListing || new Map();
+        const wixIdMap = data.wixIdToProduct || new Map();
+        const products = window.masterJsonData?.inventory || [];
+        const normalize = s => s.replace(/\s*[-–]\s*/g, '-').toLowerCase().trim();
+        
+        // Build list of proposed changes
+        const proposals = [];
+        
+        for (const product of products) {
+            const sku = product.sku || product.SKU || '';
+            if (!sku) continue;
+            const name = product.productName || product.name || product.title || '';
+            const etsyId = product.etsyListingId || '';
+            const wixId = product.wixProductId || product.wixId || '';
+            
+            // Get channel SKUs
+            let etsySkus = [];
+            if (etsyId && etsyIdMap.size > 0) {
+                const etsyListing = etsyIdMap.get(String(etsyId));
+                if (etsyListing) {
+                    etsySkus = etsyListing.skus || [etsyListing.sku].filter(s => s);
+                }
+            }
+            let wixSkus = [];
+            if (wixId && wixIdMap.size > 0) {
+                const wixProduct = wixIdMap.get(wixId);
+                if (wixProduct) {
+                    wixSkus = wixProduct.skus || [];
+                }
+            }
+            
+            const allChannelSkus = [...etsySkus, ...wixSkus];
+            if (allChannelSkus.length === 0) continue;
+            
+            // Check for exact match
+            if (allChannelSkus.includes(sku)) continue;
+            
+            // Find best suggested SKU
+            let suggestedSku = '';
+            let reason = '';
+            
+            // Priority 1: SKU both channels share (exact)
+            if (etsySkus.length > 0 && wixSkus.length > 0) {
+                const etsySet = new Set(etsySkus);
+                const shared = wixSkus.find(ws => etsySet.has(ws));
+                if (shared) {
+                    suggestedSku = shared;
+                    reason = 'Etsy & Wix both use this SKU';
+                }
+            }
+            
+            // Priority 2: Normalized match (spacing only)
+            if (!suggestedSku) {
+                const invNorm = normalize(sku);
+                const match = allChannelSkus.find(cs => normalize(cs) === invNorm);
+                if (match) {
+                    suggestedSku = match;
+                    reason = 'Spacing/formatting difference only';
+                }
+            }
+            
+            // Priority 3: Best available channel SKU
+            if (!suggestedSku) {
+                if (etsySkus.length > 0 && wixSkus.length > 0) {
+                    const etsyNormSet = new Set(etsySkus.map(normalize));
+                    const shared = wixSkus.find(ws => etsyNormSet.has(normalize(ws)));
+                    suggestedSku = shared || etsySkus[0];
+                    reason = shared ? 'Channels agree (normalized)' : 'Using Etsy SKU — channels differ';
+                } else {
+                    suggestedSku = etsySkus[0] || wixSkus[0];
+                    reason = etsySkus.length > 0 ? 'From Etsy' : 'From Wix';
+                }
+            }
+            
+            if (suggestedSku && suggestedSku !== sku) {
+                proposals.push({
+                    productId: product.id,
+                    productName: name,
+                    currentSku: sku,
+                    suggestedSku: suggestedSku,
+                    etsySkus: etsySkus.join(', '),
+                    wixSkus: wixSkus.join(', '),
+                    reason: reason,
+                    accepted: false
+                });
+            }
+        }
+        
+        if (proposals.length === 0) {
+            toast('✅ All inventory SKUs already match their channel SKUs!', 'success');
+            return;
+        }
+        
+        // Store proposals globally for the modal
+        window._skuFixProposals = proposals;
+        
+        // Build modal
+        const existingModal = document.getElementById('sku-fix-modal');
+        if (existingModal) existingModal.remove();
+        
+        const modal = document.createElement('div');
+        modal.id = 'sku-fix-modal';
+        modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:10000;display:flex;align-items:center;justify-content:center;';
+        
+        const spacingCount = proposals.filter(p => p.reason.includes('Spacing') || p.reason.includes('formatting')).length;
+        const channelAgreeCount = proposals.filter(p => p.reason.includes('both use') || p.reason.includes('agree')).length;
+        const otherCount = proposals.length - spacingCount - channelAgreeCount;
+        
+        modal.innerHTML = `
+            <div style="background:white;border-radius:12px;width:95%;max-width:1100px;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <div style="padding:20px 24px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <h2 style="margin:0;font-size:20px;color:#1a1a2e;">🔧 Fix Inventory SKUs</h2>
+                        <div style="font-size:13px;color:#666;margin-top:4px;">
+                            ${proposals.length} changes proposed: 
+                            <span style="color:#d4740e;">${spacingCount} spacing</span>, 
+                            <span style="color:#2a6f97;">${channelAgreeCount} channels agree</span>
+                            ${otherCount > 0 ? `, <span style="color:#dc3545;">${otherCount} review needed</span>` : ''}
+                        </div>
+                    </div>
+                    <button onclick="document.getElementById('sku-fix-modal').remove()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#999;">×</button>
+                </div>
+                
+                <div style="padding:12px 24px;background:#f8f9fa;border-bottom:1px solid #e5e7eb;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                    <button onclick="skuFixSelectAll(true)" style="padding:6px 14px;background:#28a745;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">✅ Accept All</button>
+                    <button onclick="skuFixSelectAll(false)" style="padding:6px 14px;background:#6c757d;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">Clear All</button>
+                    <button onclick="skuFixSelectByType('spacing')" style="padding:6px 14px;background:#d4740e;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">Accept Spacing Only (${spacingCount})</button>
+                    <button onclick="skuFixSelectByType('agree')" style="padding:6px 14px;background:#2a6f97;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px;">Accept Channels Agree (${channelAgreeCount})</button>
+                    <span style="flex:1;"></span>
+                    <span id="sku-fix-selected-count" style="font-size:13px;color:#666;">0 selected</span>
+                </div>
+                
+                <div style="overflow-y:auto;flex:1;padding:0;" id="sku-fix-list">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                        <thead>
+                            <tr style="background:#f1f3f5;position:sticky;top:0;z-index:1;">
+                                <th style="padding:10px 12px;text-align:center;width:50px;border-bottom:2px solid #dee2e6;">✓</th>
+                                <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">Product</th>
+                                <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">Current SKU</th>
+                                <th style="padding:10px 12px;text-align:center;width:30px;border-bottom:2px solid #dee2e6;">→</th>
+                                <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">Suggested SKU</th>
+                                <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">Etsy SKU(s)</th>
+                                <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">Wix SKU(s)</th>
+                                <th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${proposals.map((p, i) => {
+                                const isSpacing = p.reason.includes('Spacing') || p.reason.includes('formatting');
+                                const isAgree = p.reason.includes('both use') || p.reason.includes('agree');
+                                const rowColor = isSpacing ? '#fff8f0' : isAgree ? '#f0f7ff' : '#fff5f5';
+                                const badgeColor = isSpacing ? '#d4740e' : isAgree ? '#2a6f97' : '#dc3545';
+                                const badgeText = isSpacing ? 'SPACING' : isAgree ? 'AGREE' : 'REVIEW';
+                                return `
+                                    <tr id="sku-fix-row-${i}" style="background:${rowColor};border-bottom:1px solid #e5e7eb;">
+                                        <td style="padding:8px 12px;text-align:center;">
+                                            <input type="checkbox" id="sku-fix-cb-${i}" onchange="skuFixToggle(${i})" style="width:18px;height:18px;cursor:pointer;">
+                                        </td>
+                                        <td style="padding:8px 12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${p.productName}">${p.productName}</td>
+                                        <td style="padding:8px 12px;font-family:monospace;font-weight:600;color:#dc3545;">${p.currentSku}</td>
+                                        <td style="padding:8px 12px;text-align:center;color:#999;">→</td>
+                                        <td style="padding:8px 12px;font-family:monospace;font-weight:600;color:#28a745;">${p.suggestedSku}</td>
+                                        <td style="padding:8px 12px;font-family:monospace;font-size:11px;color:#555;">${p.etsySkus || '—'}</td>
+                                        <td style="padding:8px 12px;font-family:monospace;font-size:11px;color:#555;">${p.wixSkus || '—'}</td>
+                                        <td style="padding:8px 12px;"><span style="background:${badgeColor};color:white;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;">${badgeText}</span></td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div style="padding:16px 24px;border-top:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;background:#f8f9fa;">
+                    <div style="font-size:12px;color:#666;">Changes are applied to the Master JSON file. A backup is recommended first.</div>
+                    <div style="display:flex;gap:8px;">
+                        <button onclick="document.getElementById('sku-fix-modal').remove()" class="btn btn-secondary">Cancel</button>
+                        <button id="sku-fix-apply-btn" onclick="applySkuFixes()" style="padding:10px 24px;background:#28a745;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600;" disabled>
+                            Apply 0 Changes
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        console.log(`[SKU Fix Utility] Opened with ${proposals.length} proposals`);
+    }
+    
+    function skuFixToggle(index) {
+        const proposals = window._skuFixProposals;
+        if (!proposals) return;
+        const cb = document.getElementById(`sku-fix-cb-${index}`);
+        proposals[index].accepted = cb.checked;
+        const row = document.getElementById(`sku-fix-row-${index}`);
+        if (row) row.style.opacity = cb.checked ? '1' : '0.7';
+        skuFixUpdateCount();
+    }
+    
+    function skuFixSelectAll(checked) {
+        const proposals = window._skuFixProposals;
+        if (!proposals) return;
+        proposals.forEach((p, i) => {
+            p.accepted = checked;
+            const cb = document.getElementById(`sku-fix-cb-${i}`);
+            if (cb) cb.checked = checked;
+            const row = document.getElementById(`sku-fix-row-${i}`);
+            if (row) row.style.opacity = checked ? '1' : '0.7';
+        });
+        skuFixUpdateCount();
+    }
+    
+    function skuFixSelectByType(type) {
+        const proposals = window._skuFixProposals;
+        if (!proposals) return;
+        proposals.forEach((p, i) => {
+            let match = false;
+            if (type === 'spacing') match = p.reason.includes('Spacing') || p.reason.includes('formatting');
+            else if (type === 'agree') match = p.reason.includes('both use') || p.reason.includes('agree');
+            
+            p.accepted = match;
+            const cb = document.getElementById(`sku-fix-cb-${i}`);
+            if (cb) cb.checked = match;
+            const row = document.getElementById(`sku-fix-row-${i}`);
+            if (row) row.style.opacity = match ? '1' : '0.7';
+        });
+        skuFixUpdateCount();
+    }
+    
+    function skuFixUpdateCount() {
+        const proposals = window._skuFixProposals;
+        if (!proposals) return;
+        const count = proposals.filter(p => p.accepted).length;
+        const countEl = document.getElementById('sku-fix-selected-count');
+        if (countEl) countEl.textContent = `${count} selected`;
+        const btn = document.getElementById('sku-fix-apply-btn');
+        if (btn) {
+            btn.textContent = `Apply ${count} Change${count !== 1 ? 's' : ''}`;
+            btn.disabled = count === 0;
+            btn.style.opacity = count === 0 ? '0.5' : '1';
+        }
+    }
+    
+    async function applySkuFixes() {
+        const proposals = window._skuFixProposals;
+        if (!proposals) return;
+        
+        const accepted = proposals.filter(p => p.accepted);
+        if (accepted.length === 0) {
+            toast('No changes selected.', 'warning');
+            return;
+        }
+        
+        // Confirm
+        if (!confirm(`Apply ${accepted.length} SKU change${accepted.length !== 1 ? 's' : ''} to the Master JSON?\n\nThis will update inventory SKUs to match channel SKUs.`)) {
+            return;
+        }
+        
+        const btn = document.getElementById('sku-fix-apply-btn');
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Applying...';
+        }
+        
+        const inventory = window.masterJsonData?.inventory || [];
+        let applied = 0;
+        let notFound = 0;
+        const changes = [];
+        
+        for (const proposal of accepted) {
+            const product = inventory.find(p => p.id == proposal.productId);
+            if (product) {
+                const oldSku = product.sku;
+                product.sku = proposal.suggestedSku;
+                applied++;
+                changes.push({ sku: oldSku, newSku: proposal.suggestedSku, name: proposal.productName });
+                console.log(`[SKU Fix] ✅ ${oldSku} → ${proposal.suggestedSku} (${proposal.productName})`);
+                
+                // Log to activity
+                if (typeof logActivity === 'function') {
+                    logActivity('inventory', 'sku_corrected', 'system',
+                        `SKU corrected: ${oldSku} → ${proposal.suggestedSku} (${proposal.productName})`,
+                        { oldSku, newSku: proposal.suggestedSku, productName: proposal.productName, productId: proposal.productId, reason: proposal.reason }
+                    );
+                }
+            } else {
+                notFound++;
+                console.warn(`[SKU Fix] ⚠️ Product ID ${proposal.productId} not found in inventory`);
+            }
+        }
+        
+        // Save to disk
+        if (applied > 0 && masterJsonFileHandle) {
+            try {
+                const writable = await masterJsonFileHandle.createWritable();
+                await writable.write(JSON.stringify(window.masterJsonData, null, 2));
+                await writable.close();
+                console.log(`[SKU Fix] 💾 Saved ${applied} SKU changes to Master JSON`);
+                
+                // Log save activity
+                if (typeof logActivity === 'function') {
+                    logActivity('system', 'sku_bulk_fix', 'system',
+                        `Bulk SKU fix: ${applied} SKUs corrected to match channel data`,
+                        { applied, notFound, changes: changes.slice(0, 50) }
+                    );
+                }
+                
+                toast(`✅ Applied ${applied} SKU changes and saved to Master JSON${notFound > 0 ? ` (${notFound} not found)` : ''}`, 'success');
+            } catch (saveErr) {
+                console.error('[SKU Fix] ❌ Save failed:', saveErr);
+                toast(`⚠️ Changes applied in memory but save failed: ${saveErr.message}. Try saving manually.`, 'error');
+            }
+        } else if (applied > 0) {
+            toast(`⚠️ Applied ${applied} changes in memory but no Master file connected. Open file to save.`, 'warning');
+        }
+        
+        // Update the modal to show results
+        if (btn) {
+            btn.textContent = `✅ Applied ${applied} Changes`;
+            btn.style.background = '#6c757d';
+        }
+        
+        // Strike through applied rows
+        for (let i = 0; i < proposals.length; i++) {
+            if (proposals[i].accepted) {
+                const row = document.getElementById(`sku-fix-row-${i}`);
+                if (row) {
+                    row.style.background = '#e8f5e9';
+                    row.style.textDecoration = 'line-through';
+                    row.style.opacity = '0.6';
+                }
+                const cb = document.getElementById(`sku-fix-cb-${i}`);
+                if (cb) cb.disabled = true;
+            }
+        }
+    }
+
     // v3.3.5.22: Channel SKU Comparison Report
     // Shows inventory SKU vs Etsy SKU vs Wix SKU side by side
     // Helps verify channels match each other and identify inventory SKU corrections needed
@@ -11125,35 +11470,54 @@
             const etsyStr = etsySkus.join(' | ') || '(no ID)';
             const wixStr = wixSkus.join(' | ') || '(no ID)';
             
-            // Check if Etsy and Wix match each other
+            // Check if Etsy and Wix match each other (EXACT comparison)
             let etsyWixMatch = '';
             if (etsySkus.length > 0 && wixSkus.length > 0) {
-                // Check if any Etsy SKU matches any Wix SKU (normalized)
-                const etsyNorm = new Set(etsySkus.map(normalize));
-                const wixNorm = new Set(wixSkus.map(normalize));
-                const overlap = [...etsyNorm].some(s => wixNorm.has(s));
-                etsyWixMatch = overlap ? '✅ YES' : '⚠️ NO — channels differ';
+                const etsySet = new Set(etsySkus);
+                const exactOverlap = wixSkus.some(ws => etsySet.has(ws));
+                if (exactOverlap) {
+                    etsyWixMatch = '✅ YES';
+                } else {
+                    // Check if they match after normalization (spacing issue only)
+                    const etsyNorm = new Set(etsySkus.map(normalize));
+                    const softOverlap = wixSkus.some(ws => etsyNorm.has(normalize(ws)));
+                    etsyWixMatch = softOverlap ? '⚠️ SOFT MATCH (spacing differs)' : '❌ NO — channels differ';
+                }
             } else if (etsySkus.length > 0) {
                 etsyWixMatch = '— (Wix ID missing)';
             } else {
                 etsyWixMatch = '— (Etsy ID missing)';
             }
             
-            // Check if inventory matches channels
-            const invNorm = normalize(sku);
+            // Check if inventory EXACTLY matches any channel SKU
             const allChannelSkus = [...etsySkus, ...wixSkus];
+            const exactChannelSet = new Set(allChannelSkus);
+            const invExactMatch = exactChannelSet.has(sku);
+            
+            // Also check normalized (to detect spacing-only differences)
+            const invNorm = normalize(sku);
             const allChannelNorm = new Set(allChannelSkus.map(normalize));
-            const invMatchesChannel = allChannelNorm.has(invNorm);
+            const invSoftMatch = !invExactMatch && allChannelNorm.has(invNorm);
             
             let invStatus = '';
             let suggestedSku = '';
             let notes = '';
             
-            if (invMatchesChannel) {
-                invStatus = '✅ YES';
+            if (invExactMatch) {
+                invStatus = '✅ EXACT MATCH';
                 matchCount++;
+            } else if (invSoftMatch) {
+                invStatus = '⚠️ SPACING DIFFERS';
+                mismatchCount++;
+                // Find the channel SKU that matches after normalization
+                const match = allChannelSkus.find(cs => normalize(cs) === invNorm);
+                if (match) {
+                    suggestedSku = match;
+                    notes = 'Update inventory SKU to remove/add spaces';
+                }
+                channelMatchInvDiff++;
             } else if (allChannelSkus.length > 0) {
-                invStatus = '⚠️ NO — inventory differs';
+                invStatus = '❌ NO MATCH';
                 mismatchCount++;
                 
                 // Find the best suggestion: prefer a SKU that both channels share
@@ -11163,7 +11527,6 @@
                     if (shared) {
                         suggestedSku = shared;
                         notes = 'Etsy & Wix agree — update inventory to match';
-                        channelMatchInvDiff++;
                     } else {
                         suggestedSku = etsySkus[0];
                         notes = 'Etsy & Wix disagree — review manually';
@@ -11179,8 +11542,8 @@
                 invStatus = '— (no channel SKUs to compare)';
             }
             
-            // Only include rows where something is different or noteworthy
-            const needsRow = !invMatchesChannel || etsyWixMatch.includes('NO');
+            // Include rows where anything differs (exact comparison)
+            const needsRow = !invExactMatch || etsyWixMatch.includes('NO') || etsyWixMatch.includes('SOFT');
             
             if (needsRow) {
                 _diagIncluded++;
@@ -11202,16 +11565,17 @@
         console.log(`[Channel SKU Comparison] Skipped (not allocated): ${_diagSkippedNotAllocated}`);
         console.log(`[Channel SKU Comparison] Skipped (no channel SKUs found): ${_diagSkippedNoChannelSkus}`);
         console.log(`[Channel SKU Comparison] Included in report: ${_diagIncluded}`);
-        console.log(`[Channel SKU Comparison] All matched (filtered out): ${matchCount}`);
+        console.log(`[Channel SKU Comparison] All exact matches (filtered out): ${matchCount}`);
         
         // Sort: channels agree but inventory differs first (easy fixes), then channel disagreements
         const header = rows.shift();
         rows.sort((a, b) => {
             const priority = (row) => {
-                if (row[7].includes('Etsy & Wix agree')) return 0;  // Easiest fix
-                if (row[5].includes('NO')) return 1;  // Inventory differs
-                if (row[4].includes('NO')) return 2;  // Channels disagree
-                return 3;
+                if (row[4].includes('NO —')) return 0;           // Channels disagree — worst
+                if (row[5].includes('NO MATCH')) return 1;       // Inventory totally different
+                if (row[5].includes('SPACING')) return 2;        // Spacing fix needed
+                if (row[4].includes('SOFT')) return 3;           // Channel spacing differs
+                return 4;
             };
             const pa = priority(a), pb = priority(b);
             if (pa !== pb) return pa - pb;
@@ -11236,8 +11600,8 @@
         link.click();
         URL.revokeObjectURL(link.href);
         
-        toast(`📊 Comparison: ${channelMatchInvDiff} easy fixes (channels agree), ${mismatchCount} total mismatches, ${rows.length - 1} rows`, 'success');
-        console.log(`[Channel SKU Comparison] Exported ${rows.length - 1} rows: ${channelMatchInvDiff} easy fixes, ${mismatchCount} mismatches, ${matchCount} already correct`);
+        toast(`📊 Comparison: ${channelMatchInvDiff} spacing fixes, ${mismatchCount} total differences, ${matchCount} exact matches, ${rows.length - 1} rows`, 'success');
+        console.log(`[Channel SKU Comparison] Exported ${rows.length - 1} rows: ${channelMatchInvDiff} spacing fixes, ${mismatchCount} total diffs, ${matchCount} exact matches`);
     }
 
     // =============================================
