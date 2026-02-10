@@ -68913,6 +68913,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
         let salesHistory = [];
         
         let currentTab = 'inventory';
+        
+        // v23.3.10: Table sort state
+        let inventorySortColumn = 'brandName';  // Default sort by Brand
+        let inventorySortDirection = 'asc';     // Default ascending
         let globalSurcharge = 7.0; // 7% surcharge on OB shipping
         let etsyOHFee = 10.0; // 10% overhead fee for Etsy
         let wixOHFee = 10.0; // 10% overhead fee for Wix
@@ -71231,18 +71235,36 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
 
         // v23.3.4 FIX #4: Scroll position retention
         let savedScrollPosition = 0;
+        let savedEditItemId = null;  // v23.3.10: Track which item was being edited
         
         function closeModal() {
             document.getElementById('itemModal').classList.remove('active');
             
-            // v23.3.4 FIX #4: Restore scroll position after closing modal
+            // v23.3.10: Scroll to the specific item that was being edited
             setTimeout(() => {
+                if (savedEditItemId) {
+                    const row = document.querySelector(`#inventoryTable tr .item-checkbox[data-id="${savedEditItemId}"]`);
+                    if (row) {
+                        const tr = row.closest('tr');
+                        if (tr) {
+                            tr.scrollIntoView({ block: 'center', behavior: 'instant' });
+                            // Brief highlight to show which row
+                            tr.style.transition = 'background 0.3s';
+                            tr.style.background = 'rgba(102, 126, 234, 0.15)';
+                            setTimeout(() => { tr.style.background = ''; }, 1500);
+                            console.log('[Scroll] Scrolled to item:', savedEditItemId);
+                            savedEditItemId = null;
+                            return;
+                        }
+                    }
+                }
+                // Fallback to pixel position
                 window.scrollTo({
                     top: savedScrollPosition,
                     behavior: 'instant'
                 });
                 console.log('[Scroll] Restored position:', savedScrollPosition);
-            }, 50); // Small delay to ensure modal animation completes
+            }, 50);
         }
         
         // ============================================
@@ -74311,6 +74333,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                 }
             } else {
                 inventory.push(item);
+                savedEditItemId = item.id;  // v23.3.10: Track for scroll-to
                 console.log('✅ New item added to inventory');
                 
                 // Log new item to Activity Log
@@ -76164,6 +76187,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
             
             // Apply advanced filters if any are active
             filtered = filterInventory(filtered);
+            
+            // v23.3.10: Apply column sort
+            filtered = sortInventoryItems(filtered);
 
             const tbody = document.getElementById('inventoryTable');
             const empty = document.getElementById('emptyInventory');
@@ -76306,7 +76332,15 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                     </th>`;
                     console.log(`   ${index}: checkbox header added`);
                 } else {
-                    headerHTML += `<th ${style} class="${resizableClass}" data-column-id="${col.id}" data-min-width="${col.minWidth}" data-max-width="${col.maxWidth}">
+                    const sortableIds = ['brandName', 'productName', 'sku', 'qty', 'category', 'vendor', 'retailPrice', 'wholesalePrice', 'shelfNumber', 'status'];
+                    const isSortable = sortableIds.includes(col.id);
+                    const sortClass = isSortable ? 'sortable' : '';
+                    const sortedClass = (isSortable && inventorySortColumn === col.id) 
+                        ? (inventorySortDirection === 'asc' ? 'sorted-asc' : 'sorted-desc') 
+                        : '';
+                    const sortClick = isSortable ? `onclick="sortInventoryBy('${col.id}')"` : '';
+                    
+                    headerHTML += `<th ${style} class="${resizableClass} ${sortClass} ${sortedClass}" data-column-id="${col.id}" data-min-width="${col.minWidth}" data-max-width="${col.maxWidth}" ${sortClick}>
                         ${col.label}
                         ${resizeHandle}
                     </th>`;
@@ -77650,7 +77684,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                 
                 // v23.3.4 FIX #4: Save current scroll position before opening modal
                 savedScrollPosition = window.scrollY;
-                console.log('[Scroll] Saved position:', savedScrollPosition);
+                savedEditItemId = item.id;  // v23.3.10: Track item for scroll-to
+                console.log('[Scroll] Saved position:', savedScrollPosition, 'item:', item.id);
                 
                 // Show the modal first
                 modal.classList.add('active');
@@ -124040,6 +124075,46 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
             });
         }
         
+        // v23.3.10: Click-to-sort column headers
+        function sortInventoryBy(columnId) {
+            if (inventorySortColumn === columnId) {
+                // Toggle direction
+                inventorySortDirection = inventorySortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                inventorySortColumn = columnId;
+                inventorySortDirection = 'asc';
+            }
+            console.log(`[Sort] ${columnId} ${inventorySortDirection}`);
+            renderCurrentView();
+        }
+        
+        function sortInventoryItems(items) {
+            if (!inventorySortColumn) return items;
+            
+            const col = inventorySortColumn;
+            const dir = inventorySortDirection === 'asc' ? 1 : -1;
+            
+            return [...items].sort((a, b) => {
+                let valA = a[col];
+                let valB = b[col];
+                
+                // Handle numeric columns
+                if (['qty', 'retailPrice', 'wholesalePrice', 'shelfNumber'].includes(col)) {
+                    valA = parseFloat(valA) || 0;
+                    valB = parseFloat(valB) || 0;
+                    return (valA - valB) * dir;
+                }
+                
+                // Handle string columns
+                valA = (valA || '').toString().toLowerCase();
+                valB = (valB || '').toString().toLowerCase();
+                
+                if (valA < valB) return -1 * dir;
+                if (valA > valB) return 1 * dir;
+                return 0;
+            });
+        }
+        
         function toggleFilters() {
             const panel = document.getElementById('filtersPanel');
             const toggleText = document.getElementById('filtersToggleText');
@@ -133285,8 +133360,9 @@ function addCategory() {
     // Clear input
     input.value = '';
     
-    // Refresh table
+    // Refresh table and dropdown
     renderCategoriesTable();
+    updateCategoryDropdown();
     
     // Show success message
     showToast(`✅ Category "${newCategory}" added. Click "Save to CONFIG" to persist.`, 'success');
