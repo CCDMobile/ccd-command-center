@@ -4481,13 +4481,38 @@
     // =============================================
     // QUEUE PROCESSING ENGINE
     // =============================================
-    async function processQueue() {
+    async function processQueue(filterItemIds = null) {
         if (state.processing) {
             toast('Already processing queue', 'warning');
             return;
         }
 
-        const pending = state.queue.filter(i => i.status === 'pending');
+        // v3.3.5.23: Auto-expire stale queue items older than 1 hour
+        const ONE_HOUR = 60 * 60 * 1000;
+        const now = Date.now();
+        state.queue.forEach(item => {
+            if (item.status === 'pending' && item.timestamp) {
+                const age = now - new Date(item.timestamp).getTime();
+                if (age > ONE_HOUR) {
+                    item.status = 'expired';
+                    item.error = 'Auto-expired: queued over 1 hour ago';
+                    console.log(`[Queue] ⏰ Auto-expired stale item: ${item.product?.sku} → ${item.channel} (age: ${Math.round(age/60000)}min)`);
+                    logActivity('sync', 'queue_item_expired', item.channel,
+                        `⏰ Stale queue item expired: ${item.product?.sku} → ${item.channel}`,
+                        { sku: item.product?.sku, channel: item.channel, ageMinutes: Math.round(age/60000), reason: item.reason }
+                    );
+                }
+            }
+        });
+
+        // v3.3.5.23: If filterItemIds provided, only process those specific items (cascade isolation)
+        let pending;
+        if (filterItemIds && filterItemIds.length > 0) {
+            pending = state.queue.filter(i => i.status === 'pending' && filterItemIds.includes(i.id));
+            console.log(`[Queue] Processing ${pending.length} filtered items (of ${state.queue.filter(i => i.status === 'pending').length} total pending)`);
+        } else {
+            pending = state.queue.filter(i => i.status === 'pending');
+        }
         if (pending.length === 0) {
             toast('No pending items to process', 'info');
             return;
@@ -8405,6 +8430,8 @@
                     if (sourceChannel !== 'etsy' && (product.etsyListing || product.etsyListingId)) {
                         const oldEtsyQty = product.etsyQty || product.warehouseQty || 0;
                         product.etsyQty = newQty;
+                        // v3.3.5.23: Sync channels object so cascade queue reads correct qty
+                        if (product.channels) product.channels.etsy = newQty;
                         console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${newQty}`);
                         
                         changes.push({
@@ -8421,6 +8448,8 @@
                     if (sourceChannel !== 'wix' && (product.wixProductId || product.wixId)) {
                         const oldWixQty = product.wixQty || product.warehouseQty || 0;
                         product.wixQty = newQty;
+                        // v3.3.5.23: Sync channels object so cascade queue reads correct qty
+                        if (product.channels) product.channels.wix = newQty;
                         console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${newQty}`);
                         
                         changes.push({
@@ -8439,6 +8468,8 @@
                     if (product.wayfairSku || product.supplierPartNumber) {
                         const oldWayfairQty = product.wayfairQty || product.warehouseQty || 0;
                         product.wayfairQty = newQty;
+                        // v3.3.5.23: Sync channels object so cascade queue reads correct qty
+                        if (product.channels) product.channels.wayfair = newQty;
                         console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newQty}`);
                         
                         changes.push({
@@ -8619,14 +8650,12 @@
                 queue: cascadeQueue
             });
             
-            // ========== AUTO-PROCESS CASCADE IMMEDIATELY ==========
-            // Don't wait for the 5-minute interval - process now!
-            setTimeout(async () => {
-                if (!state.processing) {
-                    addLog('⚡ Auto-processing cascade updates immediately...', 'info');
-                    await processQueue();
-                }
-            }, 1000); // 1 second delay to let UI update
+            // ========== AUTO-PROCESS CASCADE ==========
+            // v3.3.5.23: Removed unfiltered processQueue() call here.
+            // processOrderWithCascade() now handles cascade with proper item isolation.
+            // "Process & Deduct Only" should NOT auto-cascade to channels.
+            // Stale queue items were being picked up by the old unfiltered call.
+            console.log('[processOrder] Cascade items queued. Use "Process, Deduct & Push to Channels" to push, or process queue manually.');
         }
         
         // Log auto-cascade status for visibility
@@ -8757,7 +8786,8 @@
         try {
             console.log('[processOrderWithCascade] Starting cascade for order:', orderId);
             
-            // Get queue length BEFORE processing
+            // v3.3.5.23: Track existing queue item IDs BEFORE processing
+            const existingItemIds = new Set(state.queue.map(i => i.id));
             const queueBefore = state.queue ? state.queue.length : 0;
             console.log('[processOrderWithCascade] Queue length before:', queueBefore);
             
@@ -8767,21 +8797,23 @@
             // Small delay to ensure queue is populated
             await new Promise(resolve => setTimeout(resolve, 200));
             
-            // Get queue length AFTER processing
+            // v3.3.5.23: Identify ONLY the new items added by this order's cascade
+            const newItemIds = state.queue
+                .filter(i => !existingItemIds.has(i.id))
+                .map(i => i.id);
+            
             const queueAfter = state.queue ? state.queue.length : 0;
             console.log('[processOrderWithCascade] Queue length after:', queueAfter);
+            console.log('[processOrderWithCascade] New item IDs:', newItemIds.length);
             
-            // Calculate how many new items were added to queue
-            const newQueueItems = queueAfter - queueBefore;
-            
-            if (newQueueItems > 0) {
-                console.log(`[processOrderWithCascade] Found ${newQueueItems} new queue items, processing cascade...`);
-                toast(`🚀 Processing order and pushing ${newQueueItems} update(s) to channels...`, 'info');
+            if (newItemIds.length > 0) {
+                console.log(`[processOrderWithCascade] Processing ONLY ${newItemIds.length} new cascade items (ignoring ${state.queue.filter(i => i.status === 'pending' && !newItemIds.includes(i.id)).length} pre-existing)`);
+                toast(`🚀 Processing order and pushing ${newItemIds.length} update(s) to channels...`, 'info');
                 
-                // Immediately process the queue (push to channels)
-                await processQueue();
+                // v3.3.5.23: Only process the new cascade items, not stale queue items
+                await processQueue(newItemIds);
                 
-                toast(`✅ Order processed and ${newQueueItems} update(s) sent to channels!`, 'success');
+                toast(`✅ Order processed and ${newItemIds.length} update(s) sent to channels!`, 'success');
                 console.log('[processOrderWithCascade] Cascade complete');
             } else {
                 // Check if order exists and was processed
