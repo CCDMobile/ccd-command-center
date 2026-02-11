@@ -9126,7 +9126,7 @@ Previous versions documented in development guide.
                         <div class="form-grid">
                             <div class="form-group">
                                 <label>Brand Name</label>
-                                <input type="text" id="brandName" required>
+                                <input type="text" id="brandName" required list="brandNameList">
                             </div>
                             <div class="form-group">
                                 <label>Product Name</label>
@@ -9157,7 +9157,7 @@ Previous versions documented in development guide.
                             </div>
                             <div class="form-group">
                                 <label>Vendor/Supplier</label>
-                                <input type="text" id="vendor" placeholder="e.g. Sullivans, Primitives">
+                                <input type="text" id="vendor" placeholder="e.g. Sullivans, Primitives" list="vendorList">
                             </div>
                             <div class="form-group">
                                 <label>Quantity</label>
@@ -123670,6 +123670,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
             switchTab('inventory'); // Set default tab to Warehouse
             checkParLevels();
             initializeFilters();
+            initializeBrandVendorManagement(); // v23.3.10: Populate brand/vendor tables & datalists
             initializeDashboard();
         });
         
@@ -124054,8 +124055,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
         let activeFilters = {};
         
         function initializeFilters() {
-            // Populate brand filter
-            const brands = [...new Set(inventory.map(item => item.brandName).filter(Boolean))].sort();
+            // Populate brand filter (v23.3.10: merge managed brands + inventory brands)
+            const allBrands = new Set([...(managedBrands || [])]);
+            inventory.forEach(item => { if (item.brandName) allBrands.add(item.brandName); });
+            const brands = [...allBrands].sort();
             const brandSelect = document.getElementById('filterBrand');
             brands.forEach(brand => {
                 const option = document.createElement('option');
@@ -127804,14 +127807,18 @@ async function loadSettingsFromConfigFile() {
     try {
         const file = await configFileHandle.getFile();
         const text = await file.text();
-        const configData = JSON.parse(text);
+        const parsedConfig = JSON.parse(text);
         
-        if (!configData.settings) {
+        // v23.3.10: Set GLOBAL configData so category/brand/vendor management can access it
+        configData = parsedConfig;
+        console.log('[CONFIG] Global configData set');
+        
+        if (!parsedConfig.settings) {
             console.log('[CONFIG] No settings in config file');
             return false;
         }
         
-        const settings = configData.settings;
+        const settings = parsedConfig.settings;
         let settingsLoaded = 0;
         
         // Map config settings to localStorage keys
@@ -127852,6 +127859,27 @@ async function loadSettingsFromConfigFile() {
         }
         
         console.log(`✅ [CONFIG] Loaded ${settingsLoaded} settings from CONFIG file`);
+        
+        // v23.3.10: Refresh categories, brands, and vendors from CONFIG data
+        if (typeof loadManagedCategories === 'function') {
+            loadManagedCategories();
+            if (typeof updateCategoryDropdown === 'function') updateCategoryDropdown();
+            if (typeof renderCategoriesTable === 'function') renderCategoriesTable();
+            console.log('[CONFIG] Categories refreshed from CONFIG');
+        }
+        if (typeof loadManagedBrands === 'function') {
+            loadManagedBrands();
+            if (typeof updateBrandDatalist === 'function') updateBrandDatalist();
+            if (typeof updateBrandFilterDropdown === 'function') updateBrandFilterDropdown();
+            if (typeof renderBrandsTable === 'function') renderBrandsTable();
+            console.log('[CONFIG] Brands refreshed from CONFIG');
+        }
+        if (typeof loadManagedVendors === 'function') {
+            loadManagedVendors();
+            if (typeof updateVendorDatalist === 'function') updateVendorDatalist();
+            if (typeof renderVendorsTable === 'function') renderVendorsTable();
+            console.log('[CONFIG] Vendors refreshed from CONFIG');
+        }
         
         // Refresh the settings UI if it's open
         if (typeof loadSettingsValues === 'function') {
@@ -132654,6 +132682,112 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
             </div>
         </div>
         
+        <!-- v23.3.10: Brand Management Section -->
+        <div class="settings-section">
+            <div class="settings-section-header">
+                <span>🏷️ Brand Management</span>
+            </div>
+            <div class="settings-section-content">
+                <p class="settings-help" style="margin-bottom: 12px;">
+                    Manage product brands. Brands appear as suggestions in the Brand field and populate the filter dropdown.
+                </p>
+                
+                <div id="brandStats" style="padding: 10px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 6px; color: white; margin-bottom: 15px;">
+                    <div style="font-weight: 600; margin-bottom: 5px;">📊 Brand Statistics</div>
+                    <div id="brandStatsContent" style="font-size: 13px;">Loading...</div>
+                </div>
+                
+                <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 15px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+                            <tr>
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-weight: 600;">Brand Name</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-weight: 600; width: 100px;">Items</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-weight: 600; width: 120px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="brandsTableBody"></tbody>
+                    </table>
+                </div>
+                
+                <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+                    <input type="text" id="newBrandName" placeholder="Enter new brand name..." 
+                           style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"
+                           onkeypress="if(event.key==='Enter') addBrand()">
+                    <button onclick="addBrand()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; white-space: nowrap;">
+                        ➕ Add Brand
+                    </button>
+                </div>
+                
+                <div style="display: flex; gap: 8px; margin-top: 15px;">
+                    <button onclick="saveBrandsToConfig()" style="flex: 1; padding: 12px; background: #f5576c; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        💾 Save to CONFIG.json
+                    </button>
+                    <button onclick="refreshBrandList()" style="padding: 12px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- v23.3.10: Vendor Management Section -->
+        <div class="settings-section">
+            <div class="settings-section-header">
+                <span>🏭 Vendor / Supplier Management</span>
+            </div>
+            <div class="settings-section-content">
+                <p class="settings-help" style="margin-bottom: 12px;">
+                    Manage vendors/suppliers. Vendors appear as suggestions in the Vendor field to prevent typos and ensure consistency.
+                </p>
+                
+                <div id="vendorStats" style="padding: 10px; background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); border-radius: 6px; color: white; margin-bottom: 15px;">
+                    <div style="font-weight: 600; margin-bottom: 5px;">📊 Vendor Statistics</div>
+                    <div id="vendorStatsContent" style="font-size: 13px;">Loading...</div>
+                </div>
+                
+                <div style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 15px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead style="position: sticky; top: 0; background: #f8f9fa; z-index: 1;">
+                            <tr>
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid #ddd; font-weight: 600;">Vendor Name</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-weight: 600; width: 100px;">Items</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid #ddd; font-weight: 600; width: 120px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="vendorsTableBody"></tbody>
+                    </table>
+                </div>
+                
+                <div style="display: flex; gap: 8px; margin-bottom: 15px;">
+                    <input type="text" id="newVendorName" placeholder="Enter new vendor name..." 
+                           style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"
+                           onkeypress="if(event.key==='Enter') addVendor()">
+                    <button onclick="addVendor()" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; white-space: nowrap;">
+                        ➕ Add Vendor
+                    </button>
+                </div>
+                
+                <div style="display: flex; gap: 8px; margin-top: 15px;">
+                    <button onclick="saveVendorsToConfig()" style="flex: 1; padding: 12px; background: #4facfe; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        💾 Save to CONFIG.json
+                    </button>
+                    <button onclick="refreshVendorList()" style="padding: 12px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+                        🔄 Refresh
+                    </button>
+                </div>
+                
+                <div style="margin-top: 15px; padding: 12px; background: #e7f3ff; border-left: 4px solid #007bff; border-radius: 4px;">
+                    <div style="font-weight: 600; color: #007bff; margin-bottom: 5px;">ℹ️ How it works:</div>
+                    <ul style="margin: 5px 0 0 20px; font-size: 13px; color: #333;">
+                        <li>Brands &amp; vendors appear as dropdown suggestions (free text still accepted)</li>
+                        <li>Editing a name updates all items using it</li>
+                        <li>Deleting requires moving items to another entry</li>
+                        <li>Click "Save to CONFIG" to persist across sessions</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+        
         <!-- Automation Section -->
         <div class="settings-section">
             <div class="settings-section-header">
@@ -133168,6 +133302,12 @@ document.addEventListener('DOMContentLoaded', function() {
         loadManagedCategories();
         updateCategoryDropdown();
         console.log('[Init] Category dropdown initialized');
+        
+        // v23.3.10: Initialize brand & vendor datalists
+        initializeBrandVendorManagement();
+        updateBrandDatalist();
+        updateVendorDatalist();
+        console.log('[Init] Brand & Vendor datalists initialized');
     }, 500);
     
     // === STATUS WIDGETS TOGGLE (v23.2.8) ===
@@ -133205,6 +133345,8 @@ document.addEventListener('DOMContentLoaded', function() {
  * Global categories array - loaded from CONFIG or defaults
  */
 let managedCategories = [];
+let managedVendors = [];   // v23.3.10: Managed vendor list
+let managedBrands = [];    // v23.3.10: Managed brand list
 let configData = null;  // ✅ v23.3.8: Proper global declaration (prevents ReferenceError)
 
 /**
@@ -133240,6 +133382,56 @@ function loadManagedCategories() {
 /**
  * Get usage count for each category
  */
+// v23.3.10: Load managed vendors from CONFIG or build from existing items
+function loadManagedVendors() {
+    if (typeof configData !== 'undefined' && configData && configData.settings && configData.settings.vendors) {
+        managedVendors = [...configData.settings.vendors];
+        console.log('[Vendors] Loaded from CONFIG:', managedVendors.length, 'vendors');
+    } else {
+        // Build from existing inventory items
+        managedVendors = [...new Set(inventory.map(item => item.vendor).filter(Boolean))].sort();
+        console.log('[Vendors] Built from inventory:', managedVendors.length, 'vendors');
+    }
+    return managedVendors;
+}
+
+// v23.3.10: Load managed brands from CONFIG or build from existing items
+function loadManagedBrands() {
+    if (typeof configData !== 'undefined' && configData && configData.settings && configData.settings.brands) {
+        managedBrands = [...configData.settings.brands];
+        console.log('[Brands] Loaded from CONFIG:', managedBrands.length, 'brands');
+    } else {
+        // Build from existing inventory items
+        managedBrands = [...new Set(inventory.map(item => item.brandName).filter(Boolean))].sort();
+        console.log('[Brands] Built from inventory:', managedBrands.length, 'brands');
+    }
+    return managedBrands;
+}
+
+// v23.3.10: Vendor usage counts
+function getVendorUsageCounts() {
+    const counts = {};
+    managedVendors.forEach(v => { counts[v] = 0; });
+    inventory.forEach(item => {
+        if (item.vendor && counts.hasOwnProperty(item.vendor)) {
+            counts[item.vendor]++;
+        }
+    });
+    return counts;
+}
+
+// v23.3.10: Brand usage counts
+function getBrandUsageCounts() {
+    const counts = {};
+    managedBrands.forEach(b => { counts[b] = 0; });
+    inventory.forEach(item => {
+        if (item.brandName && counts.hasOwnProperty(item.brandName)) {
+            counts[item.brandName]++;
+        }
+    });
+    return counts;
+}
+
 function getCategoryUsageCounts() {
     const counts = {};
     
@@ -133612,6 +133804,406 @@ if (typeof originalOpenSettings === 'function') {
 }
 
 console.log('📁 Category Management module loaded (v23.3.5)');
+
+// ============================================
+// v23.3.10: BRAND MANAGEMENT MODULE
+// ============================================
+
+function renderBrandsTable() {
+    const tbody = document.getElementById('brandsTableBody');
+    if (!tbody) return;
+    
+    const counts = getBrandUsageCounts();
+    const sorted = [...managedBrands].sort();
+    
+    tbody.innerHTML = sorted.map(brand => {
+        const count = counts[brand] || 0;
+        return `
+            <tr>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>${brand}</strong></td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                    <span style="background: ${count > 0 ? '#28a745' : '#6c757d'}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">${count}</span>
+                </td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                    <button onclick="editBrandName('${brand.replace(/'/g, "\\'")}')" 
+                            style="padding: 6px 12px; background: #ffc107; color: #333; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 4px;"
+                            title="Edit brand">✏️</button>
+                    <button onclick="deleteBrand('${brand.replace(/'/g, "\\'")}')" 
+                            style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
+                            title="Delete brand">🗑️</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    updateBrandStats(counts);
+}
+
+function updateBrandStats(counts) {
+    const el = document.getElementById('brandStatsContent');
+    if (!el) return;
+    const total = managedBrands.length;
+    const totalItems = Object.values(counts).reduce((a, b) => a + b, 0);
+    const empty = managedBrands.filter(b => (counts[b] || 0) === 0).length;
+    const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const mostUsed = sortedCounts.length > 0 ? sortedCounts[0] : ['N/A', 0];
+    
+    el.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px;">
+            <div><strong>Total Brands:</strong> ${total}</div>
+            <div><strong>Total Items:</strong> ${totalItems}</div>
+            <div><strong>Most Used:</strong> ${mostUsed[0]} (${mostUsed[1]})</div>
+            <div><strong>Empty:</strong> ${empty}</div>
+        </div>
+    `;
+}
+
+function addBrand() {
+    const input = document.getElementById('newBrandName');
+    if (!input) return;
+    const newBrand = input.value.trim();
+    if (!newBrand) { alert('⚠️ Please enter a brand name'); return; }
+    if (managedBrands.includes(newBrand)) { alert('⚠️ Brand "' + newBrand + '" already exists'); return; }
+    if (newBrand.length > 50) { alert('⚠️ Brand name too long (max 50 characters)'); return; }
+    
+    managedBrands.push(newBrand);
+    console.log('[Brands] Added:', newBrand);
+    input.value = '';
+    renderBrandsTable();
+    updateBrandDatalist();
+    updateBrandFilterDropdown();
+    showToast(`✅ Brand "${newBrand}" added. Click "Save to CONFIG" to persist.`, 'success');
+}
+
+function editBrandName(oldName) {
+    const counts = getBrandUsageCounts();
+    const itemCount = counts[oldName] || 0;
+    
+    const newName = prompt(
+        `Edit brand: "${oldName}"\n\n${itemCount} item(s) currently use this brand.\n\nEnter new name:`,
+        oldName
+    );
+    if (!newName || newName === oldName) return;
+    const trimmedName = newName.trim();
+    if (!trimmedName) { alert('⚠️ Brand name cannot be empty'); return; }
+    if (managedBrands.includes(trimmedName)) { alert('⚠️ Brand "' + trimmedName + '" already exists'); return; }
+    
+    const index = managedBrands.indexOf(oldName);
+    if (index !== -1) managedBrands[index] = trimmedName;
+    
+    if (itemCount > 0) {
+        let updated = 0;
+        inventory.forEach(item => {
+            if (item.brandName === oldName) { item.brandName = trimmedName; updated++; }
+        });
+        console.log('[Brands] Renamed:', oldName, '→', trimmedName, '(' + updated + ' items updated)');
+        autoSave();
+        showToast(`✅ Renamed "${oldName}" → "${trimmedName}" (${updated} items updated)`, 'success');
+    } else {
+        console.log('[Brands] Renamed:', oldName, '→', trimmedName, '(no items affected)');
+        showToast(`✅ Renamed "${oldName}" → "${trimmedName}"`, 'success');
+    }
+    
+    renderBrandsTable();
+    updateBrandDatalist();
+    updateBrandFilterDropdown();
+}
+
+function deleteBrand(brandName) {
+    const counts = getBrandUsageCounts();
+    const itemCount = counts[brandName] || 0;
+    
+    if (itemCount > 0) {
+        const otherBrands = managedBrands.filter(b => b !== brandName);
+        if (otherBrands.length === 0) { alert('⚠️ Cannot delete the last brand!'); return; }
+        
+        const moveTo = prompt(
+            `⚠️ WARNING: "${brandName}" is used by ${itemCount} item(s).\n\n` +
+            `Move items to which brand?\n\nAvailable: ${otherBrands.join(', ')}`,
+            otherBrands[0]
+        );
+        if (!moveTo) return;
+        if (!managedBrands.includes(moveTo)) { alert('⚠️ Invalid brand: ' + moveTo); return; }
+        
+        let moved = 0;
+        inventory.forEach(item => {
+            if (item.brandName === brandName) { item.brandName = moveTo; moved++; }
+        });
+        console.log('[Brands] Moved', moved, 'items from', brandName, 'to', moveTo);
+        autoSave();
+    } else {
+        if (!confirm(`Delete brand "${brandName}"?\n\nThis brand is not currently in use.`)) return;
+    }
+    
+    const index = managedBrands.indexOf(brandName);
+    if (index !== -1) managedBrands.splice(index, 1);
+    
+    renderBrandsTable();
+    updateBrandDatalist();
+    updateBrandFilterDropdown();
+    showToast(`✅ Brand "${brandName}" deleted${itemCount > 0 ? ' and ' + itemCount + ' items migrated' : ''}`, 'success');
+}
+
+async function saveBrandsToConfig() {
+    if (!configFileHandle) {
+        alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
+        return;
+    }
+    try {
+        const file = await configFileHandle.getFile();
+        const text = await file.text();
+        const config = JSON.parse(text);
+        if (!config.settings) config.settings = {};
+        config.settings.brands = managedBrands;
+        const writable = await configFileHandle.createWritable();
+        await writable.write(JSON.stringify(config, null, 2));
+        await writable.close();
+        configData = config;
+        console.log('[Brands] Saved to CONFIG.json:', managedBrands.length, 'brands');
+        showToast(`✅ ${managedBrands.length} brands saved to CONFIG.json`, 'success');
+        updateBrandDatalist();
+        updateBrandFilterDropdown();
+    } catch (err) {
+        console.error('[Brands] Error saving to CONFIG:', err);
+        alert('❌ Error saving to CONFIG.json:\n\n' + err.message);
+    }
+}
+
+function refreshBrandList() {
+    loadManagedBrands();
+    renderBrandsTable();
+    updateBrandDatalist();
+    updateBrandFilterDropdown();
+    showToast('🔄 Brand list refreshed', 'info');
+}
+
+function updateBrandDatalist() {
+    let datalist = document.getElementById('brandNameList');
+    if (!datalist) {
+        datalist = document.createElement('datalist');
+        datalist.id = 'brandNameList';
+        document.body.appendChild(datalist);
+    }
+    // Merge managed brands + any brands from inventory not in managed list
+    const allBrands = new Set([...managedBrands]);
+    inventory.forEach(item => { if (item.brandName) allBrands.add(item.brandName); });
+    const sorted = [...allBrands].sort();
+    datalist.innerHTML = sorted.map(b => `<option value="${b}">`).join('');
+    console.log('[Brands] Datalist updated with', sorted.length, 'brands');
+}
+
+function updateBrandFilterDropdown() {
+    const brandSelect = document.getElementById('filterBrand');
+    if (!brandSelect) return;
+    const currentValue = brandSelect.value;
+    // Merge managed brands + existing item brands
+    const allBrands = new Set([...managedBrands]);
+    inventory.forEach(item => { if (item.brandName) allBrands.add(item.brandName); });
+    const sorted = [...allBrands].sort();
+    brandSelect.innerHTML = '<option value="">All Brands</option>';
+    sorted.forEach(brand => {
+        const option = document.createElement('option');
+        option.value = brand;
+        option.textContent = brand;
+        brandSelect.appendChild(option);
+    });
+    if (currentValue) brandSelect.value = currentValue;
+    console.log('[Brands] Filter dropdown updated with', sorted.length, 'brands');
+}
+
+// ============================================
+// v23.3.10: VENDOR MANAGEMENT MODULE
+// ============================================
+
+function renderVendorsTable() {
+    const tbody = document.getElementById('vendorsTableBody');
+    if (!tbody) return;
+    
+    const counts = getVendorUsageCounts();
+    const sorted = [...managedVendors].sort();
+    
+    tbody.innerHTML = sorted.map(vendor => {
+        const count = counts[vendor] || 0;
+        return `
+            <tr>
+                <td style="padding: 10px; border-bottom: 1px solid #eee;"><strong>${vendor}</strong></td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                    <span style="background: ${count > 0 ? '#28a745' : '#6c757d'}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">${count}</span>
+                </td>
+                <td style="padding: 10px; border-bottom: 1px solid #eee; text-align: center;">
+                    <button onclick="editVendorName('${vendor.replace(/'/g, "\\'")}')" 
+                            style="padding: 6px 12px; background: #ffc107; color: #333; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600; margin-right: 4px;"
+                            title="Edit vendor">✏️</button>
+                    <button onclick="deleteVendor('${vendor.replace(/'/g, "\\'")}')" 
+                            style="padding: 6px 12px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;"
+                            title="Delete vendor">🗑️</button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+    
+    updateVendorStats(counts);
+}
+
+function updateVendorStats(counts) {
+    const el = document.getElementById('vendorStatsContent');
+    if (!el) return;
+    const total = managedVendors.length;
+    const totalItems = Object.values(counts).reduce((a, b) => a + b, 0);
+    const empty = managedVendors.filter(v => (counts[v] || 0) === 0).length;
+    const sortedCounts = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    const mostUsed = sortedCounts.length > 0 ? sortedCounts[0] : ['N/A', 0];
+    
+    el.innerHTML = `
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 13px;">
+            <div><strong>Total Vendors:</strong> ${total}</div>
+            <div><strong>Total Items:</strong> ${totalItems}</div>
+            <div><strong>Most Used:</strong> ${mostUsed[0]} (${mostUsed[1]})</div>
+            <div><strong>Empty:</strong> ${empty}</div>
+        </div>
+    `;
+}
+
+function addVendor() {
+    const input = document.getElementById('newVendorName');
+    if (!input) return;
+    const newVendor = input.value.trim();
+    if (!newVendor) { alert('⚠️ Please enter a vendor name'); return; }
+    if (managedVendors.includes(newVendor)) { alert('⚠️ Vendor "' + newVendor + '" already exists'); return; }
+    if (newVendor.length > 50) { alert('⚠️ Vendor name too long (max 50 characters)'); return; }
+    
+    managedVendors.push(newVendor);
+    console.log('[Vendors] Added:', newVendor);
+    input.value = '';
+    renderVendorsTable();
+    updateVendorDatalist();
+    showToast(`✅ Vendor "${newVendor}" added. Click "Save to CONFIG" to persist.`, 'success');
+}
+
+function editVendorName(oldName) {
+    const counts = getVendorUsageCounts();
+    const itemCount = counts[oldName] || 0;
+    
+    const newName = prompt(
+        `Edit vendor: "${oldName}"\n\n${itemCount} item(s) currently use this vendor.\n\nEnter new name:`,
+        oldName
+    );
+    if (!newName || newName === oldName) return;
+    const trimmedName = newName.trim();
+    if (!trimmedName) { alert('⚠️ Vendor name cannot be empty'); return; }
+    if (managedVendors.includes(trimmedName)) { alert('⚠️ Vendor "' + trimmedName + '" already exists'); return; }
+    
+    const index = managedVendors.indexOf(oldName);
+    if (index !== -1) managedVendors[index] = trimmedName;
+    
+    if (itemCount > 0) {
+        let updated = 0;
+        inventory.forEach(item => {
+            if (item.vendor === oldName) { item.vendor = trimmedName; updated++; }
+        });
+        console.log('[Vendors] Renamed:', oldName, '→', trimmedName, '(' + updated + ' items updated)');
+        autoSave();
+        showToast(`✅ Renamed "${oldName}" → "${trimmedName}" (${updated} items updated)`, 'success');
+    } else {
+        console.log('[Vendors] Renamed:', oldName, '→', trimmedName, '(no items affected)');
+        showToast(`✅ Renamed "${oldName}" → "${trimmedName}"`, 'success');
+    }
+    
+    renderVendorsTable();
+    updateVendorDatalist();
+}
+
+function deleteVendor(vendorName) {
+    const counts = getVendorUsageCounts();
+    const itemCount = counts[vendorName] || 0;
+    
+    if (itemCount > 0) {
+        const otherVendors = managedVendors.filter(v => v !== vendorName);
+        if (otherVendors.length === 0) { alert('⚠️ Cannot delete the last vendor!'); return; }
+        
+        const moveTo = prompt(
+            `⚠️ WARNING: "${vendorName}" is used by ${itemCount} item(s).\n\n` +
+            `Move items to which vendor?\n\nAvailable: ${otherVendors.join(', ')}`,
+            otherVendors[0]
+        );
+        if (!moveTo) return;
+        if (!managedVendors.includes(moveTo)) { alert('⚠️ Invalid vendor: ' + moveTo); return; }
+        
+        let moved = 0;
+        inventory.forEach(item => {
+            if (item.vendor === vendorName) { item.vendor = moveTo; moved++; }
+        });
+        console.log('[Vendors] Moved', moved, 'items from', vendorName, 'to', moveTo);
+        autoSave();
+    } else {
+        if (!confirm(`Delete vendor "${vendorName}"?\n\nThis vendor is not currently in use.`)) return;
+    }
+    
+    const index = managedVendors.indexOf(vendorName);
+    if (index !== -1) managedVendors.splice(index, 1);
+    
+    renderVendorsTable();
+    updateVendorDatalist();
+    showToast(`✅ Vendor "${vendorName}" deleted${itemCount > 0 ? ' and ' + itemCount + ' items migrated' : ''}`, 'success');
+}
+
+async function saveVendorsToConfig() {
+    if (!configFileHandle) {
+        alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
+        return;
+    }
+    try {
+        const file = await configFileHandle.getFile();
+        const text = await file.text();
+        const config = JSON.parse(text);
+        if (!config.settings) config.settings = {};
+        config.settings.vendors = managedVendors;
+        const writable = await configFileHandle.createWritable();
+        await writable.write(JSON.stringify(config, null, 2));
+        await writable.close();
+        configData = config;
+        console.log('[Vendors] Saved to CONFIG.json:', managedVendors.length, 'vendors');
+        showToast(`✅ ${managedVendors.length} vendors saved to CONFIG.json`, 'success');
+        updateVendorDatalist();
+    } catch (err) {
+        console.error('[Vendors] Error saving to CONFIG:', err);
+        alert('❌ Error saving to CONFIG.json:\n\n' + err.message);
+    }
+}
+
+function refreshVendorList() {
+    loadManagedVendors();
+    renderVendorsTable();
+    updateVendorDatalist();
+    showToast('🔄 Vendor list refreshed', 'info');
+}
+
+function updateVendorDatalist() {
+    let datalist = document.getElementById('vendorList');
+    if (!datalist) {
+        datalist = document.createElement('datalist');
+        datalist.id = 'vendorList';
+        document.body.appendChild(datalist);
+    }
+    const allVendors = new Set([...managedVendors]);
+    inventory.forEach(item => { if (item.vendor) allVendors.add(item.vendor); });
+    const sorted = [...allVendors].sort();
+    datalist.innerHTML = sorted.map(v => `<option value="${v}">`).join('');
+    console.log('[Vendors] Datalist updated with', sorted.length, 'vendors');
+}
+
+// v23.3.10: Initialize brand & vendor management on settings open
+function initializeBrandVendorManagement() {
+    loadManagedBrands();
+    loadManagedVendors();
+    renderBrandsTable();
+    renderVendorsTable();
+    updateBrandDatalist();
+    updateVendorDatalist();
+    updateBrandFilterDropdown();
+}
+
+console.log('🏷️ Brand & Vendor Management module loaded (v23.3.10)');
 
 // ============================================
 // v23.3.7: AUTO-SYNC ON ALLOCATION
