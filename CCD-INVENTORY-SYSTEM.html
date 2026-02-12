@@ -9907,6 +9907,16 @@ Previous versions documented in development guide.
                         <span class="form-section-header-title">Wayfair Details</span>
                     </div>
                     <div class="form-section-content">
+                        <!-- v26.x: Wayfair Supplier Part Number (supplierPartNumber) — used for inventory sync -->
+                        <div style="margin-bottom: 12px; background: #e8f5e9; padding: 12px 15px; border-radius: 6px; border: 1px solid #a5d6a7;">
+                            <label style="font-size: 12px; color: #2e7d32; font-weight: 600; margin-bottom: 5px; display: block;">
+                                🔗 Wayfair Supplier Part Number <span style="font-weight: normal; color: #666;">(supplierPartNumber for inventory sync)</span>
+                            </label>
+                            <input type="text" id="wayfairSkuInput" placeholder="e.g., CCD380623 — leave blank if not on Wayfair" style="width: 100%; padding: 8px; border: 2px solid #a5d6a7; border-radius: 4px; font-size: 14px; font-weight: 500;">
+                            <div style="font-size: 11px; color: #666; margin-top: 4px;">
+                                Enter the exact SKU as it appears in Wayfair Partner Home. This may differ from the Warehouse SKU above.
+                            </div>
+                        </div>
                         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; background: #f8f9fa; padding: 15px; border-radius: 6px; border: 1px solid #e0e0e0;">
                             <div style="grid-column: 1 / -1;">
                                 <label style="font-size: 12px; color: #666; font-weight: normal; margin-bottom: 5px; display: block;">Product Dimensions</label>
@@ -72535,6 +72545,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                 document.getElementById('boxLength').value = originalItemState.boxLength || 0;
                 document.getElementById('boxWidth').value = originalItemState.boxWidth || 0;
                 document.getElementById('boxHeight').value = originalItemState.boxHeight || 0;
+                // v26.x: Restore Wayfair SKU field
+                document.getElementById('wayfairSkuInput').value = originalItemState.wayfairSku || originalItemState.supplierPartNumber || '';
                 document.getElementById('wayfairDimensions').value = originalItemState.wayfairDimensions || '';
                 document.getElementById('wayfairWeight').value = originalItemState.wayfairWeight || '';
                 document.getElementById('wayfairMaterials').value = originalItemState.wayfairMaterials || '';
@@ -74149,7 +74161,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                 // ✅ v23.3.7: PRESERVE channel platform IDs (critical — these are set by Sync Hub)
                 etsyListingId: existingItem?.etsyListingId || null,
                 wixProductId: existingItem?.wixProductId || existingItem?.wixId || null,
-                wayfairSku: existingItem?.wayfairSku || existingItem?.supplierPartNumber || null
+                // v26.x: Read Wayfair SKU from form field (user-entered), fallback to existing value
+                wayfairSku: document.getElementById('wayfairSkuInput')?.value?.trim() || existingItem?.wayfairSku || existingItem?.supplierPartNumber || null
             };
             
             // v22.1.0: Calculate totalActual (warehouse + TM)
@@ -74590,7 +74603,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                     // ✅ v23.3.7: PRESERVE channel platform IDs (critical — set by Sync Hub)
                     etsyListingId: existingItem?.etsyListingId || null,
                     wixProductId: existingItem?.wixProductId || existingItem?.wixId || null,
-                    wayfairSku: existingItem?.wayfairSku || existingItem?.supplierPartNumber || null
+                    // v26.x: Read Wayfair SKU from form field (user-entered), fallback to existing value
+                    wayfairSku: document.getElementById('wayfairSkuInput')?.value?.trim() || existingItem?.wayfairSku || existingItem?.supplierPartNumber || null
                 };
             } catch (error) {
                 console.error('Error collecting form data:', error);
@@ -77551,6 +77565,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                 document.getElementById('boxLength').value = item.boxLength || 0;
                 document.getElementById('boxWidth').value = item.boxWidth || 0;
                 document.getElementById('boxHeight').value = item.boxHeight || 0;
+                // v26.x: Populate Wayfair SKU field
+                document.getElementById('wayfairSkuInput').value = item.wayfairSku || item.supplierPartNumber || '';
                 document.getElementById('wayfairDimensions').value = item.wayfairDimensions || '';
                 document.getElementById('wayfairWeight').value = item.wayfairWeight || '';
                 document.getElementById('wayfairMaterials').value = item.wayfairMaterials || '';
@@ -134294,10 +134310,15 @@ async function autoSyncOnAllocation(item, existingItem) {
         }
         
         // Wayfair — supplierPartNumber IS the SKU, no API call needed
+        // v26.x: Only set if not already entered by user in the Inventory System form
         if (needsSync.includes('wayfair')) {
-            item.wayfairSku = sku;
+            if (!item.wayfairSku && !item.supplierPartNumber) {
+                item.wayfairSku = sku;
+                console.log(`[Auto-Sync] ✅ ${sku} → Wayfair SKU defaulted to master SKU (no user-entered value)`);
+            } else {
+                console.log(`[Auto-Sync] ✅ ${sku} → Wayfair SKU already set: ${item.wayfairSku || item.supplierPartNumber}`);
+            }
             updated = true;
-            console.log(`[Auto-Sync] ✅ ${sku} → Wayfair SKU mapped (same as master SKU)`);
         }
         
         // If any IDs were found, update the item in inventory and save
