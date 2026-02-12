@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.21 - Simplified Activity Log + Auto-Process Safety</title>
+    <title>CCD Sync Hub v3.3.5.24 - Wayfair SKU Reverse Mapping Fix</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -3890,6 +3890,30 @@
             window.skuMappingsData.mappings[wayfairSku].usageCount++;
             window.skuMappingsData.mappings[wayfairSku].lastUsed = new Date().toISOString();
         }
+    }
+    
+    /**
+     * v3.3.5.24: Reverse lookup - given a master SKU, find the Wayfair-side SKU
+     * from learned mappings in SKU_MAPPINGS.json
+     * 
+     * SKU_MAPPINGS stores: wayfairSku → { masterSku, confidence, ... }
+     * This function inverts that to find: masterSku → wayfairSku
+     * 
+     * Returns: the Wayfair-side supplierPartNumber, or null if no mapping exists
+     * 
+     * BACKWARD COMPATIBLE: Returns null when no mapping found,
+     * allowing callers to fall back to existing behavior
+     */
+    function getWayfairSkuForMaster(masterSku) {
+        if (!masterSku || !window.skuMappingsData?.mappings) return null;
+        
+        const mappings = window.skuMappingsData.mappings;
+        for (const [wayfairSku, mapping] of Object.entries(mappings)) {
+            if (mapping.masterSku === masterSku) {
+                return wayfairSku;
+            }
+        }
+        return null;
     }
     
     /**
@@ -8153,6 +8177,18 @@
                             if (item.skuMatch.confidence >= 85 && item.skuMatch.confidence < 100) {
                                 await addSkuMapping(sku, masterSku, 'auto-learned');
                             }
+                            
+                            // v3.3.5.24: Persist the Wayfair-side SKU (supplierPartNumber) on the product
+                            // This ensures inventory pushes use the correct Wayfair SKU format
+                            // e.g., Wayfair knows "CCD380623" but MASTER uses "380-623"
+                            // BACKWARD COMPATIBLE: only sets if we have a confirmed match
+                            if (sku !== masterSku) {
+                                product.wayfairSku = sku;
+                                console.log(`[v3.3.5.24] Saved Wayfair supplierPartNumber on product: ${product.sku || product.SKU} → wayfairSku: ${sku}`);
+                            } else if (!product.wayfairSku) {
+                                // SKUs match exactly - still set wayfairSku if not already set
+                                product.wayfairSku = sku;
+                            }
                         }
                     }
                     
@@ -8217,6 +8253,15 @@
                             // If confidence >= 85%, auto-learn the mapping
                             if (matchResult.confidence >= 85 && matchResult.confidence < 100) {
                                 await addSkuMapping(sku, matchResult.matchedSku, 'auto-learned');
+                            }
+                            
+                            // v3.3.5.24: Persist the Wayfair-side SKU (supplierPartNumber) on the product
+                            // Same logic as cached match path above
+                            if (sku !== matchResult.matchedSku) {
+                                product.wayfairSku = sku;
+                                console.log(`[v3.3.5.24] Saved Wayfair supplierPartNumber on product: ${matchResult.matchedSku} → wayfairSku: ${sku}`);
+                            } else if (!product.wayfairSku) {
+                                product.wayfairSku = sku;
                             }
                         } else {
                             // No match found at all
@@ -10677,14 +10722,23 @@
                 const isOnWayfair = channels.wayfair && channels.wayfair > 0;
                 
                 if (isOnWayfair) {
-                    // supplierPartNumber === SKU for your Wayfair account
-                    product.wayfairSku = sku;
+                    // v3.3.5.24: Use reverse lookup from learned mappings to get the
+                    // actual Wayfair supplierPartNumber, not just the master SKU.
+                    // Example: Master SKU "380-623" → Wayfair knows it as "CCD380623"
+                    // BACKWARD COMPATIBLE: Falls back to existing wayfairSku or master SKU
+                    const mappedWayfairSku = getWayfairSkuForMaster(sku);
+                    product.wayfairSku = mappedWayfairSku || product.wayfairSku || sku;
                     found++;
-                    console.log(`[Wayfair ID Sync] ✅ Mapped ${sku} (listed on Wayfair channel)`);
+                    
+                    if (product.wayfairSku !== sku) {
+                        console.log(`[Wayfair ID Sync] ✅ Mapped ${sku} → wayfairSku: ${product.wayfairSku} (from learned mapping)`);
+                    } else {
+                        console.log(`[Wayfair ID Sync] ✅ Mapped ${sku} (listed on Wayfair channel)`);
+                    }
                     
                     logActivity('sync', 'wayfair_id_found', 'wayfair',
                         `✅ Mapped Wayfair SKU for ${sku}`,
-                        { sku: sku, wayfairSku: sku }
+                        { sku: sku, wayfairSku: product.wayfairSku }
                     );
                 } else {
                     notFound++;
