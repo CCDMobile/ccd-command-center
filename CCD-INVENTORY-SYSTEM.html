@@ -9241,8 +9241,10 @@ Previous versions documented in development guide.
                                     </div>
                                     <input type="number" id="ibShipping" step="0.001" min="0" max="50" value="20" 
                                            oninput="updateIBShippingSlider(this.value); updateMarkupCalculator()" 
+                                           onblur="this.value = clampIBShipping(this.value); updateIBShippingSlider(this.value); updateMarkupCalculator()"
                                            style="width: 100%; padding: 8px; border: 2px solid #e9ecef; border-radius: 4px;">
-                                    <div style="font-size: 11px; color: #666; margin-top: 6px;">Applied to wholesale price</div>
+                                    <div id="ibShippingDollarDisplay" style="font-size: 12px; color: #2196f3; font-weight: 600; margin-top: 6px; padding: 4px 8px; background: #e3f2fd; border-radius: 4px;">= $0.00 per unit</div>
+                                    <div style="font-size: 11px; color: #666; margin-top: 4px;">Percentage applied to wholesale price (format: xxx.xxx, max 50%)</div>
                                 </div>
                             </div>
                         </div>
@@ -77552,6 +77554,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
                 // v20.31 FIX: Properly load ibShipping, defaulting to 20 only if undefined
                 document.getElementById('ibShipping').value = item.ibShipping !== undefined ? item.ibShipping : 20;
                 document.getElementById('ibShippingSlider').value = item.ibShipping !== undefined ? item.ibShipping : 20;
+                // v23.3.10: Update dollar display after loading ibShipping
+                updateIBShippingDollarDisplay();
                 document.getElementById('tariff').value = item.tariff || 0;
                 document.getElementById('retailPrice').value = item.retailPrice || 0;
                 document.getElementById('retailPriceOld').value = item.retailPriceOld || '';
@@ -77979,6 +77983,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
             const wholesale = parseFloat(document.getElementById('wholesalePrice').value) || 0;
             const currentRetailPrice = parseFloat(document.getElementById('retailPrice').value) || 0;
 
+            // v23.3.10: Update IB-Shipping dollar display whenever wholesale changes
+            updateIBShippingDollarDisplay();
+
             // v23.3.4 FIX #3: Auto-apply 100% markup as default for new items
             // If retail price is 0 or empty and wholesale has a value, apply 100% markup automatically
             if (wholesale > 0 && currentRetailPrice === 0) {
@@ -78011,12 +78018,42 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
             updateMarkupCalculator();
         }
 
+        // v23.3.10: IB-Shipping helpers with xxx.xxx enforcement and dollar display
         function updateIBShippingValue(value) {
-            document.getElementById('ibShipping').value = value;
+            const clamped = clampIBShipping(value);
+            document.getElementById('ibShipping').value = clamped;
+            updateIBShippingDollarDisplay();
         }
 
         function updateIBShippingSlider(value) {
-            document.getElementById('ibShippingSlider').value = value;
+            const clamped = clampIBShipping(value);
+            document.getElementById('ibShippingSlider').value = clamped;
+            document.getElementById('ibShipping').value = clamped;
+            updateIBShippingDollarDisplay();
+        }
+
+        // v23.3.10: Enforce xxx.xxx format — max 3 decimal places, 0-50 range
+        function clampIBShipping(value) {
+            let num = parseFloat(value);
+            if (isNaN(num)) return 0;
+            if (num < 0) num = 0;
+            if (num > 50) num = 50;
+            // Truncate to 3 decimal places (not round — what you type is what you get)
+            num = Math.floor(num * 1000) / 1000;
+            return num;
+        }
+
+        // v23.3.10: Show calculated dollar amount next to IB% so user can verify
+        function updateIBShippingDollarDisplay() {
+            const wholesale = parseFloat(document.getElementById('wholesalePrice').value) || 0;
+            const ibPercent = parseFloat(document.getElementById('ibShipping').value) || 0;
+            const dollarAmount = wholesale * (ibPercent / 100);
+            const display = document.getElementById('ibShippingDollarDisplay');
+            if (display) {
+                display.textContent = wholesale > 0 ? 
+                    `= $${dollarAmount.toFixed(2)} per unit (${ibPercent}% of $${wholesale.toFixed(2)})` : 
+                    '(enter wholesale price)';
+            }
         }
 
         function applyMarkup(percent) {
