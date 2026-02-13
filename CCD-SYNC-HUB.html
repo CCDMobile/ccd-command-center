@@ -8318,6 +8318,8 @@
                 let currentQty = product.warehouseQty || product.qty || product.quantity || 0;
                 let newQty = currentQty;
                 let adjustResult = { adjusted: false, changes: [], parAlerts: [] };
+                // v3.3.5.24: Snapshot for cascade reduction — will be updated after source reduction
+                let preAdjustChannels = product.channels ? JSON.parse(JSON.stringify(product.channels)) : {};
                 
                 // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
                 if (enableDeduction) {
@@ -8376,11 +8378,10 @@
                         );
                     }
                     
-                    // v3.3.5.24: Snapshot channel qtys BEFORE autoAdjust runs
+                    // v3.3.5.24: Capture snapshot AFTER source reduction but BEFORE autoAdjust
                     // autoAdjust has an "Etsy=Wix sync" rule that modifies channel values.
-                    // The explicit cascade reduction code (below) needs the ORIGINAL values
-                    // to correctly calculate "oldQty - soldQty" without double-reducing.
-                    const preAdjustChannels = product.channels ? JSON.parse(JSON.stringify(product.channels)) : {};
+                    // The cascade reduction code needs these ORIGINAL values.
+                    preAdjustChannels = product.channels ? JSON.parse(JSON.stringify(product.channels)) : {};
                     
                     // v2.1.0: Auto-adjust channel allocations after order
                     adjustResult = autoAdjustChannelAllocations(product, order.channel);
@@ -8627,18 +8628,25 @@
             const sku = item.sku;
             if (sku === 'UNKNOWN') continue;
             
-            const product = products.find(p => (p.sku || p.SKU) === sku);
+            // v3.3.5.24: For Wayfair orders, item.sku is the Wayfair-side SKU (e.g., CCDPD4996820)
+            // which won't match any master SKU. Use the pre-matched masterSku if available.
+            const lookupSku = item.skuMatch?.masterSku || sku;
+            const product = products.find(p => (p.sku || p.SKU) === lookupSku);
             if (!product) continue;
             
             const sourceChannel = order.channel;
             const channels = product.channels || {};
+            // v3.3.5.24: Use master SKU for Etsy/Wix, not the order-side SKU
+            // For Wayfair orders, item.sku is the Wayfair-side SKU (e.g., CCDPD4996820)
+            // but Etsy/Wix need the master SKU (e.g., 4996-820)
+            const masterSku = product.sku || product.SKU || sku;
             
             // v4.0: Push channel-specific qty (after auto-adjustment), not warehouse qty
             if ((product.etsyListing || product.etsyListingId) && sourceChannel !== 'etsy') {
                 const etsyQty = channels.etsy || 0;
                 cascadeQueue.push({
                     channel: 'etsy',
-                    sku: sku,
+                    sku: masterSku,
                     qty: etsyQty,
                     listingId: product.etsyListing || product.etsyListingId
                 });
@@ -8648,7 +8656,7 @@
                 const wixQty = channels.wix || 0;
                 cascadeQueue.push({
                     channel: 'wix',
-                    sku: sku,
+                    sku: masterSku,
                     qty: wixQty,
                     productId: product.wixProductId || product.wixId
                 });
@@ -8661,7 +8669,7 @@
                 const wayfairQty = channels.wayfair || 0;
                 cascadeQueue.push({
                     channel: 'wayfair',
-                    sku: sku,
+                    sku: masterSku,
                     qty: wayfairQty,
                     wayfairSku: product.wayfairSku || product.supplierPartNumber
                 });
