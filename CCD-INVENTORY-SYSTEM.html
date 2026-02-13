@@ -4,7 +4,7 @@
 CCD INVENTORY MANAGEMENT SYSTEM - VERSION HISTORY
 ================================================================================
 
-v23.3.9 (February 7, 2026) - Allocation Toggle + Audit Fixes
+v23.3.10 (February 12, 2026) - IB-Shipping % Fix + Dollar Display
 ------------------------------------------------------------------------
 NEW FEATURES:
 - Green/red sync dots on channel tags (table view) showing ID sync status
@@ -756,7 +756,7 @@ Previous versions documented in development guide.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Inventory Management System v23.3.9 - Allocation Toggle + Audit Fixes</title>
+    <title>CCD Inventory Management System v23.3.10 - IB-Shipping % Fix + Dollar Display</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -7717,7 +7717,7 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.9 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 7 - Audit Fixes</span></h1>
+                            <h1>CCD Inventory System v23.3.10 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 12 - IB-Shipping Fix</span></h1>
                             <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-02-07 • Sync Indicators + Activity Logging</p>
                         </div>
                     </div>
@@ -7852,7 +7852,7 @@ Previous versions documented in development guide.
         
         <!-- Keep old header hidden for reference but don't display -->
         <div class="header" style="display: none;">
-            <h1>📦 CCD Inventory Management System v23.3.9</h1>
+            <h1>📦 CCD Inventory Management System v23.3.10</h1>
             <p>Design System Foundation: Spacing Scale | Typography System | Color Palette | Enhanced Buttons & Forms</p>
         </div>
         
@@ -9241,7 +9241,7 @@ Previous versions documented in development guide.
                                     </div>
                                     <input type="number" id="ibShipping" step="0.0001" min="0" max="50" value="20" 
                                            oninput="updateIBShippingSlider(this.value); updateMarkupCalculator()" 
-                                           onblur="this.value = clampIBShipping(this.value); updateIBShippingSlider(this.value); updateMarkupCalculator()"
+                                           onblur="var v=parseFloat(this.value)||0; if(v<0){this.value=0;} else if(v>50){this.value=50;} updateIBShippingSlider(this.value); updateMarkupCalculator()"
                                            style="width: 100%; padding: 8px; border: 2px solid #e9ecef; border-radius: 4px;">
                                     <div id="ibShippingDollarDisplay" style="font-size: 12px; color: #2196f3; font-weight: 600; margin-top: 6px; padding: 4px 8px; background: #e3f2fd; border-radius: 4px;">= $0.00 per unit</div>
                                     <div style="font-size: 11px; color: #666; margin-top: 4px;">Percentage applied to wholesale price (format: xxx.xxxx, max 50%)</div>
@@ -10624,7 +10624,7 @@ const CCDSharedFiles = (function() {
     };
 })();
 
-console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
+console.log('✅ CCDSharedFiles helper loaded (v23.3.10)');
 </script>
 
 <script>
@@ -11171,13 +11171,13 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
          */
         async function initEcosystem() {
             console.log('🚀 ====================================');
-            console.log('🚀 CCD Inventory System v23.3.9');
-            console.log('🚀 Build: 2026-02-07 • Allocation Toggle + Audit Fixes');
+            console.log('🚀 CCD Inventory System v23.3.10');
+            console.log('🚀 Build: 2026-02-12 • IB-Shipping % Fix + Dollar Display');
             console.log('🚀 ====================================');
-            console.log('[Ecosystem] Initializing CCD Ecosystem Integration v23.3.9...');
-            console.log('🔧 [VERSION] CCD Inventory System v23.3.9 - Feb 7, 2026');
-            console.log('🔧 [FIXES] 1. Save duration ✓  2. Treasure Marts formula ✓  3. Channel +/- buttons 0.10 ✓');
-            console.log('🔧 [VERIFY] Version v23.3.9 confirmed');
+            console.log('[Ecosystem] Initializing CCD Ecosystem Integration v23.3.10...');
+            console.log('🔧 [VERSION] CCD Inventory System v23.3.10 - Feb 12, 2026');
+            console.log('🔧 [FIXES] 1. IB-Shipping % enforced xxx.xxxx ✓  2. Dollar display ✓  3. No rounding ✓');
+            console.log('🔧 [VERIFY] Version v23.3.10 confirmed');
             
             // Generate session ID
             if (!sessionStorage.getItem('ccd_session_id')) {
@@ -78018,17 +78018,16 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.9)');
             updateMarkupCalculator();
         }
 
-        // v23.3.10: IB-Shipping helpers with xxx.xxx enforcement and dollar display
+        // v23.3.10: IB-Shipping helpers — no rounding, no truncating, no write-back loops
         function updateIBShippingValue(value) {
-            const clamped = clampIBShipping(value);
-            document.getElementById('ibShipping').value = clamped;
+            // Called from SLIDER oninput — update the number input only
+            document.getElementById('ibShipping').value = value;
             updateIBShippingDollarDisplay();
         }
 
         function updateIBShippingSlider(value) {
-            const clamped = clampIBShipping(value);
-            document.getElementById('ibShippingSlider').value = clamped;
-            document.getElementById('ibShipping').value = clamped;
+            // Called from NUMBER INPUT oninput — update the slider only, do NOT write back to number input
+            document.getElementById('ibShippingSlider').value = value;
             updateIBShippingDollarDisplay();
         }
 
