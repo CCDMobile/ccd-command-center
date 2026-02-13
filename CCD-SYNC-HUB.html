@@ -8376,6 +8376,12 @@
                         );
                     }
                     
+                    // v3.3.5.24: Snapshot channel qtys BEFORE autoAdjust runs
+                    // autoAdjust has an "Etsy=Wix sync" rule that modifies channel values.
+                    // The explicit cascade reduction code (below) needs the ORIGINAL values
+                    // to correctly calculate "oldQty - soldQty" without double-reducing.
+                    const preAdjustChannels = product.channels ? JSON.parse(JSON.stringify(product.channels)) : {};
+                    
                     // v2.1.0: Auto-adjust channel allocations after order
                     adjustResult = autoAdjustChannelAllocations(product, order.channel);
                     
@@ -8473,36 +8479,47 @@
                     // Source channel already updated by the sale itself
                     
                     if (sourceChannel !== 'etsy' && (product.etsyListing || product.etsyListingId)) {
-                        const oldEtsyQty = product.etsyQty || product.warehouseQty || 0;
-                        product.etsyQty = newQty;
+                        const oldEtsyQty = preAdjustChannels.etsy || 0;
+                        // v3.3.5.24: Reduce by sold qty, NOT set to warehouse qty
+                        // Old code set channels.etsy = newQty (warehouse), which was a no-op
+                        // when channel was already at or below warehouse qty
+                        // Uses preAdjustChannels to avoid double-reduction from autoAdjust
+                        const reducedEtsyQty = Math.max(0, oldEtsyQty - item.qty);
+                        // Also cap at warehouse qty — can't advertise more than we physically have
+                        const cappedEtsyQty = Math.min(reducedEtsyQty, newQty);
+                        product.etsyQty = cappedEtsyQty;
                         // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.etsy = newQty;
-                        console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${newQty}`);
+                        if (product.channels) product.channels.etsy = cappedEtsyQty;
+                        console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${cappedEtsyQty} (reduced by ${item.qty}, capped at warehouse ${newQty})`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'etsyQty',
                             before: oldEtsyQty,
-                            after: newQty,
+                            after: cappedEtsyQty,
                             reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
                     }
                     
                     if (sourceChannel !== 'wix' && (product.wixProductId || product.wixId)) {
-                        const oldWixQty = product.wixQty || product.warehouseQty || 0;
-                        product.wixQty = newQty;
+                        const oldWixQty = preAdjustChannels.wix || 0;
+                        // v3.3.5.24: Reduce by sold qty, NOT set to warehouse qty
+                        // Uses preAdjustChannels to avoid double-reduction from autoAdjust
+                        const reducedWixQty = Math.max(0, oldWixQty - item.qty);
+                        const cappedWixQty = Math.min(reducedWixQty, newQty);
+                        product.wixQty = cappedWixQty;
                         // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.wix = newQty;
-                        console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${newQty}`);
+                        if (product.channels) product.channels.wix = cappedWixQty;
+                        console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${cappedWixQty} (reduced by ${item.qty}, capped at warehouse ${newQty})`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'wixQty',
                             before: oldWixQty,
-                            after: newQty,
+                            after: cappedWixQty,
                             reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
@@ -8511,18 +8528,29 @@
                     // 🔧 WAYFAIR CASCADE FIX v3.3.5.8: Removed sourceChannel !== 'wayfair' check
                     // Wayfair allocations must ALWAYS be updated, even for Wayfair orders
                     if (product.wayfairSku || product.supplierPartNumber) {
-                        const oldWayfairQty = product.wayfairQty || product.warehouseQty || 0;
-                        product.wayfairQty = newQty;
+                        const oldWayfairQty = preAdjustChannels.wayfair || 0;
+                        let newWayfairQty;
+                        if (sourceChannel === 'wayfair') {
+                            // v3.3.5.24: Source channel deduction already reduced channels.wayfair
+                            // above — just cap at warehouse qty to prevent over-advertising
+                            newWayfairQty = Math.min(oldWayfairQty, newQty);
+                        } else {
+                            // v3.3.5.24: Reduce by sold qty, NOT set to warehouse qty
+                            // Uses preAdjustChannels to avoid double-reduction from autoAdjust
+                            const reducedQty = Math.max(0, oldWayfairQty - item.qty);
+                            newWayfairQty = Math.min(reducedQty, newQty);
+                        }
+                        product.wayfairQty = newWayfairQty;
                         // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.wayfair = newQty;
-                        console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newQty}`);
+                        if (product.channels) product.channels.wayfair = newWayfairQty;
+                        console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newWayfairQty} (${sourceChannel === 'wayfair' ? 'source channel, capped at warehouse' : 'reduced by ' + item.qty + ', capped at warehouse ' + newQty})`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'wayfairQty',
                             before: oldWayfairQty,
-                            after: newQty,
+                            after: newWayfairQty,
                             reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
