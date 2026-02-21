@@ -5028,10 +5028,18 @@
     }
 
     async function updateWixInventory(product, url, key) {
+        // v3.3.5.25: Reject push if no valid Wix product ID — prevents false success
+        const productId = product.wixProductId || product.productId;
+        if (!productId) {
+            const msg = `No Wix product ID for SKU ${product.sku} — skipping inventory push. Map this product in Inventory System or run Channel ID Sync.`;
+            console.warn(`[Wix Push] ❌ ${msg}`);
+            addLog(`⚠️ ${msg}`, 'warning');
+            return { success: false, error: msg };
+        }
         return await corsSafePost(url, {
             key: key,
             action: 'updateInventory',
-            productId: product.wixProductId || product.productId,
+            productId: productId,
             sku: product.sku,
             quantity: parseInt(product.qty || product.wixQty || product.quantity || 0)
         });
@@ -5058,11 +5066,21 @@
             
             // ============ UPDATE / INVENTORY SYNC ============
             if (fields.quantity || fields.qty || action === 'update') {
+                // v3.3.5.25: Reject push if no explicit Wayfair SKU — master SKU won't match
+                // Wayfair uses different SKU formats (e.g., CCDCTW530042 vs master 530042)
+                // and silently ignores unrecognized SKUs in DIFFERENTIAL feeds
+                const wayfairSku = product.wayfairSku || product.supplierPartNumber;
+                if (!wayfairSku) {
+                    const msg = `No Wayfair Supplier Part Number for SKU ${product.sku} — skipping inventory push. Enter it in Inventory System or let a Wayfair order auto-learn it.`;
+                    console.warn(`[Wayfair Push] ❌ ${msg}`);
+                    addLog(`⚠️ ${msg}`, 'warning');
+                    return { success: false, error: msg };
+                }
                 const result = await corsSafePost(url, {
                     key: key,
                     action: 'updateInventory',
                     inventory: [{
-                        supplierPartNumber: product.wayfairSku || product.sku,
+                        supplierPartNumber: wayfairSku,
                         quantityOnHand: parseInt(product.wayfairQty || product.qty || product.quantity || 0),
                         supplierId: 254744
                     }],
