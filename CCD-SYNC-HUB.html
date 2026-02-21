@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.25 - Allocation Sync Independent of Auto-Process</title>
+    <title>CCD Sync Hub v3.3.5.26 - Pricing Sync Toggle</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -667,6 +667,16 @@
                                 <input type="checkbox" id="autoPushWayfair" checked>
                                 <span style="color: var(--wayfair);">Push to Wayfair</span>
                             </label>
+                        </div>
+                        <!-- v3.3.5.26: Pricing Sync Toggle (independent of allocation sync) -->
+                        <div style="border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px;">
+                            <label class="form-checkbox" style="margin: 0;">
+                                <input type="checkbox" id="autoPushPricing" onchange="toggleAutoPush()">
+                                <span style="font-weight: 600;">💲 Push Pricing Changes</span>
+                            </label>
+                            <p style="font-size: 0.78rem; color: var(--text-dim); margin-top: 6px;">
+                                When enabled, retail price changes from Inventory System are automatically pushed to channels. Independent of allocation sync above.
+                            </p>
                         </div>
                     </div>
                     
@@ -2870,6 +2880,7 @@
             autoPollIntervalMinutes: 15,
             orderDateRange: 'last_7days', // NEW: Default to last 7 days
             autoPushEnabled: false,
+            autoPushPricing: false,
             autoPushEtsy: true,
             autoPushWix: true,
             autoPushWayfair: true,
@@ -9011,13 +9022,14 @@
         state.settings.autoPushEtsy = document.getElementById('autoPushEtsy').checked;
         state.settings.autoPushWix = document.getElementById('autoPushWix').checked;
         state.settings.autoPushWayfair = document.getElementById('autoPushWayfair').checked;
+        state.settings.autoPushPricing = document.getElementById('autoPushPricing').checked;
         
         if (enabled) {
             // Take initial inventory snapshot for change detection
             takeInventorySnapshot();
             // Start watching for changes
             startAutoPushWatcher();
-            addAutoSyncLogEntry('✅ Auto-Push enabled for: ' + getEnabledPushChannels().join(', '));
+            addAutoSyncLogEntry('✅ Auto-Push enabled for: ' + getEnabledPushChannels().join(', ') + (state.settings.autoPushPricing ? ' | 💲 Pricing sync ON' : ''));
         } else {
             stopAutoPushWatcher();
             addAutoSyncLogEntry('⏹️ Auto-Push disabled');
@@ -9046,7 +9058,9 @@
                     qty: product.qty || product.quantity || product.totalQty || 0,
                     etsyQty: product.channels?.etsy || 0,
                     wixQty: product.channels?.wix || 0,
-                    wayfairQty: product.channels?.wayfair || 0
+                    wayfairQty: product.channels?.wayfair || 0,
+                    // v3.3.5.26: Track stored channel prices for price change detection
+                    channelPrices: product.channelPrices || {}
                 };
             }
         }
@@ -9188,6 +9202,70 @@
                     source: 'inventory-system-auto-push'
                 });
                 queuedCount++;
+            }
+            
+            // ================================================================
+            // v3.3.5.26: PRICING CHANGES — Independent toggle from allocation
+            // Only processes when autoPushPricing is ON. Uses same per-channel
+            // toggles (autoPushEtsy/Wix/Wayfair) for channel selection.
+            // Reads EXACT prices from Inventory System's channelPrices — no
+            // recalculation. These prices were calculated once on save and
+            // stored in MASTER.json as the single source of truth.
+            // Backward compatible: old changes without pricing data are ignored.
+            // ================================================================
+            if (state.settings.autoPushPricing && change.changes.pricing) {
+                const cp = change.changes.pricing.channelPrices || {};
+                
+                // Etsy price push
+                if (state.settings.autoPushEtsy && 
+                    change.etsyListingId &&
+                    cp.etsy && cp.etsy.old !== cp.etsy.new) {
+                    
+                    addToQueue({
+                        channel: 'etsy',
+                        action: 'update',
+                        product: {
+                            sku: sku,
+                            productName: change.productName,
+                            retailPrice: cp.etsy.new,
+                            listingId: change.etsyListingId
+                        },
+                        fields: { price: true },
+                        reason: `Inventory System: Etsy price $${cp.etsy.old} → $${cp.etsy.new}`,
+                        source: 'inventory-system-price-push'
+                    });
+                    queuedCount++;
+                }
+                
+                // Wix price push
+                if (state.settings.autoPushWix && 
+                    change.wixProductId &&
+                    cp.wix && cp.wix.old !== cp.wix.new) {
+                    
+                    addToQueue({
+                        channel: 'wix',
+                        action: 'update',
+                        product: {
+                            sku: sku,
+                            productName: change.productName,
+                            retailPrice: cp.wix.new,
+                            wixProductId: change.wixProductId
+                        },
+                        fields: { price: true },
+                        reason: `Inventory System: Wix price $${cp.wix.old} → $${cp.wix.new}`,
+                        source: 'inventory-system-price-push'
+                    });
+                    queuedCount++;
+                }
+                
+                // Wayfair price push — NOTE: Wayfair API has limited pricing support.
+                // Log it but don't queue since Wayfair pricing is managed via Extranet portal.
+                if (state.settings.autoPushWayfair && 
+                    change.wayfairSku &&
+                    cp.wayfair && cp.wayfair.old !== cp.wayfair.new) {
+                    
+                    addAutoSyncLogEntry(`ℹ️ ${sku}: Wayfair price changed $${cp.wayfair.old} → $${cp.wayfair.new} (Wayfair pricing managed via Extranet — not pushed)`);
+                }
             }
             
             // Check for zero stock alert
@@ -10032,6 +10110,7 @@
             autoPollEnabled: state.settings.autoPollEnabled,
             autoPollIntervalMinutes: state.settings.autoPollIntervalMinutes,
             autoPushEnabled: state.settings.autoPushEnabled,
+            autoPushPricing: document.getElementById('autoPushPricing')?.checked ?? false,
             autoPushEtsy: document.getElementById('autoPushEtsy')?.checked ?? true,
             autoPushWix: document.getElementById('autoPushWix')?.checked ?? true,
             autoPushWayfair: document.getElementById('autoPushWayfair')?.checked ?? true,
@@ -10060,6 +10139,7 @@
                 const autoPollEnabled = document.getElementById('autoPollEnabled');
                 const autoPollInterval = document.getElementById('autoPollInterval');
                 const autoPushEnabled = document.getElementById('autoPushEnabled');
+                const autoPushPricing = document.getElementById('autoPushPricing');
                 const autoPushEtsy = document.getElementById('autoPushEtsy');
                 const autoPushWix = document.getElementById('autoPushWix');
                 const autoPushWayfair = document.getElementById('autoPushWayfair');
@@ -10072,6 +10152,7 @@
                 if (autoPollInterval) autoPollInterval.value = settings.autoPollIntervalMinutes || 15;
                 if (orderDateRange) orderDateRange.value = settings.orderDateRange || 'last_7days';
                 if (autoPushEnabled) autoPushEnabled.checked = settings.autoPushEnabled || false;
+                if (autoPushPricing) autoPushPricing.checked = settings.autoPushPricing || false;
                 if (autoPushEtsy) autoPushEtsy.checked = settings.autoPushEtsy !== false;
                 if (autoPushWix) autoPushWix.checked = settings.autoPushWix !== false;
                 if (autoPushWayfair) autoPushWayfair.checked = settings.autoPushWayfair !== false;

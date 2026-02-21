@@ -756,7 +756,7 @@ Previous versions documented in development guide.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Inventory Management System v23.3.11 - Sync Hub Allocation Master</title>
+    <title>CCD Inventory Management System v23.3.12 - Pricing Sync Notification</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -73703,7 +73703,19 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             // v23.3.11: Always write changes to localStorage. Sync Hub's "Auto-Push on Change"
             // checkbox is the sole master that decides whether to process these changes.
             // This keeps all sync control in one place (Sync Hub) with per-channel toggles.
+            // v23.3.12: Now includes pricing changes for Sync Hub's "Push Pricing Changes" toggle.
             try {
+                // v23.3.12: Detect pricing changes using stored channelPrices (the single source of truth)
+                const oldPrices = oldItem?.channelPrices || {};
+                const newPrices = newItem.channelPrices || {};
+                const pricingChanged = 
+                    (oldPrices.etsy || 0) !== (newPrices.etsy || 0) ||
+                    (oldPrices.wix || 0) !== (newPrices.wix || 0) ||
+                    (oldPrices.wayfair || 0) !== (newPrices.wayfair || 0);
+                
+                const allocationChanged = 
+                    JSON.stringify(oldItem?.channels || {}) !== JSON.stringify(newItem.channels || {});
+                
                 const change = {
                     timestamp: new Date().toISOString(),
                     sku: newItem.sku,
@@ -73735,6 +73747,20 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                     wayfairSku: newItem.wayfairSku || newItem.supplierPartNumber || null
                 };
                 
+                // v23.3.12: Add channel prices when prices changed
+                // Uses channelPrices (calculated once on save, stored in JSON).
+                // Sync Hub reads these exact values — no recalculation.
+                // Backward compatible: old Sync Hub versions simply ignore this field.
+                if (pricingChanged) {
+                    change.changes.pricing = {
+                        channelPrices: {
+                            etsy: { old: oldPrices.etsy || 0, new: newPrices.etsy || 0 },
+                            wix: { old: oldPrices.wix || 0, new: newPrices.wix || 0 },
+                            wayfair: { old: oldPrices.wayfair || 0, new: newPrices.wayfair || 0 }
+                        }
+                    };
+                }
+                
                 // Write to localStorage queue for Sync Hub to pick up
                 const pendingChanges = JSON.parse(localStorage.getItem('ccd_inventory_changes') || '[]');
                 pendingChanges.push(change);
@@ -73759,6 +73785,15 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 }
                 if (change.wayfairSku && change.changes.channels.wayfair.old !== change.changes.channels.wayfair.new) {
                     pushTargets.push(`Wayfair: ${change.changes.channels.wayfair.old} → ${change.changes.channels.wayfair.new}`);
+                }
+                
+                // v23.3.12: Log pricing changes too
+                if (pricingChanged) {
+                    const priceChanges = [];
+                    if ((oldPrices.etsy || 0) !== (newPrices.etsy || 0)) priceChanges.push(`Etsy: $${oldPrices.etsy || 0} → $${newPrices.etsy || 0}`);
+                    if ((oldPrices.wix || 0) !== (newPrices.wix || 0)) priceChanges.push(`Wix: $${oldPrices.wix || 0} → $${newPrices.wix || 0}`);
+                    if ((oldPrices.wayfair || 0) !== (newPrices.wayfair || 0)) priceChanges.push(`Wayfair: $${oldPrices.wayfair || 0} → $${newPrices.wayfair || 0}`);
+                    pushTargets.push(`💲 ${priceChanges.join(', ')}`);
                 }
                 
                 if (pushTargets.length > 0 && typeof logActivity === 'function') {
@@ -74170,6 +74205,23 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             if (item.channels.wix !== undefined) {
                 item.channels.etsy = item.channels.wix;
             }
+            
+            // v23.3.12: Calculate and store final channel prices on save.
+            // These are the EXACT prices that get pushed to channels and read by Channel Manager.
+            // Single source of truth — no recalculation anywhere, ever.
+            item.channelPrices = {};
+            const channelsToPrice = ['etsy', 'wix', 'wayfair', 'crazychicks', 'treasuremarts'];
+            for (const ch of channelsToPrice) {
+                try {
+                    const metrics = calculateChannelMetrics(item, ch);
+                    item.channelPrices[ch] = parseFloat(metrics.retailPrice.toFixed(2));
+                } catch (e) {
+                    console.warn(`[Channel Pricing] Could not calculate ${ch} price:`, e);
+                    // Preserve existing price if calculation fails
+                    item.channelPrices[ch] = existingItem?.channelPrices?.[ch] || 0;
+                }
+            }
+            console.log('[Channel Pricing] Stored prices on save:', item.channelPrices);
             
             // ✅ v20.15: PURCHASE HISTORY MANAGEMENT
             // Create a purchase history entry for this transaction
