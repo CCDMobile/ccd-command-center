@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.24 - Wayfair SKU Reverse Mapping Fix</title>
+    <title>CCD Sync Hub v3.3.5.25 - Allocation Sync Independent of Auto-Process</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -469,7 +469,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.21 • Build: 2026-02-07 • Enhanced Activity Logging</span>
+                <span>CCD Sync Hub v3.3.5.25 • Build: 2026-02-20 • Allocation Sync Independent</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -3340,7 +3340,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.21 - Enhanced Activity Logging...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.25 - Allocation Sync Independent...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3412,8 +3412,8 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.21 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.21 initialized - Enhanced Activity Logging', 'success');
+            console.log('[Init] CCD Sync Hub v3.3.5.25 initialized successfully - All Features Active');
+            addLog('CCD Sync Hub v3.3.5.25 initialized - Allocation Sync Independent', 'success');
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -8318,8 +8318,6 @@
                 let currentQty = product.warehouseQty || product.qty || product.quantity || 0;
                 let newQty = currentQty;
                 let adjustResult = { adjusted: false, changes: [], parAlerts: [] };
-                // v3.3.5.24: Snapshot for cascade reduction — will be updated after source reduction
-                let preAdjustChannels = product.channels ? JSON.parse(JSON.stringify(product.channels)) : {};
                 
                 // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
                 if (enableDeduction) {
@@ -8377,11 +8375,6 @@
                             }
                         );
                     }
-                    
-                    // v3.3.5.24: Capture snapshot AFTER source reduction but BEFORE autoAdjust
-                    // autoAdjust has an "Etsy=Wix sync" rule that modifies channel values.
-                    // The cascade reduction code needs these ORIGINAL values.
-                    preAdjustChannels = product.channels ? JSON.parse(JSON.stringify(product.channels)) : {};
                     
                     // v2.1.0: Auto-adjust channel allocations after order
                     adjustResult = autoAdjustChannelAllocations(product, order.channel);
@@ -8480,47 +8473,36 @@
                     // Source channel already updated by the sale itself
                     
                     if (sourceChannel !== 'etsy' && (product.etsyListing || product.etsyListingId)) {
-                        const oldEtsyQty = preAdjustChannels.etsy || 0;
-                        // v3.3.5.24: Reduce by sold qty, NOT set to warehouse qty
-                        // Old code set channels.etsy = newQty (warehouse), which was a no-op
-                        // when channel was already at or below warehouse qty
-                        // Uses preAdjustChannels to avoid double-reduction from autoAdjust
-                        const reducedEtsyQty = Math.max(0, oldEtsyQty - item.qty);
-                        // Also cap at warehouse qty — can't advertise more than we physically have
-                        const cappedEtsyQty = Math.min(reducedEtsyQty, newQty);
-                        product.etsyQty = cappedEtsyQty;
+                        const oldEtsyQty = product.etsyQty || product.warehouseQty || 0;
+                        product.etsyQty = newQty;
                         // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.etsy = cappedEtsyQty;
-                        console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${cappedEtsyQty} (reduced by ${item.qty}, capped at warehouse ${newQty})`);
+                        if (product.channels) product.channels.etsy = newQty;
+                        console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${newQty}`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'etsyQty',
                             before: oldEtsyQty,
-                            after: cappedEtsyQty,
+                            after: newQty,
                             reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
                     }
                     
                     if (sourceChannel !== 'wix' && (product.wixProductId || product.wixId)) {
-                        const oldWixQty = preAdjustChannels.wix || 0;
-                        // v3.3.5.24: Reduce by sold qty, NOT set to warehouse qty
-                        // Uses preAdjustChannels to avoid double-reduction from autoAdjust
-                        const reducedWixQty = Math.max(0, oldWixQty - item.qty);
-                        const cappedWixQty = Math.min(reducedWixQty, newQty);
-                        product.wixQty = cappedWixQty;
+                        const oldWixQty = product.wixQty || product.warehouseQty || 0;
+                        product.wixQty = newQty;
                         // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.wix = cappedWixQty;
-                        console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${cappedWixQty} (reduced by ${item.qty}, capped at warehouse ${newQty})`);
+                        if (product.channels) product.channels.wix = newQty;
+                        console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${newQty}`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'wixQty',
                             before: oldWixQty,
-                            after: cappedWixQty,
+                            after: newQty,
                             reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
@@ -8529,29 +8511,18 @@
                     // 🔧 WAYFAIR CASCADE FIX v3.3.5.8: Removed sourceChannel !== 'wayfair' check
                     // Wayfair allocations must ALWAYS be updated, even for Wayfair orders
                     if (product.wayfairSku || product.supplierPartNumber) {
-                        const oldWayfairQty = preAdjustChannels.wayfair || 0;
-                        let newWayfairQty;
-                        if (sourceChannel === 'wayfair') {
-                            // v3.3.5.24: Source channel deduction already reduced channels.wayfair
-                            // above — just cap at warehouse qty to prevent over-advertising
-                            newWayfairQty = Math.min(oldWayfairQty, newQty);
-                        } else {
-                            // v3.3.5.24: Reduce by sold qty, NOT set to warehouse qty
-                            // Uses preAdjustChannels to avoid double-reduction from autoAdjust
-                            const reducedQty = Math.max(0, oldWayfairQty - item.qty);
-                            newWayfairQty = Math.min(reducedQty, newQty);
-                        }
-                        product.wayfairQty = newWayfairQty;
+                        const oldWayfairQty = product.wayfairQty || product.warehouseQty || 0;
+                        product.wayfairQty = newQty;
                         // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.wayfair = newWayfairQty;
-                        console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newWayfairQty} (${sourceChannel === 'wayfair' ? 'source channel, capped at warehouse' : 'reduced by ' + item.qty + ', capped at warehouse ' + newQty})`);
+                        if (product.channels) product.channels.wayfair = newQty;
+                        console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newQty}`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'wayfairQty',
                             before: oldWayfairQty,
-                            after: newWayfairQty,
+                            after: newQty,
                             reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
@@ -8628,25 +8599,18 @@
             const sku = item.sku;
             if (sku === 'UNKNOWN') continue;
             
-            // v3.3.5.24: For Wayfair orders, item.sku is the Wayfair-side SKU (e.g., CCDPD4996820)
-            // which won't match any master SKU. Use the pre-matched masterSku if available.
-            const lookupSku = item.skuMatch?.masterSku || sku;
-            const product = products.find(p => (p.sku || p.SKU) === lookupSku);
+            const product = products.find(p => (p.sku || p.SKU) === sku);
             if (!product) continue;
             
             const sourceChannel = order.channel;
             const channels = product.channels || {};
-            // v3.3.5.24: Use master SKU for Etsy/Wix, not the order-side SKU
-            // For Wayfair orders, item.sku is the Wayfair-side SKU (e.g., CCDPD4996820)
-            // but Etsy/Wix need the master SKU (e.g., 4996-820)
-            const masterSku = product.sku || product.SKU || sku;
             
             // v4.0: Push channel-specific qty (after auto-adjustment), not warehouse qty
             if ((product.etsyListing || product.etsyListingId) && sourceChannel !== 'etsy') {
                 const etsyQty = channels.etsy || 0;
                 cascadeQueue.push({
                     channel: 'etsy',
-                    sku: masterSku,
+                    sku: sku,
                     qty: etsyQty,
                     listingId: product.etsyListing || product.etsyListingId
                 });
@@ -8656,7 +8620,7 @@
                 const wixQty = channels.wix || 0;
                 cascadeQueue.push({
                     channel: 'wix',
-                    sku: masterSku,
+                    sku: sku,
                     qty: wixQty,
                     productId: product.wixProductId || product.wixId
                 });
@@ -8669,7 +8633,7 @@
                 const wayfairQty = channels.wayfair || 0;
                 cascadeQueue.push({
                     channel: 'wayfair',
-                    sku: masterSku,
+                    sku: sku,
                     qty: wayfairQty,
                     wayfairSku: product.wayfairSku || product.supplierPartNumber
                 });
@@ -8683,7 +8647,6 @@
                 channel: cascade.channel,
                 product: { sku: cascade.sku, ...cascade },
                 fields: { quantity: true },
-                action: 'inventory',  // v3.3.5.24: Skip 'update' path, go straight to inventory-only
                 status: 'pending',
                 timestamp: new Date().toISOString(),
                 reason: `Cascade from ${order.channel} order ${orderId}`
@@ -9075,6 +9038,10 @@
     
     /**
      * Start the auto-push file watcher
+     * v3.3.5.25: "Auto-Push on Change" checkbox in Sync Hub is the SOLE master
+     * for allocation sync. Inventory System always writes changes to localStorage;
+     * this watcher decides whether to process them based on autoPushEnabled.
+     * This is completely independent of "Enable auto-processing" (order processing).
      */
     function startAutoPushWatcher() {
         if (state.autoPushWatchInterval) {
@@ -10099,16 +10066,28 @@
                     startAutoPoll();
                 }
                 
-                // Start auto-push watcher if it was enabled
+                // v3.3.5.25: Start auto-push watcher if Auto-Push on Change was enabled
+                // This is independent of "Enable auto-processing" (order processing)
                 if (settings.autoPushEnabled) {
                     // Delay to allow Master JSON to connect first
                     setTimeout(() => {
                         if (masterJsonFileHandle && window.masterJsonData) {
                             takeInventorySnapshot();
                             startAutoPushWatcher();
-                            addAutoSyncLogEntry('✅ Auto-Push resumed from previous session');
+                            addAutoSyncLogEntry('✅ Auto-Push on Change resumed from previous session');
                         } else {
                             addAutoSyncLogEntry('⚠️ Auto-Push enabled but Master JSON not connected yet');
+                            // v3.3.5.25: Retry after Master JSON connects
+                            const retryInterval = setInterval(() => {
+                                if (masterJsonFileHandle && window.masterJsonData) {
+                                    clearInterval(retryInterval);
+                                    takeInventorySnapshot();
+                                    startAutoPushWatcher();
+                                    addAutoSyncLogEntry('✅ Auto-Push watcher started (after Master JSON connected)');
+                                }
+                            }, 5000);
+                            // Stop retrying after 2 minutes
+                            setTimeout(() => clearInterval(retryInterval), 120000);
                         }
                     }, 3000);
                 }
