@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Channel Manager v3.4.1 - Activity Log Enhancement</title>
+    <title>CCD Channel Manager v4.0.0 - Phase 1: Wire It Together</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -789,7 +789,7 @@
                         <div class="form-row">
                             <div class="form-group">
                                 <label class="form-label">CCD API Key</label>
-                                <input type="password" class="form-input" id="wayfairApiKey" value="ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF" style="font-family: 'JetBrains Mono', monospace;">
+                                <input type="password" class="form-input" id="wayfairApiKey" value="" placeholder="Read from CONFIG.json" style="font-family: 'JetBrains Mono', monospace;">
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Supplier ID</label>
@@ -1871,7 +1871,7 @@
         settings: { 
             etsyProxyUrl: '', etsyShopId: 'CountryCharmDecorUS', etsyApiKey: '', 
             wixProxyUrl: '', wixSiteId: '',
-            wayfairProxyUrl: '', wayfairApiKey: 'ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF', 
+            wayfairProxyUrl: '', wayfairApiKey: '', 
             wayfairSupplierId: '254744', wayfairEnvironment: 'sandbox'
         },
         connections: { etsy: false, wix: false, wayfair: false }
@@ -1924,9 +1924,9 @@
         return {
             settings: {
                 features: {
-                    useSharedQueue: false,
+                    useSharedQueue: false,  // PERMANENTLY FALSE - Phase 1.8: All push ops go through ccd_sync_hub_inbox
                     inventoryDeduction: true,
-                    autoCascade: false,
+                    autoCascade: false,  // PERMANENTLY FALSE - Phase 1.4: Sync Hub is sole master for all sync operations
                     enhancedHeartbeat: false,
                     parAlerts: false,
                     enforceEtsyWixSync: false,
@@ -1940,7 +1940,7 @@
                     healthDashboard: false,
                     userRoles: false,
                     auditLog: false,
-                    aiContentStudioIntegration: true  // NEW: AI Content Studio import feature
+                    aiContentStudioIntegration: true  // AI Content Studio import feature
                 }
             }
         };
@@ -1988,6 +1988,12 @@
      * Toggle a feature flag and save (v3.4.0)
      */
     async function toggleFeatureFlag(flagKey) {
+        // Phase 1.4 & 1.8: Block permanently disabled flags
+        if (flagKey === 'autoCascade' || flagKey === 'useSharedQueue' || flagKey === 'sharedQueue') {
+            toast(`⛔ ${flagKey} is permanently disabled (Phase 1). Sync Hub is the sole master for sync operations.`, 'warning');
+            return;
+        }
+        
         const config = await loadConfig();
         if (!config.settings) config.settings = {};
         if (!config.settings.features) config.settings.features = {};
@@ -2125,149 +2131,36 @@
     // =====================================================================
     // GAP 4: AUTO-CASCADE INVENTORY UPDATES (v3.2.0)
     // Automatically push inventory changes to channels when Master changes
-    // Feature Flag: config.settings.features.autoCascade
-    // Backward Compatible: Disabled by default, no behavior change when off
+    // =====================================================================
+    // Phase 1.4: AUTO-CASCADE WATCHER — PERMANENTLY DISABLED
+    // Sync Hub is the sole master for all sync operations. 
+    // Two watchers (CM + SH) = double pushes. Removed.
     // =====================================================================
     
     let autoCascadeWatcherInterval = null;
     let lastKnownInventoryState = null;
     
     /**
-     * Start watching for inventory changes to auto-cascade (GAP 4)
-     * Feature Flag: autoCascade
+     * Phase 1.4: DISABLED — Auto-cascade watcher removed.
+     * Sync Hub handles all change detection and pushing.
      */
     async function startAutoCascadeWatcher() {
-        const config = await loadConfig();
-        const autoCascadeEnabled = config?.settings?.features?.autoCascade ?? false;
-        
-        if (!autoCascadeEnabled) {
-            console.log('[Auto-Cascade] Feature disabled - not starting watcher');
-            return;
-        }
-        
-        if (autoCascadeWatcherInterval) {
-            console.log('[Auto-Cascade] Watcher already running');
-            return;
-        }
-        
-        console.log('[Auto-Cascade] Starting inventory change watcher');
-        
-        // Take initial snapshot
-        takeInventorySnapshot();
-        
-        // Check for changes every 30 seconds
-        autoCascadeWatcherInterval = setInterval(async () => {
-            await checkForInventoryChanges();
-        }, 30000);
-        
-        toast('🔄 Auto-Cascade enabled - watching for changes', 'info');
+        console.log('[Auto-Cascade] ⛔ PERMANENTLY DISABLED (Phase 1.4) - Sync Hub is sole master for sync operations');
+        return;
     }
     
     /**
-     * Stop auto-cascade watcher (GAP 4)
+     * Phase 1.4: DISABLED
      */
     function stopAutoCascadeWatcher() {
         if (autoCascadeWatcherInterval) {
             clearInterval(autoCascadeWatcherInterval);
             autoCascadeWatcherInterval = null;
-            console.log('[Auto-Cascade] Watcher stopped');
         }
     }
     
-    /**
-     * Take snapshot of current inventory state (GAP 4)
-     */
-    function takeInventorySnapshot() {
-        if (!masterJsonData?.inventory) {
-            lastKnownInventoryState = {};
-            return;
-        }
-        
-        lastKnownInventoryState = {};
-        for (const product of masterJsonData.inventory) {
-            if (product.sku) {
-                lastKnownInventoryState[product.sku] = {
-                    qty: product.qty || 0,
-                    channels: JSON.parse(JSON.stringify(product.channels || {}))
-                };
-            }
-        }
-        
-        console.log(`[Auto-Cascade] Snapshot taken: ${Object.keys(lastKnownInventoryState).length} products`);
-    }
-    
-    /**
-     * Check for inventory changes and cascade to channels (GAP 4)
-     */
-    async function checkForInventoryChanges() {
-        if (!masterJsonData?.inventory || !lastKnownInventoryState) {
-            return;
-        }
-        
-        const config = await loadConfig();
-        const autoCascadeEnabled = config?.settings?.features?.autoCascade ?? false;
-        
-        if (!autoCascadeEnabled) {
-            stopAutoCascadeWatcher();
-            return;
-        }
-        
-        const changes = [];
-        
-        for (const product of masterJsonData.inventory) {
-            if (!product.sku) continue;
-            
-            const previous = lastKnownInventoryState[product.sku];
-            if (!previous) {
-                // New product - skip for now
-                continue;
-            }
-            
-            const currentQty = product.qty || 0;
-            const previousQty = previous.qty || 0;
-            
-            // Check for warehouse qty change
-            if (currentQty !== previousQty) {
-                changes.push({
-                    sku: product.sku,
-                    productName: product.productName,
-                    field: 'qty',
-                    from: previousQty,
-                    to: currentQty,
-                    product: product
-                });
-            }
-            
-            // Check for channel allocation changes
-            const currentChannels = product.channels || {};
-            const previousChannels = previous.channels || {};
-            
-            for (const channel of ['etsy', 'wix', 'wayfair']) {
-                const currentVal = currentChannels[channel] || 0;
-                const previousVal = previousChannels[channel] || 0;
-                
-                if (currentVal !== previousVal) {
-                    changes.push({
-                        sku: product.sku,
-                        productName: product.productName,
-                        field: `channels.${channel}`,
-                        channel: channel,
-                        from: previousVal,
-                        to: currentVal,
-                        product: product
-                    });
-                }
-            }
-        }
-        
-        if (changes.length > 0) {
-            console.log(`[Auto-Cascade] Detected ${changes.length} changes`);
-            await processCascadeChanges(changes);
-        }
-        
-        // Update snapshot
-        takeInventorySnapshot();
-    }
+    function takeInventorySnapshot() { /* Phase 1.4: Disabled */ }
+    async function checkForInventoryChanges() { /* Phase 1.4: Disabled */ }
     
     /**
      * Process detected changes and push to channels (GAP 4)
@@ -2817,7 +2710,7 @@
         }
         
         // Check Etsy price (if product has Etsy listing)
-        if (product.channels?.etsy > 0 || product.etsyListingId) {
+        if (product.channels?.etsy > 0 || product.etsyListingId || product.etsyListing) {
             const expected = calculateExpectedPrice(wholesale, 'etsy', pricingConfig);
             const actual = product.etsyPrice || product.retailPrice;
             
@@ -2842,7 +2735,7 @@
         }
         
         // Check Wix price
-        if (product.channels?.wix > 0 || product.wixProductId) {
+        if (product.channels?.wix > 0 || product.wixProductId || product.wixId) {
             const expected = calculateExpectedPrice(wholesale, 'wix', pricingConfig);
             const actual = product.wixPrice || product.retailPrice;
             
@@ -2867,7 +2760,7 @@
         }
         
         // Check Wayfair price
-        if (product.channels?.wayfair > 0 || product.wayfairSku) {
+        if (product.channels?.wayfair > 0 || product.wayfairSku || product.supplierPartNumber) {
             const expected = calculateExpectedPrice(wholesale, 'wayfair', pricingConfig);
             const actual = product.wayfairPrice;
             
@@ -2916,7 +2809,7 @@
         }
         
         // Recalculate Etsy
-        if (product.channels?.etsy > 0 || product.etsyListingId) {
+        if (product.channels?.etsy > 0 || product.etsyListingId || product.etsyListing) {
             const newEtsy = calculateExpectedPrice(wholesale, 'etsy', pricingConfig);
             if (product.etsyPrice !== newEtsy) {
                 changes.push(`Etsy: $${product.etsyPrice?.toFixed(2)} → $${newEtsy.toFixed(2)}`);
@@ -2925,7 +2818,7 @@
         }
         
         // Recalculate Wix
-        if (product.channels?.wix > 0 || product.wixProductId) {
+        if (product.channels?.wix > 0 || product.wixProductId || product.wixId) {
             const newWix = calculateExpectedPrice(wholesale, 'wix', pricingConfig);
             if (product.wixPrice !== newWix) {
                 changes.push(`Wix: $${product.wixPrice?.toFixed(2)} → $${newWix.toFixed(2)}`);
@@ -2934,7 +2827,7 @@
         }
         
         // Recalculate Wayfair
-        if (product.channels?.wayfair > 0 || product.wayfairSku) {
+        if (product.channels?.wayfair > 0 || product.wayfairSku || product.supplierPartNumber) {
             const newWayfair = calculateExpectedPrice(wholesale, 'wayfair', pricingConfig);
             if (product.wayfairPrice !== newWayfair) {
                 changes.push(`Wayfair: $${product.wayfairPrice?.toFixed(2)} → $${newWayfair.toFixed(2)}`);
@@ -4294,97 +4187,43 @@
     
     // ===== END GAP 21: AUDIT LOG =====
 
-    // ===== SYNC HUB INTEGRATION (GAP 1 - v3.1.0) =====
-    // Backward compatible with feature flag: useSharedQueue
-    // Save queue to localStorage (legacy) OR Master JSON _syncQueue (new)
+    // ===== SYNC HUB INTEGRATION (Phase 1 - v4.0.0) =====
+    // Phase 1.8: Channel Manager NEVER writes to ccd_sync_hub_queue
+    // All push operations go through ccd_sync_hub_inbox instead
+    // Queue state is internal to Channel Manager only
     
     /**
-     * Save sync queue with backward compatibility (GAP 1)
+     * Save sync queue to internal state only (Phase 1.8)
+     * Channel Manager maintains its own queue display but does NOT write to Sync Hub's queue
      */
     async function saveSyncQueue() {
-        const config = await loadConfig();
-        const useSharedQueue = config?.settings?.features?.useSharedQueue ?? false;
-        
-        if (useSharedQueue) {
-            // NEW: Save to Master JSON _syncQueue
-            console.log('[Queue] Saving to Master JSON _syncQueue');
-            
-            if (!masterJsonData) {
-                console.error('[Queue] Master JSON not loaded, cannot save shared queue');
-                return false;
-            }
-            
-            // Ensure _syncQueue exists
-            if (!masterJsonData._syncQueue) {
-                masterJsonData._syncQueue = [];
-            }
-            
-            // Update Master JSON
-            masterJsonData._syncQueue = state.syncQueue;
-            
-            // Save file
-            try {
-                await saveMasterJson({ 
-                    actionDescription: `Queue updated from Channel Manager: ${state.syncQueue.length} items`,
-                    skipLog: true 
-                });
-                console.log('[Queue] ✅ Saved to Master JSON');
-                return true;
-            } catch (error) {
-                console.error('[Queue] Failed to save:', error);
-                return false;
-            }
-            
-        } else {
-            // OLD: Save to localStorage (backward compatible)
-            console.log('[Queue] Saving to localStorage (legacy mode)');
-            localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.syncQueue));
-            console.log('[Queue] ✅ Saved to localStorage');
+        // Save to localStorage for Channel Manager's own state persistence only
+        try {
+            localStorage.setItem('ccd_channel_manager_queue', JSON.stringify(state.syncQueue));
+            console.log(`[Queue] ✅ Saved ${state.syncQueue.length} items to CM internal queue`);
             return true;
+        } catch (error) {
+            console.error('[Queue] Failed to save:', error);
+            return false;
         }
     }
     
     /**
-     * Load sync queue with backward compatibility (GAP 1)
+     * Load sync queue from internal state (Phase 1.8)
      */
     async function loadSyncQueue() {
-        const config = await loadConfig();
-        const useSharedQueue = config?.settings?.features?.useSharedQueue ?? false;
-        
-        if (useSharedQueue) {
-            // NEW: Load from Master JSON _syncQueue
-            console.log('[Queue] Loading from Master JSON _syncQueue');
-            
-            if (!masterJsonData) {
-                console.warn('[Queue] Master JSON not loaded, cannot access shared queue');
+        console.log('[Queue] Loading from Channel Manager internal queue');
+        const saved = localStorage.getItem('ccd_channel_manager_queue');
+        if (saved) {
+            try {
+                state.syncQueue = JSON.parse(saved);
+                console.log(`[Queue] ✅ Loaded ${state.syncQueue.length} items`);
+            } catch (e) {
+                console.error('Error loading sync queue:', e);
                 state.syncQueue = [];
-                return;
             }
-            
-            // Ensure _syncQueue exists
-            if (!masterJsonData._syncQueue) {
-                masterJsonData._syncQueue = [];
-            }
-            
-            // Get queue from Master JSON
-            state.syncQueue = masterJsonData._syncQueue || [];
-            console.log(`[Queue] ✅ Loaded ${state.syncQueue.length} items from Master JSON`);
-            
         } else {
-            // OLD: Load from localStorage (backward compatible)
-            console.log('[Queue] Loading from localStorage (legacy mode)');
-            const saved = localStorage.getItem('ccd_sync_hub_queue');
-            if (saved) {
-                try {
-                    state.syncQueue = JSON.parse(saved);
-                    console.log(`[Queue] ✅ Loaded ${state.syncQueue.length} items from localStorage`);
-                } catch (e) {
-                    console.error('Error loading sync queue:', e);
-                    state.syncQueue = [];
-                }
-            } else {
-                state.syncQueue = [];
-            }
+            state.syncQueue = [];
         }
     }
     
@@ -4512,17 +4351,38 @@
             if (config?.settings?.features?.aiContentStudioIntegration) {
                 loadPendingContent();
             }
+            
+            // Phase 1.9: Load proxy URLs and API keys from CONFIG.json
+            if (config?.settings?.proxyUrls) {
+                const proxyUrls = config.settings.proxyUrls;
+                if (proxyUrls.etsy && !state.settings.etsyProxyUrl) state.settings.etsyProxyUrl = proxyUrls.etsy;
+                if (proxyUrls.wix && !state.settings.wixProxyUrl) state.settings.wixProxyUrl = proxyUrls.wix;
+                if (proxyUrls.wayfair && !state.settings.wayfairProxyUrl) state.settings.wayfairProxyUrl = proxyUrls.wayfair;
+                // Update UI fields
+                const epu = document.getElementById('etsyProxyUrl');
+                const wpu = document.getElementById('wixProxyUrl');
+                const wapu = document.getElementById('wayfairProxyUrl');
+                if (epu && !epu.value && state.settings.etsyProxyUrl) epu.value = state.settings.etsyProxyUrl;
+                if (wpu && !wpu.value && state.settings.wixProxyUrl) wpu.value = state.settings.wixProxyUrl;
+                if (wapu && !wapu.value && state.settings.wayfairProxyUrl) wapu.value = state.settings.wayfairProxyUrl;
+                console.log('[Config] ✅ Loaded proxy URLs from CONFIG.json');
+            }
+            if (config?.settings?.ccdApiKey && !state.settings.wayfairApiKey) {
+                state.settings.wayfairApiKey = config.settings.ccdApiKey;
+                const wak = document.getElementById('wayfairApiKey');
+                if (wak && !wak.value) wak.value = config.settings.ccdApiKey;
+            }
         }, 1000);
         
-        // GAP 4: Start auto-cascade if enabled (delayed to allow files to load)
-        setTimeout(async () => {
-            const config = await loadConfig();
-            if (config?.settings?.features?.autoCascade && masterJsonData) {
-                startAutoCascadeWatcher();
-            }
-        }, 3000);
+        // Phase 1.4: Auto-cascade is permanently disabled - Sync Hub is sole master
+        // (no auto-cascade startup needed)
         
-        console.log('[Init] CCD Channel Manager v3.2.0 initialized (GAPs 4, 6, 11, 14 implemented)');
+        // Phase 1.3: Start polling Sync Hub results for push status feedback
+        setTimeout(() => {
+            startResultsPolling();
+        }, 2000);
+        
+        console.log('[Init] CCD Channel Manager v4.0.0 initialized (Phase 1: Wire It Together)');
         
         // Log startup to Activity Log (only if Master JSON is connected)
         setTimeout(() => {
@@ -5000,15 +4860,15 @@
                 // Channel allocations are in i.channels object (qty allocated to each channel)
                 const channels = i.channels || {};
                 
-                // Check if product is allocated to each channel (qty > 0 means listed)
-                const hasEtsy = (channels.etsy > 0) || !!i.etsyListingId;
-                const hasWix = (channels.wix > 0) || !!i.wixProductId;
-                const hasWayfair = (channels.wayfair > 0) || !!i.wayfairSku;
+                // Phase 1.6: Check both current and legacy field names for channel IDs
+                const etsyId = i.etsyListingId || i.etsyListing || null;
+                const wixId = i.wixProductId || i.wixId || null;
+                const wayfairSkuVal = i.wayfairSku || i.supplierPartNumber || null;
                 
-                // Get channel IDs if they exist
-                const etsyId = i.etsyListingId || null;
-                const wixId = i.wixProductId || null;
-                const wayfairSku = i.wayfairSku || i.sku; // Use product SKU as wayfair SKU if allocated
+                // Check if product is allocated to each channel (qty > 0 means listed OR has channel ID)
+                const hasEtsy = (channels.etsy > 0) || !!etsyId;
+                const hasWix = (channels.wix > 0) || !!wixId;
+                const hasWayfair = (channels.wayfair > 0) || !!(wayfairSkuVal && wayfairSkuVal !== i.sku);
                 
                 // Channel quantities from channels object
                 const etsyQty = channels.etsy || 0;
@@ -5017,6 +4877,9 @@
                 
                 // Base warehouse qty
                 const baseQty = i.qty || i.warehouseQty || i.quantity || 0;
+                
+                // Phase 1.7: Read stored channel prices directly from MASTER.json (no recalculation)
+                const channelPrices = i.channelPrices || {};
                 
                 return {
                     id: i.id || i.sku, 
@@ -5028,16 +4891,19 @@
                     // Channel mappings - truthy if allocated OR has ID
                     etsy: hasEtsy ? { id: etsyId, qty: etsyQty } : null,
                     wix: hasWix ? { id: wixId, qty: wixQty } : null,
-                    wayfair: hasWayfair ? { sku: wayfairSku, qty: wayfairQty } : null,
+                    wayfair: hasWayfair ? { sku: wayfairSkuVal, qty: wayfairQty } : null,
                     // Quantities per channel
                     etsyQty: etsyQty,
                     wixQty: wixQty,
                     wayfairQty: wayfairQty,
-                    wayfairSku: hasWayfair ? wayfairSku : null,
-                    // Etsy specific fields
+                    wayfairSku: hasWayfair ? wayfairSkuVal : null,
+                    // Channel IDs (legacy-aware)
                     etsyListingId: etsyId,
+                    wixProductId: wixId,
                     etsyTitle: i.etsyTitle || null,
                     etsyPrice: i.etsyPrice || null,
+                    // Phase 1.7: Stored channel prices from MASTER.json
+                    channelPrices: channelPrices,
                     // Full item for reference
                     _raw: i
                 };
@@ -5206,24 +5072,33 @@
                 const data = JSON.parse(d);
                 // Handle different data structures
                 const inventory = data.inventory || data.items || [];
-                state.products = inventory.map(i => ({
-                    id: i.id || i.sku, 
-                    sku: i.sku, 
-                    name: i.productName || i.name,
-                    description: i.description || '', 
-                    price: i.retailPrice || i.price || 0, 
-                    quantity: i.qty || i.warehouseQty || i.quantity || 0,
-                    // Channel mappings from channels object
-                    etsy: ((i.channels?.etsy > 0) || i.etsyListingId) ? { id: i.etsyListingId, qty: i.channels?.etsy || 0 } : null,
-                    wix: ((i.channels?.wix > 0) || i.wixProductId) ? { id: i.wixProductId, qty: i.channels?.wix || 0 } : null,
-                    wayfair: ((i.channels?.wayfair > 0) || i.wayfairSku) ? { sku: i.wayfairSku || i.sku, qty: i.channels?.wayfair || 0 } : null,
-                    // Quantities per channel
-                    etsyQty: i.channels?.etsy || 0,
-                    wixQty: i.channels?.wix || 0,
-                    wayfairQty: i.channels?.wayfair || 0,
-                    wayfairSku: i.wayfairSku || null,
-                    _raw: i
-                }));
+                state.products = inventory.map(i => {
+                    // Phase 1.6: Legacy-aware field names
+                    const etsyId = i.etsyListingId || i.etsyListing || null;
+                    const wixId = i.wixProductId || i.wixId || null;
+                    const wayfairSkuVal = i.wayfairSku || i.supplierPartNumber || null;
+                    const cp = i.channelPrices || {};
+                    
+                    return {
+                        id: i.id || i.sku, 
+                        sku: i.sku, 
+                        name: i.productName || i.name,
+                        description: i.description || '', 
+                        price: i.retailPrice || i.price || 0, 
+                        quantity: i.qty || i.warehouseQty || i.quantity || 0,
+                        etsy: ((i.channels?.etsy > 0) || etsyId) ? { id: etsyId, qty: i.channels?.etsy || 0 } : null,
+                        wix: ((i.channels?.wix > 0) || wixId) ? { id: wixId, qty: i.channels?.wix || 0 } : null,
+                        wayfair: ((i.channels?.wayfair > 0) || (wayfairSkuVal && wayfairSkuVal !== i.sku)) ? { sku: wayfairSkuVal, qty: i.channels?.wayfair || 0 } : null,
+                        etsyQty: i.channels?.etsy || 0,
+                        wixQty: i.channels?.wix || 0,
+                        wayfairQty: i.channels?.wayfair || 0,
+                        wayfairSku: wayfairSkuVal || null,
+                        etsyListingId: etsyId,
+                        wixProductId: wixId,
+                        channelPrices: cp,
+                        _raw: i
+                    };
+                });
                 console.log('✅ Loaded ' + state.products.length + ' products from localStorage');
             } catch(e) { 
                 console.error('Error parsing inventory data:', e); 
@@ -5340,7 +5215,13 @@
         
         // Use Etsy-specific title/price if available, otherwise use master
         const etsyTitle = p._raw?.etsyTitle || p.name;
-        const etsyPrice = p._raw?.etsyPrice || p.price;
+        
+        // Phase 1.7: Display stored channel prices from MASTER.json (no recalculation)
+        const cp = p.channelPrices || {};
+        const etsyPrice = cp.etsy || p._raw?.etsyPrice || p.price;
+        const wixPrice = cp.wix || p._raw?.wixPrice || p.price;
+        const wayfairPrice = cp.wayfair || p._raw?.wayfairPrice || p.price;
+        const hasChannelPrices = cp.etsy || cp.wix || cp.wayfair;
         
         setCell('etsyTitle', p.etsy ? etsyTitle : ''); 
         setCell('wixTitle', p.wix ? p.name : ''); 
@@ -5350,9 +5231,16 @@
         setCell('wixDesc', p.wix ? 'Yes' : ''); 
         setCell('wayfairDesc', p.wayfair ? 'Yes' : '');
         
-        setCell('etsyPrice', p.etsy ? '$' + (etsyPrice || 0).toFixed(2) : ''); 
-        setCell('wixPrice', p.wix ? '$' + (p.price || 0).toFixed(2) : ''); 
-        setCell('wayfairPrice', p.wayfair ? '$' + (p.price || 0).toFixed(2) : '');
+        // Phase 1.7: Show stored channel prices or "Price not calculated" message
+        if (hasChannelPrices) {
+            setCell('etsyPrice', p.etsy ? '$' + (etsyPrice || 0).toFixed(2) : ''); 
+            setCell('wixPrice', p.wix ? '$' + (wixPrice || 0).toFixed(2) : ''); 
+            setCell('wayfairPrice', p.wayfair ? '$' + (wayfairPrice || 0).toFixed(2) : '');
+        } else {
+            setCell('etsyPrice', p.etsy ? '$' + (etsyPrice || 0).toFixed(2) : ''); 
+            setCell('wixPrice', p.wix ? '$' + (wixPrice || 0).toFixed(2) : ''); 
+            setCell('wayfairPrice', p.wayfair ? '$' + (wayfairPrice || 0).toFixed(2) : '');
+        }
         
         // Show allocated quantities from channels object
         setCell('etsyQty', p.etsy ? p.etsyQty : ''); 
@@ -5386,7 +5274,7 @@
         if (document.getElementById('pushImages').checked) fields.push('images');
         if (document.getElementById('pushVar').checked) fields.push('variations');
         const action = document.getElementById('pushAction').value;
-        if (ch === 'wayfair' && fields.includes('quantity')) pushToWayfairInventory();
+        // Phase 1.1: No direct API calls - all pushes go through Sync Hub inbox via processQueue()
         state.syncQueue.push({ id: Date.now(), product: p, channel: ch, fields, action, status: 'pending' });
         await saveSyncQueue();
         closeModal('pushModal');
@@ -5514,8 +5402,9 @@
         }
         if (txt) txt.textContent = 'Checking...';
         try {
-            // Use CCD API key for proxy auth
-            const ccdKey = 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+            // Phase 1.9: Read API key from config instead of hardcoded value
+            const config = await loadConfig();
+            const ccdKey = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
             const url = state.settings.wixProxyUrl + '?action=test&key=' + encodeURIComponent(ccdKey);
             const r = await fetch(url);
             const d = await r.json();
@@ -5547,238 +5436,252 @@
             return; 
         }
         
-        toast(`Processing ${pending.length} item${pending.length > 1 ? 's' : ''}...`, 'info');
+        // Phase 1.1: Submit all pending items to Sync Hub inbox (no direct API calls)
+        const config = await loadConfig();
+        let submitted = 0, validationErrors = 0;
         
-        let completed = 0, errors = 0;
         for (const item of pending) {
             try {
-                // Process based on channel
-                await processQueueItem(item);
-                item.status = 'completed';
-                item.completedAt = new Date().toISOString();
-                completed++;
+                // Phase 1.5: Validate channel IDs before submission
+                const validation = validateChannelId(item);
+                if (!validation.valid) {
+                    item.status = 'error';
+                    item.error = validation.error;
+                    validationErrors++;
+                    
+                    logActivity('error', 'validation_failed', item.channel,
+                        `Validation failed for ${item.product?.sku || 'item'}: ${validation.error}`,
+                        { sku: item.product?.sku, channel: item.channel, error: validation.error }
+                    );
+                    continue;
+                }
                 
-                // Log individual success
-                logActivity('sync', 'push_success', item.channel,
-                    `Pushed ${item.product?.sku || 'item'} to ${item.channel}`,
+                // Submit to Sync Hub inbox
+                submitToSyncHubInbox(item, config);
+                item.status = 'submitted';
+                item.submittedAt = new Date().toISOString();
+                submitted++;
+                
+                logActivity('sync', 'push_submitted', item.channel,
+                    `Submitted ${item.product?.sku || 'item'} to Sync Hub inbox for ${item.channel}`,
                     { sku: item.product?.sku, channel: item.channel, action: item.action, fields: item.fields || item.field }
                 );
             } catch (err) { 
                 item.status = 'error'; 
                 item.error = err.message;
-                item.errorAt = new Date().toISOString();
-                errors++;
-                console.error('Queue item error:', err);
-                
-                // Log failure
-                logActivity('error', 'push_failed', item.channel,
-                    `Failed to push ${item.product?.sku || 'item'} to ${item.channel}: ${err.message}`,
-                    { sku: item.product?.sku, channel: item.channel, error: err.message }
-                );
+                validationErrors++;
+                console.error('Queue submission error:', err);
             }
         }
         
         // Save queue state
         await saveSyncQueue();
         
-        // Save activity log entries to disk
-        if (masterFileHandle && masterJsonData) {
-            try {
-                const writable = await masterFileHandle.createWritable();
-                await writable.write(JSON.stringify(masterJsonData, null, 2));
-                await writable.close();
-                console.log('✅ Activity log saved after queue processing');
-            } catch (saveErr) {
-                console.error('Failed to save activity log:', saveErr);
-            }
-        }
-        
         // Summary toast
-        if (errors > 0) {
-            toast(`⚠️ Completed: ${completed}, Errors: ${errors}`, 'warning');
+        if (validationErrors > 0) {
+            toast(`⚠️ Submitted: ${submitted}, Errors: ${validationErrors}`, 'warning');
         } else {
-            toast(`✅ Successfully processed ${completed} item${completed > 1 ? 's' : ''}`, 'success');
+            toast(`✅ Submitted ${submitted} item${submitted > 1 ? 's' : ''} to Sync Hub`, 'success');
         }
     }
     
-    /**
-     * Process a single queue item based on channel and action
-     */
-    async function processQueueItem(item) {
-        const channel = item.channel?.toLowerCase();
-        const action = item.action?.toLowerCase() || 'update';
-        const fields = item.fields || [item.field].filter(Boolean) || ['quantity'];
-        
-        console.log(`[Queue] Processing: ${item.product?.sku} → ${channel} (${action})`);
-        
-        switch (channel) {
-            case 'wayfair':
-                await processWayfairQueueItem(item, action, fields);
-                break;
-            case 'etsy':
-                await processEtsyQueueItem(item, action, fields);
-                break;
-            case 'wix':
-                await processWixQueueItem(item, action, fields);
-                break;
-            default:
-                throw new Error(`Unknown channel: ${channel}`);
-        }
-    }
+    // =====================================================================
+    // Phase 1.1: SYNC HUB INBOX SUBMISSION
+    // Channel Manager NEVER calls APIs directly. All pushes go through inbox.
+    // =====================================================================
     
     /**
-     * Process Wayfair queue item
+     * Submit a queue item to Sync Hub's inbox (Phase 1.1)
+     * Writes to ccd_sync_hub_inbox localStorage key
      */
-    async function processWayfairQueueItem(item, action, fields) {
-        const { wayfairProxyUrl, wayfairApiKey, wayfairSupplierId } = state.settings;
-        if (!wayfairProxyUrl) throw new Error('Wayfair proxy not configured');
+    function submitToSyncHubInbox(item, config) {
+        const raw = item.product?._raw || {};
+        const product = item.product || {};
         
-        const product = item.product;
-        if (!product) throw new Error('No product data in queue item');
+        // Phase 1.9: Read API keys from config
+        const ccdApiKey = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        const etsyApiKey = config?.settings?.etsyApiKey || config?.settings?.apiKeys?.etsyApiKey || ccdApiKey;
         
-        // Wayfair only supports inventory updates via API
-        if (action === 'inventory' || action === 'update' || fields.includes('quantity')) {
-            const inventory = [{
-                supplierPartNumber: product.wayfairSku || product.sku,
-                quantityOnHand: product.channels?.wayfair || product.wayfairQty || product.qty || 0,
-                supplierId: parseInt(wayfairSupplierId) || undefined
-            }];
-            
-            const response = await fetch(wayfairProxyUrl + '?action=updateInventory&key=' + encodeURIComponent(wayfairApiKey || ''), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inventory, feedKind: 'DIFFERENTIAL' })
-            });
-            
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Wayfair update failed');
-            return result;
-        }
-        
-        throw new Error(`Wayfair action '${action}' not supported`);
-    }
-    
-    /**
-     * Process Etsy queue item
-     */
-    async function processEtsyQueueItem(item, action, fields) {
-        const url = state.settings.etsyProxyUrl;
-        const key = state.settings.etsyApiKey || 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
-        
-        if (!url) throw new Error('Etsy proxy not configured');
-        
-        const product = item.product;
-        if (!product) throw new Error('No product data in queue item');
-        
-        const listingId = product.etsyListingId || product.etsy?.listingId;
-        
-        // Handle inventory/quantity updates
-        if (action === 'inventory' || action === 'update' || fields.includes('quantity')) {
-            if (!listingId) {
-                throw new Error(`No Etsy listing ID for SKU ${product.sku} - cannot update inventory`);
-            }
-            
-            const qty = product.channels?.etsy || product.etsyQty || product.qty || 0;
-            
-            const data = {
-                action: 'updateInventory',
-                key: key,
-                listing_id: listingId,
-                quantity: qty,
-                sku: product.sku
-            };
-            
-            const response = await fetch(`${url}?${new URLSearchParams(data)}`);
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Etsy inventory update failed');
-            return result;
-        }
-        
-        // Handle price updates
-        if (fields.includes('price')) {
-            if (!listingId) {
-                throw new Error(`No Etsy listing ID for SKU ${product.sku} - cannot update price`);
-            }
-            
-            const price = product.etsyPrice || product.retailPrice || 0;
-            
-            const data = {
-                action: 'updatePrice',
-                key: key,
-                listing_id: listingId,
-                price: price,
-                sku: product.sku
-            };
-            
-            const response = await fetch(`${url}?${new URLSearchParams(data)}`);
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Etsy price update failed');
-            return result;
-        }
-        
-        // Handle create action
-        if (action === 'create') {
-            throw new Error('Etsy listing creation requires manual setup via Etsy.com');
-        }
-        
-        throw new Error(`Etsy action '${action}' with fields [${fields.join(',')}] not supported`);
-    }
-    
-    /**
-     * Process Wix queue item
-     */
-    async function processWixQueueItem(item, action, fields) {
-        const url = state.settings.wixProxyUrl;
-        const key = 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
-        
-        if (!url) throw new Error('Wix proxy not configured');
-        
-        const product = item.product;
-        if (!product) throw new Error('No product data in queue item');
-        
-        const productId = product.wixProductId || product.wix?.productId;
-        
-        // Build update data based on fields
-        const data = { 
-            sku: product.sku,
-            action: 'syncProduct'
+        // Build inbox item in format Sync Hub expects
+        const inboxItem = {
+            id: 'cm_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6),
+            channel: item.channel,
+            action: item.action || 'update',
+            product: {
+                sku: product.sku,
+                productName: product.name || product.productName || raw.productName,
+                // Phase 1.6: Legacy-aware channel IDs
+                listingId: raw.etsyListingId || raw.etsyListing || product.etsyListingId,
+                productId: raw.wixProductId || raw.wixId || product.wixProductId,
+                wayfairSku: raw.wayfairSku || raw.supplierPartNumber || product.wayfairSku,
+                qty: product.etsyQty || product.wixQty || product.wayfairQty || product.quantity || raw.qty || 0,
+                retailPrice: product.price || raw.retailPrice || 0,
+                // Phase 1.7: Include stored channel prices
+                channelPrices: raw.channelPrices || product.channelPrices || {},
+                channels: raw.channels || {},
+                description: product.description || raw.description || ''
+            },
+            fields: item.fields || (item.field ? { [item.field]: true } : { quantity: true }),
+            reason: `Channel Manager push: ${product.sku} → ${item.channel}`,
+            source: 'channel-manager',
+            timestamp: new Date().toISOString()
         };
         
-        if (productId) {
-            data.productId = productId;
+        // Set channel-specific quantities and IDs
+        if (item.channel === 'etsy') {
+            inboxItem.product.qty = raw.channels?.etsy || product.etsyQty || 0;
+            inboxItem.product.listingId = raw.etsyListingId || raw.etsyListing || product.etsyListingId;
+            inboxItem.product.price = raw.channelPrices?.etsy || raw.etsyPrice || product.price || raw.retailPrice || 0;
+        } else if (item.channel === 'wix') {
+            inboxItem.product.qty = raw.channels?.wix || product.wixQty || 0;
+            inboxItem.product.productId = raw.wixProductId || raw.wixId || product.wixProductId;
+            inboxItem.product.price = raw.channelPrices?.wix || raw.wixPrice || product.price || raw.retailPrice || 0;
+        } else if (item.channel === 'wayfair') {
+            inboxItem.product.qty = raw.channels?.wayfair || product.wayfairQty || 0;
+            inboxItem.product.wayfairSku = raw.wayfairSku || raw.supplierPartNumber || product.wayfairSku;
+            inboxItem.product.price = raw.channelPrices?.wayfair || raw.wayfairPrice || product.price || raw.retailPrice || 0;
         }
         
-        // Add fields to update
-        if (fields.includes('quantity') || action === 'inventory') {
-            data.quantity = product.channels?.wix || product.wixQty || product.qty || 0;
-        }
-        if (fields.includes('price')) {
-            data.price = product.wixPrice || product.retailPrice || 0;
-        }
-        if (fields.includes('title') || fields.includes('name')) {
-            data.name = product.productName || product.name || product.title;
-        }
-        if (fields.includes('description')) {
-            data.description = product.description || '';
+        // Read existing inbox, append, write back
+        let inbox = [];
+        try {
+            const existing = localStorage.getItem('ccd_sync_hub_inbox');
+            if (existing) inbox = JSON.parse(existing);
+        } catch (e) { inbox = []; }
+        
+        inbox.push(inboxItem);
+        localStorage.setItem('ccd_sync_hub_inbox', JSON.stringify(inbox));
+        
+        console.log(`[Inbox] ✅ Submitted to Sync Hub inbox: ${product.sku} → ${item.channel} (${inboxItem.id})`);
+    }
+    
+    /**
+     * Phase 1.5: Validate channel ID exists before submission
+     */
+    function validateChannelId(item) {
+        const product = item.product || {};
+        const raw = product._raw || {};
+        const channel = item.channel?.toLowerCase();
+        
+        if (channel === 'etsy') {
+            const etsyId = raw.etsyListingId || raw.etsyListing || product.etsyListingId;
+            if (!etsyId || isNaN(Number(etsyId))) {
+                return { valid: false, error: 'This product has no Etsy Listing ID. Run Channel ID Mapper or set it manually in Inventory System.' };
+            }
+        } else if (channel === 'wix') {
+            const wixId = raw.wixProductId || raw.wixId || product.wixProductId;
+            if (!wixId || String(wixId).trim() === '') {
+                return { valid: false, error: 'This product has no Wix Product ID. Run Channel ID Mapper or set it manually in Inventory System.' };
+            }
+        } else if (channel === 'wayfair') {
+            const wayfairId = raw.wayfairSku || raw.supplierPartNumber || product.wayfairSku;
+            if (!wayfairId || wayfairId === product.sku || wayfairId === raw.sku) {
+                return { valid: false, error: 'This product has no Wayfair SKU (Supplier Part Number). Set it in Inventory System.' };
+            }
         }
         
-        // For create action, we need all fields
-        if (action === 'create') {
-            data.name = product.productName || product.name || product.title;
-            data.description = product.description || '';
-            data.price = product.wixPrice || product.retailPrice || 0;
-            data.quantity = product.channels?.wix || product.wixQty || product.qty || 0;
+        return { valid: true };
+    }
+    
+    /**
+     * Phase 1.3: Poll Sync Hub results for push status feedback
+     * Reads from ccd_sync_hub_results and updates queue item statuses
+     */
+    let resultsPollingInterval = null;
+    
+    function startResultsPolling() {
+        if (resultsPollingInterval) clearInterval(resultsPollingInterval);
+        
+        resultsPollingInterval = setInterval(() => {
+            try {
+                const resultsJson = localStorage.getItem('ccd_sync_hub_results');
+                if (!resultsJson) return;
+                
+                const results = JSON.parse(resultsJson);
+                if (!Array.isArray(results) || results.length === 0) return;
+                
+                // Match results to submitted queue items
+                let updatedCount = 0;
+                for (const result of results) {
+                    if (!result.id || !result.id.startsWith('cm_')) continue; // Only process our items
+                    
+                    const queueItem = state.syncQueue.find(q => 
+                        q.status === 'submitted' && 
+                        (q.submittedInboxId === result.id || 
+                         (q.product?.sku === result.sku && q.channel === result.channel && q.status === 'submitted'))
+                    );
+                    
+                    if (queueItem) {
+                        if (result.status === 'success') {
+                            queueItem.status = 'completed';
+                            queueItem.completedAt = result.timestamp;
+                            queueItem.result = result.message;
+                            toast(`✅ ${result.sku} pushed to ${result.channel}`, 'success');
+                        } else {
+                            queueItem.status = 'error';
+                            queueItem.error = result.message || result.error || 'Push failed';
+                            toast(`❌ ${result.sku} failed on ${result.channel}: ${queueItem.error}`, 'error');
+                        }
+                        updatedCount++;
+                    }
+                }
+                
+                if (updatedCount > 0) {
+                    saveSyncQueue();
+                    console.log(`[Results] Updated ${updatedCount} queue items from Sync Hub results`);
+                }
+            } catch (e) {
+                // Silently fail - don't disrupt other operations
+                console.debug('[Results] Polling error:', e);
+            }
+        }, 5000); // Check every 5 seconds
+        
+        console.log('[Results] Started polling Sync Hub results (5s interval)');
+    }
+    
+    function stopResultsPolling() {
+        if (resultsPollingInterval) {
+            clearInterval(resultsPollingInterval);
+            resultsPollingInterval = null;
         }
-        
-        const response = await fetch(`${url}?action=syncProduct&key=${encodeURIComponent(key)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        });
-        
-        const result = await response.json();
-        if (!result.success) throw new Error(result.error || 'Wix update failed');
-        return result;
+    }
+    
+    /**
+     * Phase 1.1: processQueueItem is now DEPRECATED
+     * All push operations go through Sync Hub inbox via submitToSyncHubInbox()
+     * This function is kept for backward compatibility but redirects to inbox
+     */
+    async function processQueueItem(item) {
+        console.warn('[DEPRECATED] processQueueItem called directly - redirecting to Sync Hub inbox');
+        const config = await loadConfig();
+        submitToSyncHubInbox(item, config);
+    }
+    
+    /**
+     * Phase 1.1: DEPRECATED - Direct Wayfair push removed (CORS will block from GitHub Pages)
+     * All Wayfair pushes now go through Sync Hub inbox
+     */
+    async function processWayfairQueueItem(item, action, fields) {
+        console.warn('[DEPRECATED] processWayfairQueueItem - use Sync Hub inbox instead');
+        throw new Error('Direct Wayfair push disabled. Use Sync Hub inbox.');
+    }
+    
+    /**
+     * Phase 1.1: DEPRECATED - Direct Etsy push removed (CORS will block from GitHub Pages)
+     * All Etsy pushes now go through Sync Hub inbox
+     */
+    async function processEtsyQueueItem(item, action, fields) {
+        console.warn('[DEPRECATED] processEtsyQueueItem - use Sync Hub inbox instead');
+        throw new Error('Direct Etsy push disabled. Use Sync Hub inbox.');
+    }
+    
+    /**
+     * Phase 1.1: DEPRECATED - Direct Wix push removed (CORS will block from GitHub Pages)
+     * All Wix pushes now go through Sync Hub inbox
+     */
+    async function processWixQueueItem(item, action, fields) {
+        console.warn('[DEPRECATED] processWixQueueItem - use Sync Hub inbox instead');
+        throw new Error('Direct Wix push disabled. Use Sync Hub inbox.');
     }
     
     function loadSourceProducts() {
@@ -5896,9 +5799,9 @@
         document.getElementById('editorLength').value = raw.length || raw.itemLength || '';
         document.getElementById('editorWidth').value = raw.width || raw.itemWidth || '';
         document.getElementById('editorHeight').value = raw.height || raw.itemHeight || '';
-        document.getElementById('editorEtsyId').value = p.etsy?.id || raw.etsyListingId || '';
-        document.getElementById('editorWixId').value = p.wix?.id || raw.wixProductId || '';
-        document.getElementById('editorWayfairSku').value = p.wayfair?.sku || raw.wayfairSku || '';
+        document.getElementById('editorEtsyId').value = p.etsy?.id || raw.etsyListingId || raw.etsyListing || '';
+        document.getElementById('editorWixId').value = p.wix?.id || raw.wixProductId || raw.wixId || '';
+        document.getElementById('editorWayfairSku').value = p.wayfair?.sku || raw.wayfairSku || raw.supplierPartNumber || '';
         
         // Channel allocations
         const channels = raw.channels || {};
@@ -6010,7 +5913,12 @@
                 etsy: etsyQty,
                 wix: wixQty,
                 wayfair: wayfairQty
-            }
+            },
+            // Phase 1.10: Required fields for new products
+            channelPrices: {},
+            channelPriceAdjustments: { etsy: 0, wix: 0, wayfair: 0, crazychicks: 0, treasuremarts: 0 },
+            isActive: true,
+            dateAdded: new Date().toISOString()
         };
         
         // Add channel-specific prices if set
@@ -6371,7 +6279,9 @@
     
     async function fetchWixProducts() {
         const url = state.settings.wixProxyUrl;
-        const key = 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        // Phase 1.9: Read API key from config
+        const config = await loadConfig();
+        const key = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
         
         if (!url) throw new Error('Wix proxy not configured');
         
@@ -6679,7 +6589,9 @@
     
     async function fetchEtsyForCompare() {
         const url = state.settings.etsyProxyUrl;
-        const key = state.settings.etsyApiKey || 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        // Phase 1.9: Read API key from config
+        const config = await loadConfig();
+        const key = state.settings.etsyApiKey || config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
         
         if (!url) {
             console.warn('Etsy proxy not configured');
@@ -6708,7 +6620,9 @@
     
     async function fetchWixForCompare() {
         const url = state.settings.wixProxyUrl;
-        const key = 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        // Phase 1.9: Read API key from config
+        const config = await loadConfig();
+        const key = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
         
         if (!url) {
             console.warn('Wix proxy not configured');
@@ -7057,7 +6971,9 @@
     
     async function syncProductToWix(product, sourceData, fields) {
         const url = state.settings.wixProxyUrl;
-        const key = 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        // Phase 1.9: Read API key from config
+        const config = await loadConfig();
+        const key = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
         
         if (!url) throw new Error('Wix proxy not configured');
         
@@ -7082,7 +6998,9 @@
     
     async function syncProductToEtsy(product, sourceData, fields) {
         const url = state.settings.etsyProxyUrl;
-        const key = state.settings.etsyApiKey || 'ccd_UhDRQOM9TIqfSLj9Kyj2IROPS8SQ1KU5';
+        // Phase 1.9: Read API key from config
+        const config = await loadConfig();
+        const key = state.settings.etsyApiKey || config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
         
         if (!url) throw new Error('Etsy proxy not configured');
         
