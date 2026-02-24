@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.26 - Pricing Sync Toggle</title>
+    <title>CCD Sync Hub v3.3.5.28 - Pricing Sync Toggle</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -1732,6 +1732,7 @@
     // MASTER JSON FILE - GLOBAL VARIABLES
     // =============================================
     let masterJsonFileHandle = null;
+    let masterDirectoryHandle = null; // v3.3.5.28: For pending-changes file access
     window.masterJsonData = null; // Make globally accessible for debugging
     
     // ============================================================
@@ -3275,6 +3276,17 @@
             if (permission === 'granted') {
                 masterJsonFileHandle = handle;
                 await loadMasterJson();
+                // v3.3.5.28: Also restore directory handle for pending-changes watcher
+                try {
+                    const dirHandle = await loadFileHandle('masterDirectory');
+                    if (dirHandle) {
+                        const dirPerm = await dirHandle.queryPermission({ mode: 'readwrite' });
+                        if (dirPerm === 'granted') {
+                            masterDirectoryHandle = dirHandle;
+                            console.log('[Master JSON] ✅ Directory handle restored for pending-changes watcher');
+                        }
+                    }
+                } catch (de) { console.log('[Master JSON] Directory handle not available:', de.message); }
                 console.log('[Master JSON] ✅ Auto-reconnected successfully');
                 toast('Master JSON auto-connected', 'success');
                 return true;
@@ -3351,7 +3363,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.25 - Allocation Sync Independent...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.28 - Remote Save Routing...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -5079,7 +5091,7 @@
     }
 
     async function updateWixInventory(product, url, key) {
-        // v3.3.5.25: Reject push if no valid Wix product ID — prevents false success
+        // v3.3.5.28: Reject push if no valid Wix product ID — prevents false success
         const productId = product.wixProductId || product.productId;
         if (!productId) {
             const msg = `No Wix product ID for SKU ${product.sku} — skipping inventory push. Map this product in Inventory System or run Channel ID Sync.`;
@@ -5087,13 +5099,26 @@
             addLog(`⚠️ ${msg}`, 'warning');
             return { success: false, error: msg };
         }
-        return await corsSafePost(url, {
+        
+        // v3.3.5.28: Include variantId — Wix inventory API requires it
+        const params = {
             key: key,
             action: 'updateInventory',
             productId: productId,
             sku: product.sku,
             quantity: parseInt(product.qty || product.wixQty || product.quantity || 0)
-        });
+        };
+        
+        // Add variantId if stored (set by Channel ID Sync)
+        const variantId = product.wixVariantId || product.variantId;
+        if (variantId) {
+            params.variantId = variantId;
+            console.log(`[Wix Push] Including variantId: ${variantId} for ${product.sku}`);
+        } else {
+            console.warn(`[Wix Push] ⚠️ No variantId for ${product.sku} — proxy will need to look it up`);
+        }
+        
+        return await corsSafePost(url, params);
     }
 
     /**
@@ -6146,21 +6171,56 @@
                 return;
             }
             
-            const options = {
-                types: [{
-                    description: 'JSON Files',
-                    accept: { 'application/json': ['.json'] }
-                }],
-                multiple: false
-            };
+            // v3.3.5.28: Use directory picker to get folder access (for pending-changes watcher)
+            let fileHandle = null;
+            let dirHandle = null;
             
-            const [fileHandle] = await window.showOpenFilePicker(options);
+            try {
+                dirHandle = await window.showDirectoryPicker({
+                    id: 'ccd-master-folder',
+                    mode: 'readwrite',
+                    startIn: 'documents'
+                });
+                
+                // Find master file in directory
+                const expectedNames = ['ccd-inventory-MASTER.json', 'ccd-inventory-master.json'];
+                for (const name of expectedNames) {
+                    try { fileHandle = await dirHandle.getFileHandle(name); break; } catch (e) { /* next */ }
+                }
+                
+                if (!fileHandle) {
+                    // Find any MASTER JSON file
+                    for await (const entry of dirHandle.values()) {
+                        if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER') && !entry.name.includes('pending')) {
+                            fileHandle = await dirHandle.getFileHandle(entry.name);
+                            break;
+                        }
+                    }
+                }
+                
+                if (!fileHandle) {
+                    toast('Could not find MASTER.json in the selected folder', 'error');
+                    return;
+                }
+            } catch (dirError) {
+                if (dirError.name === 'AbortError') return;
+                // Fallback to file picker
+                console.warn('Directory picker failed, falling back to file picker');
+                const [fh] = await window.showOpenFilePicker({
+                    types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }],
+                    multiple: false
+                });
+                fileHandle = fh;
+            }
+            
             masterJsonFileHandle = fileHandle;
+            masterDirectoryHandle = dirHandle;
             
             // Save to IndexedDB for persistence
             try {
                 await saveFileHandle('masterJson', fileHandle);
-                console.log('[Master JSON] File handle saved to IndexedDB');
+                if (dirHandle) await saveFileHandle('masterDirectory', dirHandle);
+                console.log('[Master JSON] File and directory handles saved to IndexedDB');
             } catch (e) {
                 console.warn('[Master JSON] Could not save file handle:', e);
             }
@@ -6171,11 +6231,13 @@
             
             await loadMasterJson();
             
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                // User cancelled - not an error
-                return;
+            if (dirHandle) {
+                console.log('[Master JSON] ✅ Directory access granted — pending-changes watcher active');
+                addLog('📁 Master folder connected — remote save routing active', 'success');
             }
+            
+        } catch (error) {
+            if (error.name === 'AbortError') return;
             console.error('[Master JSON] Select error:', error);
             toast(`Error selecting file: ${error.message}`, 'error');
             logError(`Master JSON select: ${error.message}`);
@@ -9179,6 +9241,94 @@
             }
             // =====================================================
             // END Phase 1.2 INBOX CHECK
+            // =====================================================
+            
+            // =====================================================
+            // v3.3.5.28: CHECK PENDING CHANGES FILE (ALWAYS)
+            // Remote Inventory System writes to ccd-pending-changes.json
+            // instead of MASTER.json to prevent OneDrive conflicts.
+            // =====================================================
+            if (masterDirectoryHandle) {
+                try {
+                    let pendingHandle = null;
+                    try {
+                        pendingHandle = await masterDirectoryHandle.getFileHandle('ccd-pending-changes.json');
+                    } catch (e) { /* file doesn't exist yet - normal */ }
+                    
+                    if (pendingHandle) {
+                        const pendingFile = await pendingHandle.getFile();
+                        // Only process if file has content (>10 bytes) and was recently modified
+                        if (pendingFile.size > 10) {
+                            const pendingText = await pendingFile.text();
+                            const pendingData = JSON.parse(pendingText);
+                            
+                            // Check if this is new data we haven't processed yet
+                            const pendingVersion = pendingData._metadata?.version || 0;
+                            const pendingSource = pendingData._pendingMeta?.source || 'unknown';
+                            const currentVersion = window.masterJsonData?._metadata?.version || 0;
+                            
+                            if (pendingVersion > 0 && pendingData._pendingMeta) {
+                                console.log(`[Pending] 📬 Found pending changes from ${pendingSource} (v${pendingVersion})`);
+                                addAutoSyncLogEntry(`📬 Processing pending changes from ${pendingSource}`);
+                                
+                                // Apply pending data to master
+                                // The pending file IS the full master data — just merge metadata
+                                const mergedData = pendingData;
+                                delete mergedData._pendingMeta; // Remove routing metadata
+                                
+                                // Increment version past both
+                                mergedData._metadata.version = Math.max(pendingVersion, currentVersion) + 1;
+                                mergedData._metadata.lastModified = new Date().toISOString();
+                                mergedData._metadata.lastModifiedBy = `Sync Hub (merged from ${pendingSource})`;
+                                
+                                // Merge activity logs from current master and pending
+                                if (window.masterJsonData?._activityLog) {
+                                    const currentLog = window.masterJsonData._activityLog || [];
+                                    const pendingLog = mergedData._activityLog || [];
+                                    const seen = new Set();
+                                    const merged = [];
+                                    for (const e of [...pendingLog, ...currentLog]) {
+                                        const key = e.id || e.timestamp;
+                                        if (!seen.has(key)) { seen.add(key); merged.push(e); }
+                                    }
+                                    merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                                    mergedData._activityLog = merged.slice(0, 5000);
+                                }
+                                
+                                // Write merged data to MASTER.json
+                                if (masterJsonFileHandle) {
+                                    const jsonString = JSON.stringify(mergedData, null, 2);
+                                    const writable = await masterJsonFileHandle.createWritable();
+                                    await writable.write(jsonString);
+                                    await writable.close();
+                                    
+                                    // Update in-memory data
+                                    window.masterJsonData = mergedData;
+                                    loadedFileTimestamp = (await masterJsonFileHandle.getFile()).lastModified;
+                                    loadedMetadataVersion = mergedData._metadata.version;
+                                    
+                                    console.log(`[Pending] ✅ Merged v${pendingVersion} into MASTER.json → v${mergedData._metadata.version}`);
+                                    addAutoSyncLogEntry(`✅ Merged remote changes → v${mergedData._metadata.version}`);
+                                    addLog(`📬 Merged remote changes from ${pendingSource}`, 'success');
+                                }
+                                
+                                // Clear the pending file
+                                const clearWritable = await pendingHandle.createWritable();
+                                await clearWritable.write('{}');
+                                await clearWritable.close();
+                                console.log('[Pending] Cleared ccd-pending-changes.json');
+                            }
+                        }
+                    }
+                } catch (pendingError) {
+                    // Only log real errors, not "file not found"
+                    if (pendingError.name !== 'NotFoundError') {
+                        console.error('[Pending] Error checking pending changes:', pendingError);
+                    }
+                }
+            }
+            // =====================================================
+            // END v3.3.5.28 PENDING CHANGES CHECK
             // =====================================================
             
             // Auto-push (Inventory System change detection) only runs when enabled

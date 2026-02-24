@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Channel Manager v4.0.0 - Phase 1: Wire It Together</title>
+    <title>CCD Channel Manager v4.0.1 - Phase 1: Wire It Together</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -4187,7 +4187,7 @@
     
     // ===== END GAP 21: AUDIT LOG =====
 
-    // ===== SYNC HUB INTEGRATION (Phase 1 - v4.0.0) =====
+    // ===== SYNC HUB INTEGRATION (Phase 1 - v4.0.1) =====
     // Phase 1.8: Channel Manager NEVER writes to ccd_sync_hub_queue
     // All push operations go through ccd_sync_hub_inbox instead
     // Queue state is internal to Channel Manager only
@@ -4396,13 +4396,13 @@
             startResultsPolling();
         }, 2000);
         
-        console.log('[Init] CCD Channel Manager v4.0.0 initialized (Phase 1: Wire It Together)');
+        console.log('[Init] CCD Channel Manager v4.0.1 initialized (Phase 1: Wire It Together)');
         
         // Log startup to Activity Log (only if Master JSON is connected)
         setTimeout(() => {
             if (typeof logActivity === 'function' && masterJsonData) {
                 logActivity('system', 'channel_manager_started', 'system',
-                    'Channel Manager v3.2.0 started',
+                    'Channel Manager v4.0.1 started',
                     { reconnected: reconnected, syncDataConnected: !!syncDataFileHandle }
                 );
             }
@@ -5433,14 +5433,17 @@
         txt.textContent = 'Checking...';
         try {
             const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
-            const url = state.settings.etsyProxyUrl + '?action=getShopInfo&key=' + encodeURIComponent(key);
+            // Use action=status (same as Sync Hub) for compatibility
+            const url = state.settings.etsyProxyUrl + '?action=status&key=' + encodeURIComponent(key);
+            console.log('[Etsy] Testing connection:', state.settings.etsyProxyUrl, '| key:', key ? '✅ present' : '❌ empty');
             const r = await fetch(url);
             const d = await r.json();
-            if (d.success && d.shop) { 
+            if (d.success) { 
                 dot.className = 'status-dot connected'; 
-                txt.textContent = 'Connected (' + (d.shop.shop_name || 'Shop') + ')'; 
+                txt.textContent = 'Connected' + (d.shop?.shop_name ? ' (' + d.shop.shop_name + ')' : ''); 
                 state.connections.etsy = true; 
                 autoSaveSettings(); // Persist on success
+                console.log('[Etsy] ✅ Connected');
                 if (!silent) toast('Etsy connected!', 'success'); 
             }
             else throw new Error(d.error || 'Unknown error');
@@ -5448,6 +5451,7 @@
             dot.className = 'status-dot disconnected'; 
             txt.textContent = 'Failed'; 
             state.connections.etsy = false; 
+            console.error('[Etsy] ❌ Connection failed:', err.message);
             if (!silent) toast('Etsy: ' + (err.message || 'Connection failed'), 'error'); 
         }
     }
@@ -7316,7 +7320,7 @@
                                 <span style="font-family: 'JetBrains Mono', monospace; color: var(--text-dim);">#${esc(orderId)}</span>
                             </div>
                             <div style="font-size: 0.85rem; color: var(--text-dim); margin-top: 4px;">
-                                📅 ${formatDate(orderDate)} • 👤 ${esc(buyer)} • 📦 ${items.length} items • 💰 $${total.toFixed(2)}
+                                📅 ${formatDate(orderDate)} • 👤 ${esc(buyer)} • 📦 ${items.length} items • 💰 $${parseFloat(total || 0).toFixed(2)}
                             </div>
                         </div>
                         <div style="display: flex; align-items: center; gap: 12px;">

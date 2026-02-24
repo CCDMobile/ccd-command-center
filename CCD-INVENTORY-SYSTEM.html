@@ -756,7 +756,7 @@ Previous versions documented in development guide.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Inventory Management System v23.3.12 - Pricing Sync Notification</title>
+    <title>CCD Inventory Management System v23.3.13 - Remote Save Routing</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -76769,7 +76769,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                             break;
                         case 'ibShipping':
                             const ibShippingValue = item.ibShipping || 0;
-                            cellContent = '$' + ibShippingValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                            cellContent = ibShippingValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%';
                             break;
                         case 'tariff':
                             const tariffValue = item.tariff || 0;
@@ -125458,6 +125458,76 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
 
 // Global backup state
 let masterFileHandle = null;
+let masterDirectoryHandle = null;  // v23.3.13: Parent folder for pending-changes routing
+let pendingChangesFileHandle = null; // v23.3.13: Cached handle for ccd-pending-changes.json
+
+// ============================================================
+// v23.3.13: REMOTE SAVE ROUTING
+// When not on the primary machine (where Sync Hub runs),
+// saves go to ccd-pending-changes.json instead of MASTER.json
+// to prevent OneDrive sync conflicts.
+// ============================================================
+
+/**
+ * Detect if this is the primary machine (where Sync Hub runs).
+ * Primary machine writes directly to MASTER.json.
+ * Remote machines write to ccd-pending-changes.json.
+ */
+function isPrimaryMachine() {
+    // If Sync Hub has stored settings in localStorage, this is the primary machine
+    const hubSettings = localStorage.getItem('ccd_sync_hub_settings');
+    if (hubSettings) return true;
+    // Fallback: check for explicit flag
+    return localStorage.getItem('ccd_is_primary_machine') === 'true';
+}
+
+/**
+ * Write pending changes to ccd-pending-changes.json in the master file's folder.
+ * Sync Hub on the primary machine will pick this up and merge into MASTER.json.
+ */
+async function savePendingChanges(data, trigger, itemSKU) {
+    if (!masterDirectoryHandle) {
+        console.error('[Pending] No directory handle — cannot write pending changes');
+        showNotification('❌ Cannot save: folder not connected. Please reconnect to master file.', 'error');
+        return false;
+    }
+    
+    try {
+        // Get or create the pending changes file
+        if (!pendingChangesFileHandle) {
+            pendingChangesFileHandle = await masterDirectoryHandle.getFileHandle(
+                'ccd-pending-changes.json', { create: true }
+            );
+        }
+        
+        // Add routing metadata so Sync Hub knows where this came from
+        data._pendingMeta = {
+            source: getAppIdentifier(),
+            trigger: trigger + (itemSKU ? ` (${itemSKU})` : ''),
+            savedAt: new Date().toISOString(),
+            hostname: localStorage.getItem('ccd_hostname') || 'Unknown'
+        };
+        
+        const jsonString = JSON.stringify(data, null, 2);
+        const writable = await pendingChangesFileHandle.createWritable();
+        await writable.write(jsonString);
+        await writable.close();
+        
+        console.log(`[Pending] ✅ Wrote ${(jsonString.length / 1024).toFixed(1)}KB to ccd-pending-changes.json`);
+        showNotification('✅ Changes saved — syncing to master via Sync Hub...', 'success');
+        
+        // Update tracking so collision detection doesn't fire
+        loadedMetadataVersion = data._metadata.version;
+        backupConfig.lastBackupTime = Date.now();
+        backupConfig.consecutiveFailures = 0;
+        
+        return true;
+    } catch (error) {
+        console.error('[Pending] Failed to write pending changes:', error);
+        showNotification('❌ Failed to save changes: ' + error.message, 'error');
+        return false;
+    }
+}
 
 // ============================================================
 // COLLISION DETECTION - Tracking variables
@@ -126131,14 +126201,65 @@ async function configureMasterFile() {
             return false;
         }
         
-        const [fileHandle] = await window.showOpenFilePicker({
-            types: [{
-                description: 'JSON Files',
-                accept: {'application/json': ['.json']}
-            }],
-            suggestedName: 'ccd-inventory-MASTER.json',
-            mode: 'readwrite'  // Request write permission upfront
-        });
+        // v23.3.13: Use directory picker to get folder access (needed for pending-changes routing)
+        let fileHandle = null;
+        let dirHandle = null;
+        
+        try {
+            dirHandle = await window.showDirectoryPicker({
+                id: 'ccd-master-folder',
+                mode: 'readwrite',
+                startIn: 'documents'
+            });
+            
+            // Find master file in the directory
+            const expectedNames = ['ccd-inventory-MASTER.json', 'ccd-inventory-master.json'];
+            for (const name of expectedNames) {
+                try {
+                    fileHandle = await dirHandle.getFileHandle(name);
+                    break;
+                } catch (e) { /* try next name */ }
+            }
+            
+            if (!fileHandle) {
+                // List available JSON files for the user
+                let jsonFiles = [];
+                for await (const entry of dirHandle.values()) {
+                    if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER')) {
+                        jsonFiles.push(entry.name);
+                    }
+                }
+                
+                if (jsonFiles.length === 1) {
+                    fileHandle = await dirHandle.getFileHandle(jsonFiles[0]);
+                } else if (jsonFiles.length > 1) {
+                    const choice = prompt(
+                        'Multiple master files found. Enter the filename to use:\n\n' +
+                        jsonFiles.map((f, i) => `${i + 1}. ${f}`).join('\n') +
+                        '\n\nEnter number (1-' + jsonFiles.length + '):'
+                    );
+                    const idx = parseInt(choice) - 1;
+                    if (idx >= 0 && idx < jsonFiles.length) {
+                        fileHandle = await dirHandle.getFileHandle(jsonFiles[idx]);
+                    }
+                }
+                
+                if (!fileHandle) {
+                    alert('❌ Could not find ccd-inventory-MASTER.json in the selected folder.\n\nPlease select the folder containing your master inventory file.');
+                    return false;
+                }
+            }
+        } catch (dirError) {
+            if (dirError.name === 'AbortError') return false;
+            // Fallback: use file picker if directory picker fails
+            console.warn('Directory picker failed, falling back to file picker:', dirError.message);
+            const [fh] = await window.showOpenFilePicker({
+                types: [{ description: 'JSON Files', accept: {'application/json': ['.json']} }],
+                suggestedName: 'ccd-inventory-MASTER.json',
+                mode: 'readwrite'
+            });
+            fileHandle = fh;
+        }
         
         // CRITICAL: Request write permission explicitly
         const permission = await fileHandle.requestPermission({ mode: 'readwrite' });
@@ -126151,21 +126272,36 @@ async function configureMasterFile() {
         console.log('✅ Write permission granted - no more confirmation dialogs!');
         
         masterFileHandle = fileHandle;
+        masterDirectoryHandle = dirHandle; // v23.3.13: Store folder handle
         backupConfig.masterFilePath = fileHandle.name;
         backupConfig.enabled = true;
-        backupConfig.permissionGranted = true;  // Track that permission is granted
+        backupConfig.permissionGranted = true;
         
-        // Store handle in IndexedDB for one-click reconnect
+        // Store handles in IndexedDB for one-click reconnect
         if (typeof storeFileHandle === 'function') {
             storeFileHandle('masterFile', fileHandle, { type: 'master' }).catch(e => 
                 console.warn('Could not store master file handle:', e)
             );
+            // v23.3.13: Also store directory handle
+            if (dirHandle) {
+                storeFileHandle('masterDirectory', dirHandle, { type: 'directory' }).catch(e =>
+                    console.warn('Could not store master directory handle:', e)
+                );
+            }
         }
         
         // Save configuration
         localStorage.setItem('ccdMasterFileConfigured', 'true');
         localStorage.setItem('ccdMasterFileName', fileHandle.name);
         localStorage.setItem('ccdPermissionGranted', 'true');
+        
+        // v23.3.13: Log routing mode
+        if (isPrimaryMachine()) {
+            console.log('✅ Primary machine detected — saves write directly to MASTER.json');
+        } else {
+            console.log('ℹ️ Remote machine detected — saves will route through ccd-pending-changes.json');
+            showNotification('ℹ️ Remote mode: changes will sync through Sync Hub', 'info', 5000);
+        }
         
         console.log('✅ Master file configured:', fileHandle.name);
         
@@ -126888,7 +127024,18 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
         
         const jsonString = JSON.stringify(data, null, 2);
         
-        // Write to file - This should now be silent (no dialog)
+        // ============================================================
+        // v23.3.13: REMOTE SAVE ROUTING
+        // On remote machines, write to pending file instead of MASTER.json
+        // to prevent OneDrive sync conflicts
+        // ============================================================
+        if (!isPrimaryMachine() && masterDirectoryHandle) {
+            console.log('[Save] Remote machine detected — routing to ccd-pending-changes.json');
+            backupConfig.backupInProgress = false;
+            return await savePendingChanges(data, trigger, itemSKU);
+        }
+        
+        // Primary machine: Write directly to MASTER.json (existing behavior)
         const writable = await masterFileHandle.createWritable();
         await writable.write(jsonString);
         await writable.close();
@@ -128199,6 +128346,23 @@ async function tryAutoReconnect() {
                 }
             } catch (e) {
                 console.log('⚠️ Could not auto-reconnect master file:', e.message);
+            }
+        }
+        
+        // v23.3.13: Try Master Directory auto-reconnect (for pending-changes routing)
+        const dirStored = await getStoredFileHandle('masterDirectory');
+        if (dirStored?.handle && !masterDirectoryHandle) {
+            try {
+                const dirPermission = await safeQueryPermission(dirStored.handle, 'readwrite');
+                if (dirPermission === 'granted') {
+                    masterDirectoryHandle = dirStored.handle;
+                    console.log('✅ Auto-reconnected to master directory:', dirStored.handle.name);
+                    if (!isPrimaryMachine()) {
+                        console.log('ℹ️ Remote machine — saves will route through ccd-pending-changes.json');
+                    }
+                }
+            } catch (e) {
+                console.log('⚠️ Could not auto-reconnect master directory:', e.message);
             }
         }
         
