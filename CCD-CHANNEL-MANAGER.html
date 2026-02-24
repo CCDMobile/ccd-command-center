@@ -313,7 +313,7 @@
             </nav>
         </div>
         <div class="header-right">
-            <span class="env-badge sandbox" id="wayfairEnvBadge">🧪 Sandbox</span>
+            <span class="env-badge production" id="wayfairEnvBadge">🚀 Production</span>
             <button class="btn btn-secondary" onclick="refreshData()">&#8635; Refresh</button>
             <button class="btn btn-primary" onclick="openProductEditor('create')">+ Create Listing</button>
             <button class="btn btn-secondary" onclick="openInventory()">&#8592; Inventory</button>
@@ -778,7 +778,7 @@
                             <div style="font-weight: 600;">Wayfair</div>
                             <div style="font-size: 0.85rem; color: var(--text-dim);">Supplier API Integration</div>
                         </div>
-                        <span class="env-badge sandbox" id="wayfairEnvBadgeSettings" style="margin-left: auto;">🧪 Sandbox</span>
+                        <span class="env-badge production" id="wayfairEnvBadgeSettings" style="margin-left: auto;">🚀 Production</span>
                     </div>
                     <div class="settings-body">
                         <div class="form-group">
@@ -1872,7 +1872,7 @@
             etsyProxyUrl: '', etsyShopId: 'CountryCharmDecorUS', etsyApiKey: '', 
             wixProxyUrl: '', wixSiteId: '',
             wayfairProxyUrl: '', wayfairApiKey: '', 
-            wayfairSupplierId: '254744', wayfairEnvironment: 'sandbox'
+            wayfairSupplierId: '254744', wayfairEnvironment: 'production'
         },
         connections: { etsy: false, wix: false, wayfair: false }
     };
@@ -4337,6 +4337,42 @@
             loadProducts();
         }
         
+        // Phase 1.9: Load config and API keys BEFORE running connection tests
+        const config = await loadConfig();
+        
+        // Load proxy URLs from CONFIG.json
+        if (config?.settings?.proxyUrls) {
+            const proxyUrls = config.settings.proxyUrls;
+            if (proxyUrls.etsy && !state.settings.etsyProxyUrl) state.settings.etsyProxyUrl = proxyUrls.etsy;
+            if (proxyUrls.wix && !state.settings.wixProxyUrl) state.settings.wixProxyUrl = proxyUrls.wix;
+            if (proxyUrls.wayfair && !state.settings.wayfairProxyUrl) state.settings.wayfairProxyUrl = proxyUrls.wayfair;
+            // Update UI fields
+            const epu = document.getElementById('etsyProxyUrl');
+            const wpu = document.getElementById('wixProxyUrl');
+            const wapu = document.getElementById('wayfairProxyUrl');
+            if (epu && !epu.value && state.settings.etsyProxyUrl) epu.value = state.settings.etsyProxyUrl;
+            if (wpu && !wpu.value && state.settings.wixProxyUrl) wpu.value = state.settings.wixProxyUrl;
+            if (wapu && !wapu.value && state.settings.wayfairProxyUrl) wapu.value = state.settings.wayfairProxyUrl;
+            console.log('[Config] ✅ Loaded proxy URLs from CONFIG.json');
+        }
+        
+        // Load API keys from CONFIG.json into state.settings
+        const configApiKey = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        if (configApiKey) {
+            if (!state.settings.etsyApiKey) {
+                state.settings.etsyApiKey = config?.settings?.apiKeys?.etsyApiKey || configApiKey;
+                const eak = document.getElementById('etsyApiKey');
+                if (eak && !eak.value) eak.value = state.settings.etsyApiKey;
+            }
+            if (!state.settings.wayfairApiKey) {
+                state.settings.wayfairApiKey = configApiKey;
+                const wak = document.getElementById('wayfairApiKey');
+                if (wak && !wak.value) wak.value = state.settings.wayfairApiKey;
+            }
+            console.log('[Config] ✅ Loaded API keys from CONFIG.json');
+        }
+        
+        // NOW run connection tests (keys are loaded)
         testEtsy(true); 
         testWix(true);
         testWayfair(true); 
@@ -4347,30 +4383,8 @@
         
         // AI Content Studio Integration: Load pending content if feature enabled
         setTimeout(async () => {
-            const config = await loadConfig();
             if (config?.settings?.features?.aiContentStudioIntegration) {
                 loadPendingContent();
-            }
-            
-            // Phase 1.9: Load proxy URLs and API keys from CONFIG.json
-            if (config?.settings?.proxyUrls) {
-                const proxyUrls = config.settings.proxyUrls;
-                if (proxyUrls.etsy && !state.settings.etsyProxyUrl) state.settings.etsyProxyUrl = proxyUrls.etsy;
-                if (proxyUrls.wix && !state.settings.wixProxyUrl) state.settings.wixProxyUrl = proxyUrls.wix;
-                if (proxyUrls.wayfair && !state.settings.wayfairProxyUrl) state.settings.wayfairProxyUrl = proxyUrls.wayfair;
-                // Update UI fields
-                const epu = document.getElementById('etsyProxyUrl');
-                const wpu = document.getElementById('wixProxyUrl');
-                const wapu = document.getElementById('wayfairProxyUrl');
-                if (epu && !epu.value && state.settings.etsyProxyUrl) epu.value = state.settings.etsyProxyUrl;
-                if (wpu && !wpu.value && state.settings.wixProxyUrl) wpu.value = state.settings.wixProxyUrl;
-                if (wapu && !wapu.value && state.settings.wayfairProxyUrl) wapu.value = state.settings.wayfairProxyUrl;
-                console.log('[Config] ✅ Loaded proxy URLs from CONFIG.json');
-            }
-            if (config?.settings?.ccdApiKey && !state.settings.wayfairApiKey) {
-                state.settings.wayfairApiKey = config.settings.ccdApiKey;
-                const wak = document.getElementById('wayfairApiKey');
-                if (wak && !wak.value) wak.value = config.settings.ccdApiKey;
             }
         }, 1000);
         
@@ -5331,8 +5345,32 @@
     function loadSettings() {
         const s = localStorage.getItem('ccd_channel_manager_settings');
         if (s) Object.assign(state.settings, JSON.parse(s));
+        
+        // Fallback: Import credentials from Sync Hub if Channel Manager has none
+        // Both apps share the same localStorage domain on GitHub Pages
+        if (!state.settings.etsyProxyUrl || !state.settings.etsyApiKey) {
+            try {
+                const hubSettings = JSON.parse(localStorage.getItem('ccd_sync_hub_settings') || '{}');
+                if (hubSettings.etsyProxyUrl && !state.settings.etsyProxyUrl) state.settings.etsyProxyUrl = hubSettings.etsyProxyUrl;
+                if (hubSettings.wixProxyUrl && !state.settings.wixProxyUrl) state.settings.wixProxyUrl = hubSettings.wixProxyUrl;
+                if (hubSettings.wayfairProxyUrl && !state.settings.wayfairProxyUrl) state.settings.wayfairProxyUrl = hubSettings.wayfairProxyUrl;
+                if (hubSettings.ccdApiKey) {
+                    if (!state.settings.etsyApiKey) state.settings.etsyApiKey = hubSettings.ccdApiKey;
+                    if (!state.settings.wayfairApiKey) state.settings.wayfairApiKey = hubSettings.ccdApiKey;
+                }
+                if (hubSettings.etsyProxyUrl || hubSettings.ccdApiKey) {
+                    console.log('[Settings] ✅ Imported credentials from Sync Hub');
+                    // Persist so we don't need to import again
+                    localStorage.setItem('ccd_channel_manager_settings', JSON.stringify(state.settings));
+                }
+            } catch (e) { console.warn('[Settings] Could not read Sync Hub settings:', e); }
+        }
+        
+        // Legacy fallback: check old Inventory System settings
         const inv = localStorage.getItem('ccdInventorySettings');
-        if (inv) { const i = JSON.parse(inv); if (i.etsyProxyUrl) state.settings.etsyProxyUrl = i.etsyProxyUrl; }
+        if (inv) { const i = JSON.parse(inv); if (i.etsyProxyUrl && !state.settings.etsyProxyUrl) state.settings.etsyProxyUrl = i.etsyProxyUrl; }
+        
+        // Populate form fields
         document.getElementById('etsyProxyUrl').value = state.settings.etsyProxyUrl || '';
         document.getElementById('etsyShopId').value = state.settings.etsyShopId || '';
         document.getElementById('etsyApiKey').value = state.settings.etsyApiKey || '';
@@ -5368,18 +5406,41 @@
     
     function resetSettings() { if (confirm('Reset?')) { localStorage.removeItem('ccd_channel_manager_settings'); location.reload(); } }
     
+    // Helper: sync current form field values into state.settings (without toast)
+    function syncFormToState() {
+        const fields = {
+            etsyProxyUrl: 'etsyProxyUrl', etsyShopId: 'etsyShopId', etsyApiKey: 'etsyApiKey',
+            wixProxyUrl: 'wixProxyUrl', wixSiteId: 'wixSiteId',
+            wayfairProxyUrl: 'wayfairProxyUrl', wayfairApiKey: 'wayfairApiKey', wayfairSupplierId: 'wayfairSupplierId'
+        };
+        for (const [key, id] of Object.entries(fields)) {
+            const el = document.getElementById(id);
+            if (el && el.value.trim()) state.settings[key] = el.value.trim();
+        }
+    }
+    
+    // Helper: persist current state.settings to localStorage
+    function autoSaveSettings() {
+        localStorage.setItem('ccd_channel_manager_settings', JSON.stringify(state.settings));
+        console.log('[Settings] Auto-saved to localStorage');
+    }
+    
     async function testEtsy(silent) {
         const dot = document.getElementById('etsyStatusDot'), txt = document.getElementById('etsyStatusText');
+        // Sync form fields to state before testing (captures user input)
+        syncFormToState();
         if (!state.settings.etsyProxyUrl) { dot.className = 'status-dot disconnected'; txt.textContent = 'Not configured'; return; }
         txt.textContent = 'Checking...';
         try {
-            const url = state.settings.etsyProxyUrl + '?action=getShopInfo&key=' + encodeURIComponent(state.settings.etsyApiKey);
+            const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
+            const url = state.settings.etsyProxyUrl + '?action=getShopInfo&key=' + encodeURIComponent(key);
             const r = await fetch(url);
             const d = await r.json();
             if (d.success && d.shop) { 
                 dot.className = 'status-dot connected'; 
                 txt.textContent = 'Connected (' + (d.shop.shop_name || 'Shop') + ')'; 
                 state.connections.etsy = true; 
+                autoSaveSettings(); // Persist on success
                 if (!silent) toast('Etsy connected!', 'success'); 
             }
             else throw new Error(d.error || 'Unknown error');
@@ -5394,6 +5455,7 @@
     async function testWix(silent) {
         const dot = document.getElementById('wixStatusDot'), txt = document.getElementById('wixStatusText');
         const dashDot = document.getElementById('dashWixStatus');
+        syncFormToState();
         if (!state.settings.wixProxyUrl) { 
             if (dot) { dot.className = 'status-dot disconnected'; }
             if (txt) { txt.textContent = 'Not configured'; }
@@ -5402,10 +5464,8 @@
         }
         if (txt) txt.textContent = 'Checking...';
         try {
-            // Phase 1.9: Read API key from config instead of hardcoded value
-            const config = await loadConfig();
-            const ccdKey = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
-            const url = state.settings.wixProxyUrl + '?action=test&key=' + encodeURIComponent(ccdKey);
+            const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
+            const url = state.settings.wixProxyUrl + '?action=test&key=' + encodeURIComponent(key);
             const r = await fetch(url);
             const d = await r.json();
             if (d.success) { 
@@ -5413,6 +5473,7 @@
                 if (txt) txt.textContent = 'Connected (' + (d.productsFound || 0) + ' products)'; 
                 if (dashDot) dashDot.innerHTML = '<span class="connection-dot connected"></span>Connected';
                 state.connections.wix = true; 
+                autoSaveSettings();
                 if (!silent) toast('Wix connected! Found ' + (d.productsFound || 0) + ' products', 'success'); 
             }
             else throw new Error(d.error || 'Unknown error');
@@ -5497,10 +5558,6 @@
     function submitToSyncHubInbox(item, config) {
         const raw = item.product?._raw || {};
         const product = item.product || {};
-        
-        // Phase 1.9: Read API keys from config
-        const ccdApiKey = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
-        const etsyApiKey = config?.settings?.etsyApiKey || config?.settings?.apiKeys?.etsyApiKey || ccdApiKey;
         
         // Build inbox item in format Sync Hub expects
         const inboxItem = {
@@ -6257,7 +6314,7 @@
     
     async function fetchEtsyListings() {
         const url = state.settings.etsyProxyUrl;
-        const key = state.settings.etsyApiKey || state.settings.ccdApiKey;
+        const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
         
         if (!url) throw new Error('Etsy proxy not configured');
         
@@ -6279,9 +6336,7 @@
     
     async function fetchWixProducts() {
         const url = state.settings.wixProxyUrl;
-        // Phase 1.9: Read API key from config
-        const config = await loadConfig();
-        const key = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
         
         if (!url) throw new Error('Wix proxy not configured');
         
@@ -6589,9 +6644,7 @@
     
     async function fetchEtsyForCompare() {
         const url = state.settings.etsyProxyUrl;
-        // Phase 1.9: Read API key from config
-        const config = await loadConfig();
-        const key = state.settings.etsyApiKey || config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
         
         if (!url) {
             console.warn('Etsy proxy not configured');
@@ -6620,9 +6673,7 @@
     
     async function fetchWixForCompare() {
         const url = state.settings.wixProxyUrl;
-        // Phase 1.9: Read API key from config
-        const config = await loadConfig();
-        const key = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
         
         if (!url) {
             console.warn('Wix proxy not configured');
@@ -6971,9 +7022,7 @@
     
     async function syncProductToWix(product, sourceData, fields) {
         const url = state.settings.wixProxyUrl;
-        // Phase 1.9: Read API key from config
-        const config = await loadConfig();
-        const key = config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
         
         if (!url) throw new Error('Wix proxy not configured');
         
@@ -6998,9 +7047,7 @@
     
     async function syncProductToEtsy(product, sourceData, fields) {
         const url = state.settings.etsyProxyUrl;
-        // Phase 1.9: Read API key from config
-        const config = await loadConfig();
-        const key = state.settings.etsyApiKey || config?.settings?.ccdApiKey || config?.settings?.apiKeys?.ccdApiKey || '';
+        const key = state.settings.etsyApiKey || state.settings.wayfairApiKey || '';
         
         if (!url) throw new Error('Etsy proxy not configured');
         
@@ -7126,6 +7173,7 @@
     }
 
     async function testWayfair(silent = false) {
+        syncFormToState();
         const { wayfairProxyUrl } = state.settings;
         if (!wayfairProxyUrl) { updateWayfairStatus(false, 'Not configured'); return; }
         updateWayfairStatus(null, 'Checking...');
@@ -7133,9 +7181,10 @@
             const result = await wayfairApiCall('testAuth');
             if (result.success) {
                 state.connections.wayfair = true;
-                state.settings.wayfairEnvironment = result.environment || 'sandbox';
-                updateWayfairStatus(true, 'Connected (' + (result.environment || 'sandbox') + ')');
+                state.settings.wayfairEnvironment = result.environment || 'production';
+                updateWayfairStatus(true, 'Connected (' + (result.environment || 'production') + ')');
                 updateWayfairEnvironmentBadges();
+                autoSaveSettings();
                 if (!silent) toast('Wayfair connected!', 'success');
             } else { state.connections.wayfair = false; updateWayfairStatus(false, result.error || 'Auth failed'); if (!silent) toast('Wayfair auth failed', 'error'); }
         } catch (err) { state.connections.wayfair = false; updateWayfairStatus(false, 'Connection error'); if (!silent) toast('Wayfair error: ' + err.message, 'error'); }

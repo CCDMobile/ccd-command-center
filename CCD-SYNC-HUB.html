@@ -9125,65 +9125,66 @@
         
         // Check for changes every 10 seconds (faster for real-time sync)
         state.autoPushWatchInterval = setInterval(async () => {
+            
+            // =====================================================
+            // Phase 1.2: CHECK CHANNEL MANAGER INBOX (ALWAYS)
+            // This runs regardless of autoPushEnabled because
+            // Channel Manager explicitly requested these pushes.
+            // =====================================================
+            try {
+                const inboxJson = localStorage.getItem('ccd_sync_hub_inbox');
+                if (inboxJson) {
+                    const inbox = JSON.parse(inboxJson);
+                    if (Array.isArray(inbox) && inbox.length > 0) {
+                        console.log(`[Inbox] 📬 Received ${inbox.length} job(s) from Channel Manager`);
+                        addAutoSyncLogEntry(`📬 Received ${inbox.length} job(s) from Channel Manager`);
+                        
+                        // Clear inbox immediately to prevent duplicate processing
+                        localStorage.setItem('ccd_sync_hub_inbox', '[]');
+                        
+                        // Add each inbox item to Sync Hub's queue
+                        for (const inboxItem of inbox) {
+                            const queueItem = {
+                                id: inboxItem.id || ('cm_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
+                                channel: inboxItem.channel,
+                                action: inboxItem.action || 'update',
+                                product: inboxItem.product || {},
+                                fields: inboxItem.fields || {},
+                                reason: inboxItem.reason || 'Channel Manager push',
+                                source: inboxItem.source || 'channel-manager',
+                                status: 'pending',
+                                timestamp: inboxItem.timestamp || new Date().toISOString()
+                            };
+                            
+                            // Map Channel Manager fields to Sync Hub expected format
+                            if (queueItem.channel === 'etsy' && queueItem.product.listingId) {
+                                queueItem.product.etsyListingId = queueItem.product.listingId;
+                            }
+                            if (queueItem.channel === 'wix' && queueItem.product.productId) {
+                                queueItem.product.wixProductId = queueItem.product.productId;
+                            }
+                            
+                            addToQueue(queueItem);
+                        }
+                        
+                        // Auto-process inbox items immediately
+                        const inboxItemIds = inbox.map(i => i.id).filter(Boolean);
+                        if (inboxItemIds.length > 0) {
+                            setTimeout(() => processQueue(inboxItemIds), 500);
+                        }
+                    }
+                }
+            } catch (inboxError) {
+                console.error('[Inbox] Error processing Channel Manager inbox:', inboxError);
+            }
+            // =====================================================
+            // END Phase 1.2 INBOX CHECK
+            // =====================================================
+            
+            // Auto-push (Inventory System change detection) only runs when enabled
             if (!state.settings.autoPushEnabled) return;
             
             try {
-                // =====================================================
-                // Phase 1.2: CHECK CHANNEL MANAGER INBOX (NEW)
-                // Picks up push requests submitted by Channel Manager
-                // =====================================================
-                try {
-                    const inboxJson = localStorage.getItem('ccd_sync_hub_inbox');
-                    if (inboxJson) {
-                        const inbox = JSON.parse(inboxJson);
-                        if (Array.isArray(inbox) && inbox.length > 0) {
-                            console.log(`[Inbox] 📬 Received ${inbox.length} job(s) from Channel Manager`);
-                            addAutoSyncLogEntry(`📬 Received ${inbox.length} job(s) from Channel Manager`);
-                            
-                            // Clear inbox immediately to prevent duplicate processing
-                            localStorage.setItem('ccd_sync_hub_inbox', '[]');
-                            
-                            // Add each inbox item to Sync Hub's queue
-                            for (const inboxItem of inbox) {
-                                const queueItem = {
-                                    id: inboxItem.id || ('cm_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
-                                    channel: inboxItem.channel,
-                                    action: inboxItem.action || 'update',
-                                    product: inboxItem.product || {},
-                                    fields: inboxItem.fields || {},
-                                    reason: inboxItem.reason || 'Channel Manager push',
-                                    source: inboxItem.source || 'channel-manager',
-                                    status: 'pending',
-                                    timestamp: inboxItem.timestamp || new Date().toISOString()
-                                };
-                                
-                                // Map Channel Manager fields to Sync Hub expected format
-                                if (queueItem.channel === 'etsy' && queueItem.product.listingId) {
-                                    queueItem.product.etsyListingId = queueItem.product.listingId;
-                                }
-                                if (queueItem.channel === 'wix' && queueItem.product.productId) {
-                                    queueItem.product.wixProductId = queueItem.product.productId;
-                                }
-                                
-                                addToQueue(queueItem);
-                            }
-                            
-                            // Auto-process inbox items immediately
-                            const inboxItemIds = inbox.map(i => i.id).filter(Boolean);
-                            if (inboxItemIds.length > 0) {
-                                setTimeout(() => processQueue(inboxItemIds), 500);
-                            }
-                        }
-                    }
-                } catch (inboxError) {
-                    console.error('[Inbox] Error processing Channel Manager inbox:', inboxError);
-                    // Fail silently - don't disrupt existing auto-push functionality
-                }
-                // =====================================================
-                // END Phase 1.2 INBOX CHECK
-                // =====================================================
-                
-                // METHOD 1: Check localStorage for Inventory System changes (immediate)
                 const lastChange = localStorage.getItem('ccd_inventory_last_change') || '';
                 if (lastChange && lastChange !== lastProcessedChange) {
                     console.log('[Auto-Push] Detected Inventory System change via localStorage');
