@@ -125482,6 +125482,82 @@ function isPrimaryMachine() {
 }
 
 /**
+ * v23.3.13: Try to restore or acquire the master directory handle.
+ * Called after master file connects via any path (shared files, IndexedDB, manual).
+ * On remote machines without a directory handle, shows a one-time folder picker.
+ */
+async function tryRestoreDirectoryHandle() {
+    if (masterDirectoryHandle) return; // Already have it
+    
+    // Try IndexedDB first (silent)
+    try {
+        const dirStored = await getStoredFileHandle('masterDirectory');
+        if (dirStored?.handle) {
+            let perm = 'denied';
+            try {
+                if (typeof dirStored.handle.queryPermission === 'function') {
+                    perm = await dirStored.handle.queryPermission({ mode: 'readwrite' });
+                }
+            } catch (e) { /* ignore */ }
+            
+            if (perm === 'granted') {
+                masterDirectoryHandle = dirStored.handle;
+                console.log('[Directory] ✅ Restored from IndexedDB:', dirStored.handle.name);
+                return;
+            }
+        }
+    } catch (e) { /* no stored handle */ }
+    
+    // On remote machines, we need the directory handle for pending-changes routing
+    if (!isPrimaryMachine()) {
+        // Check if we already prompted this session
+        if (sessionStorage.getItem('ccd_dir_prompt_shown')) return;
+        sessionStorage.setItem('ccd_dir_prompt_shown', 'true');
+        
+        console.log('[Directory] ⚠️ Remote machine needs folder access for safe sync');
+        
+        // Show a non-blocking notification with action
+        setTimeout(() => {
+            showNotification(
+                '📁 Multi-user sync upgrade needed: Click the backup status indicator, then "Reconnect Master File" to enable safe sync.',
+                'warning', 15000
+            );
+        }, 3000);
+        
+        // Also add a helper function Mary can call from backup panel
+        window.upgradeMasterFolder = async function() {
+            try {
+                const dirHandle = await window.showDirectoryPicker({
+                    id: 'ccd-master-folder',
+                    mode: 'readwrite',
+                    startIn: 'documents'
+                });
+                
+                // Verify the master file is in this folder
+                try {
+                    const testHandle = await dirHandle.getFileHandle(masterFileHandle.name || 'ccd-inventory-MASTER.json');
+                    masterDirectoryHandle = dirHandle;
+                    
+                    // Store for future sessions
+                    if (typeof storeFileHandle === 'function') {
+                        await storeFileHandle('masterDirectory', dirHandle, { type: 'directory' });
+                    }
+                    
+                    console.log('[Directory] ✅ Folder connected:', dirHandle.name);
+                    showNotification('✅ Master folder connected — safe sync enabled!', 'success');
+                } catch (e) {
+                    showNotification('❌ Master file not found in selected folder. Pick the folder containing ' + (masterFileHandle?.name || 'MASTER.json'), 'error');
+                }
+            } catch (e) {
+                if (e.name !== 'AbortError') {
+                    showNotification('❌ Folder selection failed: ' + e.message, 'error');
+                }
+            }
+        };
+    }
+}
+
+/**
  * Write pending changes to ccd-pending-changes.json in the master file's folder.
  * Sync Hub on the primary machine will pick this up and merge into MASTER.json.
  */
@@ -128276,6 +128352,9 @@ async function tryAutoReconnect() {
                 initializeJSONAutoSync();
                 updateBackupStatusIndicator();
                 
+                // v23.3.13: Try to restore directory handle for remote save routing
+                await tryRestoreDirectoryHandle();
+                
                 // Skip rest of auto-reconnect if master was found via shared files
                 return masterConnected;
             }
@@ -128341,6 +128420,9 @@ async function tryAutoReconnect() {
                     initializeJSONAutoSync();
                     
                     updateBackupStatusIndicator();
+                    
+                    // v23.3.13: Ensure directory handle for remote save routing
+                    await tryRestoreDirectoryHandle();
                 } else {
                     console.log('⚠️ Master file needs permission re-grant');
                 }
@@ -128530,21 +128612,62 @@ function dismissReconnectPrompt() {
 
 async function reconnectMasterFile() {
     try {
-        const [fileHandle] = await window.showOpenFilePicker({
-            types: [{
-                description: 'JSON Files',
-                accept: {'application/json': ['.json']}
-            }],
-            mode: 'readwrite'
-        });
+        // v23.3.13: Use directory picker to get folder access (needed for remote save routing)
+        let fileHandle = null;
+        let dirHandle = null;
+        
+        try {
+            dirHandle = await window.showDirectoryPicker({
+                id: 'ccd-master-folder',
+                mode: 'readwrite',
+                startIn: 'documents'
+            });
+            
+            // Find master file in directory
+            const expectedNames = ['ccd-inventory-MASTER.json', 'ccd-inventory-master.json'];
+            for (const name of expectedNames) {
+                try { fileHandle = await dirHandle.getFileHandle(name); break; } catch (e) { /* next */ }
+            }
+            
+            if (!fileHandle) {
+                for await (const entry of dirHandle.values()) {
+                    if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER') && !entry.name.includes('pending') && !entry.name.includes('Mary')) {
+                        fileHandle = await dirHandle.getFileHandle(entry.name);
+                        break;
+                    }
+                }
+            }
+            
+            if (!fileHandle) {
+                showNotification('❌ Could not find MASTER.json in the selected folder', 'error');
+                return;
+            }
+        } catch (dirError) {
+            if (dirError.name === 'AbortError') return;
+            // Fallback to file picker
+            const [fh] = await window.showOpenFilePicker({
+                types: [{ description: 'JSON Files', accept: {'application/json': ['.json']} }],
+                mode: 'readwrite'
+            });
+            fileHandle = fh;
+        }
         
         const permission = await fileHandle.requestPermission({ mode: 'readwrite' });
         if (permission === 'granted') {
             masterFileHandle = fileHandle;
+            masterDirectoryHandle = dirHandle;
             backupConfig.masterFilePath = fileHandle.name;
             backupConfig.enabled = true;
             backupConfig.permissionGranted = true;
             localStorage.setItem('ccdMasterFileName', fileHandle.name);
+            
+            // Store handles for future sessions
+            if (typeof storeFileHandle === 'function') {
+                storeFileHandle('masterFile', fileHandle, { type: 'master' }).catch(e => console.warn(e));
+                if (dirHandle) {
+                    storeFileHandle('masterDirectory', dirHandle, { type: 'directory' }).catch(e => console.warn(e));
+                }
+            }
             
             // Load data from master file
             await loadFromMasterFile();
@@ -128557,8 +128680,9 @@ async function reconnectMasterFile() {
                 btn.disabled = true;
             }
             
-            showNotification('✅ Master file reconnected: ' + fileHandle.name, 'success');
-            console.log('✅ Master file reconnected:', fileHandle.name);
+            const routeMode = isPrimaryMachine() ? 'direct write' : 'remote sync via Sync Hub';
+            showNotification(`✅ Master file reconnected (${routeMode}): ` + fileHandle.name, 'success');
+            console.log('✅ Master file reconnected:', fileHandle.name, '| mode:', routeMode);
             updateBackupStatusIndicator();
             
             // Check if we're done
