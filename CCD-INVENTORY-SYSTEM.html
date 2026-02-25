@@ -756,7 +756,7 @@ Previous versions documented in development guide.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Inventory Management System v23.3.13 - Remote Save Routing</title>
+    <title>CCD Inventory Management System v23.3.14 - Config Write Permission Fix</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -7717,7 +7717,7 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.11 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 20 - Sync Hub Master</span></h1>
+                            <h1>CCD Inventory System v23.3.14 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 25 - Config Write Fix</span></h1>
                             <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-02-07 • Sync Indicators + Activity Logging</p>
                         </div>
                     </div>
@@ -11248,6 +11248,12 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 return;
             }
             
+            // v23.3.14: Ensure write permission
+            if (!await ensureConfigWritePermission()) {
+                showNotification('⚠️ Write permission denied for CONFIG.json. Reconnect in Settings.', 'warning');
+                return;
+            }
+            
             try {
                 // Read current config
                 const file = await configFileHandle.getFile();
@@ -11315,6 +11321,13 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             if (!configFileHandle) {
                 showNotification('⚠️ CONFIG file not connected - change saved locally only', 'warning');
                 console.log(`[Feature Toggle] ${featureName} = ${enabled} (localStorage only)`);
+                localStorage.setItem(`feature_${featureName}`, enabled.toString());
+                return;
+            }
+            
+            // v23.3.14: Ensure write permission
+            if (!await ensureConfigWritePermission()) {
+                showNotification('⚠️ CONFIG write permission denied - change saved locally only', 'warning');
                 localStorage.setItem(`feature_${featureName}`, enabled.toString());
                 return;
             }
@@ -70223,25 +70236,33 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             
             // Also save to CONFIG.json if connected
             if (configFileHandle) {
-                try {
-                    const file = await configFileHandle.getFile();
-                    const text = await file.text();
-                    const cfgData = JSON.parse(text);
-                    if (!cfgData.settings) cfgData.settings = {};
-                    if (!cfgData.settings.features) cfgData.settings.features = {};
-                    featureFlags.forEach(flag => {
-                        const checkbox = document.getElementById('flag_' + flag);
-                        if (checkbox) cfgData.settings.features[flag] = checkbox.checked;
-                    });
-                    cfgData._metadata = cfgData._metadata || {};
-                    cfgData._metadata.lastModified = new Date().toISOString();
-                    cfgData._metadata.lastModifiedBy = 'CCD-INVENTORY-SYSTEM Settings Save All';
-                    const writable = await configFileHandle.createWritable();
-                    await writable.write(JSON.stringify(cfgData, null, 2));
-                    await writable.close();
-                    console.log('[Settings] Feature flags saved to CONFIG.json');
-                } catch (err) {
-                    console.warn('[Settings] Could not save features to CONFIG:', err.message);
+                // v23.3.14: Ensure write permission before attempting config write
+                const hasWritePerm = await ensureConfigWritePermission();
+                if (hasWritePerm) {
+                    try {
+                        const file = await configFileHandle.getFile();
+                        const text = await file.text();
+                        const cfgData = JSON.parse(text);
+                        if (!cfgData.settings) cfgData.settings = {};
+                        if (!cfgData.settings.features) cfgData.settings.features = {};
+                        featureFlags.forEach(flag => {
+                            const checkbox = document.getElementById('flag_' + flag);
+                            if (checkbox) cfgData.settings.features[flag] = checkbox.checked;
+                        });
+                        cfgData._metadata = cfgData._metadata || {};
+                        cfgData._metadata.lastModified = new Date().toISOString();
+                        cfgData._metadata.lastModifiedBy = 'CCD-INVENTORY-SYSTEM Settings Save All';
+                        const writable = await configFileHandle.createWritable();
+                        await writable.write(JSON.stringify(cfgData, null, 2));
+                        await writable.close();
+                        console.log('[Settings] Feature flags saved to CONFIG.json');
+                    } catch (err) {
+                        console.warn('[Settings] Could not save features to CONFIG:', err.message);
+                        showNotification('⚠️ Settings saved locally but CONFIG.json write failed', 'warning');
+                    }
+                } else {
+                    console.warn('[Settings] No write permission for CONFIG.json');
+                    showNotification('⚠️ Settings saved locally but CONFIG.json needs reconnect for write access', 'warning');
                 }
             }
             // ========== END Feature Flag Save ==========
@@ -127981,6 +128002,29 @@ function initializeBackupSystem() {
  */
 let configFileHandle = null;
 
+/**
+ * v23.3.14: Ensure configFileHandle has readwrite permission before writing.
+ * Auto-reconnect only grants 'read' — this upgrades on user gesture (button click).
+ */
+async function ensureConfigWritePermission() {
+    if (!configFileHandle) return false;
+    try {
+        const perm = await configFileHandle.queryPermission({ mode: 'readwrite' });
+        if (perm === 'granted') return true;
+        // User gesture required — this works because we're called from a button click
+        const requested = await configFileHandle.requestPermission({ mode: 'readwrite' });
+        if (requested === 'granted') {
+            console.log('[CONFIG] ✅ Write permission granted');
+            return true;
+        }
+        console.warn('[CONFIG] Write permission denied');
+        return false;
+    } catch (err) {
+        console.error('[CONFIG] Permission check failed:', err);
+        return false;
+    }
+}
+
 async function tryLoadConfigFromOneDrive() {
     console.log('[CONFIG] Attempting to load shared config...');
     
@@ -127989,7 +128033,11 @@ async function tryLoadConfigFromOneDrive() {
         if (typeof CCDSharedFiles !== 'undefined') {
             const savedHandle = await CCDSharedFiles.getConfigFile();
             if (savedHandle) {
-                const perm = await savedHandle.queryPermission({ mode: 'read' });
+                // v23.3.14: Try readwrite first, fall back to read
+                let perm = await savedHandle.queryPermission({ mode: 'readwrite' });
+                if (perm !== 'granted') {
+                    perm = await savedHandle.queryPermission({ mode: 'read' });
+                }
                 if (perm === 'granted') {
                     configFileHandle = savedHandle;
                     await loadSettingsFromConfigFile();
@@ -134053,6 +134101,12 @@ async function saveCategoriestoConfig() {
         return;
     }
     
+    // v23.3.14: Ensure write permission (auto-reconnect may only have read)
+    if (!await ensureConfigWritePermission()) {
+        alert('⚠️ Write permission denied for CONFIG.json.\n\nPlease reconnect the CONFIG file in Settings to grant write access.');
+        return;
+    }
+    
     try {
         // Read current CONFIG
         const file = await configFileHandle.getFile();
@@ -134303,6 +134357,13 @@ async function saveBrandsToConfig() {
         alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
         return;
     }
+    
+    // v23.3.14: Ensure write permission (auto-reconnect may only have read)
+    if (!await ensureConfigWritePermission()) {
+        alert('⚠️ Write permission denied for CONFIG.json.\n\nPlease reconnect the CONFIG file in Settings to grant write access.');
+        return;
+    }
+    
     try {
         const file = await configFileHandle.getFile();
         const text = await file.text();
@@ -134506,6 +134567,13 @@ async function saveVendorsToConfig() {
         alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
         return;
     }
+    
+    // v23.3.14: Ensure write permission (auto-reconnect may only have read)
+    if (!await ensureConfigWritePermission()) {
+        alert('⚠️ Write permission denied for CONFIG.json.\n\nPlease reconnect the CONFIG file in Settings to grant write access.');
+        return;
+    }
+    
     try {
         const file = await configFileHandle.getFile();
         const text = await file.text();
