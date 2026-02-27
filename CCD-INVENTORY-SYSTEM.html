@@ -11243,14 +11243,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
          * Save pricing settings from Settings panel to CONFIG file
          */
         async function savePricingSettingsToConfig() {
-            if (!configFileHandle) {
-                showNotification('❌ CONFIG file not connected. Connect it first in Settings.', 'error');
-                return;
-            }
-            
-            // v23.3.14: Ensure write permission
+            // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
             if (!await ensureConfigWritePermission()) {
-                showNotification('⚠️ Write permission denied for CONFIG.json. Reconnect in Settings.', 'warning');
+                showNotification('⚠️ Could not get write access to CONFIG.json. Try again.', 'warning');
                 return;
             }
             
@@ -11318,16 +11313,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
          * @param {boolean} enabled - New state
          */
         async function toggleFeature(featureName, enabled) {
-            if (!configFileHandle) {
-                showNotification('⚠️ CONFIG file not connected - change saved locally only', 'warning');
-                console.log(`[Feature Toggle] ${featureName} = ${enabled} (localStorage only)`);
-                localStorage.setItem(`feature_${featureName}`, enabled.toString());
-                return;
-            }
-            
-            // v23.3.14: Ensure write permission
+            // v23.3.14b: Self-healing — try to get write access, fall back to localStorage
             if (!await ensureConfigWritePermission()) {
-                showNotification('⚠️ CONFIG write permission denied - change saved locally only', 'warning');
+                showNotification('⚠️ CONFIG file not writable - change saved locally only', 'warning');
+                console.log(`[Feature Toggle] ${featureName} = ${enabled} (localStorage only)`);
                 localStorage.setItem(`feature_${featureName}`, enabled.toString());
                 return;
             }
@@ -128005,23 +127994,53 @@ let configFileHandle = null;
 /**
  * v23.3.14: Ensure configFileHandle has readwrite permission before writing.
  * Auto-reconnect only grants 'read' — this upgrades on user gesture (button click).
+ * v23.3.14b: Self-healing — if handle is null, prompt user to pick the file.
  */
 async function ensureConfigWritePermission() {
-    if (!configFileHandle) return false;
+    // If no handle at all, try to acquire one right now (we have user gesture from button click)
+    if (!configFileHandle) {
+        console.warn('[CONFIG] No config handle — prompting user to connect...');
+        const connected = await selectConfigFile();
+        if (!connected || !configFileHandle) {
+            console.error('[CONFIG] User did not connect CONFIG.json');
+            return false;
+        }
+        // selectConfigFile uses showOpenFilePicker which grants readwrite by default
+        console.log('[CONFIG] ✅ Config file connected via save-triggered prompt');
+        return true;
+    }
+    
     try {
+        // Already have handle — check if we have write permission
         const perm = await configFileHandle.queryPermission({ mode: 'readwrite' });
         if (perm === 'granted') return true;
-        // User gesture required — this works because we're called from a button click
+        
+        // Try to upgrade — user gesture required (we're called from a button click)
         const requested = await configFileHandle.requestPermission({ mode: 'readwrite' });
         if (requested === 'granted') {
-            console.log('[CONFIG] ✅ Write permission granted');
+            console.log('[CONFIG] ✅ Write permission upgraded');
             return true;
         }
-        console.warn('[CONFIG] Write permission denied');
-        return false;
+        
+        // Permission denied — try fresh file picker as last resort
+        console.warn('[CONFIG] Permission upgrade denied — trying fresh file picker...');
+        const connected = await selectConfigFile();
+        if (!connected || !configFileHandle) {
+            console.error('[CONFIG] Could not get write access to CONFIG.json');
+            return false;
+        }
+        console.log('[CONFIG] ✅ Config file reconnected with write access');
+        return true;
+        
     } catch (err) {
         console.error('[CONFIG] Permission check failed:', err);
-        return false;
+        // Try fresh picker as fallback
+        try {
+            const connected = await selectConfigFile();
+            return connected && !!configFileHandle;
+        } catch (e) {
+            return false;
+        }
     }
 }
 
@@ -128244,7 +128263,11 @@ async function tryReconnectConfigFile() {
         // Try to get from our local IndexedDB store first
         const savedData = await getStoredFileHandle('configFile');
         if (savedData?.handle) {
-            const perm = await savedData.handle.queryPermission({ mode: 'read' });
+            // v23.3.14: Try readwrite first, fall back to read
+            let perm = await savedData.handle.queryPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') {
+                perm = await savedData.handle.queryPermission({ mode: 'read' });
+            }
             if (perm === 'granted') {
                 configFileHandle = savedData.handle;
                 await loadSettingsFromConfigFile();
@@ -128257,7 +128280,11 @@ async function tryReconnectConfigFile() {
         if (typeof CCDSharedFiles !== 'undefined') {
             const sharedHandle = await CCDSharedFiles.getConfigFile();
             if (sharedHandle) {
-                const perm = await sharedHandle.queryPermission({ mode: 'read' });
+                // v23.3.14: Try readwrite first, fall back to read
+                let perm = await sharedHandle.queryPermission({ mode: 'readwrite' });
+                if (perm !== 'granted') {
+                    perm = await sharedHandle.queryPermission({ mode: 'read' });
+                }
                 if (perm === 'granted') {
                     configFileHandle = sharedHandle;
                     await loadSettingsFromConfigFile();
@@ -134096,14 +134123,9 @@ function deleteCategory(categoryName) {
  * Save categories to CONFIG.json
  */
 async function saveCategoriestoConfig() {
-    if (!configFileHandle) {
-        alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
-        return;
-    }
-    
-    // v23.3.14: Ensure write permission (auto-reconnect may only have read)
+    // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
     if (!await ensureConfigWritePermission()) {
-        alert('⚠️ Write permission denied for CONFIG.json.\n\nPlease reconnect the CONFIG file in Settings to grant write access.');
+        alert('⚠️ Could not get write access to CONFIG.json.\n\nPlease try again — when the file picker appears, select your CONFIG.json file.');
         return;
     }
     
@@ -134353,14 +134375,9 @@ function deleteBrand(brandName) {
 }
 
 async function saveBrandsToConfig() {
-    if (!configFileHandle) {
-        alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
-        return;
-    }
-    
-    // v23.3.14: Ensure write permission (auto-reconnect may only have read)
+    // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
     if (!await ensureConfigWritePermission()) {
-        alert('⚠️ Write permission denied for CONFIG.json.\n\nPlease reconnect the CONFIG file in Settings to grant write access.');
+        alert('⚠️ Could not get write access to CONFIG.json.\n\nPlease try again — when the file picker appears, select your CONFIG.json file.');
         return;
     }
     
@@ -134563,14 +134580,9 @@ function deleteVendor(vendorName) {
 }
 
 async function saveVendorsToConfig() {
-    if (!configFileHandle) {
-        alert('⚠️ CONFIG.json not connected!\n\nPlease connect CONFIG.json in the "System Configuration File" section above.');
-        return;
-    }
-    
-    // v23.3.14: Ensure write permission (auto-reconnect may only have read)
+    // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
     if (!await ensureConfigWritePermission()) {
-        alert('⚠️ Write permission denied for CONFIG.json.\n\nPlease reconnect the CONFIG file in Settings to grant write access.');
+        alert('⚠️ Could not get write access to CONFIG.json.\n\nPlease try again — when the file picker appears, select your CONFIG.json file.');
         return;
     }
     
