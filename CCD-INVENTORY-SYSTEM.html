@@ -127769,6 +127769,18 @@ function toggleBackupStatusPanel() {
             <div style="font-weight: 600; font-size: 14px;">
                 ${backupConfig.masterFilePath || 'Unknown'}
             </div>
+            ${!masterDirectoryHandle ? `
+            <div style="margin-top: 8px; padding: 8px 10px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
+                <div style="font-size: 11px; color: #856404; margin-bottom: 6px;">
+                    ⚠️ Folder access needed for multi-user sync
+                </div>
+                <button onclick="reconnectMasterFile()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;">
+                    📁 Reconnect Master File (Pick Folder)
+                </button>
+            </div>
+            ` : `
+            <div style="font-size: 11px; color: #28a745; margin-top: 4px;">✅ Folder access granted — multi-user sync active</div>
+            `}
         </div>
         
         <!-- JSON AUTO-SYNC SECTION -->
@@ -127975,9 +127987,14 @@ function initializeBackupSystem() {
         setTimeout(async () => {
             const autoConnected = await tryAutoReconnect();
             
+            // v23.3.14b: On remote machines, also check for directory handle
+            // Auto-reconnect may connect the file but not the folder
+            const needsDirUpgrade = masterFileHandle && !masterDirectoryHandle && typeof isPrimaryMachine === 'function' && !isPrimaryMachine();
+            
             // If auto-reconnect failed, show the manual prompt
-            if (!autoConnected) {
-                showReconnectPrompt(wasMasterConfigured && !masterFileHandle, wasBackupDirConfigured && !backupDirectoryHandle);
+            if (!autoConnected || needsDirUpgrade) {
+                const needsMaster = (wasMasterConfigured && !masterFileHandle) || needsDirUpgrade;
+                showReconnectPrompt(needsMaster, wasBackupDirConfigured && !backupDirectoryHandle);
             }
         }, 1000);
     }
