@@ -125570,48 +125570,242 @@ async function tryRestoreDirectoryHandle() {
 /**
  * Write pending changes to ccd-pending-changes.json in the master file's folder.
  * Sync Hub on the primary machine will pick this up and merge into MASTER.json.
+ *
+ * v23.3.15: REPLACED with HTTP relay through Sync Hub proxy.
+ * Remote machines now POST changed items to the proxy. Sync Hub polls and merges.
+ * No more OneDrive file conflicts.
+ */
+
+// ============================================================
+// v23.3.15: CHANGE TRACKING & HTTP RELAY SYSTEM
+// ============================================================
+
+// Snapshot of inventory at last load/sync — used to detect what changed
+window._inventorySnapshot = {};
+window._settingsSnapshot = {};
+window._pendingRelayQueue = []; // Offline retry queue
+
+/**
+ * Capture a snapshot of all inventory items and global settings.
+ * Called after loading from master file or after a successful relay POST.
+ */
+function captureInventorySnapshot() {
+    window._inventorySnapshot = {};
+    for (let i = 0; i < inventory.length; i++) {
+        const item = inventory[i];
+        if (item && item.id) {
+            window._inventorySnapshot[item.id] = JSON.stringify(item);
+        }
+    }
+    window._settingsSnapshot = JSON.stringify({
+        surcharge: globalSurcharge,
+        etsyOH: etsyOHFee,
+        wixOH: wixOHFee,
+        wayfairOH: wayfairOHFee,
+        treasureMartsRent: treasureMartsRentFee
+    });
+    console.log(`[ChangeTrack] 📸 Snapshot captured: ${Object.keys(window._inventorySnapshot).length} items`);
+}
+
+/**
+ * Compare current inventory against snapshot to find what changed.
+ * Returns only the items that were added, modified, or removed.
+ */
+function getChangedItems() {
+    const upsertItems = [];
+    const currentIds = new Set();
+    
+    for (let i = 0; i < inventory.length; i++) {
+        const item = inventory[i];
+        if (!item || !item.id) continue;
+        currentIds.add(item.id);
+        
+        const currentJson = JSON.stringify(item);
+        const snapshotJson = window._inventorySnapshot[item.id];
+        
+        if (!snapshotJson || snapshotJson !== currentJson) {
+            upsertItems.push(item);
+        }
+    }
+    
+    // Find removed items (in snapshot but not in current inventory)
+    const removeItemIds = Object.keys(window._inventorySnapshot)
+        .filter(id => !currentIds.has(id));
+    
+    // Check global settings
+    const currentSettings = JSON.stringify({
+        surcharge: globalSurcharge,
+        etsyOH: etsyOHFee,
+        wixOH: wixOHFee,
+        wayfairOH: wayfairOHFee,
+        treasureMartsRent: treasureMartsRentFee
+    });
+    const settingsChanged = currentSettings !== window._settingsSnapshot;
+    
+    return {
+        upsertItems,
+        removeItemIds,
+        globalSettings: settingsChanged ? {
+            surcharge: globalSurcharge,
+            etsyOH: etsyOHFee,
+            wixOH: wixOHFee,
+            wayfairOH: wayfairOHFee,
+            treasureMartsRent: treasureMartsRentFee
+        } : null,
+        hasChanges: upsertItems.length > 0 || removeItemIds.length > 0 || settingsChanged
+    };
+}
+
+/**
+ * Get the Sync Hub proxy URL from CONFIG or localStorage
+ */
+function getSyncHubProxyUrl() {
+    // Try CONFIG first
+    if (window.configData?.settings?.proxyUrls?.syncHub) {
+        return window.configData.settings.proxyUrls.syncHub;
+    }
+    if (window.configData?.syncHubProxyUrl) {
+        return window.configData.syncHubProxyUrl;
+    }
+    // Then localStorage
+    return localStorage.getItem('syncHubUrl') || localStorage.getItem('syncHubProxyUrl') || '';
+}
+
+/**
+ * Get the API key for proxy authentication
+ */
+function getApiKey() {
+    if (window.configData?.settings?.ccdApiKey) return window.configData.settings.ccdApiKey;
+    if (window.configData?.ccdApiKey) return window.configData.ccdApiKey;
+    return localStorage.getItem('ccdApiKey') || '';
+}
+
+/**
+ * POST changed items to the Sync Hub proxy for relay to the primary machine.
+ * Replaces the old file-based savePendingChanges().
  */
 async function savePendingChanges(data, trigger, itemSKU) {
-    if (!masterDirectoryHandle) {
-        console.error('[Pending] No directory handle — cannot write pending changes');
-        showNotification('❌ Cannot save: folder not connected. Please reconnect to master file.', 'error');
+    const proxyUrl = getSyncHubProxyUrl();
+    const apiKey = getApiKey();
+    
+    if (!proxyUrl) {
+        console.error('[Relay] No Sync Hub proxy URL configured');
+        showNotification('❌ Cannot save: Sync Hub proxy URL not configured in Settings', 'error');
+        // Queue for retry
+        queueForRetry(data, trigger, itemSKU);
         return false;
     }
     
+    // Detect what actually changed (don't send the full 2MB inventory)
+    const changes = getChangedItems();
+    
+    if (!changes.hasChanges) {
+        console.log('[Relay] No changes detected — skipping relay');
+        showNotification('✅ No changes to sync', 'info');
+        return true;
+    }
+    
+    // Collect recent activity log entries (last 10 minutes from this session)
+    const recentActivity = (window.masterData?._activityLog || [])
+        .filter(entry => {
+            if (!entry.timestamp) return false;
+            const age = Date.now() - new Date(entry.timestamp).getTime();
+            return age < 600000; // 10 minutes
+        })
+        .slice(0, 50); // Cap at 50 entries
+    
+    const payload = {
+        action: 'submitChanges',
+        key: apiKey,
+        source: getAppIdentifier(),
+        trigger: trigger + (itemSKU ? ` (${itemSKU})` : ''),
+        changes: {
+            upsertItems: changes.upsertItems,
+            removeItemIds: changes.removeItemIds,
+            globalSettings: changes.globalSettings,
+            activityEntries: recentActivity
+        }
+    };
+    
+    const payloadSize = JSON.stringify(payload).length;
+    console.log(`[Relay] 📤 Sending ${changes.upsertItems.length} changed items, ${changes.removeItemIds.length} removed (${(payloadSize / 1024).toFixed(1)}KB)`);
+    
     try {
-        // Get or create the pending changes file
-        if (!pendingChangesFileHandle) {
-            pendingChangesFileHandle = await masterDirectoryHandle.getFileHandle(
-                'ccd-pending-changes.json', { create: true }
-            );
+        const response = await fetch(proxyUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        
+        // Apps Script always returns 200, check the JSON body for success
+        const result = await response.json();
+        
+        if (result.success) {
+            console.log(`[Relay] ✅ Changes queued: batch ${result.batchId} (${result.queueDepth} in queue)`);
+            showNotification(`✅ Changes saved — syncing to master via Sync Hub (${changes.upsertItems.length} items)`, 'success');
+            
+            // Update snapshot so we don't re-send the same changes
+            captureInventorySnapshot();
+            
+            // Update tracking variables
+            backupConfig.lastBackupTime = Date.now();
+            backupConfig.consecutiveFailures = 0;
+            
+            // Process any queued retries
+            processRetryQueue();
+            
+            return true;
+        } else {
+            console.error('[Relay] ❌ Proxy rejected:', result.error);
+            
+            if (result.code === 'QUEUE_FULL') {
+                showNotification('⚠️ Sync Hub queue full — is Sync Hub running? Changes saved locally.', 'warning');
+            } else if (result.code === 'BATCH_TOO_LARGE') {
+                showNotification('⚠️ Too many changes at once. Try saving more frequently.', 'warning');
+            } else {
+                showNotification('⚠️ Sync failed: ' + (result.error || 'Unknown error') + '. Changes saved locally.', 'warning');
+            }
+            
+            queueForRetry(data, trigger, itemSKU);
+            return false;
         }
         
-        // Add routing metadata so Sync Hub knows where this came from
-        data._pendingMeta = {
-            source: getAppIdentifier(),
-            trigger: trigger + (itemSKU ? ` (${itemSKU})` : ''),
-            savedAt: new Date().toISOString(),
-            hostname: localStorage.getItem('ccd_hostname') || 'Unknown'
-        };
-        
-        const jsonString = JSON.stringify(data, null, 2);
-        const writable = await pendingChangesFileHandle.createWritable();
-        await writable.write(jsonString);
-        await writable.close();
-        
-        console.log(`[Pending] ✅ Wrote ${(jsonString.length / 1024).toFixed(1)}KB to ccd-pending-changes.json`);
-        showNotification('✅ Changes saved — syncing to master via Sync Hub...', 'success');
-        
-        // Update tracking so collision detection doesn't fire
-        loadedMetadataVersion = data._metadata.version;
-        backupConfig.lastBackupTime = Date.now();
-        backupConfig.consecutiveFailures = 0;
-        
-        return true;
     } catch (error) {
-        console.error('[Pending] Failed to write pending changes:', error);
-        showNotification('❌ Failed to save changes: ' + error.message, 'error');
+        console.error('[Relay] ❌ Network error:', error.message);
+        showNotification('⚠️ Cannot reach Sync Hub proxy — changes saved locally, will retry.', 'warning');
+        queueForRetry(data, trigger, itemSKU);
         return false;
+    }
+}
+
+/**
+ * Queue a failed relay attempt for retry
+ */
+function queueForRetry(data, trigger, itemSKU) {
+    // Save to localStorage as safety net
+    try {
+        localStorage.setItem('ccd-pending-relay', JSON.stringify({
+            timestamp: new Date().toISOString(),
+            trigger,
+            itemSKU,
+            inventoryCount: inventory.length
+        }));
+    } catch (e) { /* quota exceeded is fine */ }
+    
+    // Mark that we have pending changes
+    window._hasUnreliayedChanges = true;
+    backupConfig.consecutiveFailures = (backupConfig.consecutiveFailures || 0) + 1;
+}
+
+/**
+ * Retry sending queued changes (called after a successful relay)
+ */
+async function processRetryQueue() {
+    if (window._hasUnreliayedChanges) {
+        window._hasUnreliayedChanges = false;
+        try {
+            localStorage.removeItem('ccd-pending-relay');
+        } catch (e) { /* ok */ }
     }
 }
 
@@ -126492,6 +126686,9 @@ async function loadFromMasterFile() {
         wayfairOHFee = data.wayfairOH || 10;
         treasureMartsRentFee = data.treasureMartsRent || 10;
         
+        // v23.3.15: Capture snapshot for change tracking (remote save relay)
+        captureInventorySnapshot();
+        
         // Initialize masterData for activity logging
         window.masterData = data;
         console.log('🔍 [Load Debug] data._activityLog from file:', data._activityLog?.length || 0, 'entries');
@@ -127111,12 +127308,12 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
         const jsonString = JSON.stringify(data, null, 2);
         
         // ============================================================
-        // v23.3.13: REMOTE SAVE ROUTING
-        // On remote machines, write to pending file instead of MASTER.json
-        // to prevent OneDrive sync conflicts
+        // v23.3.15: REMOTE SAVE ROUTING (HTTP relay via Sync Hub proxy)
+        // Remote machines POST changed items to proxy instead of writing files.
+        // Sync Hub polls the proxy and merges into MASTER.json.
         // ============================================================
-        if (!isPrimaryMachine() && masterDirectoryHandle) {
-            console.log('[Save] Remote machine detected — routing to ccd-pending-changes.json');
+        if (!isPrimaryMachine()) {
+            console.log('[Save] Remote machine detected — routing through Sync Hub proxy');
             backupConfig.backupInProgress = false;
             return await savePendingChanges(data, trigger, itemSKU);
         }

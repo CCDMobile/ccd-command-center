@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.28 - Pending Changes Watcher</title>
+    <title>CCD Sync Hub v3.3.5.26 - Pricing Sync Toggle</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -469,7 +469,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.28 • Build: 2026-02-28 • Pending Changes Watcher</span>
+                <span>CCD Sync Hub v3.3.5.25 • Build: 2026-02-20 • Allocation Sync Independent</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -640,6 +640,23 @@
                         </p>
                         <div id="autoPollStatus" style="margin-top: 12px; padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 0.8rem; display: none;">
                             <span id="autoPollStatusText">Next poll: --</span>
+                        </div>
+                    </div>
+                    
+                    <!-- v2.0.0: Remote Change Relay -->
+                    <div style="background: var(--bg-input); padding: 16px; border-radius: 8px; border-left: 3px solid #10b981;">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+                            <label class="form-checkbox" style="margin: 0;">
+                                <input type="checkbox" id="relayEnabled" onchange="toggleRelayConsumer(this.checked)" checked>
+                                <span style="font-weight: 600;">📡 Remote Change Relay</span>
+                            </label>
+                            <span class="mode-badge" id="relayStatusBadge" style="background: rgba(16,185,129,0.2); color: #10b981; font-size: 0.7rem; padding: 2px 8px; border-radius: 4px;">ENABLED</span>
+                        </div>
+                        <p style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 8px;">
+                            Polls Sync Hub proxy every 15s for inventory changes from remote machines (Mary, etc). Automatically merges into Master JSON.
+                        </p>
+                        <div id="relayStatusPanel" style="padding: 8px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 0.8rem;">
+                            <span id="relayStatusText">⏳ Waiting for master file...</span>
                         </div>
                     </div>
                     
@@ -1732,7 +1749,6 @@
     // MASTER JSON FILE - GLOBAL VARIABLES
     // =============================================
     let masterJsonFileHandle = null;
-    let masterDirectoryHandle = null;  // v3.3.5.28: Folder handle for pending-changes watcher
     window.masterJsonData = null; // Make globally accessible for debugging
     
     // ============================================================
@@ -3372,32 +3388,6 @@
             // Try to auto-reconnect to Master JSON (needed for shared queue)
             await tryReconnectMasterJson();
             
-            // v3.3.5.28: Try to restore directory handle for pending-changes watcher
-            if (!masterDirectoryHandle) {
-                try {
-                    const dirHandle = await loadFileHandle('masterDirectory');
-                    if (dirHandle) {
-                        const perm = await dirHandle.queryPermission({ mode: 'readwrite' });
-                        if (perm === 'granted') {
-                            masterDirectoryHandle = dirHandle;
-                            console.log('[Master Directory] ✅ Auto-reconnected:', dirHandle.name);
-                        } else {
-                            try {
-                                const newPerm = await dirHandle.requestPermission({ mode: 'readwrite' });
-                                if (newPerm === 'granted') {
-                                    masterDirectoryHandle = dirHandle;
-                                    console.log('[Master Directory] ✅ Permission granted:', dirHandle.name);
-                                }
-                            } catch (e) {
-                                console.log('[Master Directory] Permission request failed — select folder to enable pending-changes watcher');
-                            }
-                        }
-                    }
-                } catch (e) {
-                    console.log('[Master Directory] No saved directory handle');
-                }
-            }
-            
             // Try to auto-reconnect to SKU Mappings file (v3.3.5.9)
             await tryReconnectSkuMappings();
             
@@ -3452,9 +3442,6 @@
             
             console.log('[Init] CCD Sync Hub v3.3.5.25 initialized successfully - All Features Active');
             addLog('CCD Sync Hub v3.3.5.25 initialized - Allocation Sync Independent', 'success');
-            
-            // v3.3.5.28: Start pending-changes watcher (always runs, independent of auto-push)
-            startPendingChangesWatcher();
             
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
@@ -6136,56 +6123,21 @@
                 return;
             }
             
-            // v3.3.5.28: Use directory picker to get folder access (needed for pending-changes watcher)
-            let fileHandle = null;
-            let dirHandle = null;
+            const options = {
+                types: [{
+                    description: 'JSON Files',
+                    accept: { 'application/json': ['.json'] }
+                }],
+                multiple: false
+            };
             
-            try {
-                dirHandle = await window.showDirectoryPicker({
-                    id: 'ccd-master-folder',
-                    mode: 'readwrite',
-                    startIn: 'documents'
-                });
-                
-                // Find master file in directory
-                const expectedNames = ['ccd-inventory-MASTER.json', 'ccd-inventory-master.json'];
-                for (const name of expectedNames) {
-                    try { fileHandle = await dirHandle.getFileHandle(name); break; } catch (e) { /* next */ }
-                }
-                
-                if (!fileHandle) {
-                    for await (const entry of dirHandle.values()) {
-                        if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER') && !entry.name.includes('pending') && !entry.name.includes('Mary')) {
-                            fileHandle = await dirHandle.getFileHandle(entry.name);
-                            break;
-                        }
-                    }
-                }
-                
-                if (!fileHandle) {
-                    toast('Could not find MASTER.json in selected folder', 'error');
-                    return;
-                }
-            } catch (dirError) {
-                if (dirError.name === 'AbortError') return;
-                console.warn('[Master JSON] Directory picker failed, falling back to file picker:', dirError.message);
-                const [fh] = await window.showOpenFilePicker({
-                    types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }],
-                    multiple: false
-                });
-                fileHandle = fh;
-            }
-            
+            const [fileHandle] = await window.showOpenFilePicker(options);
             masterJsonFileHandle = fileHandle;
-            masterDirectoryHandle = dirHandle;
             
             // Save to IndexedDB for persistence
             try {
                 await saveFileHandle('masterJson', fileHandle);
-                if (dirHandle) {
-                    await saveFileHandle('masterDirectory', dirHandle);
-                }
-                console.log('[Master JSON] File and directory handles saved to IndexedDB');
+                console.log('[Master JSON] File handle saved to IndexedDB');
             } catch (e) {
                 console.warn('[Master JSON] Could not save file handle:', e);
             }
@@ -9060,6 +9012,19 @@
     /**
      * Toggle Auto-Poll feature
      */
+    // v2.0.0: Toggle Remote Change Relay
+    function toggleRelayConsumer(enabled) {
+        if (enabled) {
+            startRelayConsumer();
+            const badge = document.getElementById('relayStatusBadge');
+            if (badge) { badge.style.background = 'rgba(16,185,129,0.2)'; badge.style.color = '#10b981'; badge.textContent = 'ENABLED'; }
+        } else {
+            stopRelayConsumer();
+            const badge = document.getElementById('relayStatusBadge');
+            if (badge) { badge.style.background = 'rgba(239,68,68,0.2)'; badge.style.color = 'var(--error)'; badge.textContent = 'DISABLED'; }
+        }
+    }
+    
     function toggleAutoPoll() {
         const enabled = document.getElementById('autoPollEnabled').checked;
         state.settings.autoPollEnabled = enabled;
@@ -9140,102 +9105,6 @@
      * this watcher decides whether to process them based on autoPushEnabled.
      * This is completely independent of "Enable auto-processing" (order processing).
      */
-    // ================================================================
-    // v3.3.5.28: PENDING-CHANGES WATCHER (always runs, independent of auto-push)
-    // Picks up saves from remote machines (Mary's laptop) via ccd-pending-changes.json
-    // ================================================================
-    let pendingChangesInterval = null;
-    
-    function startPendingChangesWatcher() {
-        if (pendingChangesInterval) {
-            clearInterval(pendingChangesInterval);
-        }
-        
-        pendingChangesInterval = setInterval(async () => {
-            if (!masterDirectoryHandle || !masterJsonFileHandle) return;
-            
-            try {
-                let pendingFileHandle = null;
-                try {
-                    pendingFileHandle = await masterDirectoryHandle.getFileHandle('ccd-pending-changes.json');
-                } catch (e) { /* file doesn't exist yet — normal */ }
-                
-                if (!pendingFileHandle) return;
-                
-                const pendingFile = await pendingFileHandle.getFile();
-                if (pendingFile.size <= 10) return; // Empty or just "{}"
-                
-                const pendingText = await pendingFile.text();
-                const pendingData = JSON.parse(pendingText);
-                
-                // Check if it has actual data (not empty or already cleared)
-                if (!pendingData || !pendingData.inventory || pendingData.inventory.length === 0) return;
-                
-                console.log('[Pending] 📥 Found remote changes:', pendingFile.size, 'bytes,', pendingData.inventory.length, 'items');
-                
-                // Remove routing metadata
-                delete pendingData._pendingMeta;
-                
-                // Read current master
-                const masterFile = await masterJsonFileHandle.getFile();
-                const masterText = await masterFile.text();
-                const currentMaster = JSON.parse(masterText);
-                
-                // Merge: pending data IS the full master from remote machine
-                const pendingVersion = pendingData.metadata?.version || pendingData._metadata?.version || 0;
-                const currentVersion = currentMaster.metadata?.version || currentMaster._metadata?.version || 0;
-                const newVersion = Math.max(pendingVersion, currentVersion) + 1;
-                
-                // Update version
-                if (pendingData.metadata) pendingData.metadata.version = newVersion;
-                if (pendingData._metadata) pendingData._metadata.version = newVersion;
-                
-                // Merge activity logs from both sources
-                const pendingLogs = pendingData._activityLog || pendingData.activityLog || [];
-                const currentLogs = currentMaster._activityLog || currentMaster.activityLog || [];
-                const mergedLogMap = new Map();
-                [...currentLogs, ...pendingLogs].forEach(log => {
-                    if (log && log.id) mergedLogMap.set(log.id, log);
-                    else if (log && log.timestamp) mergedLogMap.set(log.timestamp, log);
-                });
-                const mergedLogs = [...mergedLogMap.values()]
-                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                    .slice(0, 5000);
-                
-                if (pendingData._activityLog) pendingData._activityLog = mergedLogs;
-                if (pendingData.activityLog) pendingData.activityLog = mergedLogs;
-                
-                // Update lastModifiedBy
-                if (pendingData.metadata) {
-                    pendingData.metadata.lastModified = new Date().toISOString();
-                    pendingData.metadata.lastModifiedBy = 'Sync Hub (merged from remote)';
-                }
-                
-                // Write merged data to MASTER.json
-                const writable = await masterJsonFileHandle.createWritable();
-                await writable.write(JSON.stringify(pendingData, null, 2));
-                await writable.close();
-                
-                // Clear pending file
-                const clearWritable = await pendingFileHandle.createWritable();
-                await clearWritable.write('{}');
-                await clearWritable.close();
-                
-                // Reload master in Sync Hub
-                await loadMasterJson();
-                
-                console.log(`[Pending] ✅ Merged remote changes → v${newVersion}`);
-                addLog(`Merged remote changes into MASTER.json (v${newVersion})`, 'success');
-                toast(`📥 Remote changes merged into MASTER.json`, 'success');
-                
-            } catch (pendingErr) {
-                console.warn('[Pending] Error checking pending changes:', pendingErr.message);
-            }
-        }, 10000); // Check every 10 seconds
-        
-        console.log('[Pending] ✅ Pending-changes watcher started (10s interval)');
-    }
-    
     function startAutoPushWatcher() {
         if (state.autoPushWatchInterval) {
             clearInterval(state.autoPushWatchInterval);
@@ -9246,7 +9115,6 @@
         
         // Check for changes every 10 seconds (faster for real-time sync)
         state.autoPushWatchInterval = setInterval(async () => {
-            
             if (!state.settings.autoPushEnabled) return;
             
             try {
@@ -11985,6 +11853,259 @@
         toast(`📊 Comparison: ${channelMatchInvDiff} spacing fixes, ${mismatchCount} total differences, ${matchCount} exact matches, ${rows.length - 1} rows`, 'success');
         console.log(`[Channel SKU Comparison] Exported ${rows.length - 1} rows: ${channelMatchInvDiff} spacing fixes, ${mismatchCount} total diffs, ${matchCount} exact matches`);
     }
+
+    // =============================================
+    // v2.0.0: REMOTE CHANGE RELAY CONSUMER
+    // Polls the Sync Hub proxy for pending inventory
+    // changes submitted by remote machines (e.g., Mary).
+    // Merges changes into MASTER.json and acknowledges.
+    // =============================================
+    
+    let _relayPollInterval = null;
+    const RELAY_POLL_SECONDS = 15;
+    let _relayEnabled = false;
+    let _relayStats = { processed: 0, lastPoll: null, lastMerge: null, errors: 0 };
+    
+    /**
+     * Start polling the proxy for remote changes
+     */
+    function startRelayConsumer() {
+        if (_relayPollInterval) {
+            clearInterval(_relayPollInterval);
+        }
+        
+        _relayEnabled = true;
+        console.log(`[Relay] ▶️ Started polling every ${RELAY_POLL_SECONDS}s for remote changes`);
+        addLog(`🔄 Remote change relay started (polling every ${RELAY_POLL_SECONDS}s)`, 'info');
+        
+        // Poll immediately, then on interval
+        pollForRemoteChanges();
+        _relayPollInterval = setInterval(pollForRemoteChanges, RELAY_POLL_SECONDS * 1000);
+        
+        updateRelayUI();
+    }
+    
+    /**
+     * Stop polling
+     */
+    function stopRelayConsumer() {
+        if (_relayPollInterval) {
+            clearInterval(_relayPollInterval);
+            _relayPollInterval = null;
+        }
+        _relayEnabled = false;
+        console.log('[Relay] ⏹️ Stopped polling');
+        addLog('⏹️ Remote change relay stopped', 'info');
+        updateRelayUI();
+    }
+    
+    /**
+     * Poll the proxy for pending changes and merge them
+     */
+    async function pollForRemoteChanges() {
+        const proxyUrl = state.settings?.syncHubProxyUrl;
+        const apiKey = state.settings?.ccdApiKey;
+        
+        if (!proxyUrl || !apiKey) {
+            return; // Silently skip if not configured
+        }
+        
+        if (!masterJsonFileHandle || !window.masterJsonData) {
+            return; // No master file connected
+        }
+        
+        try {
+            const url = `${proxyUrl}?action=getChanges&key=${encodeURIComponent(apiKey)}`;
+            const response = await fetch(url);
+            const result = await response.json();
+            
+            _relayStats.lastPoll = new Date().toISOString();
+            
+            if (!result.success || !result.changes || result.changes.length === 0) {
+                return; // No pending changes
+            }
+            
+            console.log(`[Relay] 📥 Found ${result.changes.length} pending change batch(es)`);
+            
+            // Process each batch in order
+            const processedIds = [];
+            
+            for (const batch of result.changes) {
+                try {
+                    await mergeRemoteBatch(batch);
+                    processedIds.push(batch.id);
+                    _relayStats.processed++;
+                    console.log(`[Relay] ✅ Merged batch ${batch.id} from ${batch.source}`);
+                } catch (mergeErr) {
+                    console.error(`[Relay] ❌ Failed to merge batch ${batch.id}:`, mergeErr);
+                    _relayStats.errors++;
+                    // Don't ack this batch — it will be retried next poll
+                }
+            }
+            
+            // Acknowledge processed batches
+            if (processedIds.length > 0) {
+                try {
+                    const ackUrl = `${proxyUrl}?action=ackChanges&key=${encodeURIComponent(apiKey)}&ids=${processedIds.join(',')}`;
+                    await fetch(ackUrl);
+                    console.log(`[Relay] ✅ Acknowledged ${processedIds.length} batch(es)`);
+                } catch (ackErr) {
+                    console.warn('[Relay] ⚠️ Ack failed (batches will be reprocessed):', ackErr.message);
+                }
+                
+                // Save the merged master file
+                const saveResult = await saveMasterJson({
+                    isAutoProcess: true,
+                    actionDescription: `Merged ${processedIds.length} remote change batch(es) from relay`
+                });
+                
+                if (saveResult === false || (saveResult && saveResult.saved === false)) {
+                    console.warn('[Relay] ⚠️ Master save after merge had issues — will retry');
+                } else {
+                    _relayStats.lastMerge = new Date().toISOString();
+                    
+                    // Reload UI to reflect merged changes
+                    analyzeMasterJson();
+                    updateMasterJsonUI();
+                    
+                    const totalItems = processedIds.reduce((sum, id) => {
+                        const batch = result.changes.find(b => b.id === id);
+                        return sum + (batch ? (batch.upsertItems || []).length + (batch.removeItemIds || []).length : 0);
+                    }, 0);
+                    
+                    addLog(`✅ Merged ${totalItems} item change(s) from ${processedIds.length} remote batch(es)`, 'success');
+                    toast(`📥 Merged ${totalItems} remote change(s)`, 'success');
+                }
+            }
+            
+            updateRelayUI();
+            
+        } catch (error) {
+            // Network errors are expected when proxy is unreachable — don't spam logs
+            if (_relayStats.errors % 20 === 0) {
+                console.warn('[Relay] Poll error (every 20th logged):', error.message);
+            }
+            _relayStats.errors++;
+        }
+    }
+    
+    /**
+     * Merge a single remote change batch into the in-memory master data
+     */
+    async function mergeRemoteBatch(batch) {
+        const masterInventory = window.masterJsonData.inventory || [];
+        
+        // Build index for fast lookup
+        const indexById = {};
+        for (let i = 0; i < masterInventory.length; i++) {
+            if (masterInventory[i] && masterInventory[i].id) {
+                indexById[masterInventory[i].id] = i;
+            }
+        }
+        
+        // Apply upserts (update existing or insert new)
+        const upsertItems = batch.upsertItems || [];
+        let updated = 0, inserted = 0;
+        
+        for (const item of upsertItems) {
+            if (!item || !item.id) continue;
+            
+            const existingIdx = indexById[item.id];
+            if (existingIdx !== undefined) {
+                masterInventory[existingIdx] = item;
+                updated++;
+            } else {
+                masterInventory.push(item);
+                indexById[item.id] = masterInventory.length - 1;
+                inserted++;
+            }
+        }
+        
+        // Apply removals
+        const removeIds = batch.removeItemIds || [];
+        if (removeIds.length > 0) {
+            const removeSet = new Set(removeIds);
+            window.masterJsonData.inventory = masterInventory.filter(item => 
+                !item || !item.id || !removeSet.has(item.id)
+            );
+        }
+        
+        // Apply global settings if present
+        if (batch.globalSettings) {
+            const gs = batch.globalSettings;
+            if (gs.surcharge !== undefined) window.masterJsonData.surcharge = gs.surcharge;
+            if (gs.etsyOH !== undefined) window.masterJsonData.etsyOH = gs.etsyOH;
+            if (gs.wixOH !== undefined) window.masterJsonData.wixOH = gs.wixOH;
+            if (gs.wayfairOH !== undefined) window.masterJsonData.wayfairOH = gs.wayfairOH;
+            if (gs.treasureMartsRent !== undefined) window.masterJsonData.treasureMartsRent = gs.treasureMartsRent;
+        }
+        
+        // Merge activity entries
+        const newActivities = batch.activityEntries || [];
+        if (newActivities.length > 0) {
+            if (!window.masterJsonData._activityLog) {
+                window.masterJsonData._activityLog = [];
+            }
+            const existingIds = new Set(
+                window.masterJsonData._activityLog.map(e => e.id || e.timestamp)
+            );
+            for (const entry of newActivities) {
+                const key = entry.id || entry.timestamp;
+                if (!existingIds.has(key)) {
+                    window.masterJsonData._activityLog.unshift(entry);
+                    existingIds.add(key);
+                }
+            }
+            // Cap activity log
+            if (window.masterJsonData._activityLog.length > 5000) {
+                window.masterJsonData._activityLog = window.masterJsonData._activityLog.slice(0, 5000);
+            }
+        }
+        
+        // Add to change log
+        if (!window.masterJsonData._changeLog) window.masterJsonData._changeLog = [];
+        window.masterJsonData._changeLog.unshift({
+            timestamp: new Date().toISOString(),
+            type: 'relay_merge',
+            source: batch.source,
+            trigger: batch.trigger,
+            details: `Merged: ${updated} updated, ${inserted} new, ${removeIds.length} removed`
+        });
+        
+        console.log(`[Relay] Batch ${batch.id}: ${updated} updated, ${inserted} inserted, ${removeIds.length} removed`);
+    }
+    
+    /**
+     * Update the relay status indicator in the UI
+     */
+    function updateRelayUI() {
+        const el = document.getElementById('relayStatusText');
+        if (!el) return;
+        
+        if (_relayEnabled) {
+            el.innerHTML = `🔄 <span style="color: var(--success);">Active</span> — ${_relayStats.processed} merged, last poll: ${_relayStats.lastPoll ? new Date(_relayStats.lastPoll).toLocaleTimeString() : 'never'}`;
+        } else {
+            el.innerHTML = `⏹️ <span style="color: var(--text-dim);">Disabled</span>`;
+        }
+    }
+    
+    // Auto-start relay consumer when master file is loaded
+    const _origInit = typeof init === 'function' ? init : null;
+    
+    // Hook into master file load to start relay
+    const _origLoadMasterJson = loadMasterJson;
+    loadMasterJson = async function() {
+        const result = await _origLoadMasterJson.apply(this, arguments);
+        
+        // Start relay consumer after master file is loaded
+        if (window.masterJsonData && !_relayPollInterval) {
+            setTimeout(() => {
+                startRelayConsumer();
+            }, 3000); // Wait 3s for other init to complete
+        }
+        
+        return result;
+    };
 
     // =============================================
     // START APP
