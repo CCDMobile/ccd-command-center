@@ -125594,7 +125594,8 @@ function captureInventorySnapshot() {
     for (let i = 0; i < inventory.length; i++) {
         const item = inventory[i];
         if (item && item.id) {
-            window._inventorySnapshot[item.id] = JSON.stringify(item);
+            // Always use string keys for consistent comparison
+            window._inventorySnapshot[String(item.id)] = JSON.stringify(item);
         }
     }
     window._settingsSnapshot = JSON.stringify({
@@ -125618,10 +125619,11 @@ function getChangedItems() {
     for (let i = 0; i < inventory.length; i++) {
         const item = inventory[i];
         if (!item || !item.id) continue;
-        currentIds.add(item.id);
+        const strId = String(item.id);  // Consistent string comparison
+        currentIds.add(strId);
         
         const currentJson = JSON.stringify(item);
-        const snapshotJson = window._inventorySnapshot[item.id];
+        const snapshotJson = window._inventorySnapshot[strId];
         
         if (!snapshotJson || snapshotJson !== currentJson) {
             upsertItems.push(item);
@@ -125657,27 +125659,21 @@ function getChangedItems() {
 }
 
 /**
- * Get the Sync Hub proxy URL from CONFIG or localStorage
+ * Get the Sync Hub proxy URL from CONFIG (single source of truth)
  */
 function getSyncHubProxyUrl() {
-    // Try CONFIG first
-    if (window.configData?.settings?.proxyUrls?.syncHub) {
-        return window.configData.settings.proxyUrls.syncHub;
-    }
-    if (window.configData?.syncHubProxyUrl) {
-        return window.configData.syncHubProxyUrl;
-    }
-    // Then localStorage
-    return localStorage.getItem('syncHubUrl') || localStorage.getItem('syncHubProxyUrl') || '';
+    return window.configData?.settings?.proxyUrls?.syncHub 
+        || window.configData?.syncHubProxyUrl 
+        || '';
 }
 
 /**
- * Get the API key for proxy authentication
+ * Get the API key from CONFIG (single source of truth)
  */
 function getApiKey() {
-    if (window.configData?.settings?.ccdApiKey) return window.configData.settings.ccdApiKey;
-    if (window.configData?.ccdApiKey) return window.configData.ccdApiKey;
-    return localStorage.getItem('ccdApiKey') || '';
+    return window.configData?.settings?.ccdApiKey 
+        || window.configData?.ccdApiKey 
+        || '';
 }
 
 /**
@@ -125733,7 +125729,7 @@ async function savePendingChanges(data, trigger, itemSKU) {
     try {
         const response = await fetch(proxyUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'text/plain' },
             body: JSON.stringify(payload)
         });
         
