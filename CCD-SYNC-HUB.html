@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v3.3.5.28 - Pricing Sync Toggle</title>
+    <title>CCD Sync Hub v3.3.5.28 - Pending Changes Watcher</title>
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     
     <!-- Shared File Helper (inline for standalone compatibility) -->
@@ -469,7 +469,7 @@
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.25 • Build: 2026-02-20 • Allocation Sync Independent</span>
+                <span>CCD Sync Hub v3.3.5.28 • Build: 2026-02-28 • Pending Changes Watcher</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -1732,7 +1732,7 @@
     // MASTER JSON FILE - GLOBAL VARIABLES
     // =============================================
     let masterJsonFileHandle = null;
-    let masterDirectoryHandle = null; // v3.3.5.28: For pending-changes file access
+    let masterDirectoryHandle = null;  // v3.3.5.28: Folder handle for pending-changes watcher
     window.masterJsonData = null; // Make globally accessible for debugging
     
     // ============================================================
@@ -3276,17 +3276,6 @@
             if (permission === 'granted') {
                 masterJsonFileHandle = handle;
                 await loadMasterJson();
-                // v3.3.5.28: Also restore directory handle for pending-changes watcher
-                try {
-                    const dirHandle = await loadFileHandle('masterDirectory');
-                    if (dirHandle) {
-                        const dirPerm = await dirHandle.queryPermission({ mode: 'readwrite' });
-                        if (dirPerm === 'granted') {
-                            masterDirectoryHandle = dirHandle;
-                            console.log('[Master JSON] ✅ Directory handle restored for pending-changes watcher');
-                        }
-                    }
-                } catch (de) { console.log('[Master JSON] Directory handle not available:', de.message); }
                 console.log('[Master JSON] ✅ Auto-reconnected successfully');
                 toast('Master JSON auto-connected', 'success');
                 return true;
@@ -3363,7 +3352,7 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.28 - Remote Save Routing...');
+            console.log('[Init] Starting CCD Sync Hub v3.3.5.25 - Allocation Sync Independent...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
@@ -3382,6 +3371,32 @@
             
             // Try to auto-reconnect to Master JSON (needed for shared queue)
             await tryReconnectMasterJson();
+            
+            // v3.3.5.28: Try to restore directory handle for pending-changes watcher
+            if (!masterDirectoryHandle) {
+                try {
+                    const dirHandle = await loadFileHandle('masterDirectory');
+                    if (dirHandle) {
+                        const perm = await dirHandle.queryPermission({ mode: 'readwrite' });
+                        if (perm === 'granted') {
+                            masterDirectoryHandle = dirHandle;
+                            console.log('[Master Directory] ✅ Auto-reconnected:', dirHandle.name);
+                        } else {
+                            try {
+                                const newPerm = await dirHandle.requestPermission({ mode: 'readwrite' });
+                                if (newPerm === 'granted') {
+                                    masterDirectoryHandle = dirHandle;
+                                    console.log('[Master Directory] ✅ Permission granted:', dirHandle.name);
+                                }
+                            } catch (e) {
+                                console.log('[Master Directory] Permission request failed — select folder to enable pending-changes watcher');
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.log('[Master Directory] No saved directory handle');
+                }
+            }
             
             // Try to auto-reconnect to SKU Mappings file (v3.3.5.9)
             await tryReconnectSkuMappings();
@@ -4649,9 +4664,6 @@
                         qty: item.product?.qty,
                         result: result
                     });
-                    
-                    // Phase 1.3: Write success result to ccd_sync_hub_results for Channel Manager feedback
-                    writeSyncHubResult(item, 'success', result.message || 'Success');
                 } else {
                     throw new Error(result.error || 'Unknown error');
                 }
@@ -4692,9 +4704,6 @@
                     error: error.message,
                     willRetry: state.settings.retryFailedEnabled && item.retryCount < state.settings.maxRetries
                 });
-                
-                // Phase 1.3: Write failure result to ccd_sync_hub_results for Channel Manager feedback
-                writeSyncHubResult(item, 'failed', error.message);
                 
                 // Auto-retry if enabled and under max retries
                 if (state.settings.retryFailedEnabled && item.retryCount < state.settings.maxRetries) {
@@ -4787,40 +4796,6 @@
                 return await pushToWayfair(product, fields, action);
             default:
                 return { success: false, error: 'Unknown channel: ' + channel };
-        }
-    }
-    
-    /**
-     * Phase 1.3: Write push result to ccd_sync_hub_results for Channel Manager feedback
-     * Keeps last 50 results. Channel Manager polls this key to show real-time status.
-     */
-    function writeSyncHubResult(item, status, message) {
-        try {
-            let results = [];
-            const existing = localStorage.getItem('ccd_sync_hub_results');
-            if (existing) {
-                results = JSON.parse(existing);
-                if (!Array.isArray(results)) results = [];
-            }
-            
-            results.unshift({
-                id: item.id,
-                sku: item.product?.sku || 'unknown',
-                channel: item.channel,
-                status: status,
-                message: message,
-                timestamp: new Date().toISOString()
-            });
-            
-            // Keep last 50 results
-            if (results.length > 50) {
-                results = results.slice(0, 50);
-            }
-            
-            localStorage.setItem('ccd_sync_hub_results', JSON.stringify(results));
-            console.log(`[Results] Wrote ${status} result for ${item.product?.sku} → ${item.channel}`);
-        } catch (e) {
-            console.error('[Results] Failed to write result:', e);
         }
     }
 
@@ -5091,7 +5066,7 @@
     }
 
     async function updateWixInventory(product, url, key) {
-        // v3.3.5.28: Reject push if no valid Wix product ID — prevents false success
+        // v3.3.5.25: Reject push if no valid Wix product ID — prevents false success
         const productId = product.wixProductId || product.productId;
         if (!productId) {
             const msg = `No Wix product ID for SKU ${product.sku} — skipping inventory push. Map this product in Inventory System or run Channel ID Sync.`;
@@ -5099,26 +5074,13 @@
             addLog(`⚠️ ${msg}`, 'warning');
             return { success: false, error: msg };
         }
-        
-        // v3.3.5.28: Include variantId — Wix inventory API requires it
-        const params = {
+        return await corsSafePost(url, {
             key: key,
             action: 'updateInventory',
             productId: productId,
             sku: product.sku,
             quantity: parseInt(product.qty || product.wixQty || product.quantity || 0)
-        };
-        
-        // Add variantId if stored (set by Channel ID Sync)
-        const variantId = product.wixVariantId || product.variantId;
-        if (variantId) {
-            params.variantId = variantId;
-            console.log(`[Wix Push] Including variantId: ${variantId} for ${product.sku}`);
-        } else {
-            console.warn(`[Wix Push] ⚠️ No variantId for ${product.sku} — proxy will need to look it up`);
-        }
-        
-        return await corsSafePost(url, params);
+        });
     }
 
     /**
@@ -6171,7 +6133,7 @@
                 return;
             }
             
-            // v3.3.5.28: Use directory picker to get folder access (for pending-changes watcher)
+            // v3.3.5.28: Use directory picker to get folder access (needed for pending-changes watcher)
             let fileHandle = null;
             let dirHandle = null;
             
@@ -6189,9 +6151,8 @@
                 }
                 
                 if (!fileHandle) {
-                    // Find any MASTER JSON file
                     for await (const entry of dirHandle.values()) {
-                        if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER') && !entry.name.includes('pending')) {
+                        if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER') && !entry.name.includes('pending') && !entry.name.includes('Mary')) {
                             fileHandle = await dirHandle.getFileHandle(entry.name);
                             break;
                         }
@@ -6199,13 +6160,12 @@
                 }
                 
                 if (!fileHandle) {
-                    toast('Could not find MASTER.json in the selected folder', 'error');
+                    toast('Could not find MASTER.json in selected folder', 'error');
                     return;
                 }
             } catch (dirError) {
                 if (dirError.name === 'AbortError') return;
-                // Fallback to file picker
-                console.warn('Directory picker failed, falling back to file picker');
+                console.warn('[Master JSON] Directory picker failed, falling back to file picker:', dirError.message);
                 const [fh] = await window.showOpenFilePicker({
                     types: [{ description: 'JSON Files', accept: { 'application/json': ['.json'] } }],
                     multiple: false
@@ -6219,7 +6179,9 @@
             // Save to IndexedDB for persistence
             try {
                 await saveFileHandle('masterJson', fileHandle);
-                if (dirHandle) await saveFileHandle('masterDirectory', dirHandle);
+                if (dirHandle) {
+                    await saveFileHandle('masterDirectory', dirHandle);
+                }
                 console.log('[Master JSON] File and directory handles saved to IndexedDB');
             } catch (e) {
                 console.warn('[Master JSON] Could not save file handle:', e);
@@ -6231,13 +6193,11 @@
             
             await loadMasterJson();
             
-            if (dirHandle) {
-                console.log('[Master JSON] ✅ Directory access granted — pending-changes watcher active');
-                addLog('📁 Master folder connected — remote save routing active', 'success');
-            }
-            
         } catch (error) {
-            if (error.name === 'AbortError') return;
+            if (error.name === 'AbortError') {
+                // User cancelled - not an error
+                return;
+            }
             console.error('[Master JSON] Select error:', error);
             toast(`Error selecting file: ${error.message}`, 'error');
             logError(`Master JSON select: ${error.message}`);
@@ -9188,153 +9148,98 @@
         // Check for changes every 10 seconds (faster for real-time sync)
         state.autoPushWatchInterval = setInterval(async () => {
             
-            // =====================================================
-            // Phase 1.2: CHECK CHANNEL MANAGER INBOX (ALWAYS)
-            // This runs regardless of autoPushEnabled because
-            // Channel Manager explicitly requested these pushes.
-            // =====================================================
-            try {
-                const inboxJson = localStorage.getItem('ccd_sync_hub_inbox');
-                if (inboxJson) {
-                    const inbox = JSON.parse(inboxJson);
-                    if (Array.isArray(inbox) && inbox.length > 0) {
-                        console.log(`[Inbox] 📬 Received ${inbox.length} job(s) from Channel Manager`);
-                        addAutoSyncLogEntry(`📬 Received ${inbox.length} job(s) from Channel Manager`);
-                        
-                        // Clear inbox immediately to prevent duplicate processing
-                        localStorage.setItem('ccd_sync_hub_inbox', '[]');
-                        
-                        // Add each inbox item to Sync Hub's queue
-                        for (const inboxItem of inbox) {
-                            const queueItem = {
-                                id: inboxItem.id || ('cm_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4)),
-                                channel: inboxItem.channel,
-                                action: inboxItem.action || 'update',
-                                product: inboxItem.product || {},
-                                fields: inboxItem.fields || {},
-                                reason: inboxItem.reason || 'Channel Manager push',
-                                source: inboxItem.source || 'channel-manager',
-                                status: 'pending',
-                                timestamp: inboxItem.timestamp || new Date().toISOString()
-                            };
-                            
-                            // Map Channel Manager fields to Sync Hub expected format
-                            if (queueItem.channel === 'etsy' && queueItem.product.listingId) {
-                                queueItem.product.etsyListingId = queueItem.product.listingId;
-                            }
-                            if (queueItem.channel === 'wix' && queueItem.product.productId) {
-                                queueItem.product.wixProductId = queueItem.product.productId;
-                            }
-                            
-                            addToQueue(queueItem);
-                        }
-                        
-                        // Auto-process inbox items immediately
-                        const inboxItemIds = inbox.map(i => i.id).filter(Boolean);
-                        if (inboxItemIds.length > 0) {
-                            setTimeout(() => processQueue(inboxItemIds), 500);
-                        }
-                    }
-                }
-            } catch (inboxError) {
-                console.error('[Inbox] Error processing Channel Manager inbox:', inboxError);
-            }
-            // =====================================================
-            // END Phase 1.2 INBOX CHECK
-            // =====================================================
-            
-            // =====================================================
-            // v3.3.5.28: CHECK PENDING CHANGES FILE (ALWAYS)
-            // Remote Inventory System writes to ccd-pending-changes.json
-            // instead of MASTER.json to prevent OneDrive conflicts.
-            // =====================================================
-            if (masterDirectoryHandle) {
+            // ================================================================
+            // v3.3.5.28: PENDING-CHANGES FILE WATCHER (runs always, not gated by autoPush)
+            // Picks up saves from remote machines (Mary's laptop)
+            // ================================================================
+            if (masterDirectoryHandle && masterJsonFileHandle) {
                 try {
-                    let pendingHandle = null;
+                    let pendingFileHandle = null;
                     try {
-                        pendingHandle = await masterDirectoryHandle.getFileHandle('ccd-pending-changes.json');
-                    } catch (e) { /* file doesn't exist yet - normal */ }
+                        pendingFileHandle = await masterDirectoryHandle.getFileHandle('ccd-pending-changes.json');
+                    } catch (e) { /* file doesn't exist yet — normal */ }
                     
-                    if (pendingHandle) {
-                        const pendingFile = await pendingHandle.getFile();
-                        // Only process if file has content (>10 bytes) and was recently modified
-                        if (pendingFile.size > 10) {
+                    if (pendingFileHandle) {
+                        const pendingFile = await pendingFileHandle.getFile();
+                        if (pendingFile.size > 10) { // More than just "{}"
                             const pendingText = await pendingFile.text();
                             const pendingData = JSON.parse(pendingText);
                             
-                            // Check if this is new data we haven't processed yet
-                            const pendingVersion = pendingData._metadata?.version || 0;
-                            const pendingSource = pendingData._pendingMeta?.source || 'unknown';
-                            const currentVersion = window.masterJsonData?._metadata?.version || 0;
-                            
-                            if (pendingVersion > 0 && pendingData._pendingMeta) {
-                                console.log(`[Pending] 📬 Found pending changes from ${pendingSource} (v${pendingVersion})`);
-                                addAutoSyncLogEntry(`📬 Processing pending changes from ${pendingSource}`);
+                            // Check if it has actual data (not empty or already cleared)
+                            if (pendingData && pendingData.inventory && pendingData.inventory.length > 0) {
+                                console.log('[Pending] 📥 Found remote changes:', pendingFile.size, 'bytes');
                                 
-                                // Apply pending data to master
-                                // The pending file IS the full master data — just merge metadata
-                                const mergedData = pendingData;
-                                delete mergedData._pendingMeta; // Remove routing metadata
+                                // Remove routing metadata
+                                delete pendingData._pendingMeta;
                                 
-                                // Increment version past both
-                                mergedData._metadata.version = Math.max(pendingVersion, currentVersion) + 1;
-                                mergedData._metadata.lastModified = new Date().toISOString();
-                                mergedData._metadata.lastModifiedBy = `Sync Hub (merged from ${pendingSource})`;
+                                // Read current master
+                                const masterFile = await masterJsonFileHandle.getFile();
+                                const masterText = await masterFile.text();
+                                const currentMaster = JSON.parse(masterText);
                                 
-                                // Merge activity logs from current master and pending
-                                if (window.masterJsonData?._activityLog) {
-                                    const currentLog = window.masterJsonData._activityLog || [];
-                                    const pendingLog = mergedData._activityLog || [];
-                                    const seen = new Set();
-                                    const merged = [];
-                                    for (const e of [...pendingLog, ...currentLog]) {
-                                        const key = e.id || e.timestamp;
-                                        if (!seen.has(key)) { seen.add(key); merged.push(e); }
-                                    }
-                                    merged.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-                                    mergedData._activityLog = merged.slice(0, 5000);
+                                // Merge: pending data IS the full master from remote machine
+                                // Use pending as base, merge activity logs
+                                const pendingVersion = pendingData.metadata?.version || pendingData._metadata?.version || 0;
+                                const currentVersion = currentMaster.metadata?.version || currentMaster._metadata?.version || 0;
+                                const newVersion = Math.max(pendingVersion, currentVersion) + 1;
+                                
+                                // Update version
+                                if (pendingData.metadata) pendingData.metadata.version = newVersion;
+                                if (pendingData._metadata) pendingData._metadata.version = newVersion;
+                                
+                                // Merge activity logs from both sources
+                                const pendingLogs = pendingData._activityLog || pendingData.activityLog || [];
+                                const currentLogs = currentMaster._activityLog || currentMaster.activityLog || [];
+                                const mergedLogMap = new Map();
+                                [...currentLogs, ...pendingLogs].forEach(log => {
+                                    if (log && log.id) mergedLogMap.set(log.id, log);
+                                    else if (log && log.timestamp) mergedLogMap.set(log.timestamp, log);
+                                });
+                                const mergedLogs = [...mergedLogMap.values()]
+                                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                                    .slice(0, 5000);
+                                
+                                if (pendingData._activityLog) pendingData._activityLog = mergedLogs;
+                                if (pendingData.activityLog) pendingData.activityLog = mergedLogs;
+                                
+                                // Update lastModifiedBy
+                                const source = pendingData._pendingMeta?.source || 'remote';
+                                if (pendingData.metadata) {
+                                    pendingData.metadata.lastModified = new Date().toISOString();
+                                    pendingData.metadata.lastModifiedBy = `Sync Hub (merged from ${source})`;
                                 }
                                 
                                 // Write merged data to MASTER.json
-                                if (masterJsonFileHandle) {
-                                    const jsonString = JSON.stringify(mergedData, null, 2);
-                                    const writable = await masterJsonFileHandle.createWritable();
-                                    await writable.write(jsonString);
-                                    await writable.close();
-                                    
-                                    // Update in-memory data
-                                    window.masterJsonData = mergedData;
-                                    loadedFileTimestamp = (await masterJsonFileHandle.getFile()).lastModified;
-                                    loadedMetadataVersion = mergedData._metadata.version;
-                                    
-                                    console.log(`[Pending] ✅ Merged v${pendingVersion} into MASTER.json → v${mergedData._metadata.version}`);
-                                    addAutoSyncLogEntry(`✅ Merged remote changes → v${mergedData._metadata.version}`);
-                                    addLog(`📬 Merged remote changes from ${pendingSource}`, 'success');
-                                }
+                                const writable = await masterJsonFileHandle.createWritable();
+                                await writable.write(JSON.stringify(pendingData, null, 2));
+                                await writable.close();
                                 
-                                // Clear the pending file
-                                const clearWritable = await pendingHandle.createWritable();
+                                // Clear pending file
+                                const clearWritable = await pendingFileHandle.createWritable();
                                 await clearWritable.write('{}');
                                 await clearWritable.close();
-                                console.log('[Pending] Cleared ccd-pending-changes.json');
+                                
+                                // Reload master in Sync Hub
+                                await loadMasterJson();
+                                
+                                console.log(`[Pending] ✅ Merged remote changes → v${newVersion}`);
+                                addLog(`Merged remote changes into MASTER.json (v${newVersion})`, 'success');
+                                toast(`📥 Remote changes merged into MASTER.json`, 'success');
                             }
                         }
                     }
-                } catch (pendingError) {
-                    // Only log real errors, not "file not found"
-                    if (pendingError.name !== 'NotFoundError') {
-                        console.error('[Pending] Error checking pending changes:', pendingError);
-                    }
+                } catch (pendingErr) {
+                    console.warn('[Pending] Error checking pending changes:', pendingErr.message);
                 }
             }
-            // =====================================================
-            // END v3.3.5.28 PENDING CHANGES CHECK
-            // =====================================================
+            // ================================================================
+            // END PENDING-CHANGES WATCHER
+            // ================================================================
             
-            // Auto-push (Inventory System change detection) only runs when enabled
             if (!state.settings.autoPushEnabled) return;
             
             try {
+                // METHOD 1: Check localStorage for Inventory System changes (immediate)
                 const lastChange = localStorage.getItem('ccd_inventory_last_change') || '';
                 if (lastChange && lastChange !== lastProcessedChange) {
                     console.log('[Auto-Push] Detected Inventory System change via localStorage');
