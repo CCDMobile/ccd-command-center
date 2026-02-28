@@ -3453,6 +3453,9 @@
             console.log('[Init] CCD Sync Hub v3.3.5.25 initialized successfully - All Features Active');
             addLog('CCD Sync Hub v3.3.5.25 initialized - Allocation Sync Independent', 'success');
             
+            // v3.3.5.28: Start pending-changes watcher (always runs, independent of auto-push)
+            startPendingChangesWatcher();
+            
             // Log startup to Activity Log (only if Master JSON is connected)
             if (typeof logActivity === 'function' && window.masterJsonData) {
                 logActivity('system', 'sync_hub_started', 'system',
@@ -9137,6 +9140,102 @@
      * this watcher decides whether to process them based on autoPushEnabled.
      * This is completely independent of "Enable auto-processing" (order processing).
      */
+    // ================================================================
+    // v3.3.5.28: PENDING-CHANGES WATCHER (always runs, independent of auto-push)
+    // Picks up saves from remote machines (Mary's laptop) via ccd-pending-changes.json
+    // ================================================================
+    let pendingChangesInterval = null;
+    
+    function startPendingChangesWatcher() {
+        if (pendingChangesInterval) {
+            clearInterval(pendingChangesInterval);
+        }
+        
+        pendingChangesInterval = setInterval(async () => {
+            if (!masterDirectoryHandle || !masterJsonFileHandle) return;
+            
+            try {
+                let pendingFileHandle = null;
+                try {
+                    pendingFileHandle = await masterDirectoryHandle.getFileHandle('ccd-pending-changes.json');
+                } catch (e) { /* file doesn't exist yet — normal */ }
+                
+                if (!pendingFileHandle) return;
+                
+                const pendingFile = await pendingFileHandle.getFile();
+                if (pendingFile.size <= 10) return; // Empty or just "{}"
+                
+                const pendingText = await pendingFile.text();
+                const pendingData = JSON.parse(pendingText);
+                
+                // Check if it has actual data (not empty or already cleared)
+                if (!pendingData || !pendingData.inventory || pendingData.inventory.length === 0) return;
+                
+                console.log('[Pending] 📥 Found remote changes:', pendingFile.size, 'bytes,', pendingData.inventory.length, 'items');
+                
+                // Remove routing metadata
+                delete pendingData._pendingMeta;
+                
+                // Read current master
+                const masterFile = await masterJsonFileHandle.getFile();
+                const masterText = await masterFile.text();
+                const currentMaster = JSON.parse(masterText);
+                
+                // Merge: pending data IS the full master from remote machine
+                const pendingVersion = pendingData.metadata?.version || pendingData._metadata?.version || 0;
+                const currentVersion = currentMaster.metadata?.version || currentMaster._metadata?.version || 0;
+                const newVersion = Math.max(pendingVersion, currentVersion) + 1;
+                
+                // Update version
+                if (pendingData.metadata) pendingData.metadata.version = newVersion;
+                if (pendingData._metadata) pendingData._metadata.version = newVersion;
+                
+                // Merge activity logs from both sources
+                const pendingLogs = pendingData._activityLog || pendingData.activityLog || [];
+                const currentLogs = currentMaster._activityLog || currentMaster.activityLog || [];
+                const mergedLogMap = new Map();
+                [...currentLogs, ...pendingLogs].forEach(log => {
+                    if (log && log.id) mergedLogMap.set(log.id, log);
+                    else if (log && log.timestamp) mergedLogMap.set(log.timestamp, log);
+                });
+                const mergedLogs = [...mergedLogMap.values()]
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                    .slice(0, 5000);
+                
+                if (pendingData._activityLog) pendingData._activityLog = mergedLogs;
+                if (pendingData.activityLog) pendingData.activityLog = mergedLogs;
+                
+                // Update lastModifiedBy
+                if (pendingData.metadata) {
+                    pendingData.metadata.lastModified = new Date().toISOString();
+                    pendingData.metadata.lastModifiedBy = 'Sync Hub (merged from remote)';
+                }
+                
+                // Write merged data to MASTER.json
+                const writable = await masterJsonFileHandle.createWritable();
+                await writable.write(JSON.stringify(pendingData, null, 2));
+                await writable.close();
+                
+                // Clear pending file
+                const clearWritable = await pendingFileHandle.createWritable();
+                await clearWritable.write('{}');
+                await clearWritable.close();
+                
+                // Reload master in Sync Hub
+                await loadMasterJson();
+                
+                console.log(`[Pending] ✅ Merged remote changes → v${newVersion}`);
+                addLog(`Merged remote changes into MASTER.json (v${newVersion})`, 'success');
+                toast(`📥 Remote changes merged into MASTER.json`, 'success');
+                
+            } catch (pendingErr) {
+                console.warn('[Pending] Error checking pending changes:', pendingErr.message);
+            }
+        }, 10000); // Check every 10 seconds
+        
+        console.log('[Pending] ✅ Pending-changes watcher started (10s interval)');
+    }
+    
     function startAutoPushWatcher() {
         if (state.autoPushWatchInterval) {
             clearInterval(state.autoPushWatchInterval);
@@ -9147,94 +9246,6 @@
         
         // Check for changes every 10 seconds (faster for real-time sync)
         state.autoPushWatchInterval = setInterval(async () => {
-            
-            // ================================================================
-            // v3.3.5.28: PENDING-CHANGES FILE WATCHER (runs always, not gated by autoPush)
-            // Picks up saves from remote machines (Mary's laptop)
-            // ================================================================
-            if (masterDirectoryHandle && masterJsonFileHandle) {
-                try {
-                    let pendingFileHandle = null;
-                    try {
-                        pendingFileHandle = await masterDirectoryHandle.getFileHandle('ccd-pending-changes.json');
-                    } catch (e) { /* file doesn't exist yet — normal */ }
-                    
-                    if (pendingFileHandle) {
-                        const pendingFile = await pendingFileHandle.getFile();
-                        if (pendingFile.size > 10) { // More than just "{}"
-                            const pendingText = await pendingFile.text();
-                            const pendingData = JSON.parse(pendingText);
-                            
-                            // Check if it has actual data (not empty or already cleared)
-                            if (pendingData && pendingData.inventory && pendingData.inventory.length > 0) {
-                                console.log('[Pending] 📥 Found remote changes:', pendingFile.size, 'bytes');
-                                
-                                // Remove routing metadata
-                                delete pendingData._pendingMeta;
-                                
-                                // Read current master
-                                const masterFile = await masterJsonFileHandle.getFile();
-                                const masterText = await masterFile.text();
-                                const currentMaster = JSON.parse(masterText);
-                                
-                                // Merge: pending data IS the full master from remote machine
-                                // Use pending as base, merge activity logs
-                                const pendingVersion = pendingData.metadata?.version || pendingData._metadata?.version || 0;
-                                const currentVersion = currentMaster.metadata?.version || currentMaster._metadata?.version || 0;
-                                const newVersion = Math.max(pendingVersion, currentVersion) + 1;
-                                
-                                // Update version
-                                if (pendingData.metadata) pendingData.metadata.version = newVersion;
-                                if (pendingData._metadata) pendingData._metadata.version = newVersion;
-                                
-                                // Merge activity logs from both sources
-                                const pendingLogs = pendingData._activityLog || pendingData.activityLog || [];
-                                const currentLogs = currentMaster._activityLog || currentMaster.activityLog || [];
-                                const mergedLogMap = new Map();
-                                [...currentLogs, ...pendingLogs].forEach(log => {
-                                    if (log && log.id) mergedLogMap.set(log.id, log);
-                                    else if (log && log.timestamp) mergedLogMap.set(log.timestamp, log);
-                                });
-                                const mergedLogs = [...mergedLogMap.values()]
-                                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                                    .slice(0, 5000);
-                                
-                                if (pendingData._activityLog) pendingData._activityLog = mergedLogs;
-                                if (pendingData.activityLog) pendingData.activityLog = mergedLogs;
-                                
-                                // Update lastModifiedBy
-                                const source = pendingData._pendingMeta?.source || 'remote';
-                                if (pendingData.metadata) {
-                                    pendingData.metadata.lastModified = new Date().toISOString();
-                                    pendingData.metadata.lastModifiedBy = `Sync Hub (merged from ${source})`;
-                                }
-                                
-                                // Write merged data to MASTER.json
-                                const writable = await masterJsonFileHandle.createWritable();
-                                await writable.write(JSON.stringify(pendingData, null, 2));
-                                await writable.close();
-                                
-                                // Clear pending file
-                                const clearWritable = await pendingFileHandle.createWritable();
-                                await clearWritable.write('{}');
-                                await clearWritable.close();
-                                
-                                // Reload master in Sync Hub
-                                await loadMasterJson();
-                                
-                                console.log(`[Pending] ✅ Merged remote changes → v${newVersion}`);
-                                addLog(`Merged remote changes into MASTER.json (v${newVersion})`, 'success');
-                                toast(`📥 Remote changes merged into MASTER.json`, 'success');
-                            }
-                        }
-                    }
-                } catch (pendingErr) {
-                    console.warn('[Pending] Error checking pending changes:', pendingErr.message);
-                }
-            }
-            // ================================================================
-            // END PENDING-CHANGES WATCHER
-            // ================================================================
             
             if (!state.settings.autoPushEnabled) return;
             
