@@ -756,7 +756,7 @@ Previous versions documented in development guide.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Inventory Management System v23.3.15 - Self-Healing Config & Master Reconnect</title>
+    <title>CCD Inventory Management System v23.3.12 - Pricing Sync Notification</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -7667,6 +7667,7 @@ Previous versions documented in development guide.
         }
     </style>
     
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
     <!-- Skip to Main Content Link (Accessibility) -->
@@ -7717,8 +7718,8 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.15 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 28 - Self-Healing Save</span></h1>
-                            <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-02-28 • Sync Indicators + Activity Logging</p>
+                            <h1>CCD Inventory System v23.3.11 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 20 - Sync Hub Master</span></h1>
+                            <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-02-07 • Sync Indicators + Activity Logging</p>
                         </div>
                     </div>
                     
@@ -11170,7 +11171,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
         async function initEcosystem() {
             console.log('🚀 ====================================');
             console.log('🚀 CCD Inventory System v23.3.11');
-            console.log('🚀 Build: 2026-02-28 • Self-Healing Save & Master Reconnect');
+            console.log('🚀 Build: 2026-02-20 • Sync Hub Allocation Master');
             console.log('🚀 ====================================');
             console.log('[Ecosystem] Initializing CCD Ecosystem Integration v23.3.11...');
             console.log('🔧 [VERSION] CCD Inventory System v23.3.11 - Feb 20, 2026');
@@ -11207,6 +11208,34 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
          * Load pricing settings from CONFIG file into Settings panel
          */
         async function loadPricingSettingsFromConfig() {
+            const setVal = (id, val, def) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val ?? def;
+            };
+            
+            // ======== SUPABASE MODE ========
+            if (sbConnected && sbClient) {
+                try {
+                    const { data } = await sbClient.from('settings').select('value').eq('key', 'pricing').single();
+                    if (data) {
+                        const pricing = typeof data.value === 'string' ? JSON.parse(data.value) : data.value;
+                        setVal('settingsPricingMarkup', pricing.markup, 2.0);
+                        setVal('settingsPricingTolerance', pricing.tolerance, 5);
+                        setVal('settingsPricingEtsyOH', pricing.etsyOverhead, 10);
+                        setVal('settingsPricingWixOH', pricing.wixOverhead, 10);
+                        setVal('settingsPricingWayfairOH', pricing.wayfairOverhead, 10);
+                        setVal('settingsPricingEtsySurch', pricing.etsySurcharge, 7.00);
+                        setVal('settingsPricingWixSurch', pricing.wixSurcharge, 7.00);
+                        setVal('settingsPricingWayfairSurch', pricing.wayfairSurcharge, 0);
+                        console.log('[Pricing Settings] Loaded from Supabase');
+                        return;
+                    }
+                } catch (err) {
+                    console.log('[Pricing Settings] Not found in Supabase, trying fallback');
+                }
+            }
+            
+            // Fallback: CONFIG.json file mode
             if (!configFileHandle) {
                 console.log('[Pricing Settings] No CONFIG file connected');
                 return;
@@ -11243,9 +11272,49 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
          * Save pricing settings from Settings panel to CONFIG file
          */
         async function savePricingSettingsToConfig() {
-            // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
-            if (!await ensureConfigWritePermission()) {
-                showNotification('⚠️ Could not get write access to CONFIG.json. Try again.', 'warning');
+            // Get values from form
+            const getVal = (id, def, isFloat = false) => {
+                const el = document.getElementById(id);
+                if (!el) return def;
+                return isFloat ? (parseFloat(el.value) || def) : (parseInt(el.value) || def);
+            };
+            
+            const pricingSettings = {
+                markup: getVal('settingsPricingMarkup', 2.0, true),
+                tolerance: getVal('settingsPricingTolerance', 5),
+                etsyOverhead: getVal('settingsPricingEtsyOH', 10),
+                wixOverhead: getVal('settingsPricingWixOH', 10),
+                wayfairOverhead: getVal('settingsPricingWayfairOH', 10),
+                etsySurcharge: getVal('settingsPricingEtsySurch', 7.00, true),
+                wixSurcharge: getVal('settingsPricingWixSurch', 7.00, true),
+                wayfairSurcharge: getVal('settingsPricingWayfairSurch', 0, true)
+            };
+            
+            // ======== SUPABASE MODE ========
+            if (sbConnected && sbClient) {
+                try {
+                    await sbClient.from('settings').upsert({
+                        key: 'pricing',
+                        value: JSON.stringify(pricingSettings),
+                        updated_by: getAppIdentifier(),
+                        updated_at: new Date().toISOString()
+                    });
+                    
+                    showNotification('✅ Pricing settings saved!', 'success');
+                    logActivity('settings', 'pricing_updated', 'system', 
+                        'Pricing formula settings updated', pricingSettings);
+                    console.log('[Pricing Settings] Saved to Supabase');
+                    return;
+                } catch (err) {
+                    console.error('[Pricing Settings] Error saving to Supabase:', err);
+                    showNotification('❌ Failed to save: ' + err.message, 'error');
+                    return;
+                }
+            }
+            
+            // Fallback: CONFIG.json file mode
+            if (!configFileHandle) {
+                showNotification('❌ Not connected to database or CONFIG file.', 'error');
                 return;
             }
             
@@ -11313,9 +11382,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
          * @param {boolean} enabled - New state
          */
         async function toggleFeature(featureName, enabled) {
-            // v23.3.14b: Self-healing — try to get write access, fall back to localStorage
-            if (!await ensureConfigWritePermission()) {
-                showNotification('⚠️ CONFIG file not writable - change saved locally only', 'warning');
+            if (!configFileHandle) {
+                showNotification('⚠️ CONFIG file not connected - change saved locally only', 'warning');
                 console.log(`[Feature Toggle] ${featureName} = ${enabled} (localStorage only)`);
                 localStorage.setItem(`feature_${featureName}`, enabled.toString());
                 return;
@@ -70225,33 +70293,25 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             
             // Also save to CONFIG.json if connected
             if (configFileHandle) {
-                // v23.3.14: Ensure write permission before attempting config write
-                const hasWritePerm = await ensureConfigWritePermission();
-                if (hasWritePerm) {
-                    try {
-                        const file = await configFileHandle.getFile();
-                        const text = await file.text();
-                        const cfgData = JSON.parse(text);
-                        if (!cfgData.settings) cfgData.settings = {};
-                        if (!cfgData.settings.features) cfgData.settings.features = {};
-                        featureFlags.forEach(flag => {
-                            const checkbox = document.getElementById('flag_' + flag);
-                            if (checkbox) cfgData.settings.features[flag] = checkbox.checked;
-                        });
-                        cfgData._metadata = cfgData._metadata || {};
-                        cfgData._metadata.lastModified = new Date().toISOString();
-                        cfgData._metadata.lastModifiedBy = 'CCD-INVENTORY-SYSTEM Settings Save All';
-                        const writable = await configFileHandle.createWritable();
-                        await writable.write(JSON.stringify(cfgData, null, 2));
-                        await writable.close();
-                        console.log('[Settings] Feature flags saved to CONFIG.json');
-                    } catch (err) {
-                        console.warn('[Settings] Could not save features to CONFIG:', err.message);
-                        showNotification('⚠️ Settings saved locally but CONFIG.json write failed', 'warning');
-                    }
-                } else {
-                    console.warn('[Settings] No write permission for CONFIG.json');
-                    showNotification('⚠️ Settings saved locally but CONFIG.json needs reconnect for write access', 'warning');
+                try {
+                    const file = await configFileHandle.getFile();
+                    const text = await file.text();
+                    const cfgData = JSON.parse(text);
+                    if (!cfgData.settings) cfgData.settings = {};
+                    if (!cfgData.settings.features) cfgData.settings.features = {};
+                    featureFlags.forEach(flag => {
+                        const checkbox = document.getElementById('flag_' + flag);
+                        if (checkbox) cfgData.settings.features[flag] = checkbox.checked;
+                    });
+                    cfgData._metadata = cfgData._metadata || {};
+                    cfgData._metadata.lastModified = new Date().toISOString();
+                    cfgData._metadata.lastModifiedBy = 'CCD-INVENTORY-SYSTEM Settings Save All';
+                    const writable = await configFileHandle.createWritable();
+                    await writable.write(JSON.stringify(cfgData, null, 2));
+                    await writable.close();
+                    console.log('[Settings] Feature flags saved to CONFIG.json');
+                } catch (err) {
+                    console.warn('[Settings] Could not save features to CONFIG:', err.message);
                 }
             }
             // ========== END Feature Flag Save ==========
@@ -80172,7 +80232,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             // Check if we have OneDrive access via the sync data file handle
             if (!syncDataFileHandle) {
                 // Try to get the audits folder path from masterFileHandle parent
-                if (!masterFileHandle) {
+                if (!sbConnected && !masterFileHandle) {
                     showNotification('⚠️ Master file not connected. Please connect to view audits.', 'warning');
                     return;
                 }
@@ -125468,342 +125528,539 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
 
 // Global backup state
 let masterFileHandle = null;
-let masterDirectoryHandle = null;  // v23.3.13: Parent folder for pending-changes routing
-let pendingChangesFileHandle = null; // v23.3.13: Cached handle for ccd-pending-changes.json
 
-// ============================================================
-// v23.3.13: REMOTE SAVE ROUTING
-// When not on the primary machine (where Sync Hub runs),
-// saves go to ccd-pending-changes.json instead of MASTER.json
-// to prevent OneDrive sync conflicts.
-// ============================================================
-
-/**
- * Detect if this is the primary machine (where Sync Hub runs).
- * Primary machine writes directly to MASTER.json.
- * Remote machines write to ccd-pending-changes.json.
- */
-function isPrimaryMachine() {
-    // If Sync Hub has stored settings in localStorage, this is the primary machine
-    const hubSettings = localStorage.getItem('ccd_sync_hub_settings');
-    if (hubSettings) return true;
-    // Fallback: check for explicit flag
-    return localStorage.getItem('ccd_is_primary_machine') === 'true';
-}
+// ============================================================================
+// SUPABASE DATABASE LAYER — v1.0.0
+// Replaces OneDrive file-based sync with Supabase PostgreSQL database
+// ============================================================================
+let sbClient = null;
+let sbConnected = false;
+let sbRealtimeChannel = null;
+let sbItemMap = {}; // sku → supabase row id mapping
+let sbDirtyItems = new Set(); // Track modified items by SKU
+let sbSaveInProgress = false;
+const SB_BATCH_SIZE = 50;
 
 /**
- * v23.3.13: Try to restore or acquire the master directory handle.
- * Called after master file connects via any path (shared files, IndexedDB, manual).
- * On remote machines without a directory handle, shows a one-time folder picker.
+ * Convert a Supabase row (snake_case) to in-memory item format (camelCase)
  */
-async function tryRestoreDirectoryHandle() {
-    if (masterDirectoryHandle) return; // Already have it
-    
-    // Try IndexedDB first (silent)
-    try {
-        const dirStored = await getStoredFileHandle('masterDirectory');
-        if (dirStored?.handle) {
-            let perm = 'denied';
-            try {
-                if (typeof dirStored.handle.queryPermission === 'function') {
-                    perm = await dirStored.handle.queryPermission({ mode: 'readwrite' });
-                }
-            } catch (e) { /* ignore */ }
-            
-            if (perm === 'granted') {
-                masterDirectoryHandle = dirStored.handle;
-                console.log('[Directory] ✅ Restored from IndexedDB:', dirStored.handle.name);
-                return;
-            }
-        }
-    } catch (e) { /* no stored handle */ }
-    
-    // On remote machines, we need the directory handle for pending-changes routing
-    if (!isPrimaryMachine()) {
-        // Check if we already prompted this session
-        if (sessionStorage.getItem('ccd_dir_prompt_shown')) return;
-        sessionStorage.setItem('ccd_dir_prompt_shown', 'true');
-        
-        console.log('[Directory] ⚠️ Remote machine needs folder access for safe sync');
-        
-        // Show a non-blocking notification with action
-        setTimeout(() => {
-            showNotification(
-                '📁 Multi-user sync upgrade needed: Click the backup status indicator, then "Reconnect Master File" to enable safe sync.',
-                'warning', 15000
-            );
-        }, 3000);
-        
-        // Also add a helper function Mary can call from backup panel
-        window.upgradeMasterFolder = async function() {
-            try {
-                const dirHandle = await window.showDirectoryPicker({
-                    id: 'ccd-master-folder',
-                    mode: 'readwrite',
-                    startIn: 'documents'
-                });
-                
-                // Verify the master file is in this folder
-                try {
-                    const testHandle = await dirHandle.getFileHandle(masterFileHandle.name || 'ccd-inventory-MASTER.json');
-                    masterDirectoryHandle = dirHandle;
-                    
-                    // Store for future sessions
-                    if (typeof storeFileHandle === 'function') {
-                        await storeFileHandle('masterDirectory', dirHandle, { type: 'directory' });
-                    }
-                    
-                    console.log('[Directory] ✅ Folder connected:', dirHandle.name);
-                    showNotification('✅ Master folder connected — safe sync enabled!', 'success');
-                } catch (e) {
-                    showNotification('❌ Master file not found in selected folder. Pick the folder containing ' + (masterFileHandle?.name || 'MASTER.json'), 'error');
-                }
-            } catch (e) {
-                if (e.name !== 'AbortError') {
-                    showNotification('❌ Folder selection failed: ' + e.message, 'error');
-                }
-            }
-        };
-    }
-}
-
-/**
- * Write pending changes to ccd-pending-changes.json in the master file's folder.
- * Sync Hub on the primary machine will pick this up and merge into MASTER.json.
- *
- * v23.3.15: REPLACED with HTTP relay through Sync Hub proxy.
- * Remote machines now POST changed items to the proxy. Sync Hub polls and merges.
- * No more OneDrive file conflicts.
- */
-
-// ============================================================
-// v23.3.15: CHANGE TRACKING & HTTP RELAY SYSTEM
-// ============================================================
-
-// Snapshot of inventory at last load/sync — used to detect what changed
-window._inventorySnapshot = {};
-window._settingsSnapshot = {};
-window._pendingRelayQueue = []; // Offline retry queue
-
-/**
- * Capture a snapshot of all inventory items and global settings.
- * Called after loading from master file or after a successful relay POST.
- */
-function captureInventorySnapshot() {
-    window._inventorySnapshot = {};
-    for (let i = 0; i < inventory.length; i++) {
-        const item = inventory[i];
-        if (item && item.id) {
-            // Always use string keys for consistent comparison
-            window._inventorySnapshot[String(item.id)] = JSON.stringify(item);
-        }
-    }
-    window._settingsSnapshot = JSON.stringify({
-        surcharge: globalSurcharge,
-        etsyOH: etsyOHFee,
-        wixOH: wixOHFee,
-        wayfairOH: wayfairOHFee,
-        treasureMartsRent: treasureMartsRentFee
-    });
-    console.log(`[ChangeTrack] 📸 Snapshot captured: ${Object.keys(window._inventorySnapshot).length} items`);
-}
-
-/**
- * Compare current inventory against snapshot to find what changed.
- * Returns only the items that were added, modified, or removed.
- */
-function getChangedItems() {
-    const upsertItems = [];
-    const currentIds = new Set();
-    
-    for (let i = 0; i < inventory.length; i++) {
-        const item = inventory[i];
-        if (!item || !item.id) continue;
-        const strId = String(item.id);  // Consistent string comparison
-        currentIds.add(strId);
-        
-        const currentJson = JSON.stringify(item);
-        const snapshotJson = window._inventorySnapshot[strId];
-        
-        if (!snapshotJson || snapshotJson !== currentJson) {
-            upsertItems.push(item);
-        }
-    }
-    
-    // Find removed items (in snapshot but not in current inventory)
-    const removeItemIds = Object.keys(window._inventorySnapshot)
-        .filter(id => !currentIds.has(id));
-    
-    // Check global settings
-    const currentSettings = JSON.stringify({
-        surcharge: globalSurcharge,
-        etsyOH: etsyOHFee,
-        wixOH: wixOHFee,
-        wayfairOH: wayfairOHFee,
-        treasureMartsRent: treasureMartsRentFee
-    });
-    const settingsChanged = currentSettings !== window._settingsSnapshot;
-    
+function sbRowToItem(row) {
     return {
-        upsertItems,
-        removeItemIds,
-        globalSettings: settingsChanged ? {
-            surcharge: globalSurcharge,
-            etsyOH: etsyOHFee,
-            wixOH: wixOHFee,
-            wayfairOH: wayfairOHFee,
-            treasureMartsRent: treasureMartsRentFee
-        } : null,
-        hasChanges: upsertItems.length > 0 || removeItemIds.length > 0 || settingsChanged
+        id: row.legacy_id || String(row.id),
+        _sbId: row.id,  // Keep Supabase ID for updates
+        sku: row.sku,
+        productName: row.product_name,
+        brandName: row.brand_name,
+        category: row.category,
+        vendor: row.vendor,
+        shelfNumber: row.shelf_number || '',
+        qty: row.qty || 0,
+        isActive: row.is_active !== false,
+        photographed: row.photographed || false,
+        comments: row.comments || '',
+        dateAdded: row.date_added,
+        lastSoldDate: row.last_sold_date,
+        descriptionLastUpdated: row.description_last_updated,
+        wholesalePrice: parseFloat(row.wholesale_price) || 0,
+        ibShipping: parseFloat(row.ib_shipping) || 0,
+        tariff: parseFloat(row.tariff) || 0,
+        retailPrice: parseFloat(row.retail_price) || 0,
+        retailPriceOld: row.retail_price_old != null ? parseFloat(row.retail_price_old) : null,
+        coopPrice: row.coop_price != null ? parseFloat(row.coop_price) : null,
+        obShipping: parseFloat(row.ob_shipping) || 0,
+        channels: {
+            etsy: row.etsy_qty || 0,
+            wix: row.wix_qty || 0,
+            wayfair: row.wayfair_qty || 0,
+            crazychicks: row.crazychicks_qty || 0,
+            treasuremarts: row.treasuremarts_qty || 0
+        },
+        channelPriceAdjustments: {
+            etsy: parseFloat(row.etsy_price_adj) || 0,
+            wix: parseFloat(row.wix_price_adj) || 0,
+            wayfair: parseFloat(row.wayfair_price_adj) || 0,
+            crazychicks: parseFloat(row.crazychicks_price_adj) || 0,
+            treasuremarts: parseFloat(row.treasuremarts_price_adj) || 0
+        },
+        channelPrices: {
+            etsy: row.etsy_price != null ? parseFloat(row.etsy_price) : null,
+            wix: row.wix_price != null ? parseFloat(row.wix_price) : null,
+            wayfair: row.wayfair_price != null ? parseFloat(row.wayfair_price) : null,
+            crazychicks: row.crazychicks_price != null ? parseFloat(row.crazychicks_price) : null,
+            treasuremarts: row.treasuremarts_price != null ? parseFloat(row.treasuremarts_price) : null
+        },
+        channelAddedDates: {
+            ...(row.etsy_added_date ? { etsy: row.etsy_added_date } : {}),
+            ...(row.wix_added_date ? { wix: row.wix_added_date } : {}),
+            ...(row.wayfair_added_date ? { wayfair: row.wayfair_added_date } : {}),
+            ...(row.treasuremarts_added_date ? { treasuremarts: row.treasuremarts_added_date } : {})
+        },
+        minParLevel: row.min_par_level || 0,
+        maxParLevel: row.max_par_level || 0,
+        monitorLowStock: row.monitor_low_stock || false,
+        masterParEnabled: row.master_par_enabled || false,
+        masterParMin: row.master_par_min || 0,
+        masterParMax: row.master_par_max || 0,
+        channelParEnabled: row.channel_par_enabled || false,
+        channelParMin: row.channel_par_min || 0,
+        channelParMax: row.channel_par_max || 0,
+        shippingWeight: parseFloat(row.shipping_weight) || 0,
+        boxLength: parseFloat(row.box_length) || 0,
+        boxWidth: parseFloat(row.box_width) || 0,
+        boxHeight: parseFloat(row.box_height) || 0,
+        wayfairDimensions: row.wayfair_dimensions || '',
+        wayfairWeight: row.wayfair_weight || '',
+        wayfairMaterials: row.wayfair_materials || '',
+        wayfairColor: row.wayfair_color || '',
+        wayfairProps: row.wayfair_props || '',
+        wayfairCountry: row.wayfair_country || '',
+        etsyListingId: row.etsy_listing_id,
+        wixProductId: row.wix_product_id,
+        wixVariantId: row.wix_variant_id,
+        wayfairSku: row.wayfair_sku,
+        etsyTitle: row.etsy_sync_title,
+        etsyPrice: row.etsy_sync_price != null ? parseFloat(row.etsy_sync_price) : null,
+        etsyQuantity: row.etsy_sync_quantity,
+        orderDate: row.order_date,
+        orderNumber: row.order_number || '',
+        shippedDate: row.shipped_date,
+        purchaseHistory: [],  // Loaded separately
+        shippingHistory: []   // Loaded separately
     };
 }
 
 /**
- * Get the Sync Hub proxy URL from CONFIG (single source of truth)
+ * Convert an in-memory item (camelCase) to Supabase row format (snake_case)
  */
-function getSyncHubProxyUrl() {
-    return window.configData?.settings?.proxyUrls?.syncHub 
-        || window.configData?.syncHubProxyUrl 
-        || '';
-}
-
-/**
- * Get the API key from CONFIG (single source of truth)
- */
-function getApiKey() {
-    return window.configData?.settings?.ccdApiKey 
-        || window.configData?.ccdApiKey 
-        || '';
-}
-
-/**
- * POST changed items to the Sync Hub proxy for relay to the primary machine.
- * Replaces the old file-based savePendingChanges().
- */
-async function savePendingChanges(data, trigger, itemSKU) {
-    const proxyUrl = getSyncHubProxyUrl();
-    const apiKey = getApiKey();
+function itemToSbRow(item) {
+    const channels = item.channels || {};
+    const priceAdj = item.channelPriceAdjustments || {};
+    const chanPrices = item.channelPrices || {};
+    const chanDates = item.channelAddedDates || {};
     
-    if (!proxyUrl) {
-        console.error('[Relay] No Sync Hub proxy URL configured');
-        showNotification('❌ Cannot save: Sync Hub proxy URL not configured in Settings', 'error');
-        // Queue for retry
-        queueForRetry(data, trigger, itemSKU);
+    const row = {
+        sku: item.sku,
+        product_name: item.productName || '',
+        brand_name: item.brandName || '',
+        category: item.category || '',
+        vendor: item.vendor || '',
+        shelf_number: item.shelfNumber || '',
+        qty: parseInt(item.qty) || 0,
+        is_active: item.isActive !== false,
+        photographed: item.photographed || false,
+        comments: item.comments || '',
+        date_added: item.dateAdded || new Date().toISOString(),
+        last_sold_date: item.lastSoldDate || null,
+        description_last_updated: item.descriptionLastUpdated || null,
+        wholesale_price: parseFloat(item.wholesalePrice) || 0,
+        ib_shipping: parseFloat(item.ibShipping) || 0,
+        tariff: parseFloat(item.tariff) || 0,
+        retail_price: parseFloat(item.retailPrice) || 0,
+        retail_price_old: item.retailPriceOld != null ? parseFloat(item.retailPriceOld) : null,
+        coop_price: item.coopPrice != null ? parseFloat(item.coopPrice) : null,
+        ob_shipping: parseFloat(item.obShipping) || 0,
+        etsy_qty: parseInt(channels.etsy) || 0,
+        wix_qty: parseInt(channels.wix) || 0,
+        wayfair_qty: parseInt(channels.wayfair) || 0,
+        crazychicks_qty: parseInt(channels.crazychicks) || 0,
+        treasuremarts_qty: parseInt(channels.treasuremarts) || 0,
+        etsy_price_adj: parseFloat(priceAdj.etsy) || 0,
+        wix_price_adj: parseFloat(priceAdj.wix) || 0,
+        wayfair_price_adj: parseFloat(priceAdj.wayfair) || 0,
+        crazychicks_price_adj: parseFloat(priceAdj.crazychicks) || 0,
+        treasuremarts_price_adj: parseFloat(priceAdj.treasuremarts) || 0,
+        etsy_price: chanPrices.etsy != null ? parseFloat(chanPrices.etsy) : null,
+        wix_price: chanPrices.wix != null ? parseFloat(chanPrices.wix) : null,
+        wayfair_price: chanPrices.wayfair != null ? parseFloat(chanPrices.wayfair) : null,
+        crazychicks_price: chanPrices.crazychicks != null ? parseFloat(chanPrices.crazychicks) : null,
+        treasuremarts_price: chanPrices.treasuremarts != null ? parseFloat(chanPrices.treasuremarts) : null,
+        etsy_added_date: chanDates.etsy || null,
+        wix_added_date: chanDates.wix || null,
+        wayfair_added_date: chanDates.wayfair || null,
+        treasuremarts_added_date: chanDates.treasuremarts || null,
+        min_par_level: parseInt(item.minParLevel) || 0,
+        max_par_level: parseInt(item.maxParLevel) || 0,
+        monitor_low_stock: item.monitorLowStock || false,
+        master_par_enabled: item.masterParEnabled || false,
+        master_par_min: parseInt(item.masterParMin) || 0,
+        master_par_max: parseInt(item.masterParMax) || 0,
+        channel_par_enabled: item.channelParEnabled || false,
+        channel_par_min: parseInt(item.channelParMin) || 0,
+        channel_par_max: parseInt(item.channelParMax) || 0,
+        shipping_weight: parseFloat(item.shippingWeight) || 0,
+        box_length: parseFloat(item.boxLength) || 0,
+        box_width: parseFloat(item.boxWidth) || 0,
+        box_height: parseFloat(item.boxHeight) || 0,
+        wayfair_dimensions: item.wayfairDimensions || '',
+        wayfair_weight: item.wayfairWeight || '',
+        wayfair_materials: item.wayfairMaterials || '',
+        wayfair_color: item.wayfairColor || '',
+        wayfair_props: item.wayfairProps || '',
+        wayfair_country: item.wayfairCountry || '',
+        etsy_listing_id: item.etsyListingId || null,
+        wix_product_id: item.wixProductId || null,
+        wix_variant_id: item.wixVariantId || null,
+        wayfair_sku: item.wayfairSku || null,
+        etsy_sync_title: item.etsyTitle || null,
+        etsy_sync_price: item.etsyPrice != null ? parseFloat(item.etsyPrice) : null,
+        etsy_sync_quantity: item.etsyQuantity != null ? parseInt(item.etsyQuantity) : null,
+        order_date: item.orderDate || null,
+        order_number: item.orderNumber || '',
+        shipped_date: item.shippedDate || null
+    };
+    
+    // Note: id is auto-generated, never include in upsert
+    // Legacy ID preserved as legacy_id text field
+    if (item.id) row.legacy_id = String(item.id);
+    
+    return row;
+}
+
+/**
+ * Get saved Supabase credentials from localStorage
+ */
+function getSbCredentials() {
+    return {
+        url: localStorage.getItem('ccdSupabaseUrl') || '',
+        key: localStorage.getItem('ccdSupabaseKey') || ''
+    };
+}
+
+/**
+ * Save Supabase credentials to localStorage
+ */
+function saveSbCredentials(url, key) {
+    localStorage.setItem('ccdSupabaseUrl', url);
+    localStorage.setItem('ccdSupabaseKey', key);
+    localStorage.setItem('ccdUseSupabase', 'true');
+}
+
+/**
+ * Initialize Supabase client
+ */
+function initSupabaseClient(url, key) {
+    sbClient = window.supabase.createClient(url, key);
+    return sbClient;
+}
+
+/**
+ * Test Supabase connection
+ */
+async function testSupabaseConnection() {
+    if (!sbClient) return false;
+    try {
+        const { data, error } = await sbClient.from('items').select('id', { count: 'exact', head: true });
+        return !error;
+    } catch (e) {
         return false;
     }
+}
+
+/**
+ * Load all items from Supabase into the inventory array
+ */
+async function loadInventoryFromSupabase() {
+    if (!sbClient) throw new Error('Supabase not connected');
     
-    // Detect what actually changed (don't send the full 2MB inventory)
-    const changes = getChangedItems();
+    console.log('📥 Loading inventory from Supabase...');
     
-    if (!changes.hasChanges) {
-        console.log('[Relay] No changes detected — skipping relay');
-        showNotification('✅ No changes to sync', 'info');
-        return true;
-    }
+    // Load items
+    const { data: items, error } = await sbClient
+        .from('items')
+        .select('*')
+        .order('id', { ascending: true });
     
-    // Collect recent activity log entries (last 10 minutes from this session)
-    const recentActivity = (window.masterData?._activityLog || [])
-        .filter(entry => {
-            if (!entry.timestamp) return false;
-            const age = Date.now() - new Date(entry.timestamp).getTime();
-            return age < 600000; // 10 minutes
-        })
-        .slice(0, 50); // Cap at 50 entries
+    if (error) throw new Error('Failed to load items: ' + error.message);
     
-    const payload = {
-        action: 'submitChanges',
-        key: apiKey,
-        source: getAppIdentifier(),
-        trigger: trigger + (itemSKU ? ` (${itemSKU})` : ''),
-        changes: {
-            upsertItems: changes.upsertItems,
-            removeItemIds: changes.removeItemIds,
-            globalSettings: changes.globalSettings,
-            activityEntries: recentActivity
-        }
-    };
+    // Convert to in-memory format
+    inventory = items.map(row => {
+        const item = sbRowToItem(row);
+        sbItemMap[item.sku] = row.id;
+        return item;
+    });
     
-    const payloadSize = JSON.stringify(payload).length;
-    console.log(`[Relay] 📤 Sending ${changes.upsertItems.length} changed items, ${changes.removeItemIds.length} removed (${(payloadSize / 1024).toFixed(1)}KB)`);
+    // Load purchase history for all items
+    const { data: purchases, error: phError } = await sbClient
+        .from('purchase_history')
+        .select('*');
     
-    try {
-        const response = await fetch(proxyUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain' },
-            body: JSON.stringify(payload)
+    if (!phError && purchases) {
+        // Group by item_id
+        const phByItem = {};
+        purchases.forEach(ph => {
+            if (!phByItem[ph.item_id]) phByItem[ph.item_id] = [];
+            phByItem[ph.item_id].push({
+                date: ph.order_date,
+                orderDate: ph.order_date,
+                shippedDate: ph.shipped_date,
+                invoice: ph.order_number,
+                orderNumber: ph.order_number,
+                qty: ph.qty,
+                wholesalePrice: parseFloat(ph.wholesale_price) || 0,
+                ibShipping: parseFloat(ph.ib_shipping) || 0,
+                tariff: parseFloat(ph.tariff) || 0,
+                retailPrice: ph.retail_price != null ? parseFloat(ph.retail_price) : null,
+                comments: ph.comments || ''
+            });
         });
         
-        // Apps Script always returns 200, check the JSON body for success
-        const result = await response.json();
-        
-        if (result.success) {
-            console.log(`[Relay] ✅ Changes queued: batch ${result.batchId} (${result.queueDepth} in queue)`);
-            showNotification(`✅ Changes saved — syncing to master via Sync Hub (${changes.upsertItems.length} items)`, 'success');
-            
-            // Update snapshot so we don't re-send the same changes
-            captureInventorySnapshot();
-            
-            // Update tracking variables
-            backupConfig.lastBackupTime = Date.now();
-            backupConfig.consecutiveFailures = 0;
-            
-            // Process any queued retries
-            processRetryQueue();
-            
-            return true;
-        } else {
-            console.error('[Relay] ❌ Proxy rejected:', result.error);
-            
-            if (result.code === 'QUEUE_FULL') {
-                showNotification('⚠️ Sync Hub queue full — is Sync Hub running? Changes saved locally.', 'warning');
-            } else if (result.code === 'BATCH_TOO_LARGE') {
-                showNotification('⚠️ Too many changes at once. Try saving more frequently.', 'warning');
-            } else {
-                showNotification('⚠️ Sync failed: ' + (result.error || 'Unknown error') + '. Changes saved locally.', 'warning');
+        // Attach to items
+        inventory.forEach(item => {
+            const sbId = sbItemMap[item.sku];
+            if (sbId && phByItem[sbId]) {
+                item.purchaseHistory = phByItem[sbId];
             }
-            
-            queueForRetry(data, trigger, itemSKU);
-            return false;
-        }
-        
-    } catch (error) {
-        console.error('[Relay] ❌ Network error:', error.message);
-        showNotification('⚠️ Cannot reach Sync Hub proxy — changes saved locally, will retry.', 'warning');
-        queueForRetry(data, trigger, itemSKU);
+        });
+    }
+    
+    // Load sales history
+    const { data: sales, error: shError } = await sbClient
+        .from('sales_history')
+        .select('*')
+        .order('sale_date', { ascending: false });
+    
+    if (!shError && sales) {
+        salesHistory = sales.map(s => ({
+            id: s.id,
+            itemId: String(s.item_id || ''),
+            productName: s.product_name,
+            sku: s.sku,
+            brandName: s.brand_name,
+            qtySold: s.qty_sold,
+            saleChannel: s.sale_channel,
+            saleDate: s.sale_date,
+            salePrice: parseFloat(s.sale_price) || 0,
+            totalRevenue: parseFloat(s.total_revenue) || 0,
+            totalCost: parseFloat(s.total_cost) || 0,
+            netProfit: parseFloat(s.net_profit) || 0,
+            profitMargin: parseFloat(s.profit_margin) || 0,
+            wholesalePrice: parseFloat(s.wholesale_price) || 0,
+            ibShipping: parseFloat(s.ib_shipping) || 0,
+            tariff: parseFloat(s.tariff) || 0,
+            obShipping: parseFloat(s.ob_shipping) || 0,
+            timestamp: s.created_at
+        }));
+    }
+    
+    // Load settings
+    const { data: settings, error: setError } = await sbClient
+        .from('settings')
+        .select('*');
+    
+    if (!setError && settings) {
+        settings.forEach(s => {
+            const val = typeof s.value === 'string' ? JSON.parse(s.value) : s.value;
+            switch (s.key) {
+                case 'surcharge': globalSurcharge = parseFloat(val) || 7; break;
+                case 'etsy_oh': etsyOHFee = parseFloat(val) || 10; break;
+                case 'wix_oh': wixOHFee = parseFloat(val) || 10; break;
+                case 'wayfair_oh': wayfairOHFee = parseFloat(val) || 10; break;
+                case 'treasuremarts_rent': treasureMartsRentFee = parseFloat(val) || 10; break;
+            }
+        });
+    }
+    
+    console.log('✅ Loaded from Supabase:', inventory.length, 'items');
+    return inventory.length;
+}
+
+/**
+ * Save a single item to Supabase (by SKU)
+ */
+async function saveItemToSupabase(itemOrSku) {
+    if (!sbClient || !sbConnected) return false;
+    
+    const item = typeof itemOrSku === 'string' 
+        ? inventory.find(i => i.sku === itemOrSku)
+        : itemOrSku;
+    
+    if (!item) return false;
+    
+    const row = itemToSbRow(item);
+    
+    const { data, error } = await sbClient
+        .from('items')
+        .upsert(row, { onConflict: 'sku' })
+        .select('id')
+        .single();
+    
+    if (error) {
+        console.error('❌ Supabase save error for', item.sku, ':', error.message);
         return false;
     }
-}
-
-/**
- * Queue a failed relay attempt for retry
- */
-function queueForRetry(data, trigger, itemSKU) {
-    // Save to localStorage as safety net
-    try {
-        localStorage.setItem('ccd-pending-relay', JSON.stringify({
-            timestamp: new Date().toISOString(),
-            trigger,
-            itemSKU,
-            inventoryCount: inventory.length
-        }));
-    } catch (e) { /* quota exceeded is fine */ }
     
-    // Mark that we have pending changes
-    window._hasUnreliayedChanges = true;
-    backupConfig.consecutiveFailures = (backupConfig.consecutiveFailures || 0) + 1;
+    // Update ID mapping
+    if (data) {
+        item._sbId = data.id;
+        sbItemMap[item.sku] = data.id;
+    }
+    
+    return true;
 }
 
 /**
- * Retry sending queued changes (called after a successful relay)
+ * Save multiple items to Supabase in batches
  */
-async function processRetryQueue() {
-    if (window._hasUnreliayedChanges) {
-        window._hasUnreliayedChanges = false;
-        try {
-            localStorage.removeItem('ccd-pending-relay');
-        } catch (e) { /* ok */ }
+async function saveItemsBatchToSupabase(items) {
+    if (!sbClient || !sbConnected) return 0;
+    
+    let saved = 0;
+    const rows = items.map(item => itemToSbRow(item));
+    
+    for (let i = 0; i < rows.length; i += SB_BATCH_SIZE) {
+        const batch = rows.slice(i, i + SB_BATCH_SIZE);
+        const { data, error } = await sbClient
+            .from('items')
+            .upsert(batch, { onConflict: 'sku' })
+            .select('id, sku');
+        
+        if (error) {
+            console.error('❌ Batch save error:', error.message);
+        } else {
+            saved += data.length;
+            // Update ID mappings
+            data.forEach(d => {
+                sbItemMap[d.sku] = d.id;
+                const item = items.find(it => it.sku === d.sku);
+                if (item) item._sbId = d.id;
+            });
+        }
+    }
+    
+    return saved;
+}
+
+/**
+ * Save settings to Supabase
+ */
+async function saveSettingsToSupabase() {
+    if (!sbClient || !sbConnected) return;
+    
+    const settingsToSave = [
+        { key: 'surcharge', value: JSON.stringify(globalSurcharge) },
+        { key: 'etsy_oh', value: JSON.stringify(etsyOHFee) },
+        { key: 'wix_oh', value: JSON.stringify(wixOHFee) },
+        { key: 'wayfair_oh', value: JSON.stringify(wayfairOHFee) },
+        { key: 'treasuremarts_rent', value: JSON.stringify(treasureMartsRentFee) }
+    ];
+    
+    for (const s of settingsToSave) {
+        await sbClient.from('settings').upsert({
+            key: s.key,
+            value: s.value,
+            updated_by: getAppIdentifier(),
+            updated_at: new Date().toISOString()
+        });
     }
 }
+
+/**
+ * Log activity to Supabase
+ */
+async function logActivityToSupabase(category, action, channel, summary, details = {}, sku = null) {
+    if (!sbClient || !sbConnected) return;
+    
+    try {
+        await sbClient.from('activity_log').insert({
+            category: category,
+            action: action,
+            channel: channel || 'system',
+            summary: summary,
+            details: details,
+            device: getAppIdentifier(),
+            user_name: 'Unknown',
+            sku: sku
+        });
+    } catch (e) {
+        console.warn('Activity log write failed:', e.message);
+    }
+}
+
+/**
+ * Set up Supabase real-time subscription for live updates
+ */
+function startSupabaseRealtime() {
+    if (!sbClient || sbRealtimeChannel) return;
+    
+    sbRealtimeChannel = sbClient
+        .channel('inventory-live')
+        .on('postgres_changes', 
+            { event: '*', schema: 'public', table: 'items' },
+            (payload) => {
+                // Skip changes from this device
+                const myId = getAppIdentifier();
+                
+                if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+                    const row = payload.new;
+                    const existingIdx = inventory.findIndex(i => i.sku === row.sku);
+                    const updatedItem = sbRowToItem(row);
+                    
+                    if (existingIdx >= 0) {
+                        // Preserve purchase history (not in the items table)
+                        updatedItem.purchaseHistory = inventory[existingIdx].purchaseHistory;
+                        updatedItem.shippingHistory = inventory[existingIdx].shippingHistory;
+                        inventory[existingIdx] = updatedItem;
+                        console.log('🔄 Real-time update:', row.sku);
+                    } else {
+                        inventory.push(updatedItem);
+                        console.log('➕ Real-time insert:', row.sku);
+                    }
+                    
+                    sbItemMap[row.sku] = row.id;
+                    
+                    // Refresh display if visible
+                    if (typeof renderCurrentView === 'function') {
+                        renderCurrentView();
+                    }
+                } else if (payload.eventType === 'DELETE') {
+                    const row = payload.old;
+                    const idx = inventory.findIndex(i => i.sku === row.sku);
+                    if (idx >= 0) {
+                        inventory.splice(idx, 1);
+                        console.log('🗑️ Real-time delete:', row.sku);
+                        if (typeof renderCurrentView === 'function') {
+                            renderCurrentView();
+                        }
+                    }
+                }
+            }
+        )
+        .on('postgres_changes',
+            { event: '*', schema: 'public', table: 'settings' },
+            (payload) => {
+                if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+                    const row = payload.new;
+                    const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+                    switch (row.key) {
+                        case 'surcharge': globalSurcharge = parseFloat(val) || 7; break;
+                        case 'etsy_oh': etsyOHFee = parseFloat(val) || 10; break;
+                        case 'wix_oh': wixOHFee = parseFloat(val) || 10; break;
+                        case 'wayfair_oh': wayfairOHFee = parseFloat(val) || 10; break;
+                        case 'treasuremarts_rent': treasureMartsRentFee = parseFloat(val) || 10; break;
+                    }
+                    console.log('🔄 Settings updated:', row.key, '=', val);
+                }
+            }
+        )
+        .subscribe((status) => {
+            console.log('📡 Realtime status:', status);
+        });
+    
+    console.log('📡 Supabase real-time subscriptions active');
+}
+
+/**
+ * Stop real-time subscription
+ */
+function stopSupabaseRealtime() {
+    if (sbRealtimeChannel) {
+        sbClient.removeChannel(sbRealtimeChannel);
+        sbRealtimeChannel = null;
+    }
+}
+
+// End of Supabase adapter globals
+
 
 // ============================================================
 // COLLISION DETECTION - Tracking variables
@@ -126403,7 +126660,7 @@ function getBackupSummary() {
             snapshot: backupLog.find(e => e.type.startsWith('snapshot') && e.status === 'success')
         },
         filesConnected: {
-            master: !!masterFileHandle,
+            master: sbConnected || !!masterFileHandle,
             backupDir: !!backupDirectoryHandle,
             shippo: !!shippoFileHandle,
             wayfair: !!wayfairFileHandle,
@@ -126470,134 +126727,56 @@ window.showBackupSummary = showBackupSummary;
 // ============================================================================
 
 async function configureMasterFile() {
+    // ======== SUPABASE MODE ========
     try {
-        // Check if File System Access API is supported
-        if (!window.showOpenFilePicker) {
-            alert('⚠️ Your browser does not support the File System Access API.\n\nPlease use Chrome or Edge (latest version) for the multi-user backup system.');
+        const creds = getSbCredentials();
+        let url = creds.url;
+        let key = creds.key;
+        
+        // If no saved credentials, prompt user
+        if (!url || !key) {
+            url = prompt('Enter your Supabase Project URL:\n(e.g. https://xxxxx.supabase.co)');
+            if (!url) return false;
+            key = prompt('Enter your Supabase anon key:\n(starts with eyJ...)');
+            if (!key) return false;
+        }
+        
+        showNotification('🔌 Connecting to Supabase...', 'info');
+        
+        initSupabaseClient(url, key);
+        const ok = await testSupabaseConnection();
+        
+        if (!ok) {
+            alert('❌ Could not connect to Supabase.\n\nCheck your URL and anon key.');
+            sbClient = null;
             return false;
         }
         
-        // v23.3.13: Use directory picker to get folder access (needed for pending-changes routing)
-        let fileHandle = null;
-        let dirHandle = null;
-        
-        try {
-            dirHandle = await window.showDirectoryPicker({
-                id: 'ccd-master-folder',
-                mode: 'readwrite',
-                startIn: 'documents'
-            });
-            
-            // Find master file in the directory
-            const expectedNames = ['ccd-inventory-MASTER.json', 'ccd-inventory-master.json'];
-            for (const name of expectedNames) {
-                try {
-                    fileHandle = await dirHandle.getFileHandle(name);
-                    break;
-                } catch (e) { /* try next name */ }
-            }
-            
-            if (!fileHandle) {
-                // List available JSON files for the user
-                let jsonFiles = [];
-                for await (const entry of dirHandle.values()) {
-                    if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER')) {
-                        jsonFiles.push(entry.name);
-                    }
-                }
-                
-                if (jsonFiles.length === 1) {
-                    fileHandle = await dirHandle.getFileHandle(jsonFiles[0]);
-                } else if (jsonFiles.length > 1) {
-                    const choice = prompt(
-                        'Multiple master files found. Enter the filename to use:\n\n' +
-                        jsonFiles.map((f, i) => `${i + 1}. ${f}`).join('\n') +
-                        '\n\nEnter number (1-' + jsonFiles.length + '):'
-                    );
-                    const idx = parseInt(choice) - 1;
-                    if (idx >= 0 && idx < jsonFiles.length) {
-                        fileHandle = await dirHandle.getFileHandle(jsonFiles[idx]);
-                    }
-                }
-                
-                if (!fileHandle) {
-                    alert('❌ Could not find ccd-inventory-MASTER.json in the selected folder.\n\nPlease select the folder containing your master inventory file.');
-                    return false;
-                }
-            }
-        } catch (dirError) {
-            if (dirError.name === 'AbortError') return false;
-            // Fallback: use file picker if directory picker fails
-            console.warn('Directory picker failed, falling back to file picker:', dirError.message);
-            const [fh] = await window.showOpenFilePicker({
-                types: [{ description: 'JSON Files', accept: {'application/json': ['.json']} }],
-                suggestedName: 'ccd-inventory-MASTER.json',
-                mode: 'readwrite'
-            });
-            fileHandle = fh;
-        }
-        
-        // CRITICAL: Request write permission explicitly
-        const permission = await fileHandle.requestPermission({ mode: 'readwrite' });
-        
-        if (permission !== 'granted') {
-            alert('⚠️ Write permission not granted. Backups will not work.');
-            return false;
-        }
-        
-        console.log('✅ Write permission granted - no more confirmation dialogs!');
-        
-        masterFileHandle = fileHandle;
-        masterDirectoryHandle = dirHandle; // v23.3.13: Store folder handle
-        backupConfig.masterFilePath = fileHandle.name;
+        // Save credentials for auto-reconnect
+        saveSbCredentials(url, key);
+        sbConnected = true;
         backupConfig.enabled = true;
         backupConfig.permissionGranted = true;
         
-        // Store handles in IndexedDB for one-click reconnect
-        if (typeof storeFileHandle === 'function') {
-            storeFileHandle('masterFile', fileHandle, { type: 'master' }).catch(e => 
-                console.warn('Could not store master file handle:', e)
-            );
-            // v23.3.13: Also store directory handle
-            if (dirHandle) {
-                storeFileHandle('masterDirectory', dirHandle, { type: 'directory' }).catch(e =>
-                    console.warn('Could not store master directory handle:', e)
-                );
-            }
-        }
-        
-        // Save configuration
+        // Flag as configured for auto-reconnect
         localStorage.setItem('ccdMasterFileConfigured', 'true');
-        localStorage.setItem('ccdMasterFileName', fileHandle.name);
-        localStorage.setItem('ccdPermissionGranted', 'true');
+        localStorage.setItem('ccdMasterFileName', 'Supabase Database');
         
-        // v23.3.13: Log routing mode
-        if (isPrimaryMachine()) {
-            console.log('✅ Primary machine detected — saves write directly to MASTER.json');
-        } else {
-            console.log('ℹ️ Remote machine detected — saves will route through ccd-pending-changes.json');
-            showNotification('ℹ️ Remote mode: changes will sync through Sync Hub', 'info', 5000);
-        }
+        console.log('✅ Connected to Supabase');
         
-        console.log('✅ Master file configured:', fileHandle.name);
-        
-        // Load from master file
+        // Load inventory from database
         await loadFromMasterFile();
         
-        showNotification('✅ Master file configured - automatic saves enabled!', 'success');
-        updateBackupStatusIndicator();
+        // Start real-time subscriptions (replaces file polling)
+        startSupabaseRealtime();
         
-        // Show info about snapshot setup
-        setTimeout(() => {
-            showNotification('💡 Tip: Click the backup indicator to set up snapshot folders', 'info', 5000);
-        }, 2000);
+        showNotification('✅ Connected to Supabase — ' + inventory.length + ' items loaded', 'success');
+        updateBackupStatusIndicator();
         
         return true;
     } catch (error) {
-        console.error('Master file configuration error:', error);
-        if (error.name !== 'AbortError') {
-            showNotification('❌ Failed to configure master file: ' + error.message, 'error');
-        }
+        console.error('Supabase connection error:', error);
+        showNotification('❌ Connection failed: ' + error.message, 'error');
         return false;
     }
 }
@@ -126657,102 +126836,102 @@ async function configureBackupDirectory() {
 }
 
 async function loadFromMasterFile() {
-    if (!masterFileHandle) {
-        console.log('⚠️ Master file not configured');
+    // ======== SUPABASE MODE ========
+    if (!sbClient) {
+        console.log('⚠️ Supabase not connected');
         return false;
     }
     
     try {
-        showNotification('📥 Loading from master file...', 'info');
+        showNotification('📥 Loading from Supabase...', 'info');
         
-        const file = await masterFileHandle.getFile();
-        const text = await file.text();
-        const data = JSON.parse(text);
+        const count = await loadInventoryFromSupabase();
         
-        // COLLISION DETECTION: Store file timestamp and metadata version
-        loadedFileTimestamp = file.lastModified;
-        loadedMetadataVersion = data._metadata?.version || 0;
+        // Initialize masterData for activity logging (compatibility)
+        window.masterData = {
+            _activityLog: [],
+            _processedOrders: [],
+            _syncQueue: [],
+            inventory: inventory,
+            salesHistory: salesHistory
+        };
         
-        // Load data into system
-        inventory = data.inventory || [];
-        salesHistory = data.salesHistory || [];
-        globalSurcharge = data.surcharge || 7;
-        etsyOHFee = data.etsyOH || 10;
-        wixOHFee = data.wixOH || 10;
-        wayfairOHFee = data.wayfairOH || 10;
-        treasureMartsRentFee = data.treasureMartsRent || 10;
+        // Track load time
+        backupConfig.lastLoadTime = Date.now();
         
-        // v23.3.15: Capture snapshot for change tracking (remote save relay)
-        captureInventorySnapshot();
+        console.log('✅ Loaded from Supabase:', count, 'items');
         
-        // Initialize masterData for activity logging
-        window.masterData = data;
-        console.log('🔍 [Load Debug] data._activityLog from file:', data._activityLog?.length || 0, 'entries');
-        if (!window.masterData._activityLog) {
-            window.masterData._activityLog = [];
-            console.log('🔍 [Load Debug] Initialized empty _activityLog array');
-        } else {
-            console.log('🔍 [Load Debug] Preserved existing _activityLog with', window.masterData._activityLog.length, 'entries');
-        }
-        
-        // Update localStorage (wrapped to handle quota exceeded)
+        // Populate configData from Supabase settings (for brands/categories/etc)
         try {
-            localStorage.setItem('ccdInventory', text);
-        } catch (storageError) {
-            console.warn('⚠️ Could not cache to localStorage (quota exceeded) - Master JSON is the source of truth');
+            const { data: allSettings } = await sbClient.from('settings').select('*');
+            if (allSettings) {
+                const settingsMap = {};
+                allSettings.forEach(s => {
+                    try { settingsMap[s.key] = typeof s.value === 'string' ? JSON.parse(s.value) : s.value; }
+                    catch(e) { settingsMap[s.key] = s.value; }
+                });
+                
+                // Build configData structure that existing code expects
+                configData = {
+                    settings: {
+                        categories: settingsMap.categories || [],
+                        brands: settingsMap.brands || [],
+                        vendors: settingsMap.vendors || [],
+                        proxyUrls: settingsMap.proxy_urls || {},
+                        features: settingsMap.features || {},
+                        enabledChannels: settingsMap.enabled_channels || {},
+                        ccdApiKey: (settingsMap.api_keys || {}).ccdApiKey || '',
+                        emailAddresses: (settingsMap.email_settings || {}).addresses || ''
+                    }
+                };
+                console.log('✅ Config loaded from Supabase:', 
+                    (configData.settings.brands || []).length, 'brands,',
+                    (configData.settings.categories || []).length, 'categories');
+                
+                // Initialize managed lists
+                if (typeof loadManagedCategories === 'function') loadManagedCategories();
+                if (typeof loadManagedBrands === 'function') loadManagedBrands();
+                if (typeof loadManagedVendors === 'function') loadManagedVendors();
+                if (typeof updateCategoryDropdown === 'function') updateCategoryDropdown();
+                if (typeof updateBrandDatalist === 'function') updateBrandDatalist();
+                if (typeof updateBrandFilterDropdown === 'function') updateBrandFilterDropdown();
+            }
+        } catch (configErr) {
+            console.warn('⚠️ Could not load config from Supabase:', configErr.message);
         }
         
-        // Track last modified time
-        backupConfig.lastLoadTime = file.lastModified;
-        
-        console.log('✅ Loaded from master file:', inventory.length, 'items');
-        logBackupEvent('load', 'success', {
-            trigger: 'manual_load',
-            fileSize: text.length
-        });
-        
-        // Log file connection to activity log
-        logActivity('system', 'file_connected', 'system',
-            `Master JSON connected: ${inventory.length} items loaded`,
-            { filename: masterFileHandle.name, itemCount: inventory.length, fileSize: text.length }
+        logActivity('system', 'db_connected', 'system',
+            `Supabase connected: ${count} items loaded`,
+            { source: 'supabase', itemCount: count }
         );
         
-        showNotification('✅ Loaded from master file: ' + inventory.length + ' items', 'success');
+        showNotification('✅ Loaded from Supabase: ' + count + ' items', 'success');
         
         // Refresh display
         if (typeof renderCurrentView === 'function') {
             renderCurrentView();
         }
         
-        // v22.1.3: Pre-render all channel tabs to ensure they display when switched to
+        // Pre-render channel tabs
         setTimeout(() => {
             const channels = ['etsy', 'wix', 'wayfair', 'treasuremarts', 'crazychicks'];
             channels.forEach(channel => {
                 const tab = document.getElementById(channel + 'Tab');
                 if (tab && tab.innerHTML.length === 0) {
-                    renderChannelView(channel);
-                    console.log(`✅ Pre-rendered ${channel} tab`);
+                    if (typeof renderChannelView === 'function') renderChannelView(channel);
                 }
             });
         }, 100);
         
-        // Update Reports KPIs if function exists
+        // Update Reports KPIs
         if (typeof updateReportsKPIs === 'function') {
             setTimeout(updateReportsKPIs, 500);
         }
         
-        // Initialize JSON auto-sync after loading
-        lastKnownModifiedTime = file.lastModified;
-        initializeJSONAutoSync();
-        
         return true;
     } catch (error) {
-        console.error('Failed to load from master file:', error);
-        showNotification('❌ Failed to load from master file: ' + error.message, 'error');
-        logBackupEvent('load', 'failed', {
-            trigger: 'manual_load',
-            errorMessage: error.message
-        });
+        console.error('Failed to load from Supabase:', error);
+        showNotification('❌ Failed to load: ' + error.message, 'error');
         return false;
     }
 }
@@ -127108,7 +127287,7 @@ function initializeJSONAutoSync() {
 // ============================================================================
 
 async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = []) {
-    if (!masterFileHandle || !backupConfig.enabled) {
+    if (!sbConnected || !backupConfig.enabled) {
         console.log('⚠️ Master file not configured - skipping backup');
         return false;
     }
@@ -127122,61 +127301,15 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
     const startTime = Date.now();
     
     try {
-        // Verify permission before writing (check only, don't prompt)
-        let permission = 'granted';
-        try {
-            if (typeof masterFileHandle.queryPermission === 'function') {
-                permission = await masterFileHandle.queryPermission({ mode: 'readwrite' });
-            } else {
-                // queryPermission not available, try to access file directly to verify
-                await masterFileHandle.getFile();
-            }
-        } catch (permErr) {
-            permission = 'denied';
-        }
-        
-        if (permission !== 'granted') {
-            console.warn('⚠️ Write permission not granted, attempting to re-request...');
-            const newPermission = await masterFileHandle.requestPermission({ mode: 'readwrite' });
-            if (newPermission !== 'granted') {
-                throw new Error('Write permission denied');
-            }
+        // Supabase mode — no file permission needed
+        if (!sbClient) {
+            throw new Error('Supabase client not initialized');
         }
         
         // ============================================================
-        // COLLISION DETECTION - Check before saving
+        // SUPABASE SAVE — No collision detection needed (database handles it)
         // ============================================================
-        const collisionCheck = await checkForCollision();
-        
-        if (collisionCheck.collision) {
-            // Show improved collision dialog
-            const action = await showCollisionDialog(collisionCheck);
-            
-            if (action === 'reload') {
-                await loadFromMasterFile();
-                backupConfig.backupInProgress = false;
-                showNotification('🔄 File reloaded - please review and re-apply your changes', 'info');
-                return false;
-            } else if (action === 'cancel') {
-                backupConfig.backupInProgress = false;
-                return false;
-            }
-            // action === 'overwrite' - continue with save
-        }
-        
-        // ============================================================
-        // Prepare data with metadata and change log
-        // ============================================================
-        
-        // First read current file to preserve _changeLog
-        const currentFile = await masterFileHandle.getFile();
-        const currentText = await currentFile.text();
-        let existingData = {};
-        try {
-            existingData = JSON.parse(currentText);
-        } catch (e) {
-            console.warn('Could not parse existing file, starting fresh');
-        }
+        let existingData = window.masterData || {};
         
         const data = {
             _metadata: {
@@ -127301,23 +127434,52 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
         }
         // ============================================================
         
-        const jsonString = JSON.stringify(data, null, 2);
+        // ============================================================
+        // SUPABASE SAVE — Write changed items to database
+        // ============================================================
+        let savedCount = 0;
         
-        // ============================================================
-        // v23.3.15: REMOTE SAVE ROUTING (HTTP relay via Sync Hub proxy)
-        // Remote machines POST changed items to proxy instead of writing files.
-        // Sync Hub polls the proxy and merges into MASTER.json.
-        // ============================================================
-        if (!isPrimaryMachine()) {
-            console.log('[Save] Remote machine detected — routing through Sync Hub proxy');
-            backupConfig.backupInProgress = false;
-            return await savePendingChanges(data, trigger, itemSKU);
+        // Determine which items to save
+        if (itemSKU && !itemSKU.includes(' ')) {
+            // Single item save
+            const item = inventory.find(i => i.sku === itemSKU);
+            if (item) {
+                const ok = await saveItemToSupabase(item);
+                if (ok) savedCount = 1;
+            }
+        } else if (changes && changes.length > 0) {
+            // Save items mentioned in changes
+            const skusToSave = new Set();
+            changes.forEach(c => { if (c.sku) skusToSave.add(c.sku); });
+            const itemsToSave = inventory.filter(i => skusToSave.has(i.sku));
+            if (itemsToSave.length > 0) {
+                savedCount = await saveItemsBatchToSupabase(itemsToSave);
+            }
         }
         
-        // Primary machine: Write directly to MASTER.json (existing behavior)
-        const writable = await masterFileHandle.createWritable();
-        await writable.write(jsonString);
-        await writable.close();
+        // If no specific items identified, save all dirty items or small batch
+        if (savedCount === 0 && sbDirtyItems.size > 0) {
+            const dirtyItemsList = inventory.filter(i => sbDirtyItems.has(i.sku));
+            savedCount = await saveItemsBatchToSupabase(dirtyItemsList);
+            sbDirtyItems.clear();
+        }
+        
+        // If still nothing saved (bulk operation), save all items
+        if (savedCount === 0 && !itemSKU) {
+            savedCount = await saveItemsBatchToSupabase(inventory);
+        }
+        
+        // Save settings
+        await saveSettingsToSupabase();
+        
+        // Log to Supabase activity log
+        await logActivityToSupabase('system', 'data_saved', 'system',
+            `Saved ${savedCount} items to database` + (itemSKU ? ` (${itemSKU})` : ''),
+            { trigger, itemSKU, savedCount, changesCount: changes?.length || 0 },
+            itemSKU
+        );
+        
+        const jsonString = JSON.stringify({ itemCount: savedCount });
         
         // Calculate duration BEFORE using it
         const duration = Date.now() - startTime;
@@ -127334,11 +127496,10 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
         );
         
         // ============================================================
-        // COLLISION DETECTION - Update tracking variables after save
+        // SUPABASE — No collision tracking needed
         // ============================================================
-        const newFile = await masterFileHandle.getFile();
-        loadedFileTimestamp = newFile.lastModified;
-        loadedMetadataVersion = data._metadata.version;
+        loadedFileTimestamp = Date.now();
+        loadedMetadataVersion = (loadedMetadataVersion || 0) + 1;
         
         // Update config
         backupConfig.lastBackupTime = Date.now();
@@ -127499,7 +127660,7 @@ async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = [
 function initializeScheduledBackups() {
     // Hourly backups
     setInterval(() => {
-        if (backupConfig.enabled && masterFileHandle) {
+        if (backupConfig.enabled && (sbConnected || masterFileHandle)) {
             createSnapshotBackup('hourly');
         }
     }, 60 * 60 * 1000); // Every hour
@@ -127508,7 +127669,7 @@ function initializeScheduledBackups() {
     setInterval(() => {
         const now = new Date();
         if (now.getHours() === 23 && now.getMinutes() === 59) {
-            if (backupConfig.enabled && masterFileHandle) {
+            if (backupConfig.enabled && (sbConnected || masterFileHandle)) {
                 createSnapshotBackup('daily');
             }
         }
@@ -127787,7 +127948,7 @@ function updateBackupStatusIndicator() {
     // Update file connection indicators
     const fileIndicators = document.getElementById('backup-file-indicators');
     if (fileIndicators) {
-        const masterConnected = !!masterFileHandle;
+        const masterConnected = sbConnected || !!masterFileHandle;
         const snapshotsConnected = !!backupDirectoryHandle;
         const shippoConnected = !!shippoFileHandle;
         const wayfairConnected = !!wayfairFileHandle;
@@ -127804,7 +127965,7 @@ function updateBackupStatusIndicator() {
     
     // Update border color based on connection status
     const indicator = document.getElementById('backup-status-indicator');
-    const anyConnected = masterFileHandle || backupDirectoryHandle;
+    const anyConnected = sbConnected || masterFileHandle || backupDirectoryHandle;
     
     if (!backupConfig.enabled && !anyConnected) {
         icon.textContent = '💾';
@@ -127962,18 +128123,6 @@ function toggleBackupStatusPanel() {
             <div style="font-weight: 600; font-size: 14px;">
                 ${backupConfig.masterFilePath || 'Unknown'}
             </div>
-            ${!masterDirectoryHandle ? `
-            <div style="margin-top: 8px; padding: 8px 10px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffc107;">
-                <div style="font-size: 11px; color: #856404; margin-bottom: 6px;">
-                    ⚠️ Folder access needed for multi-user sync
-                </div>
-                <button onclick="reconnectMasterFile()" style="width: 100%; padding: 8px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600;">
-                    📁 Reconnect Master File (Pick Folder)
-                </button>
-            </div>
-            ` : `
-            <div style="font-size: 11px; color: #28a745; margin-top: 4px;">✅ Folder access granted — multi-user sync active</div>
-            `}
         </div>
         
         <!-- JSON AUTO-SYNC SECTION -->
@@ -128176,18 +128325,35 @@ function initializeBackupSystem() {
         backupConfig.masterFilePath = localStorage.getItem('ccdMasterFileName');
         backupConfig.backupDirectoryName = localStorage.getItem('ccdBackupDirectoryName');
         
-        // Try auto-reconnect first (will work if permission was persisted)
+        // Try Supabase auto-reconnect
         setTimeout(async () => {
-            const autoConnected = await tryAutoReconnect();
-            
-            // v23.3.14b: On remote machines, also check for directory handle
-            // Auto-reconnect may connect the file but not the folder
-            const needsDirUpgrade = masterFileHandle && !masterDirectoryHandle && typeof isPrimaryMachine === 'function' && !isPrimaryMachine();
-            
-            // If auto-reconnect failed, show the manual prompt
-            if (!autoConnected || needsDirUpgrade) {
-                const needsMaster = (wasMasterConfigured && !masterFileHandle) || needsDirUpgrade;
-                showReconnectPrompt(needsMaster, wasBackupDirConfigured && !backupDirectoryHandle);
+            const creds = getSbCredentials();
+            if (creds.url && creds.key && localStorage.getItem('ccdUseSupabase') === 'true') {
+                console.log('🔌 Auto-connecting to Supabase...');
+                try {
+                    initSupabaseClient(creds.url, creds.key);
+                    const ok = await testSupabaseConnection();
+                    if (ok) {
+                        sbConnected = true;
+                        backupConfig.enabled = true;
+                        backupConfig.permissionGranted = true;
+                        await loadFromMasterFile();
+                        startSupabaseRealtime();
+                        showNotification('✅ Auto-connected to Supabase — ' + inventory.length + ' items', 'success');
+                        updateBackupStatusIndicator();
+                    } else {
+                        showNotification('⚠️ Supabase auto-connect failed — click Connect to retry', 'warning');
+                    }
+                } catch (e) {
+                    console.warn('Supabase auto-connect error:', e);
+                    showNotification('⚠️ Could not auto-connect to Supabase', 'warning');
+                }
+            } else {
+                // Fall back to file-based reconnect attempt
+                const autoConnected = await tryAutoReconnect();
+                if (!autoConnected) {
+                    showReconnectPrompt(wasMasterConfigured && !masterFileHandle, wasBackupDirConfigured && !backupDirectoryHandle);
+                }
             }
         }, 1000);
     }
@@ -128201,59 +128367,6 @@ function initializeBackupSystem() {
  */
 let configFileHandle = null;
 
-/**
- * v23.3.14: Ensure configFileHandle has readwrite permission before writing.
- * Auto-reconnect only grants 'read' — this upgrades on user gesture (button click).
- * v23.3.14b: Self-healing — if handle is null, prompt user to pick the file.
- */
-async function ensureConfigWritePermission() {
-    // If no handle at all, try to acquire one right now (we have user gesture from button click)
-    if (!configFileHandle) {
-        console.warn('[CONFIG] No config handle — prompting user to connect...');
-        const connected = await selectConfigFile();
-        if (!connected || !configFileHandle) {
-            console.error('[CONFIG] User did not connect CONFIG.json');
-            return false;
-        }
-        // selectConfigFile uses showOpenFilePicker which grants readwrite by default
-        console.log('[CONFIG] ✅ Config file connected via save-triggered prompt');
-        return true;
-    }
-    
-    try {
-        // Already have handle — check if we have write permission
-        const perm = await configFileHandle.queryPermission({ mode: 'readwrite' });
-        if (perm === 'granted') return true;
-        
-        // Try to upgrade — user gesture required (we're called from a button click)
-        const requested = await configFileHandle.requestPermission({ mode: 'readwrite' });
-        if (requested === 'granted') {
-            console.log('[CONFIG] ✅ Write permission upgraded');
-            return true;
-        }
-        
-        // Permission denied — try fresh file picker as last resort
-        console.warn('[CONFIG] Permission upgrade denied — trying fresh file picker...');
-        const connected = await selectConfigFile();
-        if (!connected || !configFileHandle) {
-            console.error('[CONFIG] Could not get write access to CONFIG.json');
-            return false;
-        }
-        console.log('[CONFIG] ✅ Config file reconnected with write access');
-        return true;
-        
-    } catch (err) {
-        console.error('[CONFIG] Permission check failed:', err);
-        // Try fresh picker as fallback
-        try {
-            const connected = await selectConfigFile();
-            return connected && !!configFileHandle;
-        } catch (e) {
-            return false;
-        }
-    }
-}
-
 async function tryLoadConfigFromOneDrive() {
     console.log('[CONFIG] Attempting to load shared config...');
     
@@ -128262,11 +128375,7 @@ async function tryLoadConfigFromOneDrive() {
         if (typeof CCDSharedFiles !== 'undefined') {
             const savedHandle = await CCDSharedFiles.getConfigFile();
             if (savedHandle) {
-                // v23.3.14: Try readwrite first, fall back to read
-                let perm = await savedHandle.queryPermission({ mode: 'readwrite' });
-                if (perm !== 'granted') {
-                    perm = await savedHandle.queryPermission({ mode: 'read' });
-                }
+                const perm = await savedHandle.queryPermission({ mode: 'read' });
                 if (perm === 'granted') {
                     configFileHandle = savedHandle;
                     await loadSettingsFromConfigFile();
@@ -128473,11 +128582,7 @@ async function tryReconnectConfigFile() {
         // Try to get from our local IndexedDB store first
         const savedData = await getStoredFileHandle('configFile');
         if (savedData?.handle) {
-            // v23.3.14: Try readwrite first, fall back to read
-            let perm = await savedData.handle.queryPermission({ mode: 'readwrite' });
-            if (perm !== 'granted') {
-                perm = await savedData.handle.queryPermission({ mode: 'read' });
-            }
+            const perm = await savedData.handle.queryPermission({ mode: 'read' });
             if (perm === 'granted') {
                 configFileHandle = savedData.handle;
                 await loadSettingsFromConfigFile();
@@ -128490,11 +128595,7 @@ async function tryReconnectConfigFile() {
         if (typeof CCDSharedFiles !== 'undefined') {
             const sharedHandle = await CCDSharedFiles.getConfigFile();
             if (sharedHandle) {
-                // v23.3.14: Try readwrite first, fall back to read
-                let perm = await sharedHandle.queryPermission({ mode: 'readwrite' });
-                if (perm !== 'granted') {
-                    perm = await sharedHandle.queryPermission({ mode: 'read' });
-                }
+                const perm = await sharedHandle.queryPermission({ mode: 'read' });
                 if (perm === 'granted') {
                     configFileHandle = sharedHandle;
                     await loadSettingsFromConfigFile();
@@ -128637,9 +128738,6 @@ async function tryAutoReconnect() {
                 initializeJSONAutoSync();
                 updateBackupStatusIndicator();
                 
-                // v23.3.13: Try to restore directory handle for remote save routing
-                await tryRestoreDirectoryHandle();
-                
                 // Skip rest of auto-reconnect if master was found via shared files
                 return masterConnected;
             }
@@ -128705,31 +128803,11 @@ async function tryAutoReconnect() {
                     initializeJSONAutoSync();
                     
                     updateBackupStatusIndicator();
-                    
-                    // v23.3.13: Ensure directory handle for remote save routing
-                    await tryRestoreDirectoryHandle();
                 } else {
                     console.log('⚠️ Master file needs permission re-grant');
                 }
             } catch (e) {
                 console.log('⚠️ Could not auto-reconnect master file:', e.message);
-            }
-        }
-        
-        // v23.3.13: Try Master Directory auto-reconnect (for pending-changes routing)
-        const dirStored = await getStoredFileHandle('masterDirectory');
-        if (dirStored?.handle && !masterDirectoryHandle) {
-            try {
-                const dirPermission = await safeQueryPermission(dirStored.handle, 'readwrite');
-                if (dirPermission === 'granted') {
-                    masterDirectoryHandle = dirStored.handle;
-                    console.log('✅ Auto-reconnected to master directory:', dirStored.handle.name);
-                    if (!isPrimaryMachine()) {
-                        console.log('ℹ️ Remote machine — saves will route through ccd-pending-changes.json');
-                    }
-                }
-            } catch (e) {
-                console.log('⚠️ Could not auto-reconnect master directory:', e.message);
             }
         }
         
@@ -128868,7 +128946,7 @@ function showReconnectPrompt(needsMaster, needsBackupDir) {
             <div style="display: flex; flex-direction: column; gap: 10px;">
                 ${needsMaster ? `
                 <button id="reconnect-master-btn" onclick="reconnectMasterFile()" style="padding: 12px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; font-weight: 600;">
-                    📄 Step 1: Select Master File
+                    🔌 Step 1: Connect to Database
                 </button>
                 ` : ''}
                 ${needsBackupDir ? `
@@ -128897,62 +128975,21 @@ function dismissReconnectPrompt() {
 
 async function reconnectMasterFile() {
     try {
-        // v23.3.13: Use directory picker to get folder access (needed for remote save routing)
-        let fileHandle = null;
-        let dirHandle = null;
-        
-        try {
-            dirHandle = await window.showDirectoryPicker({
-                id: 'ccd-master-folder',
-                mode: 'readwrite',
-                startIn: 'documents'
-            });
-            
-            // Find master file in directory
-            const expectedNames = ['ccd-inventory-MASTER.json', 'ccd-inventory-master.json'];
-            for (const name of expectedNames) {
-                try { fileHandle = await dirHandle.getFileHandle(name); break; } catch (e) { /* next */ }
-            }
-            
-            if (!fileHandle) {
-                for await (const entry of dirHandle.values()) {
-                    if (entry.kind === 'file' && entry.name.endsWith('.json') && entry.name.includes('MASTER') && !entry.name.includes('pending') && !entry.name.includes('Mary')) {
-                        fileHandle = await dirHandle.getFileHandle(entry.name);
-                        break;
-                    }
-                }
-            }
-            
-            if (!fileHandle) {
-                showNotification('❌ Could not find MASTER.json in the selected folder', 'error');
-                return;
-            }
-        } catch (dirError) {
-            if (dirError.name === 'AbortError') return;
-            // Fallback to file picker
-            const [fh] = await window.showOpenFilePicker({
-                types: [{ description: 'JSON Files', accept: {'application/json': ['.json']} }],
-                mode: 'readwrite'
-            });
-            fileHandle = fh;
-        }
+        const [fileHandle] = await window.showOpenFilePicker({
+            types: [{
+                description: 'JSON Files',
+                accept: {'application/json': ['.json']}
+            }],
+            mode: 'readwrite'
+        });
         
         const permission = await fileHandle.requestPermission({ mode: 'readwrite' });
         if (permission === 'granted') {
             masterFileHandle = fileHandle;
-            masterDirectoryHandle = dirHandle;
             backupConfig.masterFilePath = fileHandle.name;
             backupConfig.enabled = true;
             backupConfig.permissionGranted = true;
             localStorage.setItem('ccdMasterFileName', fileHandle.name);
-            
-            // Store handles for future sessions
-            if (typeof storeFileHandle === 'function') {
-                storeFileHandle('masterFile', fileHandle, { type: 'master' }).catch(e => console.warn(e));
-                if (dirHandle) {
-                    storeFileHandle('masterDirectory', dirHandle, { type: 'directory' }).catch(e => console.warn(e));
-                }
-            }
             
             // Load data from master file
             await loadFromMasterFile();
@@ -128965,9 +129002,8 @@ async function reconnectMasterFile() {
                 btn.disabled = true;
             }
             
-            const routeMode = isPrimaryMachine() ? 'direct write' : 'remote sync via Sync Hub';
-            showNotification(`✅ Master file reconnected (${routeMode}): ` + fileHandle.name, 'success');
-            console.log('✅ Master file reconnected:', fileHandle.name, '| mode:', routeMode);
+            showNotification('✅ Master file reconnected: ' + fileHandle.name, 'success');
+            console.log('✅ Master file reconnected:', fileHandle.name);
             updateBackupStatusIndicator();
             
             // Check if we're done
@@ -130809,7 +130845,7 @@ function renderBackupHealthReport() {
                 </div>
             </div>
             ` : `
-            <p style="margin: 0;">Backup system not configured. <button onclick="configureMasterFile()" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Configure Now</button></p>
+            <p style="margin: 0;">Database not connected. <button onclick="configureMasterFile()" style="padding: 8px 16px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">Connect to Supabase</button></p>
             `}
         </div>
         
@@ -134333,9 +134369,35 @@ function deleteCategory(categoryName) {
  * Save categories to CONFIG.json
  */
 async function saveCategoriestoConfig() {
-    // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
-    if (!await ensureConfigWritePermission()) {
-        alert('⚠️ Could not get write access to CONFIG.json.\n\nPlease try again — when the file picker appears, select your CONFIG.json file.');
+    // ======== SUPABASE MODE ========
+    if (sbConnected && sbClient) {
+        try {
+            await sbClient.from('settings').upsert({
+                key: 'categories',
+                value: JSON.stringify(managedCategories),
+                updated_by: getAppIdentifier(),
+                updated_at: new Date().toISOString()
+            });
+            
+            // Update global configData
+            if (!configData) configData = { settings: {} };
+            if (!configData.settings) configData.settings = {};
+            configData.settings.categories = managedCategories;
+            
+            console.log('[Categories] Saved to Supabase:', managedCategories.length, 'categories');
+            showToast(`✅ ${managedCategories.length} categories saved`, 'success');
+            updateCategoryDropdown();
+            return;
+        } catch (err) {
+            console.error('[Categories] Error saving to Supabase:', err);
+            alert('❌ Error saving categories:\n\n' + err.message);
+            return;
+        }
+    }
+    
+    // Fallback: CONFIG.json file mode
+    if (!configFileHandle) {
+        alert('⚠️ Not connected to database or CONFIG.json!');
         return;
     }
     
@@ -134585,12 +134647,38 @@ function deleteBrand(brandName) {
 }
 
 async function saveBrandsToConfig() {
-    // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
-    if (!await ensureConfigWritePermission()) {
-        alert('⚠️ Could not get write access to CONFIG.json.\n\nPlease try again — when the file picker appears, select your CONFIG.json file.');
-        return;
+    // ======== SUPABASE MODE ========
+    if (sbConnected && sbClient) {
+        try {
+            await sbClient.from('settings').upsert({
+                key: 'brands',
+                value: JSON.stringify(managedBrands),
+                updated_by: getAppIdentifier(),
+                updated_at: new Date().toISOString()
+            });
+            
+            // Update global configData
+            if (!configData) configData = { settings: {} };
+            if (!configData.settings) configData.settings = {};
+            configData.settings.brands = managedBrands;
+            
+            console.log('[Brands] Saved to Supabase:', managedBrands.length, 'brands');
+            showToast(`✅ ${managedBrands.length} brands saved`, 'success');
+            updateBrandDatalist();
+            updateBrandFilterDropdown();
+            return;
+        } catch (err) {
+            console.error('[Brands] Error saving to Supabase:', err);
+            alert('❌ Error saving brands:\n\n' + err.message);
+            return;
+        }
     }
     
+    // Fallback: CONFIG.json file mode
+    if (!configFileHandle) {
+        alert('⚠️ Not connected to database or CONFIG.json!');
+        return;
+    }
     try {
         const file = await configFileHandle.getFile();
         const text = await file.text();
@@ -134790,12 +134878,36 @@ function deleteVendor(vendorName) {
 }
 
 async function saveVendorsToConfig() {
-    // v23.3.14b: Self-healing — will prompt to connect CONFIG if needed
-    if (!await ensureConfigWritePermission()) {
-        alert('⚠️ Could not get write access to CONFIG.json.\n\nPlease try again — when the file picker appears, select your CONFIG.json file.');
-        return;
+    // ======== SUPABASE MODE ========
+    if (sbConnected && sbClient) {
+        try {
+            await sbClient.from('settings').upsert({
+                key: 'vendors',
+                value: JSON.stringify(managedVendors),
+                updated_by: getAppIdentifier(),
+                updated_at: new Date().toISOString()
+            });
+            
+            if (!configData) configData = { settings: {} };
+            if (!configData.settings) configData.settings = {};
+            configData.settings.vendors = managedVendors;
+            
+            console.log('[Vendors] Saved to Supabase:', managedVendors.length, 'vendors');
+            showToast(`✅ ${managedVendors.length} vendors saved`, 'success');
+            updateVendorDatalist();
+            return;
+        } catch (err) {
+            console.error('[Vendors] Error saving to Supabase:', err);
+            alert('❌ Error saving vendors:\n\n' + err.message);
+            return;
+        }
     }
     
+    // Fallback: CONFIG.json file mode
+    if (!configFileHandle) {
+        alert('⚠️ Not connected to database or CONFIG.json!');
+        return;
+    }
     try {
         const file = await configFileHandle.getFile();
         const text = await file.text();
