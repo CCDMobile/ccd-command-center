@@ -70316,6 +70316,54 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             }
             // ========== END Feature Flag Save ==========
             
+            // ======== SUPABASE: Save all settings to database ========
+            if (typeof sbConnected !== 'undefined' && sbConnected && sbClient) {
+                try {
+                    const sbSaveSettings = [];
+                    
+                    // Proxy URLs
+                    sbSaveSettings.push({ key: 'proxy_urls', value: JSON.stringify({
+                        etsy: localStorage.getItem('etsyProxyUrl') || '',
+                        wix: localStorage.getItem('wixProxyUrl') || '',
+                        wayfair: localStorage.getItem('wayfairProxyUrl') || '',
+                        shippo: localStorage.getItem('shippoProxyUrl') || '',
+                        syncHub: localStorage.getItem('syncHubUrl') || ''
+                    })});
+                    
+                    // API keys
+                    sbSaveSettings.push({ key: 'api_keys', value: JSON.stringify({
+                        ccdApiKey: localStorage.getItem('ccdApiKey') || '',
+                        etsyApiKey: localStorage.getItem('etsyApiKey') || '',
+                        shippoApiKey: localStorage.getItem('shippoApiKey') || '',
+                        wayfairApiKey: localStorage.getItem('wayfairApiKey') || '',
+                        syncHubApiKey: localStorage.getItem('syncHubApiKey') || ''
+                    })});
+                    
+                    // Categories, brands, vendors
+                    if (typeof managedCategories !== 'undefined' && managedCategories.length > 0) {
+                        sbSaveSettings.push({ key: 'categories', value: JSON.stringify(managedCategories) });
+                    }
+                    if (typeof managedBrands !== 'undefined' && managedBrands.length > 0) {
+                        sbSaveSettings.push({ key: 'brands', value: JSON.stringify(managedBrands) });
+                    }
+                    if (typeof managedVendors !== 'undefined' && managedVendors.length > 0) {
+                        sbSaveSettings.push({ key: 'vendors', value: JSON.stringify(managedVendors) });
+                    }
+                    
+                    for (const s of sbSaveSettings) {
+                        await sbClient.from('settings').upsert({
+                            key: s.key,
+                            value: s.value,
+                            updated_by: typeof getAppIdentifier === 'function' ? getAppIdentifier() : 'CCD-INVENTORY-SYSTEM',
+                            updated_at: new Date().toISOString()
+                        });
+                    }
+                    console.log('[Settings] ✅ All settings saved to Supabase');
+                } catch (sbErr) {
+                    console.warn('[Settings] Could not save to Supabase:', sbErr.message);
+                }
+            }
+            
             showNotification('✅ Settings saved successfully', 'success');
             closeSettingsPanel();
         }
@@ -133337,7 +133385,7 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
                 <!-- Action Buttons -->
                 <div style="display: flex; gap: 8px; margin-top: 15px;">
                     <button onclick="saveCategoriestoConfig()" style="flex: 1; padding: 12px; background: #667eea; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
-                        💾 Save to CONFIG.json
+                        💾 Save Categories
                     </button>
                     <button onclick="refreshCategoryList()" style="padding: 12px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
                         🔄 Refresh
@@ -133396,7 +133444,7 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
                 
                 <div style="display: flex; gap: 8px; margin-top: 15px;">
                     <button onclick="saveBrandsToConfig()" style="flex: 1; padding: 12px; background: #f5576c; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
-                        💾 Save to CONFIG.json
+                        💾 Save Brands
                     </button>
                     <button onclick="refreshBrandList()" style="padding: 12px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
                         🔄 Refresh
@@ -133444,7 +133492,7 @@ console.log('✅ Reports Tab Redesign v21.7 loaded');
                 
                 <div style="display: flex; gap: 8px; margin-top: 15px;">
                     <button onclick="saveVendorsToConfig()" style="flex: 1; padding: 12px; background: #4facfe; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
-                        💾 Save to CONFIG.json
+                        💾 Save Vendors
                     </button>
                     <button onclick="refreshVendorList()" style="padding: 12px 20px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
                         🔄 Refresh
