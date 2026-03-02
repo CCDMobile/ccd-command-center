@@ -74433,6 +74433,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 const index = inventory.findIndex(i => i.id == item.id);
                 console.log('Found item at index:', index);
                 if (index !== -1) {
+                    // Preserve Supabase ID for database updates
+                    if (inventory[index]._sbId) item._sbId = inventory[index]._sbId;
                     inventory[index] = item;
                     console.log('✅ Item updated at index', index);
                     
@@ -74527,6 +74529,17 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             }
 
             autoSave();
+            
+            // ======== SUPABASE: Direct save for this specific item ========
+            if (typeof sbConnected !== 'undefined' && sbConnected && typeof saveItemToSupabase === 'function') {
+                saveItemToSupabase(item).then(ok => {
+                    if (ok) {
+                        console.log('✅ [Supabase] Item saved directly:', item.sku);
+                    } else {
+                        console.warn('⚠️ [Supabase] Direct item save failed:', item.sku);
+                    }
+                }).catch(err => console.error('[Supabase] Save error:', err));
+            }
             
             // v23.0.6: PAR Auto-Refill and Channel Sync Integration
             // Check if warehouse qty changed and apply Channel PAR if enabled
@@ -78055,7 +78068,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 }
                 
                 // 🔄 Trigger multi-user backup system
-                if (typeof saveToMasterFile === 'function' && backupConfig && backupConfig.enabled) {
+                if (typeof saveToMasterFile === 'function' && (sbConnected || (backupConfig && backupConfig.enabled))) {
                     saveToMasterFile('auto_save').catch(err => {
                         console.error('Backup failed:', err);
                     });
@@ -127335,7 +127348,7 @@ function initializeJSONAutoSync() {
 // ============================================================================
 
 async function saveToMasterFile(trigger = 'unknown', itemSKU = null, changes = []) {
-    if (!sbConnected || !backupConfig.enabled) {
+    if (!sbConnected && !(backupConfig && backupConfig.enabled)) {
         console.log('⚠️ Master file not configured - skipping backup');
         return false;
     }
