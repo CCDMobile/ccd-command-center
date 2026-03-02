@@ -463,13 +463,15 @@
             border-top: 1px solid var(--border-color);
         }
     </style>
+    <!-- Supabase JS Client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
     <header class="header">
         <div class="header-left">
             <div class="logo">
                 <div class="logo-icon">🔄</div>
-                <span>CCD Sync Hub v3.3.5.25 • Build: 2026-02-20 • Allocation Sync Independent</span>
+                <span>CCD Sync Hub v4.0 • Build: 2026-03-02 • Supabase Edition</span>
             </div>
             <nav class="header-nav">
                 <button class="nav-btn active" data-view="queue" onclick="switchView('queue')">📋 Queue</button>
@@ -497,31 +499,25 @@
             <div id="errorPanelContent" class="error-panel-content"></div>
         </div>
 
-        <!-- MASTER JSON CONNECTION BANNER - Shows when not connected -->
-        <div id="masterJsonConnectionBanner" style="background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.15)); border: 2px solid var(--info); border-radius: 12px; padding: 20px; margin-bottom: 24px; display: block;">
+        <!-- SUPABASE CONNECTION PANEL -->
+        <div id="supabaseConnectionPanel" style="background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(139,92,246,0.15)); border: 2px solid var(--info); border-radius: 12px; padding: 20px; margin-bottom: 24px;">
             <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-                <span style="font-size: 2.5rem;">📁</span>
+                <span style="font-size: 2.5rem;" id="sbIcon">🔌</span>
                 <div style="flex: 1; min-width: 200px;">
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text); margin-bottom: 4px;">Connect Your Master Inventory File</div>
-                    <div style="font-size: 0.9rem; color: var(--text-dim);">Select your <code>ccd-inventory-MASTER.json</code> file to enable order processing and inventory sync.</div>
+                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text); margin-bottom: 4px;">
+                        Supabase Database <span id="sbStatusText" style="font-weight: 400; font-size: 0.9rem; color: var(--text-dim);">— Not Connected</span>
+                    </div>
+                    <div id="sbDetailsRow" style="font-size: 0.85rem; color: var(--text-dim); margin-top: 4px;">
+                        <span id="sbItemCount"></span>
+                    </div>
+                    <div id="sbInputRow" style="margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap;">
+                        <input type="text" id="sbUrlInput" placeholder="Supabase URL" 
+                            style="flex: 1; min-width: 180px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-input, #1e293b); color: var(--text); font-size: 0.85rem;">
+                        <input type="text" id="sbKeyInput" placeholder="anon key" 
+                            style="flex: 1; min-width: 180px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-input, #1e293b); color: var(--text); font-size: 0.85rem;">
+                        <button class="btn btn-primary btn-sm" onclick="connectSupabase()" id="sbConnectBtn">🔗 Connect</button>
+                    </div>
                 </div>
-                <button class="btn btn-primary" onclick="selectMasterJsonFile()" style="white-space: nowrap;">
-                    📂 Select Master JSON File
-                </button>
-            </div>
-        </div>
-
-        <!-- MASTER JSON RECONNECT BANNER - Shows when permission needed -->
-        <div id="masterJsonReconnectBanner" style="background: rgba(234,179,8,0.15); border: 2px solid var(--warning); border-radius: 12px; padding: 20px; margin-bottom: 24px; display: none;">
-            <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
-                <span style="font-size: 2.5rem;">🔄</span>
-                <div style="flex: 1; min-width: 200px;">
-                    <div style="font-weight: 700; font-size: 1.1rem; color: var(--text); margin-bottom: 4px;">Reconnect to Master JSON</div>
-                    <div style="font-size: 0.9rem; color: var(--text-dim);">Click to restore connection to <strong id="reconnectFileName">your file</strong></div>
-                </div>
-                <button class="btn btn-primary" onclick="reconnectMasterJson()" style="white-space: nowrap;">
-                    🔗 Reconnect Now
-                </button>
             </div>
         </div>
 
@@ -1596,6 +1592,468 @@
     const _activityBuffer = [];
     
     // =============================================
+    // SUPABASE DATABASE LAYER
+    // =============================================
+    let sbClient = null;
+    let sbConnected = false;
+    
+    function getSbCredentials() {
+        return {
+            url: localStorage.getItem('ccdSupabaseUrl') || '',
+            key: localStorage.getItem('ccdSupabaseKey') || ''
+        };
+    }
+    
+    function saveSbCredentials(url, key) {
+        localStorage.setItem('ccdSupabaseUrl', url);
+        localStorage.setItem('ccdSupabaseKey', key);
+    }
+    
+    // Convert Supabase row (snake_case) to in-memory item (camelCase)
+    function sbRowToItem(row) {
+        return {
+            id: row.legacy_id || String(row.id),
+            _sbId: row.id,
+            sku: row.sku,
+            productName: row.product_name,
+            brandName: row.brand_name,
+            category: row.category,
+            vendor: row.vendor,
+            shelfNumber: row.shelf_number || '',
+            qty: row.qty || 0,
+            isActive: row.is_active !== false,
+            photographed: row.photographed || false,
+            comments: row.comments || '',
+            dateAdded: row.date_added,
+            lastSoldDate: row.last_sold_date,
+            descriptionLastUpdated: row.description_last_updated,
+            wholesalePrice: parseFloat(row.wholesale_price) || 0,
+            ibShipping: parseFloat(row.ib_shipping) || 0,
+            tariff: parseFloat(row.tariff) || 0,
+            retailPrice: parseFloat(row.retail_price) || 0,
+            retailPriceOld: row.retail_price_old != null ? parseFloat(row.retail_price_old) : null,
+            coopPrice: row.coop_price != null ? parseFloat(row.coop_price) : null,
+            obShipping: parseFloat(row.ob_shipping) || 0,
+            channels: {
+                etsy: row.etsy_qty || 0,
+                wix: row.wix_qty || 0,
+                wayfair: row.wayfair_qty || 0,
+                crazychicks: row.crazychicks_qty || 0,
+                treasuremarts: row.treasuremarts_qty || 0
+            },
+            channelPriceAdjustments: {
+                etsy: parseFloat(row.etsy_price_adj) || 0,
+                wix: parseFloat(row.wix_price_adj) || 0,
+                wayfair: parseFloat(row.wayfair_price_adj) || 0,
+                crazychicks: parseFloat(row.crazychicks_price_adj) || 0,
+                treasuremarts: parseFloat(row.treasuremarts_price_adj) || 0
+            },
+            channelPrices: {
+                etsy: row.etsy_price != null ? parseFloat(row.etsy_price) : null,
+                wix: row.wix_price != null ? parseFloat(row.wix_price) : null,
+                wayfair: row.wayfair_price != null ? parseFloat(row.wayfair_price) : null,
+                crazychicks: row.crazychicks_price != null ? parseFloat(row.crazychicks_price) : null,
+                treasuremarts: row.treasuremarts_price != null ? parseFloat(row.treasuremarts_price) : null
+            },
+            channelAddedDates: {
+                ...(row.etsy_added_date ? { etsy: row.etsy_added_date } : {}),
+                ...(row.wix_added_date ? { wix: row.wix_added_date } : {}),
+                ...(row.wayfair_added_date ? { wayfair: row.wayfair_added_date } : {}),
+                ...(row.treasuremarts_added_date ? { treasuremarts: row.treasuremarts_added_date } : {})
+            },
+            minParLevel: row.min_par_level || 0,
+            maxParLevel: row.max_par_level || 0,
+            monitorLowStock: row.monitor_low_stock || false,
+            masterParEnabled: row.master_par_enabled || false,
+            masterParMin: row.master_par_min || 0,
+            masterParMax: row.master_par_max || 0,
+            channelParEnabled: row.channel_par_enabled || false,
+            channelParMin: row.channel_par_min || 0,
+            channelParMax: row.channel_par_max || 0,
+            shippingWeight: parseFloat(row.shipping_weight) || 0,
+            boxLength: parseFloat(row.box_length) || 0,
+            boxWidth: parseFloat(row.box_width) || 0,
+            boxHeight: parseFloat(row.box_height) || 0,
+            wayfairDimensions: row.wayfair_dimensions || '',
+            wayfairWeight: row.wayfair_weight || '',
+            wayfairMaterials: row.wayfair_materials || '',
+            wayfairColor: row.wayfair_color || '',
+            wayfairProps: row.wayfair_props || '',
+            wayfairCountry: row.wayfair_country || '',
+            etsyListingId: row.etsy_listing_id,
+            wixProductId: row.wix_product_id,
+            wixVariantId: row.wix_variant_id,
+            wayfairSku: row.wayfair_sku,
+            etsyTitle: row.etsy_sync_title,
+            etsyPrice: row.etsy_sync_price != null ? parseFloat(row.etsy_sync_price) : null,
+            etsyQuantity: row.etsy_sync_quantity,
+            // Legacy qty aliases used by processOrder
+            etsyQty: row.etsy_qty || 0,
+            wixQty: row.wix_qty || 0,
+            wayfairQty: row.wayfair_qty || 0,
+            warehouseQty: row.qty || 0,
+            orderDate: row.order_date,
+            orderNumber: row.order_number || '',
+            shippedDate: row.shipped_date,
+            purchaseHistory: [],
+            shippingHistory: []
+        };
+    }
+    
+    // Convert in-memory item (camelCase) to Supabase row (snake_case)
+    function itemToSbRow(item) {
+        const channels = item.channels || {};
+        const priceAdj = item.channelPriceAdjustments || {};
+        const chanPrices = item.channelPrices || {};
+        const chanDates = item.channelAddedDates || {};
+        const row = {
+            sku: item.sku,
+            product_name: item.productName || '',
+            brand_name: item.brandName || '',
+            category: item.category || '',
+            vendor: item.vendor || '',
+            shelf_number: item.shelfNumber || '',
+            qty: parseInt(item.qty) || 0,
+            is_active: item.isActive !== false,
+            photographed: item.photographed || false,
+            comments: item.comments || '',
+            date_added: item.dateAdded || new Date().toISOString(),
+            last_sold_date: item.lastSoldDate || null,
+            description_last_updated: item.descriptionLastUpdated || null,
+            wholesale_price: parseFloat(item.wholesalePrice) || 0,
+            ib_shipping: parseFloat(item.ibShipping) || 0,
+            tariff: parseFloat(item.tariff) || 0,
+            retail_price: parseFloat(item.retailPrice) || 0,
+            retail_price_old: item.retailPriceOld != null ? parseFloat(item.retailPriceOld) : null,
+            coop_price: item.coopPrice != null ? parseFloat(item.coopPrice) : null,
+            ob_shipping: parseFloat(item.obShipping) || 0,
+            etsy_qty: parseInt(channels.etsy) || 0,
+            wix_qty: parseInt(channels.wix) || 0,
+            wayfair_qty: parseInt(channels.wayfair) || 0,
+            crazychicks_qty: parseInt(channels.crazychicks) || 0,
+            treasuremarts_qty: parseInt(channels.treasuremarts) || 0,
+            etsy_price_adj: parseFloat(priceAdj.etsy) || 0,
+            wix_price_adj: parseFloat(priceAdj.wix) || 0,
+            wayfair_price_adj: parseFloat(priceAdj.wayfair) || 0,
+            crazychicks_price_adj: parseFloat(priceAdj.crazychicks) || 0,
+            treasuremarts_price_adj: parseFloat(priceAdj.treasuremarts) || 0,
+            etsy_price: chanPrices.etsy != null ? parseFloat(chanPrices.etsy) : null,
+            wix_price: chanPrices.wix != null ? parseFloat(chanPrices.wix) : null,
+            wayfair_price: chanPrices.wayfair != null ? parseFloat(chanPrices.wayfair) : null,
+            crazychicks_price: chanPrices.crazychicks != null ? parseFloat(chanPrices.crazychicks) : null,
+            treasuremarts_price: chanPrices.treasuremarts != null ? parseFloat(chanPrices.treasuremarts) : null,
+            etsy_added_date: chanDates.etsy || null,
+            wix_added_date: chanDates.wix || null,
+            wayfair_added_date: chanDates.wayfair || null,
+            treasuremarts_added_date: chanDates.treasuremarts || null,
+            min_par_level: parseInt(item.minParLevel) || 0,
+            max_par_level: parseInt(item.maxParLevel) || 0,
+            monitor_low_stock: item.monitorLowStock || false,
+            master_par_enabled: item.masterParEnabled || false,
+            master_par_min: parseInt(item.masterParMin) || 0,
+            master_par_max: parseInt(item.masterParMax) || 0,
+            channel_par_enabled: item.channelParEnabled || false,
+            channel_par_min: parseInt(item.channelParMin) || 0,
+            channel_par_max: parseInt(item.channelParMax) || 0,
+            shipping_weight: parseFloat(item.shippingWeight) || 0,
+            box_length: parseFloat(item.boxLength) || 0,
+            box_width: parseFloat(item.boxWidth) || 0,
+            box_height: parseFloat(item.boxHeight) || 0,
+            wayfair_dimensions: item.wayfairDimensions || '',
+            wayfair_weight: item.wayfairWeight || '',
+            wayfair_materials: item.wayfairMaterials || '',
+            wayfair_color: item.wayfairColor || '',
+            wayfair_props: item.wayfairProps || '',
+            wayfair_country: item.wayfairCountry || '',
+            etsy_listing_id: item.etsyListingId || null,
+            wix_product_id: item.wixProductId || null,
+            wix_variant_id: item.wixVariantId || null,
+            wayfair_sku: item.wayfairSku || null,
+            etsy_sync_title: item.etsyTitle || null,
+            etsy_sync_price: item.etsyPrice != null ? parseFloat(item.etsyPrice) : null,
+            etsy_sync_quantity: item.etsyQuantity != null ? parseInt(item.etsyQuantity) : null,
+            order_date: item.orderDate || null,
+            order_number: item.orderNumber || '',
+            shipped_date: item.shippedDate || null
+        };
+        if (item.id) row.legacy_id = String(item.id);
+        return row;
+    }
+    
+    // Save a single item to Supabase by SKU
+    async function saveItemToSupabase(item) {
+        if (!sbClient || !sbConnected) return false;
+        const row = itemToSbRow(item);
+        const { data, error } = await sbClient.from('items').upsert(row, { onConflict: 'sku' }).select('id').single();
+        if (error) {
+            console.error('[Supabase] Save error for', item.sku, ':', error.message);
+            return false;
+        }
+        if (data) item._sbId = data.id;
+        return true;
+    }
+    
+    // Save multiple items to Supabase
+    async function saveItemsBatchToSupabase(items) {
+        if (!sbClient || !sbConnected || !items.length) return 0;
+        const BATCH = 50;
+        let saved = 0;
+        for (let i = 0; i < items.length; i += BATCH) {
+            const batch = items.slice(i, i + BATCH).map(itemToSbRow);
+            const { error } = await sbClient.from('items').upsert(batch, { onConflict: 'sku' });
+            if (!error) saved += batch.length;
+            else console.error('[Supabase] Batch error:', error.message);
+        }
+        return saved;
+    }
+    
+    // Log activity to Supabase
+    async function logActivityToSupabase(category, action, channel, summary, details = {}, sku = null) {
+        if (!sbClient || !sbConnected) return;
+        try {
+            await sbClient.from('activity_log').insert({
+                category, action, channel, summary,
+                details: typeof details === 'object' ? details : {},
+                device: localStorage.getItem('ccd_hostname') || 'SyncHub',
+                user_name: localStorage.getItem('ccdUsername') || 'Unknown',
+                sku: sku
+            });
+        } catch (e) { console.warn('[Supabase] Activity log error:', e.message); }
+    }
+    
+    // Check if order already processed (Supabase)
+    async function isOrderProcessedInDb(orderId) {
+        if (!sbClient || !sbConnected) return false;
+        try {
+            const { data } = await sbClient.from('processed_orders').select('id').eq('order_id', orderId).maybeSingle();
+            return !!data;
+        } catch (e) { return false; }
+    }
+    
+    // Persist processed order to Supabase
+    async function persistProcessedOrderToDb(orderId, channel, details = {}) {
+        if (!sbClient || !sbConnected) return;
+        try {
+            await sbClient.from('processed_orders').upsert({
+                order_id: orderId,
+                channel: channel,
+                details: details,
+                processed_at: new Date().toISOString()
+            }, { onConflict: 'order_id' });
+        } catch (e) { console.warn('[Supabase] Processed order save error:', e.message); }
+    }
+    
+    // Connect to Supabase
+    async function connectSupabase() {
+        const urlInput = document.getElementById('sbUrlInput');
+        const keyInput = document.getElementById('sbKeyInput');
+        let url = urlInput?.value?.trim();
+        let key = keyInput?.value?.trim();
+        
+        if (!url || !key) {
+            const creds = getSbCredentials();
+            url = url || creds.url;
+            key = key || creds.key;
+        }
+        if (!url || !key) {
+            toast('Enter Supabase URL and anon key', 'warning');
+            return false;
+        }
+        
+        try {
+            sbClient = window.supabase.createClient(url, key);
+            
+            // Test connection
+            const { count, error } = await sbClient.from('items').select('*', { count: 'exact', head: true });
+            if (error) throw error;
+            
+            sbConnected = true;
+            saveSbCredentials(url, key);
+            
+            // Load inventory
+            await loadFromSupabase();
+            
+            // Load settings
+            await loadSettingsFromSupabase();
+            
+            // Load processed order IDs
+            await loadProcessedOrdersFromDb();
+            
+            // Update UI
+            updateSupabaseUI(true, window.masterJsonData?.inventory?.length || 0);
+            
+            // Subscribe to real-time changes
+            sbClient.channel('synchub-items')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'items' }, (payload) => {
+                    handleRealtimeItemChange(payload);
+                })
+                .subscribe();
+            
+            console.log('[Supabase] Connected successfully');
+            addLog('🔗 Connected to Supabase database', 'success');
+            return true;
+            
+        } catch (e) {
+            console.error('[Supabase] Connection failed:', e);
+            sbConnected = false;
+            toast('Connection failed: ' + e.message, 'error');
+            updateSupabaseUI(false);
+            return false;
+        }
+    }
+    
+    // Load all inventory from Supabase into window.masterJsonData
+    async function loadFromSupabase() {
+        if (!sbClient) return;
+        
+        const { data: rows, error } = await sbClient.from('items').select('*').order('sku');
+        if (error) throw error;
+        
+        const inventory = rows.map(sbRowToItem);
+        
+        // Load settings for global fees
+        const { data: settingsRows } = await sbClient.from('settings').select('*');
+        const settingsMap = {};
+        (settingsRows || []).forEach(s => { settingsMap[s.key] = s.value; });
+        
+        // Build masterJsonData structure (backward compatible)
+        window.masterJsonData = {
+            _metadata: { version: 0, lastModified: new Date().toISOString(), lastModifiedBy: 'Supabase' },
+            _activityLog: [],
+            _changeLog: [],
+            _processedOrders: [],
+            _syncQueue: [],
+            inventory: inventory,
+            salesHistory: [],
+            surcharge: settingsMap.surcharge || 7,
+            etsyOH: settingsMap.etsy_oh || 10,
+            wixOH: settingsMap.wix_oh || 10,
+            wayfairOH: settingsMap.wayfair_oh || 10,
+            treasureMartsRent: settingsMap.treasuremarts_rent || 10
+        };
+        
+        // Update state
+        state.masterJson.productCount = inventory.length;
+        state.masterJson.fileName = 'Supabase Database';
+        state.masterJson.lastLoaded = new Date().toISOString();
+        state.connections.masterJson = true;
+        
+        // Count channel links
+        state.masterJson.etsyLinked = inventory.filter(i => i.etsyListingId).length;
+        state.masterJson.wixLinked = inventory.filter(i => i.wixProductId).length;
+        state.masterJson.wayfairLinked = inventory.filter(i => i.wayfairSku).length;
+        
+        // Replay buffered activity entries
+        if (_activityBuffer.length > 0) {
+            while (_activityBuffer.length > 0) {
+                const args = _activityBuffer.shift();
+                logActivity.apply(null, args);
+            }
+        }
+        
+        console.log('[Supabase] Loaded', inventory.length, 'items');
+    }
+    
+    // Load settings from Supabase into state.settings
+    async function loadSettingsFromSupabase() {
+        if (!sbClient) return;
+        const { data: rows } = await sbClient.from('settings').select('*');
+        if (!rows) return;
+        
+        const map = {};
+        rows.forEach(r => { map[r.key] = r.value; });
+        
+        const proxyUrls = map.proxy_urls || {};
+        const apiKeys = map.api_keys || {};
+        const features = map.features || {};
+        
+        // Apply to state.settings
+        state.settings.ccdApiKey = apiKeys.ccdApiKey || state.settings.ccdApiKey || '';
+        state.settings.etsyApiKey = apiKeys.etsyApiKey || state.settings.etsyApiKey || '';
+        state.settings.etsyProxyUrl = proxyUrls.etsy || state.settings.etsyProxyUrl || '';
+        state.settings.wixProxyUrl = proxyUrls.wix || state.settings.wixProxyUrl || '';
+        state.settings.wayfairProxyUrl = proxyUrls.wayfair || state.settings.wayfairProxyUrl || '';
+        state.settings.shippoProxyUrl = proxyUrls.shippo || state.settings.shippoProxyUrl || '';
+        state.settings.syncHubProxyUrl = proxyUrls.syncHub || state.settings.syncHubProxyUrl || '';
+        state.settings.features = features;
+        
+        const emailSettings = map.email_settings || {};
+        state.settings.emailAddresses = emailSettings.addresses || '';
+        state.settings.emailEnabled = emailSettings.enabled || false;
+        
+        // Populate form fields
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+        setVal('ccdApiKey', state.settings.ccdApiKey);
+        setVal('etsyApiKey', state.settings.etsyApiKey);
+        setVal('etsyProxyUrl', state.settings.etsyProxyUrl);
+        setVal('wixProxyUrl', state.settings.wixProxyUrl);
+        setVal('wayfairProxyUrl', state.settings.wayfairProxyUrl);
+        setVal('shippoProxyUrl', state.settings.shippoProxyUrl);
+        setVal('syncHubProxyUrl', state.settings.syncHubProxyUrl);
+        setVal('syncHubProxyUrlSettings', state.settings.syncHubProxyUrl);
+        
+        console.log('[Supabase] Settings loaded from database');
+    }
+    
+    // Load processed order IDs from Supabase
+    async function loadProcessedOrdersFromDb() {
+        if (!sbClient) return;
+        try {
+            const { data } = await sbClient.from('processed_orders').select('order_id');
+            if (data) {
+                state.orders.processedIds = new Set(data.map(r => r.order_id));
+                console.log('[Supabase] Loaded', state.orders.processedIds.size, 'processed order IDs');
+            }
+        } catch (e) { console.warn('[Supabase] Load processed orders error:', e.message); }
+    }
+    
+    // Handle real-time item changes from other clients
+    function handleRealtimeItemChange(payload) {
+        if (!window.masterJsonData?.inventory) return;
+        const inv = window.masterJsonData.inventory;
+        
+        if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+            const updated = sbRowToItem(payload.new);
+            const idx = inv.findIndex(i => i.sku === updated.sku);
+            if (idx !== -1) {
+                // Preserve _sbId
+                updated._sbId = inv[idx]._sbId || payload.new.id;
+                inv[idx] = updated;
+            } else {
+                updated._sbId = payload.new.id;
+                inv.push(updated);
+            }
+        } else if (payload.eventType === 'DELETE' && payload.old) {
+            const idx = inv.findIndex(i => i.sku === payload.old.sku);
+            if (idx !== -1) inv.splice(idx, 1);
+        }
+        
+        // Update counts
+        state.masterJson.productCount = inv.length;
+    }
+    
+    // Update Supabase connection UI
+    function updateSupabaseUI(connected, itemCount = 0) {
+        const icon = document.getElementById('sbIcon');
+        const status = document.getElementById('sbStatusText');
+        const details = document.getElementById('sbDetailsRow');
+        const inputRow = document.getElementById('sbInputRow');
+        
+        if (icon) icon.textContent = connected ? '✅' : '🔌';
+        if (status) {
+            status.textContent = connected ? `— Connected (${itemCount} items)` : '— Not Connected';
+            status.style.color = connected ? '#22c55e' : 'var(--text-dim)';
+        }
+        if (inputRow) inputRow.style.display = connected ? 'none' : 'flex';
+        if (details && connected) {
+            details.innerHTML = `Last loaded: ${new Date().toLocaleString()} · <a href="#" onclick="loadFromSupabase().then(()=>{updateSupabaseUI(true, window.masterJsonData?.inventory?.length);toast('Reloaded','success')});return false" style="color:var(--info)">🔄 Reload</a>`;
+        }
+        
+        // Also update masterJson UI elements that other code references
+        updateMasterJsonUI();
+    }
+
+    // =============================================
     // GLOBAL ERROR HANDLING
     // =============================================
     const errorLog = [];
@@ -1717,6 +2175,11 @@
         }
         
         console.log(`📋 [Activity] ${category}/${action}: ${summary}`);
+        
+        // Also write to Supabase if connected
+        if (sbConnected) {
+            logActivityToSupabase(category, action, channel, summary, details, details?.sku || null);
+        }
         
         return entry;
     }
@@ -3368,25 +3831,46 @@
     // =============================================
     async function init() {
         try {
-            console.log('[Init] Starting CCD Sync Hub v3.3.5.25 - Allocation Sync Independent...');
+            console.log('[Init] Starting CCD Sync Hub v4.0 - Supabase Edition...');
             
             // COLLISION DETECTION: Ensure hostname is set for tracking
             ensureHostnameSet();
             
-            // Initialize IndexedDB first
+            // Initialize IndexedDB (still used for SKU mappings file handle)
             await initDB();
             
-            // Try to auto-reconnect to Config file first
-            const configConnected = await tryReconnectConfig();
-            
-            // If no config file, load from localStorage
-            if (!configConnected) {
-                loadSettings();
-                updateConfigStatus(false);
+            // ============================================================
+            // SUPABASE: Try auto-connect with saved credentials
+            // ============================================================
+            const sbCreds = getSbCredentials();
+            if (sbCreds.url && sbCreds.key) {
+                const urlInput = document.getElementById('sbUrlInput');
+                const keyInput = document.getElementById('sbKeyInput');
+                if (urlInput) urlInput.value = sbCreds.url;
+                if (keyInput) keyInput.value = sbCreds.key;
+                
+                const connected = await connectSupabase();
+                if (connected) {
+                    console.log('[Init] Supabase connected - skipping file-based systems');
+                }
             }
             
-            // Try to auto-reconnect to Master JSON (needed for shared queue)
-            await tryReconnectMasterJson();
+            // If Supabase didn't connect, try legacy file-based systems
+            if (!sbConnected) {
+                console.log('[Init] Supabase not connected, trying legacy file systems...');
+                
+                // Try to auto-reconnect to Config file first
+                const configConnected = await tryReconnectConfig();
+                
+                // If no config file, load from localStorage
+                if (!configConnected) {
+                    loadSettings();
+                    updateConfigStatus(false);
+                }
+                
+                // Try to auto-reconnect to Master JSON (needed for shared queue)
+                await tryReconnectMasterJson();
+            }
             
             // Try to auto-reconnect to SKU Mappings file (v3.3.5.9)
             await tryReconnectSkuMappings();
@@ -3440,14 +3924,14 @@
                 loadNotificationSettings();
             }, 1000); // Delay to ensure connection is established
             
-            console.log('[Init] CCD Sync Hub v3.3.5.25 initialized successfully - All Features Active');
-            addLog('CCD Sync Hub v3.3.5.25 initialized - Allocation Sync Independent', 'success');
+            console.log('[Init] CCD Sync Hub v4.0 initialized successfully - Supabase Edition');
+            addLog('CCD Sync Hub v4.0 initialized' + (sbConnected ? ' (Supabase)' : ' (Legacy)'), 'success');
             
-            // Log startup to Activity Log (only if Master JSON is connected)
+            // Log startup to Activity Log
             if (typeof logActivity === 'function' && window.masterJsonData) {
                 logActivity('system', 'sync_hub_started', 'system',
-                    'Sync Hub v3.2.0 started (Resilient Polling)',
-                    { autoProcess: state.settings.autoProcessEnabled, configConnected: configConnected, sharedQueue: configData?.settings?.features?.useSharedQueue ?? false }
+                    'Sync Hub v4.0 started (Supabase Edition)',
+                    { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
                 );
             }
             
@@ -4291,6 +4775,16 @@
      * Feature Flag: settings.features.useSharedQueue
      */
     async function loadQueue() {
+        // When Supabase connected, use localStorage for queue (transient push operations)
+        if (sbConnected) {
+            const saved = localStorage.getItem('ccd_sync_hub_queue');
+            if (saved) {
+                try { state.queue = JSON.parse(saved); } catch (e) { state.queue = []; }
+            }
+            console.log(`[Queue] Loaded ${state.queue.length} items from localStorage (Supabase mode)`);
+            return;
+        }
+        
         const config = configData || {};
         const useSharedQueue = config.settings?.features?.useSharedQueue ?? false;
         
@@ -4336,6 +4830,12 @@
      * Save queue with backward compatibility (GAP 1)
      */
     async function saveQueue() {
+        // When Supabase connected, use localStorage for queue
+        if (sbConnected) {
+            localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.queue));
+            return true;
+        }
+        
         const config = configData || {};
         const useSharedQueue = config.settings?.features?.useSharedQueue ?? false;
         
@@ -4816,6 +5316,7 @@
         
         await saveMasterJson({ 
             actionDescription: `Manual inventory deduction: ${sku} -${quantity}`,
+            changes: [{ changeType: 'deduction', sku: sku, field: 'qty', before: oldQty, after: newQty, reason: reason }],
             skipLog: false 
         });
         
@@ -5581,6 +6082,34 @@
         state.settings.enableWixSync = document.getElementById('enableWixSync').checked;
         state.settings.enableWayfairSync = document.getElementById('enableWayfairSync').checked;
 
+        // Save to Supabase if connected
+        if (sbConnected && sbClient) {
+            try {
+                await sbClient.from('settings').upsert({ key: 'proxy_urls', value: {
+                    etsy: state.settings.etsyProxyUrl,
+                    wix: state.settings.wixProxyUrl,
+                    wayfair: state.settings.wayfairProxyUrl,
+                    syncHub: state.settings.syncHubProxyUrl,
+                    shippo: state.settings.shippoProxyUrl
+                }}, { onConflict: 'key' });
+                await sbClient.from('settings').upsert({ key: 'api_keys', value: {
+                    ccdApiKey: state.settings.ccdApiKey,
+                    etsyApiKey: state.settings.etsyApiKey
+                }}, { onConflict: 'key' });
+                await sbClient.from('settings').upsert({ key: 'sync_settings', value: {
+                    autoProcessEnabled: state.settings.autoProcessEnabled,
+                    retryFailedEnabled: state.settings.retryFailedEnabled,
+                    maxRetries: state.settings.maxRetries,
+                    enableEtsySync: state.settings.enableEtsySync,
+                    enableWixSync: state.settings.enableWixSync,
+                    enableWayfairSync: state.settings.enableWayfairSync,
+                    orderDateRange: state.settings.orderDateRange
+                }}, { onConflict: 'key' });
+                addLog('Settings saved to Supabase', 'success');
+            } catch (e) {
+                console.error('[Supabase] Settings save error:', e);
+            }
+        }
         // Save to shared config if connected, otherwise localStorage
         if (isSharedMode && configData) {
             configData.settings = {
@@ -5705,8 +6234,16 @@
         if (btn) btn.classList.add('active');
     }
 
-    function refreshData() {
-        loadQueue();
+    async function refreshData() {
+        if (sbConnected) {
+            try {
+                await loadFromSupabase();
+                updateSupabaseUI(true, window.masterJsonData?.inventory?.length || 0);
+            } catch (e) {
+                console.error('[Refresh] Supabase reload error:', e);
+            }
+        }
+        await loadQueue();
         renderQueue();
         updateStats();
         renderLog();
@@ -6559,131 +7096,127 @@
     }
     
     /**
-     * Save changes back to Master JSON file
+     * Save changes back to Master JSON file (or Supabase when connected)
      */
     async function saveMasterJson(options = {}) {
-        const { isAutoProcess = false, actionDescription = 'Manual save', changes = [] } = options;
+        const { isAutoProcess = false, actionDescription = 'Manual save', changes = [], skipLog = false } = options;
         
+        // ============================================================
+        // SUPABASE PATH — Save changed items directly to database
+        // ============================================================
+        if (sbConnected && sbClient && window.masterJsonData) {
+            try {
+                const products = getProductsArray();
+                
+                // Determine which SKUs changed from the changes array
+                const changedSkus = new Set();
+                if (changes && changes.length > 0) {
+                    changes.forEach(c => { if (c.sku) changedSkus.add(c.sku); });
+                }
+                
+                // If we have specific changed SKUs, save just those
+                let savedCount = 0;
+                if (changedSkus.size > 0) {
+                    const itemsToSave = products.filter(p => changedSkus.has(p.sku));
+                    for (const item of itemsToSave) {
+                        const ok = await saveItemToSupabase(item);
+                        if (ok) savedCount++;
+                    }
+                }
+                
+                // Log activity to Supabase
+                if (!skipLog) {
+                    await logActivityToSupabase('system', 'data_saved', 'system',
+                        `Sync Hub saved: ${actionDescription}`,
+                        { action: actionDescription, changesCount: changes?.length || 0, savedItems: savedCount, source: 'sync_hub' }
+                    );
+                }
+                
+                // Log individual changes to activity_log table
+                for (const change of (changes || [])) {
+                    if (change.sku && change.changeType) {
+                        await logActivityToSupabase(
+                            change.changeType === 'order' ? 'inventory' : 'sync',
+                            change.changeType,
+                            change.channel || 'system',
+                            `${change.sku}: ${change.field || ''} ${change.before ?? ''} → ${change.after ?? ''}`,
+                            change,
+                            change.sku
+                        );
+                    }
+                }
+                
+                if (!isAutoProcess) {
+                    console.log(`[Supabase] Saved ${savedCount} items: ${actionDescription}`);
+                }
+                
+                return true;
+                
+            } catch (error) {
+                console.error('[Supabase] Save error:', error);
+                toast(`Database save failed: ${error.message}`, 'error');
+                logError(`Supabase save: ${error.message}`);
+                return false;
+            }
+        }
+        
+        // ============================================================
+        // LEGACY FILE PATH — Original file-based save
+        // ============================================================
         if (!masterJsonFileHandle || !window.masterJsonData) {
             toast('No file connected', 'error');
             return false;
         }
         
         try {
-            // ============================================================
-            // COLLISION DETECTION - Check before saving
-            // ============================================================
             const collisionCheck = await checkForCollision();
-            
             if (collisionCheck.collision) {
                 if (isAutoProcess) {
-                    // AUTO-PROCESS: Silent reload and return for retry
                     console.log('[Collision] Detected during auto-process, reloading...');
-                    addLog('⚠️ Collision detected during auto-process - reloading file', 'warning');
-                    
-                    // Reload fresh data
                     await loadMasterJson();
-                    
-                    // Signal caller to retry with fresh data
                     return { saved: false, reason: 'collision_reload' };
-                    
                 } else {
-                    // MANUAL: Show dialog
                     const action = await showCollisionDialog(collisionCheck);
-                    
-                    if (action === 'reload') {
-                        await loadMasterJson();
-                        toast('🔄 File reloaded - please re-apply your changes', 'info');
-                        return false;
-                    } else if (action === 'cancel') {
-                        return false;
-                    }
-                    // action === 'overwrite' - continue with save
+                    if (action === 'reload') { await loadMasterJson(); toast('🔄 File reloaded', 'info'); return false; }
+                    else if (action === 'cancel') { return false; }
                 }
             }
             
-            // ============================================================
-            // Update metadata
-            // ============================================================
             window.masterJsonData._metadata = window.masterJsonData._metadata || {};
             window.masterJsonData._metadata.version = (window.masterJsonData._metadata.version || 0) + 1;
             window.masterJsonData._metadata.lastModified = new Date().toISOString();
             window.masterJsonData._metadata.lastModifiedBy = getAppIdentifier();
             window.masterJsonData._metadata.lastAction = actionDescription;
             
-            // Add changes to change log
             window.masterJsonData._changeLog = window.masterJsonData._changeLog || [];
             if (changes && changes.length > 0) {
-                changes.forEach(change => {
-                    window.masterJsonData._changeLog.unshift(createChangeLogEntry(change));
-                });
+                changes.forEach(change => { window.masterJsonData._changeLog.unshift(createChangeLogEntry(change)); });
             }
-            
-            // Prune old change log entries
             pruneChangeLog(window.masterJsonData);
             
-            // ============================================================
-            // MERGE _activityLog from file before saving
-            // v3.3.5.21: Prevents Sync Hub from overwriting Inventory System entries
-            // The Inventory System writes entries to the file independently.
-            // Without this merge, Sync Hub's stale in-memory copy overwrites them.
-            // ============================================================
             try {
                 const freshFile = await masterJsonFileHandle.getFile();
-                const freshText = await freshFile.text();
-                const freshData = JSON.parse(freshText);
-                
+                const freshData = JSON.parse(await freshFile.text());
                 const fileEntries = freshData._activityLog || [];
                 const memoryEntries = window.masterJsonData._activityLog || [];
-                
-                if (fileEntries.length > 0 || memoryEntries.length > 0) {
-                    // Merge: combine both, dedup by ID, sort newest first, cap at 5000
-                    const entryMap = new Map();
-                    // File entries first (baseline)
-                    fileEntries.forEach(e => { if (e.id) entryMap.set(e.id, e); });
-                    // Memory entries override (newer from this session)
-                    memoryEntries.forEach(e => { if (e.id) entryMap.set(e.id, e); });
-                    
-                    const merged = Array.from(entryMap.values())
-                        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                        .slice(0, 5000);
-                    
-                    window.masterJsonData._activityLog = merged;
-                    
-                    const newFromFile = fileEntries.filter(e => !memoryEntries.find(m => m.id === e.id)).length;
-                    if (newFromFile > 0) {
-                        console.log(`📋 [Save] Merged ${newFromFile} activity entries from file (Inventory System) + ${memoryEntries.length} from memory = ${merged.length} total`);
-                    }
-                }
-            } catch (mergeErr) {
-                console.warn('[Save] Activity log merge failed, saving memory copy as-is:', mergeErr.message);
-            }
-            
-            // ============================================================
-            // Save to file
-            // ============================================================
-            const actLogCount = window.masterJsonData._activityLog?.length || 0;
-            if (actLogCount > 0) {
-                console.log(`📋 [Save] Writing ${actLogCount} activity log entries to disk`);
-            }
+                const entryMap = new Map();
+                fileEntries.forEach(e => { if (e.id) entryMap.set(e.id, e); });
+                memoryEntries.forEach(e => { if (e.id) entryMap.set(e.id, e); });
+                window.masterJsonData._activityLog = Array.from(entryMap.values())
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 5000);
+            } catch (mergeErr) { console.warn('[Save] Activity log merge failed:', mergeErr.message); }
             
             const writable = await masterJsonFileHandle.createWritable();
             await writable.write(JSON.stringify(window.masterJsonData, null, 2));
             await writable.close();
             
-            // ============================================================
-            // COLLISION DETECTION - Update tracking variables after save
-            // ============================================================
             const newFile = await masterJsonFileHandle.getFile();
             loadedFileTimestamp = newFile.lastModified;
             loadedMetadataVersion = window.masterJsonData._metadata.version;
             
-            if (!isAutoProcess) {
-                toast('Master JSON saved', 'success');
-            }
+            if (!isAutoProcess) { toast('Master JSON saved', 'success'); }
             addLog('Master JSON file saved', 'success');
             
-            // Log to Activity Log
             if (typeof logActivity === 'function') {
                 logActivity('system', 'file_saved', 'system',
                     `Sync Hub saved Master JSON: ${actionDescription}`,
@@ -6692,22 +7225,11 @@
             }
             
             return true;
-            
         } catch (error) {
             console.error('[Master JSON] Save error:', error);
             toast(`Save failed: ${error.message}`, 'error');
             logError(`Master JSON save: ${error.message}`);
-            
-            // Send critical error notification
-            sendEventNotification(
-                'cloud.save.failed',
-                `Failed to save Master JSON: ${error.message}`,
-                {
-                    error: error.message,
-                    timestamp: new Date().toISOString()
-                }
-            );
-            
+            sendEventNotification('cloud.save.failed', `Failed to save: ${error.message}`, { error: error.message });
             return false;
         }
     }
@@ -7932,112 +8454,89 @@
     /**
      * GAP 9: DUPLICATE ORDER PREVENTION
      * Check if order has already been processed
-     * Feature Flag: enableDuplicateDetection (default: false for backward compatibility)
      */
     async function isOrderProcessed(orderId) {
-        // Check feature flag
-        const config = configData || {};
-        const enabled = config?.features?.enableDuplicateDetection ?? false;
-        
-        if (!enabled) {
-            console.log('[Duplicate Detection] Feature disabled - allowing processing');
-            return false; // Allow processing (old behavior)
-        }
-        
-        console.log('[Duplicate Detection] Checking if order already processed:', orderId);
-        
         // Check in-memory set first (fast)
         if (state.orders.processedIds.has(orderId)) {
-            console.log('[Duplicate Detection] ⚠️ Found in memory cache');
+            console.log('[Duplicate Detection] Found in memory cache');
             return true;
         }
         
-        // Check Master JSON _processedOrders array (persistent)
-        if (window.masterJsonData && window.masterJsonData._processedOrders) {
-            const processed = window.masterJsonData._processedOrders.find(o => o.orderId === orderId);
-            
-            if (processed) {
-                console.log('[Duplicate Detection] ⚠️ Order already processed:', {
-                    orderId: orderId,
-                    processedAt: processed.processedAt,
-                    processedBy: processed.processedBy,
-                    device: processed.device
-                });
-                
-                // Add to memory cache for future checks
+        // Check Supabase
+        if (sbConnected) {
+            const found = await isOrderProcessedInDb(orderId);
+            if (found) {
                 state.orders.processedIds.add(orderId);
-                
+                console.log('[Duplicate Detection] Found in Supabase');
                 return true;
             }
         }
         
-        console.log('[Duplicate Detection] ✅ Order not yet processed');
+        // Check Master JSON _processedOrders array (legacy)
+        if (window.masterJsonData && window.masterJsonData._processedOrders) {
+            const processed = window.masterJsonData._processedOrders.find(o => o.orderId === orderId);
+            if (processed) {
+                state.orders.processedIds.add(orderId);
+                return true;
+            }
+        }
+        
         return false;
     }
     
     /**
-     * Mark order as processed in Master JSON (GAP 9)
+     * Mark order as processed (Supabase + in-memory)
      */
     async function persistProcessedOrder(order) {
-        // Check feature flag
-        const config = configData || {};
-        const enabled = config?.features?.enableDuplicateDetection ?? false;
-        
-        if (!enabled) {
-            console.log('[Duplicate Detection] Feature disabled - not marking order');
-            return;
-        }
-        
-        console.log('[Duplicate Detection] Marking order as processed:', order.id);
-        
         // Add to memory cache
         state.orders.processedIds.add(order.id);
         
-        // Add to Master JSON persistent list
-        if (!window.masterJsonData._processedOrders) {
-            window.masterJsonData._processedOrders = [];
+        // Persist to Supabase
+        if (sbConnected) {
+            await persistProcessedOrderToDb(order.id, order.channel, {
+                totalAmount: order.total || 0,
+                itemCount: order.items?.length || 0,
+                processedBy: 'Sync Hub v4.0',
+                device: localStorage.getItem('ccd_hostname') || 'Unknown'
+            });
         }
         
-        // Create processed order record
-        const record = {
-            orderId: order.id,
-            channel: order.channel,
-            processedAt: new Date().toISOString(),
-            processedBy: 'Sync Hub v3.10.1',
-            device: localStorage.getItem('ccd_hostname') || 'Unknown',
-            totalAmount: order.total || 0,
-            itemCount: order.items?.length || 0
-        };
-        
-        window.masterJsonData._processedOrders.push(record);
-        
-        // Trim to last 10,000 orders to prevent bloat
-        if (window.masterJsonData._processedOrders.length > 10000) {
-            console.log('[Duplicate Detection] Trimming processed orders list from', 
-                window.masterJsonData._processedOrders.length, 'to 10,000');
-            window.masterJsonData._processedOrders = window.masterJsonData._processedOrders.slice(-10000);
+        // Also persist to Master JSON (legacy fallback)
+        if (window.masterJsonData) {
+            if (!window.masterJsonData._processedOrders) {
+                window.masterJsonData._processedOrders = [];
+            }
+            window.masterJsonData._processedOrders.push({
+                orderId: order.id,
+                channel: order.channel,
+                processedAt: new Date().toISOString(),
+                processedBy: 'Sync Hub v4.0',
+                device: localStorage.getItem('ccd_hostname') || 'Unknown',
+                totalAmount: order.total || 0,
+                itemCount: order.items?.length || 0
+            });
+            if (window.masterJsonData._processedOrders.length > 10000) {
+                window.masterJsonData._processedOrders = window.masterJsonData._processedOrders.slice(-10000);
+            }
         }
         
-        console.log('[Duplicate Detection] ✅ Order marked as processed');
+        console.log('[Duplicate Detection] Order marked as processed:', order.id);
     }
     
     /**
-     * Load processed order IDs from Master JSON on startup
+     * Load processed order IDs on startup
      */
     function loadProcessedOrderIds() {
+        // Merge from Master JSON (legacy)
         if (window.masterJsonData && window.masterJsonData._processedOrders) {
-            console.log('[Duplicate Detection] Merging processed order IDs from Master JSON');
-            // ✅ v3.3.5.21 FIX: MERGE with localStorage data instead of clearing
-            // Previous bug: clear() wiped localStorage-loaded IDs, causing notification spam
             const beforeCount = state.orders.processedIds.size;
-            
             for (const record of window.masterJsonData._processedOrders) {
                 state.orders.processedIds.add(record.orderId);
             }
-            
             const added = state.orders.processedIds.size - beforeCount;
-            console.log('[Duplicate Detection] Merged', added, 'new IDs from Master JSON (total:', state.orders.processedIds.size, ')');
+            if (added > 0) console.log('[Duplicate Detection] Merged', added, 'IDs from legacy data');
         }
+        // Supabase IDs already loaded during connectSupabase()
     }
     
     /**
@@ -10335,10 +10834,21 @@
             );
             
             // Save AFTER logActivity so the activity entry persists to disk
-            await saveMasterJson({
-                actionDescription: `Channel ID Sync: +${results.etsy.found} Etsy, +${results.wix.found} Wix, +${results.wayfair.found} Wayfair`,
-                skipLog: true  // Already logged above
-            });
+            // For Supabase: save all products that have channel IDs (they may have been updated)
+            if (sbConnected && totalFound > 0) {
+                const products = getProductsArray();
+                const modifiedProducts = products.filter(p => p.etsyListingId || p.wixProductId || p.wayfairSku);
+                let savedCount = 0;
+                for (const item of modifiedProducts) {
+                    if (await saveItemToSupabase(item)) savedCount++;
+                }
+                console.log(`[Supabase] Channel ID sync saved ${savedCount} products`);
+            } else {
+                await saveMasterJson({
+                    actionDescription: `Channel ID Sync: +${results.etsy.found} Etsy, +${results.wix.found} Wix, +${results.wayfair.found} Wayfair`,
+                    skipLog: true
+                });
+            }
             
             // Show results
             showSyncReport(results);
@@ -11903,6 +12413,9 @@
      * Poll the proxy for pending changes and merge them
      */
     async function pollForRemoteChanges() {
+        // Skip relay polling when Supabase connected (real-time subscriptions handle sync)
+        if (sbConnected) return;
+        
         const proxyUrl = state.settings?.syncHubProxyUrl;
         const apiKey = state.settings?.ccdApiKey;
         
