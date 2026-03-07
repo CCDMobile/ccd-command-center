@@ -81383,10 +81383,33 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 var ib = parseFloat(item.ibShipping) || 0;
                 var tar = parseFloat(item.tariff) || 0;
                 var ob = parseFloat(item.obShipping) || 0;
-                var cost = (ws * (1 + ib/100) + tar + ob) * qty;
+                
                 var rev = salePrice * qty;
-                var profit = rev - cost;
-                var margin = rev > 0 ? profit / rev : 0;
+                var cost, profit, margin;
+                
+                // Use the full channel pricing engine for accurate profit
+                if (typeof calculateChannelMetrics === "function" && channel && channel !== "quick-sale") {
+                    var metrics = calculateChannelMetrics(item, channel);
+                    // Total real cost includes all channel fees (transaction, CC, commission, rent, etc.)
+                    var channelCosts = (parseFloat(metrics.transactionFee)||0) + (parseFloat(metrics.ccFee)||0) + 
+                        (parseFloat(metrics.commission)||0) + (parseFloat(metrics.rent)||0) + 
+                        (parseFloat(metrics.overheadFee)||0) + (parseFloat(metrics.recoveryFee)||0) + 
+                        (parseFloat(metrics.wayfairFee)||0) + (parseFloat(metrics.surcharge)||0);
+                    var baseCost = ws + (ws * ib/100) + tar + ob;
+                    cost = (baseCost + channelCosts) * qty;
+                    profit = rev - cost;
+                    margin = rev > 0 ? profit / rev : 0;
+                    console.log("[Sales] Channel costs for", channel, ":", JSON.stringify({
+                        baseCost: baseCost.toFixed(2), channelFees: channelCosts.toFixed(2), 
+                        totalCost: (baseCost + channelCosts).toFixed(2), profit: profit.toFixed(2)
+                    }));
+                } else {
+                    // Fallback: basic cost for quick-sale or if metrics unavailable
+                    cost = (ws * (1 + ib/100) + tar + ob) * qty;
+                    profit = rev - cost;
+                    margin = rev > 0 ? profit / rev : 0;
+                }
+                
                 var row = await sbClient.from("items").select("id").eq("sku", item.sku).single();
                 await sbClient.from("sales_history").insert({
                     item_id: row.data ? row.data.id : null, sku: item.sku,
@@ -81398,7 +81421,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                     wholesale_price: ws, ib_shipping: ib, tariff: tar, ob_shipping: ob,
                     notes: "Manual sale via Inventory System"
                 });
-                console.log("[Sales] Recorded:", item.sku, "x" + qty, channel);
+                console.log("[Sales] Recorded:", item.sku, "x" + qty, channel, "profit: $" + profit.toFixed(2), "margin:", (margin*100).toFixed(1) + "%");
             } catch (e) { console.warn("[Sales] DB write failed:", e.message); }
         }
 
@@ -81429,9 +81452,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
         var _salesData = [], _salesFiltered = [], _salesSortCol = "sale_date", _salesSortDir = "desc", _salesSelected = {};
 
         function _buildSalesTab() {
-            var h = '<div style="padding:20px">';
+            var h = '<div style="padding:20px;background:#ffffff;border-radius:12px;margin:10px;min-height:calc(100vh - 200px)">';
             h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">';
-            h += '<h2 style="margin:0">\uD83D\uDCB0 Sales Report</h2>';
+            h += '<h2 style="margin:0;color:#1e293b">\uD83D\uDCB0 Sales Report</h2>';
             h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
             h += '<button onclick="loadSalesReport()" style="padding:8px 14px;border-radius:6px;border:none;background:#6366f1;color:white;font-weight:600;cursor:pointer;font-size:13px">\uD83D\uDD04 Refresh</button>';
             h += '<button onclick="exportSalesExcel()" style="padding:8px 14px;border-radius:6px;border:none;background:#22c55e;color:white;font-weight:600;cursor:pointer;font-size:13px">\uD83D\uDCCA Excel</button>';
@@ -81439,33 +81462,33 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             h += '<button onclick="purgeSelectedSales()" id="salesPurgeBtn" style="padding:8px 14px;border-radius:6px;border:none;background:#ef4444;color:white;font-weight:600;cursor:pointer;font-size:13px;display:none">\uD83D\uDDD1\uFE0F Purge Selected</button>';
             h += '</div></div>';
             h += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">';
-            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">From</label><input type="date" id="salesFilterFrom" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"></div>';
-            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">To</label><input type="date" id="salesFilterTo" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"></div>';
-            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">Channel</label><select id="salesFilterChannel" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"><option value="">All</option><option value="etsy">Etsy</option><option value="wix">Wix</option><option value="wayfair">Wayfair</option><option value="treasuremarts">TreasureMarts</option></select></div>';
-            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">Source</label><select id="salesFilterSource" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"><option value="">All</option><option value="manual">Manual</option><option value="sync_hub">Sync Hub</option><option value="mobile">Mobile</option></select></div>';
-            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">Search</label><input type="text" id="salesFilterSearch" oninput="filterSalesReport()" placeholder="SKU or product..." style="padding:6px 8px;border-radius:6px;border:1px solid #ccc;width:160px"></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px;color:#475569">From</label><input type="date" id="salesFilterFrom" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#1e293b"></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px;color:#475569">To</label><input type="date" id="salesFilterTo" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#1e293b"></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px;color:#475569">Channel</label><select id="salesFilterChannel" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#1e293b"><option value="">All</option><option value="etsy">Etsy</option><option value="wix">Wix</option><option value="wayfair">Wayfair</option><option value="treasuremarts">TreasureMarts</option></select></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px;color:#475569">Source</label><select id="salesFilterSource" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#1e293b"><option value="">All</option><option value="manual">Manual</option><option value="sync_hub">Sync Hub</option><option value="mobile">Mobile</option></select></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px;color:#475569">Search</label><input type="text" id="salesFilterSearch" oninput="filterSalesReport()" placeholder="SKU or product..." style="padding:6px 8px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;color:#1e293b;width:160px"></div>';
             h += '</div>';
             h += '<div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap">';
-            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatTotal">0</div><div style="font-size:.72rem;color:#8892a6">Total Sales</div></div>';
-            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatRevenue">$0</div><div style="font-size:.72rem;color:#8892a6">Revenue</div></div>';
-            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700;color:#22c55e" id="salesStatProfit">$0</div><div style="font-size:.72rem;color:#8892a6">Net Profit</div></div>';
-            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatQty">0</div><div style="font-size:.72rem;color:#8892a6">Units Sold</div></div>';
+            h += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:120px;background:#f8fafc"><div style="font-size:1.3rem;font-weight:700;color:#1e293b" id="salesStatTotal">0</div><div style="font-size:.72rem;color:#64748b">Total Sales</div></div>';
+            h += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:120px;background:#f8fafc"><div style="font-size:1.3rem;font-weight:700;color:#1e293b" id="salesStatRevenue">$0</div><div style="font-size:.72rem;color:#64748b">Revenue</div></div>';
+            h += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:120px;background:#f8fafc"><div style="font-size:1.3rem;font-weight:700;color:#15803d" id="salesStatProfit">$0</div><div style="font-size:.72rem;color:#64748b">Net Profit</div></div>';
+            h += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;min-width:120px;background:#f8fafc"><div style="font-size:1.3rem;font-weight:700;color:#1e293b" id="salesStatQty">0</div><div style="font-size:.72rem;color:#64748b">Units Sold</div></div>';
             h += '</div>';
-            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;overflow:hidden"><div style="overflow-x:auto">';
-            h += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
-            h += '<th style="padding:10px 8px;white-space:nowrap;width:30px;text-align:center"><input type="checkbox" id="salesSelectAll" onchange="toggleAllSalesSelect()"></th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sale_date\')">Date</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sale_channel\')">Channel</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'notes\')">Source</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sku\')">SKU</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer;min-width:180px" onclick="sortSalesBy(\'product_name\')">Product</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left">Brand</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Qty</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Price</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Revenue</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Profit</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Margin</th>';
-            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left">Added to DB</th>';
+            h += '<div style="border:1px solid #e2e8f0;border-radius:8px;overflow:hidden"><div style="overflow-x:auto">';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:13px;min-width:1300px;color:#1e293b;table-layout:fixed"><thead><tr style="background:#1e293b;color:#e2e8f0">';
+            h += '<th style="padding:10px 6px;width:36px;text-align:center"><input type="checkbox" id="salesSelectAll" onchange="toggleAllSalesSelect()"></th>';
+            h += '<th style="padding:10px 8px;text-align:left;cursor:pointer;width:95px" onclick="sortSalesBy(\'sale_date\')">Date</th>';
+            h += '<th style="padding:10px 8px;text-align:left;cursor:pointer;width:110px" onclick="sortSalesBy(\'sale_channel\')">Channel</th>';
+            h += '<th style="padding:10px 8px;text-align:left;cursor:pointer;width:75px" onclick="sortSalesBy(\'notes\')">Source</th>';
+            h += '<th style="padding:10px 8px;text-align:left;cursor:pointer;width:75px" onclick="sortSalesBy(\'sku\')">SKU</th>';
+            h += '<th style="padding:10px 8px;text-align:left;cursor:pointer;width:220px" onclick="sortSalesBy(\'product_name\')">Product</th>';
+            h += '<th style="padding:10px 8px;text-align:left;width:120px">Brand</th>';
+            h += '<th style="padding:10px 8px;text-align:center;width:40px">Qty</th>';
+            h += '<th style="padding:10px 8px;text-align:right;width:75px">Price</th>';
+            h += '<th style="padding:10px 8px;text-align:right;width:85px">Revenue</th>';
+            h += '<th style="padding:10px 8px;text-align:right;width:75px">Profit</th>';
+            h += '<th style="padding:10px 8px;text-align:right;width:65px">Margin</th>';
+            h += '<th style="padding:10px 8px;text-align:right;width:130px">Added to DB</th>';
             h += '</tr></thead>';
             h += '<tbody id="salesReportBody"><tr><td colspan="13" style="text-align:center;padding:40px">Loading...</td></tr></tbody>';
             h += '</table></div></div></div>';
@@ -81523,30 +81546,33 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
 
         function _renderST() {
             var body = document.getElementById("salesReportBody"); if (!body) return;
-            if (!_salesFiltered.length) { body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px">No sales match filters</td></tr>'; return; }
-            var cc = {etsy:"#f97316",wix:"#3b82f6",wayfair:"#a855f7",treasuremarts:"#22c55e","quick-sale":"#eab308"};
+            if (!_salesFiltered.length) { body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:#64748b">No sales match filters</td></tr>'; return; }
+            var cc = {etsy:"#c2410c",wix:"#1d4ed8",wayfair:"#7e22ce",treasuremarts:"#15803d","quick-sale":"#a16207"};
+            var ccBg = {etsy:"#fff7ed",wix:"#eff6ff",wayfair:"#faf5ff",treasuremarts:"#f0fdf4","quick-sale":"#fefce8"};
+            var chLabel = {etsy:"Etsy",wix:"Wix",wayfair:"Wayfair",treasuremarts:"Treasure Marts","quick-sale":"Quick Sale"};
             var h = "";
             for (var i = 0; i < _salesFiltered.length; i++) {
                 var r = _salesFiltered[i], s = _srcOf(r);
-                var sc = s==="Mobile"?"#22c55e":s==="Sync Hub"?"#6366f1":"#eab308";
+                var sc = s==="Mobile"?"#15803d":s==="Sync Hub"?"#4338ca":"#a16207";
+                var scBg = s==="Mobile"?"#f0fdf4":s==="Sync Hub"?"#eef2ff":"#fefce8";
                 var ch = r.sale_channel||"", p = parseFloat(r.net_profit)||0, m = parseFloat(r.profit_margin)||0;
-                var d = r.created_at ? new Date(r.created_at).toLocaleDateString()+" "+new Date(r.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
+                var d = r.created_at ? new Date(r.created_at).toLocaleDateString("en-US",{month:"numeric",day:"numeric",year:"2-digit"})+" "+new Date(r.created_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"}) : "";
                 var sel = _salesSelected[r.id] ? "checked" : "";
-                var bg = _salesSelected[r.id] ? "background:rgba(239,68,68,0.08);" : "";
+                var bg = _salesSelected[r.id] ? "background:rgba(239,68,68,0.08);" : (i%2===0?"":"background:#f8fafc;");
                 h += '<tr style="border-bottom:1px solid #e5e7eb;' + bg + '">' +
-                    '<td style="padding:8px;text-align:center"><input type="checkbox" ' + sel + ' onchange="toggleSaleSelect(' + r.id + ')"></td>' +
-                    '<td style="padding:8px 10px;white-space:nowrap">' + (r.sale_date||"") + '</td>' +
-                    '<td style="padding:8px 10px;white-space:nowrap"><span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;background:' + (cc[ch]||"#888") + '22;color:' + (cc[ch]||"#888") + '">' + ch.toUpperCase() + '</span></td>' +
-                    '<td style="padding:8px 10px;white-space:nowrap"><span style="font-size:11px;font-weight:600;padding:2px 6px;border-radius:3px;background:' + sc + '22;color:' + sc + '">' + s + '</span></td>' +
-                    '<td style="padding:8px 10px;font-family:monospace;white-space:nowrap">' + (r.sku||"") + '</td>' +
-                    '<td style="padding:8px 10px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (r.product_name||"") + '</td>' +
-                    '<td style="padding:8px 10px;white-space:nowrap">' + (r.brand_name||"") + '</td>' +
-                    '<td style="padding:8px 10px;text-align:right">' + (r.qty_sold||0) + '</td>' +
-                    '<td style="padding:8px 10px;text-align:right;font-family:monospace;white-space:nowrap">$' + (parseFloat(r.sale_price)||0).toFixed(2) + '</td>' +
-                    '<td style="padding:8px 10px;text-align:right;font-family:monospace;white-space:nowrap">$' + (parseFloat(r.total_revenue)||0).toFixed(2) + '</td>' +
-                    '<td style="padding:8px 10px;text-align:right;font-family:monospace;white-space:nowrap;color:' + (p>=0?"#22c55e":"#ef4444") + '">$' + p.toFixed(2) + '</td>' +
-                    '<td style="padding:8px 10px;text-align:right;white-space:nowrap;color:' + (m>=0?"#22c55e":"#ef4444") + '">' + (m*100).toFixed(1) + '%</td>' +
-                    '<td style="padding:8px 10px;font-size:11px;white-space:nowrap;color:#8892a6">' + d + '</td></tr>';
+                    '<td style="padding:8px 6px;text-align:center"><input type="checkbox" ' + sel + ' onchange="toggleSaleSelect(' + r.id + ')"></td>' +
+                    '<td style="padding:8px;white-space:nowrap;font-size:12px;text-align:left">' + (r.sale_date||"") + '</td>' +
+                    '<td style="padding:8px;white-space:nowrap;text-align:left"><span style="font-size:11px;font-weight:700;padding:3px 8px;border-radius:4px;background:' + (ccBg[ch]||"#f1f5f9") + ';color:' + (cc[ch]||"#475569") + '">' + (chLabel[ch]||ch.toUpperCase()) + '</span></td>' +
+                    '<td style="padding:8px;white-space:nowrap;text-align:left"><span style="font-size:11px;font-weight:600;padding:3px 6px;border-radius:3px;background:' + scBg + ';color:' + sc + '">' + s + '</span></td>' +
+                    '<td style="padding:8px;font-family:monospace;white-space:nowrap;font-size:12px;text-align:left">' + (r.sku||"") + '</td>' +
+                    '<td style="padding:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left">' + (r.product_name||"") + '</td>' +
+                    '<td style="padding:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;text-align:left">' + (r.brand_name||"") + '</td>' +
+                    '<td style="padding:8px;text-align:center;font-weight:600">' + (r.qty_sold||0) + '</td>' +
+                    '<td style="padding:8px;text-align:right;font-family:monospace;white-space:nowrap">$' + (parseFloat(r.sale_price)||0).toFixed(2) + '</td>' +
+                    '<td style="padding:8px;text-align:right;font-family:monospace;white-space:nowrap;font-weight:600">$' + (parseFloat(r.total_revenue)||0).toFixed(2) + '</td>' +
+                    '<td style="padding:8px;text-align:right;font-family:monospace;white-space:nowrap;font-weight:600;color:' + (p>=0?"#15803d":"#dc2626") + '">$' + p.toFixed(2) + '</td>' +
+                    '<td style="padding:8px;text-align:right;white-space:nowrap;font-weight:600;color:' + (m>=0?"#15803d":"#dc2626") + '">' + (m*100).toFixed(1) + '%</td>' +
+                    '<td style="padding:8px;font-size:11px;white-space:nowrap;color:#64748b;text-align:right">' + d + '</td></tr>';
             }
             body.innerHTML = h;
         }
@@ -81557,7 +81583,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             var e;
             e=document.getElementById("salesStatTotal"); if(e) e.textContent=t;
             e=document.getElementById("salesStatRevenue"); if(e) e.textContent="$"+rv.toFixed(2);
-            e=document.getElementById("salesStatProfit"); if(e){e.textContent="$"+pf.toFixed(2);e.style.color=pf>=0?"#22c55e":"#ef4444";}
+            e=document.getElementById("salesStatProfit"); if(e){e.textContent="$"+pf.toFixed(2);e.style.color=pf>=0?"#15803d":"#dc2626";}
             e=document.getElementById("salesStatQty"); if(e) e.textContent=q;
         }
 
