@@ -71225,12 +71225,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                     setTimeout(initChannelManager, 100);
                 }
             }
-            
-            
-            // Load Sales Report
-            if (tab === 'sales') {
-                if (typeof loadSalesReport === 'function') setTimeout(loadSalesReport, 100);
             }
+
+            
+            if (tab === 'sales') { if (typeof loadSalesReport === 'function') setTimeout(loadSalesReport, 100); }
 
             renderCurrentView();
         }
@@ -81367,200 +81365,233 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
         function closeSaleModal() {
             document.getElementById('saleModal').classList.remove('active');
         }
+        
 
-                // ============================================================================
-        // SALES REPORT + SUPABASE SALE RECORDING (Patched)
-        // ============================================================================
+        
+        // ====================================================================
+        // SALES REPORT + SUPABASE RECORDING + PURGE (v3)
+        // ====================================================================
 
-        // Record sale to Supabase sales_history table
-        async function recordSaleToSupabase(item, qty, channel, salePrice, saleDate, totalCostOverride, netProfitOverride, marginOverride) {
+        async function recordSaleToSupabase(item, qty, channel, salePrice, saleDate) {
             if (typeof sbClient === "undefined" || !sbClient || !sbConnected) return;
             try {
-                var wholesale = parseFloat(item.wholesalePrice) || 0;
-                var ibPct = parseFloat(item.ibShipping) || 0;
-                var tariff = parseFloat(item.tariff) || 0;
+                var ws = parseFloat(item.wholesalePrice) || 0;
+                var ib = parseFloat(item.ibShipping) || 0;
+                var tar = parseFloat(item.tariff) || 0;
                 var ob = parseFloat(item.obShipping) || 0;
-                var totalCost = totalCostOverride != null ? totalCostOverride * qty : (wholesale * (1 + ibPct / 100) + tariff + ob) * qty;
-                var totalRevenue = salePrice * qty;
-                var netProfit = netProfitOverride != null ? netProfitOverride * qty : totalRevenue - totalCost;
-                var margin = marginOverride != null ? marginOverride / 100 : (totalRevenue > 0 ? netProfit / totalRevenue : 0);
-                var itemRow = await sbClient.from("items").select("id").eq("sku", item.sku).single();
+                var cost = (ws * (1 + ib/100) + tar + ob) * qty;
+                var rev = salePrice * qty;
+                var profit = rev - cost;
+                var margin = rev > 0 ? profit / rev : 0;
+                var row = await sbClient.from("items").select("id").eq("sku", item.sku).single();
                 await sbClient.from("sales_history").insert({
-                    item_id: itemRow.data ? itemRow.data.id : null, sku: item.sku, product_name: item.productName || "",
-                    brand_name: item.brandName || "", qty_sold: qty, sale_channel: channel,
-                    sale_date: saleDate || new Date().toISOString().split("T")[0], sale_price: salePrice,
-                    total_revenue: totalRevenue, total_cost: totalCost, net_profit: netProfit,
-                    profit_margin: margin, wholesale_price: wholesale, ib_shipping: ibPct,
-                    tariff: tariff, ob_shipping: ob, notes: "Manual sale via Inventory System"
+                    item_id: row.data ? row.data.id : null, sku: item.sku,
+                    product_name: item.productName || "", brand_name: item.brandName || "",
+                    qty_sold: qty, sale_channel: channel,
+                    sale_date: saleDate || new Date().toISOString().split("T")[0],
+                    sale_price: salePrice, total_revenue: rev, total_cost: cost,
+                    net_profit: profit, profit_margin: margin,
+                    wholesale_price: ws, ib_shipping: ib, tariff: tar, ob_shipping: ob,
+                    notes: "Manual sale via Inventory System"
                 });
-                console.log("[Sales] Recorded to Supabase:", item.sku, "x" + qty, channel, "$" + totalRevenue.toFixed(2));
-            } catch (e) { console.warn("[Sales] Supabase write failed:", e.message); }
+                console.log("[Sales] Recorded:", item.sku, "x" + qty, channel);
+            } catch (e) { console.warn("[Sales] DB write failed:", e.message); }
         }
 
-        // Intercept salesHistory.push to auto-record to Supabase
+        // Auto-intercept salesHistory.push
         (function() {
-            var _waitForSalesHistory = setInterval(function() {
+            var _wait = setInterval(function() {
                 if (typeof salesHistory !== "undefined" && Array.isArray(salesHistory)) {
-                    clearInterval(_waitForSalesHistory);
-                    var _origPush = salesHistory.push.bind(salesHistory);
+                    clearInterval(_wait);
+                    var _orig = salesHistory.push.bind(salesHistory);
                     salesHistory.push = function(sale) {
-                        _origPush(sale);
+                        _orig(sale);
                         if (typeof sbClient !== "undefined" && sbClient && sbConnected && sale && sale.sku) {
                             var item = inventory.find(function(i) { return i.sku === sale.sku; });
-                            if (item) {
-                                recordSaleToSupabase(item, sale.qtySold || 1, sale.saleChannel || "manual", sale.salePrice || 0, sale.saleDate);
-                            }
+                            if (item) recordSaleToSupabase(item, sale.qtySold||1, sale.saleChannel||"manual", sale.salePrice||0, sale.saleDate);
                         }
                         return salesHistory.length;
                     };
-                    console.log("[Sales] salesHistory.push intercepted for Supabase recording");
+                    console.log("[Sales] Intercept active");
                 }
             }, 500);
         })();
 
-        // Sales Report state
-        var _salesData = [], _salesFiltered = [], _salesSortCol = "sale_date", _salesSortDir = "desc";
+        var _salesData = [], _salesFiltered = [], _salesSortCol = "sale_date", _salesSortDir = "desc", _salesSelected = {};
 
-        // Self-healing loadSalesReport - creates DOM if missing
+        function _buildSalesTab() {
+            var h = '<div style="padding:20px">';
+            h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">';
+            h += '<h2 style="margin:0">\uD83D\uDCB0 Sales Report</h2>';
+            h += '<div style="display:flex;gap:8px;flex-wrap:wrap">';
+            h += '<button onclick="loadSalesReport()" style="padding:8px 14px;border-radius:6px;border:none;background:#6366f1;color:white;font-weight:600;cursor:pointer;font-size:13px">\uD83D\uDD04 Refresh</button>';
+            h += '<button onclick="exportSalesExcel()" style="padding:8px 14px;border-radius:6px;border:none;background:#22c55e;color:white;font-weight:600;cursor:pointer;font-size:13px">\uD83D\uDCCA Excel</button>';
+            h += '<button onclick="exportSalesPDF()" style="padding:8px 14px;border-radius:6px;border:none;background:#334155;color:white;font-weight:600;cursor:pointer;font-size:13px">\uD83D\uDCC4 PDF</button>';
+            h += '<button onclick="purgeSelectedSales()" id="salesPurgeBtn" style="padding:8px 14px;border-radius:6px;border:none;background:#ef4444;color:white;font-weight:600;cursor:pointer;font-size:13px;display:none">\uD83D\uDDD1\uFE0F Purge Selected</button>';
+            h += '</div></div>';
+            h += '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:flex-end">';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">From</label><input type="date" id="salesFilterFrom" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">To</label><input type="date" id="salesFilterTo" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">Channel</label><select id="salesFilterChannel" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"><option value="">All</option><option value="etsy">Etsy</option><option value="wix">Wix</option><option value="wayfair">Wayfair</option><option value="treasuremarts">TreasureMarts</option></select></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">Source</label><select id="salesFilterSource" onchange="filterSalesReport()" style="padding:6px 8px;border-radius:6px;border:1px solid #ccc"><option value="">All</option><option value="manual">Manual</option><option value="sync_hub">Sync Hub</option><option value="mobile">Mobile</option></select></div>';
+            h += '<div><label style="font-size:12px;display:block;margin-bottom:2px">Search</label><input type="text" id="salesFilterSearch" oninput="filterSalesReport()" placeholder="SKU or product..." style="padding:6px 8px;border-radius:6px;border:1px solid #ccc;width:160px"></div>';
+            h += '</div>';
+            h += '<div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap">';
+            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatTotal">0</div><div style="font-size:.72rem;color:#8892a6">Total Sales</div></div>';
+            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatRevenue">$0</div><div style="font-size:.72rem;color:#8892a6">Revenue</div></div>';
+            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700;color:#22c55e" id="salesStatProfit">$0</div><div style="font-size:.72rem;color:#8892a6">Net Profit</div></div>';
+            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatQty">0</div><div style="font-size:.72rem;color:#8892a6">Units Sold</div></div>';
+            h += '</div>';
+            h += '<div style="border:1px solid #2a2f3e;border-radius:8px;overflow:hidden"><div style="overflow-x:auto">';
+            h += '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr>';
+            h += '<th style="padding:10px 8px;white-space:nowrap;width:30px;text-align:center"><input type="checkbox" id="salesSelectAll" onchange="toggleAllSalesSelect()"></th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sale_date\')">Date</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sale_channel\')">Channel</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'notes\')">Source</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sku\')">SKU</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left;cursor:pointer;min-width:180px" onclick="sortSalesBy(\'product_name\')">Product</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left">Brand</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Qty</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Price</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Revenue</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Profit</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:right">Margin</th>';
+            h += '<th style="padding:10px 10px;white-space:nowrap;text-align:left">Added to DB</th>';
+            h += '</tr></thead>';
+            h += '<tbody id="salesReportBody"><tr><td colspan="13" style="text-align:center;padding:40px">Loading...</td></tr></tbody>';
+            h += '</table></div></div></div>';
+            return h;
+        }
+
         async function loadSalesReport() {
             var body = document.getElementById("salesReportBody");
             if (!body) {
                 var tab = document.getElementById("salesTab");
-                if (tab) {
-                    tab.innerHTML = '<div style="padding:20px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px"><h2 style="margin:0">\uD83D\uDCB0 Sales Report</h2><div style="display:flex;gap:8px"><button onclick="loadSalesReport()" style="padding:8px 14px;border-radius:6px;border:none;background:#6366f1;color:white;font-weight:600;cursor:pointer">\uD83D\uDD04 Refresh</button><button onclick="exportSalesExcel()" style="padding:8px 14px;border-radius:6px;border:none;background:#22c55e;color:white;font-weight:600;cursor:pointer">\uD83D\uDCCA Excel</button><button onclick="exportSalesPDF()" style="padding:8px 14px;border-radius:6px;border:none;background:#334155;color:white;font-weight:600;cursor:pointer">\uD83D\uDCC4 PDF</button></div></div><div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:center"><div><label style="font-size:12px">From</label><br><input type="date" id="salesFilterFrom" onchange="filterSalesReport()"></div><div><label style="font-size:12px">To</label><br><input type="date" id="salesFilterTo" onchange="filterSalesReport()"></div><div><label style="font-size:12px">Channel</label><br><select id="salesFilterChannel" onchange="filterSalesReport()"><option value="">All</option><option value="etsy">Etsy</option><option value="wix">Wix</option><option value="wayfair">Wayfair</option><option value="treasuremarts">TreasureMarts</option></select></div><div><label style="font-size:12px">Source</label><br><select id="salesFilterSource" onchange="filterSalesReport()"><option value="">All</option><option value="manual">Manual</option><option value="sync_hub">Sync Hub</option><option value="mobile">Mobile</option></select></div><div><label style="font-size:12px">Search</label><br><input type="text" id="salesFilterSearch" oninput="filterSalesReport()" placeholder="SKU or product..." style="width:160px"></div></div><div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap"><div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatTotal">0</div><div style="font-size:.72rem;color:#8892a6">Total Sales</div></div><div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatRevenue">$0</div><div style="font-size:.72rem;color:#8892a6">Revenue</div></div><div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700;color:#22c55e" id="salesStatProfit">$0</div><div style="font-size:.72rem;color:#8892a6">Net Profit</div></div><div style="border:1px solid #2a2f3e;border-radius:8px;padding:12px 16px;min-width:120px"><div style="font-size:1.3rem;font-weight:700" id="salesStatQty">0</div><div style="font-size:.72rem;color:#8892a6">Units Sold</div></div></div><div style="border:1px solid #2a2f3e;border-radius:8px;overflow:hidden"><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.82rem"><thead><tr><th style="padding:10px 12px;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sale_date\')">Date</th><th style="padding:10px 12px;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sale_channel\')">Channel</th><th style="padding:10px 12px;text-align:left;cursor:pointer" onclick="sortSalesBy(\'notes\')">Source</th><th style="padding:10px 12px;text-align:left;cursor:pointer" onclick="sortSalesBy(\'sku\')">SKU</th><th style="padding:10px 12px;text-align:left">Product</th><th style="padding:10px 12px">Brand</th><th style="padding:10px 12px;text-align:right">Qty</th><th style="padding:10px 12px;text-align:right">Price</th><th style="padding:10px 12px;text-align:right">Revenue</th><th style="padding:10px 12px;text-align:right">Profit</th><th style="padding:10px 12px;text-align:right">Margin</th><th style="padding:10px 12px">Added to DB</th></tr></thead><tbody id="salesReportBody"><tr><td colspan="12" style="text-align:center;padding:40px">Loading...</td></tr></tbody></table></div></div></div>';
-                }
+                if (tab) tab.innerHTML = _buildSalesTab();
                 body = document.getElementById("salesReportBody");
                 if (!body) return;
             }
             if (typeof sbClient === "undefined" || !sbClient || !sbConnected) {
-                body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px">Connect to database first</td></tr>';
+                body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px">Connect to database first</td></tr>';
                 return;
             }
             try {
-                body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:20px">Loading...</td></tr>';
-                var resp = await sbClient.from("sales_history").select("*").order("sale_date", { ascending: false });
+                body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:20px">Loading...</td></tr>';
+                var resp = await sbClient.from("sales_history").select("*").order("sale_date", {ascending:false});
                 if (resp.error) throw resp.error;
                 _salesData = resp.data || [];
+                _salesSelected = {};
                 var now = new Date();
-                var ago = new Date(now - 30*24*60*60*1000);
-                var toEl = document.getElementById("salesFilterTo");
-                var fromEl = document.getElementById("salesFilterFrom");
-                if (toEl) toEl.value = now.toISOString().split("T")[0];
-                if (fromEl) fromEl.value = ago.toISOString().split("T")[0];
+                var el1 = document.getElementById("salesFilterTo"), el2 = document.getElementById("salesFilterFrom");
+                if (el1) el1.value = now.toISOString().split("T")[0];
+                if (el2) el2.value = new Date(now - 30*24*60*60*1000).toISOString().split("T")[0];
                 filterSalesReport();
-            } catch (e) {
-                body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:#ef4444">Error: ' + e.message + '</td></tr>';
-            }
+            } catch(e) { body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:#ef4444">' + e.message + '</td></tr>'; }
         }
 
-        function _detectSaleSource(row) {
-            var n = (row.notes || "").toLowerCase();
-            if (n.indexOf("mobile") >= 0) return "Mobile";
-            if (n.indexOf("sync hub") >= 0 || n.indexOf("order") >= 0) return "Sync Hub";
-            return "Manual";
-        }
+        function _srcOf(r) { var n=(r.notes||"").toLowerCase(); return n.indexOf("mobile")>=0?"Mobile":n.indexOf("sync hub")>=0||n.indexOf("order")>=0?"Sync Hub":"Manual"; }
 
         function filterSalesReport() {
-            var from = (document.getElementById("salesFilterFrom") || {}).value || "";
-            var to = (document.getElementById("salesFilterTo") || {}).value || "";
-            var ch = (document.getElementById("salesFilterChannel") || {}).value || "";
-            var src = (document.getElementById("salesFilterSource") || {}).value || "";
-            var q = ((document.getElementById("salesFilterSearch") || {}).value || "").toLowerCase();
+            var gv = function(id) { var e = document.getElementById(id); return e ? e.value : ""; };
+            var from=gv("salesFilterFrom"), to=gv("salesFilterTo"), ch=gv("salesFilterChannel"), src=gv("salesFilterSource"), q=gv("salesFilterSearch").toLowerCase();
             _salesFiltered = _salesData.filter(function(r) {
                 if (from && r.sale_date < from) return false;
                 if (to && r.sale_date > to) return false;
                 if (ch && r.sale_channel !== ch) return false;
-                if (src) { var s = _detectSaleSource(r).toLowerCase().replace(" ", "_"); if (s !== src) return false; }
-                if (q && (r.sku||"").toLowerCase().indexOf(q) < 0 && (r.product_name||"").toLowerCase().indexOf(q) < 0) return false;
+                if (src) { var s = _srcOf(r).toLowerCase().replace(" ","_"); if (s !== src) return false; }
+                if (q && (r.sku||"").toLowerCase().indexOf(q)<0 && (r.product_name||"").toLowerCase().indexOf(q)<0) return false;
                 return true;
             });
-            _salesFiltered.sort(function(a, b) {
-                var va = a[_salesSortCol] || "", vb = b[_salesSortCol] || "";
-                if (typeof va === "number" && typeof vb === "number") return _salesSortDir === "asc" ? va - vb : vb - va;
-                return _salesSortDir === "asc" ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+            _salesFiltered.sort(function(a,b) {
+                var va=a[_salesSortCol]||"", vb=b[_salesSortCol]||"";
+                if (typeof va==="number" && typeof vb==="number") return _salesSortDir==="asc"?va-vb:vb-va;
+                return _salesSortDir==="asc"?String(va).localeCompare(String(vb)):String(vb).localeCompare(String(va));
             });
-            _renderSalesTable();
-            _updateSalesStats();
+            _renderST(); _updateSS(); _updatePB();
         }
 
-        function sortSalesBy(col) {
-            if (_salesSortCol === col) _salesSortDir = _salesSortDir === "asc" ? "desc" : "asc";
-            else { _salesSortCol = col; _salesSortDir = col === "sale_date" ? "desc" : "asc"; }
-            filterSalesReport();
-        }
+        function sortSalesBy(c) { if(_salesSortCol===c)_salesSortDir=_salesSortDir==="asc"?"desc":"asc"; else{_salesSortCol=c;_salesSortDir=c==="sale_date"?"desc":"asc";} filterSalesReport(); }
 
-        function _renderSalesTable() {
-            var body = document.getElementById("salesReportBody");
-            if (!body) return;
-            if (!_salesFiltered.length) { body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px">No sales match filters</td></tr>'; return; }
-            var chC = { etsy: "#f97316", wix: "#3b82f6", wayfair: "#a855f7", treasuremarts: "#22c55e" };
-            var html = "";
+        function _renderST() {
+            var body = document.getElementById("salesReportBody"); if (!body) return;
+            if (!_salesFiltered.length) { body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px">No sales match filters</td></tr>'; return; }
+            var cc = {etsy:"#f97316",wix:"#3b82f6",wayfair:"#a855f7",treasuremarts:"#22c55e","quick-sale":"#eab308"};
+            var h = "";
             for (var i = 0; i < _salesFiltered.length; i++) {
-                var r = _salesFiltered[i];
-                var src = _detectSaleSource(r);
-                var srcC = src === "Mobile" ? "#22c55e" : src === "Sync Hub" ? "#6366f1" : "#eab308";
-                var ch = r.sale_channel || "";
-                var profit = parseFloat(r.net_profit) || 0;
-                var margin = parseFloat(r.profit_margin) || 0;
-                var added = r.created_at ? new Date(r.created_at).toLocaleDateString() + " " + new Date(r.created_at).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) : "";
-                html += '<tr style="border-bottom:1px solid #2a2f3e">' +
-                    '<td style="padding:8px 12px">' + (r.sale_date || "") + '</td>' +
-                    '<td style="padding:8px 12px"><span style="font-size:.7rem;font-weight:700;padding:2px 8px;border-radius:4px;background:' + (chC[ch] || "#888") + '22;color:' + (chC[ch] || "#888") + '">' + ch.toUpperCase() + '</span></td>' +
-                    '<td style="padding:8px 12px"><span style="font-size:.68rem;font-weight:600;padding:2px 6px;border-radius:3px;background:' + srcC + '22;color:' + srcC + '">' + src + '</span></td>' +
-                    '<td style="padding:8px 12px;font-family:monospace">' + (r.sku || "") + '</td>' +
-                    '<td style="padding:8px 12px">' + (r.product_name || "").substring(0, 35) + '</td>' +
-                    '<td style="padding:8px 12px">' + (r.brand_name || "") + '</td>' +
-                    '<td style="padding:8px 12px;text-align:right">' + (r.qty_sold || 0) + '</td>' +
-                    '<td style="padding:8px 12px;text-align:right;font-family:monospace">$' + (parseFloat(r.sale_price) || 0).toFixed(2) + '</td>' +
-                    '<td style="padding:8px 12px;text-align:right;font-family:monospace">$' + (parseFloat(r.total_revenue) || 0).toFixed(2) + '</td>' +
-                    '<td style="padding:8px 12px;text-align:right;font-family:monospace;color:' + (profit >= 0 ? "#22c55e" : "#ef4444") + '">$' + profit.toFixed(2) + '</td>' +
-                    '<td style="padding:8px 12px;text-align:right;color:' + (margin >= 0 ? "#22c55e" : "#ef4444") + '">' + (margin * 100).toFixed(1) + '%</td>' +
-                    '<td style="padding:8px 12px;font-size:.75rem;color:#5a6378">' + added + '</td></tr>';
+                var r = _salesFiltered[i], s = _srcOf(r);
+                var sc = s==="Mobile"?"#22c55e":s==="Sync Hub"?"#6366f1":"#eab308";
+                var ch = r.sale_channel||"", p = parseFloat(r.net_profit)||0, m = parseFloat(r.profit_margin)||0;
+                var d = r.created_at ? new Date(r.created_at).toLocaleDateString()+" "+new Date(r.created_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
+                var sel = _salesSelected[r.id] ? "checked" : "";
+                var bg = _salesSelected[r.id] ? "background:rgba(239,68,68,0.08);" : "";
+                h += '<tr style="border-bottom:1px solid #e5e7eb;' + bg + '">' +
+                    '<td style="padding:8px;text-align:center"><input type="checkbox" ' + sel + ' onchange="toggleSaleSelect(' + r.id + ')"></td>' +
+                    '<td style="padding:8px 10px;white-space:nowrap">' + (r.sale_date||"") + '</td>' +
+                    '<td style="padding:8px 10px;white-space:nowrap"><span style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;background:' + (cc[ch]||"#888") + '22;color:' + (cc[ch]||"#888") + '">' + ch.toUpperCase() + '</span></td>' +
+                    '<td style="padding:8px 10px;white-space:nowrap"><span style="font-size:11px;font-weight:600;padding:2px 6px;border-radius:3px;background:' + sc + '22;color:' + sc + '">' + s + '</span></td>' +
+                    '<td style="padding:8px 10px;font-family:monospace;white-space:nowrap">' + (r.sku||"") + '</td>' +
+                    '<td style="padding:8px 10px;max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + (r.product_name||"") + '</td>' +
+                    '<td style="padding:8px 10px;white-space:nowrap">' + (r.brand_name||"") + '</td>' +
+                    '<td style="padding:8px 10px;text-align:right">' + (r.qty_sold||0) + '</td>' +
+                    '<td style="padding:8px 10px;text-align:right;font-family:monospace;white-space:nowrap">$' + (parseFloat(r.sale_price)||0).toFixed(2) + '</td>' +
+                    '<td style="padding:8px 10px;text-align:right;font-family:monospace;white-space:nowrap">$' + (parseFloat(r.total_revenue)||0).toFixed(2) + '</td>' +
+                    '<td style="padding:8px 10px;text-align:right;font-family:monospace;white-space:nowrap;color:' + (p>=0?"#22c55e":"#ef4444") + '">$' + p.toFixed(2) + '</td>' +
+                    '<td style="padding:8px 10px;text-align:right;white-space:nowrap;color:' + (m>=0?"#22c55e":"#ef4444") + '">' + (m*100).toFixed(1) + '%</td>' +
+                    '<td style="padding:8px 10px;font-size:11px;white-space:nowrap;color:#8892a6">' + d + '</td></tr>';
             }
-            body.innerHTML = html;
+            body.innerHTML = h;
         }
 
-        function _updateSalesStats() {
-            var t = _salesFiltered.length, rev = 0, prof = 0, qty = 0;
-            for (var i = 0; i < _salesFiltered.length; i++) {
-                rev += parseFloat(_salesFiltered[i].total_revenue) || 0;
-                prof += parseFloat(_salesFiltered[i].net_profit) || 0;
-                qty += parseInt(_salesFiltered[i].qty_sold) || 0;
-            }
-            var el;
-            el = document.getElementById("salesStatTotal"); if (el) el.textContent = t;
-            el = document.getElementById("salesStatRevenue"); if (el) el.textContent = "$" + rev.toFixed(2);
-            el = document.getElementById("salesStatProfit"); if (el) { el.textContent = "$" + prof.toFixed(2); el.style.color = prof >= 0 ? "#22c55e" : "#ef4444"; }
-            el = document.getElementById("salesStatQty"); if (el) el.textContent = qty;
+        function _updateSS() {
+            var t=_salesFiltered.length, rv=0, pf=0, q=0;
+            for (var i=0;i<t;i++) { rv+=parseFloat(_salesFiltered[i].total_revenue)||0; pf+=parseFloat(_salesFiltered[i].net_profit)||0; q+=parseInt(_salesFiltered[i].qty_sold)||0; }
+            var e;
+            e=document.getElementById("salesStatTotal"); if(e) e.textContent=t;
+            e=document.getElementById("salesStatRevenue"); if(e) e.textContent="$"+rv.toFixed(2);
+            e=document.getElementById("salesStatProfit"); if(e){e.textContent="$"+pf.toFixed(2);e.style.color=pf>=0?"#22c55e":"#ef4444";}
+            e=document.getElementById("salesStatQty"); if(e) e.textContent=q;
+        }
+
+        function toggleSaleSelect(id) { if(_salesSelected[id]) delete _salesSelected[id]; else _salesSelected[id]=true; _renderST(); _updatePB(); }
+        function toggleAllSalesSelect() { var cb=document.getElementById("salesSelectAll"); var on=cb&&cb.checked; _salesSelected={}; if(on) for(var i=0;i<_salesFiltered.length;i++) _salesSelected[_salesFiltered[i].id]=true; _renderST(); _updatePB(); }
+        function _updatePB() { var btn=document.getElementById("salesPurgeBtn"); var cnt=Object.keys(_salesSelected).length; if(btn){btn.style.display=cnt>0?"inline-flex":"none"; if(cnt>0) btn.textContent="\uD83D\uDDD1\uFE0F Purge "+cnt+" Selected";} }
+
+        async function purgeSelectedSales() {
+            var ids = Object.keys(_salesSelected).map(Number);
+            if (!ids.length) { alert("Select rows first"); return; }
+            if (!confirm("Delete " + ids.length + " sale record(s) from database?\n\nThis cannot be undone.")) return;
+            try {
+                var resp = await sbClient.from("sales_history").delete().in("id", ids);
+                if (resp.error) throw resp.error;
+                _salesSelected = {};
+                alert("Purged " + ids.length + " records");
+                await loadSalesReport();
+            } catch(e) { alert("Purge failed: " + e.message); }
         }
 
         function exportSalesExcel() {
             if (!_salesFiltered.length) { alert("No data"); return; }
-            var h = ["Sale Date","Channel","Source","SKU","Product","Brand","Qty","Price","Revenue","Cost","Profit","Margin %","Notes","Added to DB"];
-            var rows = [h.join(",")];
-            for (var i = 0; i < _salesFiltered.length; i++) {
-                var r = _salesFiltered[i];
-                var esc = function(s) { return '"' + (s || "").replace(/"/g, '""'  ) + '"'; };
-                rows.push([r.sale_date||"",r.sale_channel||"",_detectSaleSource(r),esc(r.sku),esc(r.product_name),esc(r.brand_name),r.qty_sold||0,(parseFloat(r.sale_price)||0).toFixed(2),(parseFloat(r.total_revenue)||0).toFixed(2),(parseFloat(r.total_cost)||0).toFixed(2),(parseFloat(r.net_profit)||0).toFixed(2),((parseFloat(r.profit_margin)||0)*100).toFixed(1)+"%",esc(r.notes),r.created_at?new Date(r.created_at).toLocaleString():""].join(","));
+            var rows = ["Sale Date,Channel,Source,SKU,Product,Brand,Qty,Price,Revenue,Cost,Profit,Margin %,Notes,Added to DB"];
+            for (var i=0;i<_salesFiltered.length;i++) {
+                var r=_salesFiltered[i]; var esc=function(s){return '"'+(s||"").replace(/"/g,'""')+'"';};
+                rows.push([r.sale_date||"",r.sale_channel||"",_srcOf(r),esc(r.sku),esc(r.product_name),esc(r.brand_name),r.qty_sold||0,(parseFloat(r.sale_price)||0).toFixed(2),(parseFloat(r.total_revenue)||0).toFixed(2),(parseFloat(r.total_cost)||0).toFixed(2),(parseFloat(r.net_profit)||0).toFixed(2),((parseFloat(r.profit_margin)||0)*100).toFixed(1)+"%",esc(r.notes),r.created_at?new Date(r.created_at).toLocaleString():""].join(","));
             }
-            var blob = new Blob([rows.join("\n")], {type:"text/csv"});
-            var a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-            a.download = "CCD-Sales-" + new Date().toISOString().split("T")[0] + ".csv";
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            var b=new Blob([rows.join("\n")],{type:"text/csv"}); var a=document.createElement("a"); a.href=URL.createObjectURL(b);
+            a.download="CCD-Sales-"+new Date().toISOString().split("T")[0]+".csv"; document.body.appendChild(a); a.click(); document.body.removeChild(a);
         }
 
         function exportSalesPDF() {
             if (!_salesFiltered.length) { alert("No data"); return; }
-            var tR=0,tP=0,tQ=0;
-            var tr = "";
-            for (var i = 0; i < _salesFiltered.length; i++) {
-                var r = _salesFiltered[i]; tR+=parseFloat(r.total_revenue)||0; tP+=parseFloat(r.net_profit)||0; tQ+=parseInt(r.qty_sold)||0;
-                tr += "<tr><td>"+(r.sale_date||"")+"</td><td>"+(r.sale_channel||"").toUpperCase()+"</td><td>"+_detectSaleSource(r)+"</td><td>"+(r.sku||"")+"</td><td>"+(r.product_name||"").substring(0,30)+"</td><td style=\"text-align:right\">"+(r.qty_sold||0)+"</td><td style=\"text-align:right\">$"+(parseFloat(r.total_revenue)||0).toFixed(2)+"</td><td style=\"text-align:right;color:"+((parseFloat(r.net_profit)||0)>=0?"green":"red")+"\">$"+(parseFloat(r.net_profit)||0).toFixed(2)+"</td></tr>";
+            var tR=0,tP=0,tQ=0,tr="";
+            for (var i=0;i<_salesFiltered.length;i++) {
+                var r=_salesFiltered[i]; tR+=parseFloat(r.total_revenue)||0; tP+=parseFloat(r.net_profit)||0; tQ+=parseInt(r.qty_sold)||0;
+                tr+="<tr><td>"+(r.sale_date||"")+"</td><td>"+(r.sale_channel||"").toUpperCase()+"</td><td>"+_srcOf(r)+"</td><td>"+(r.sku||"")+"</td><td>"+(r.product_name||"")+"</td><td style=\"text-align:right\">"+(r.qty_sold||0)+"</td><td style=\"text-align:right\">$"+(parseFloat(r.total_revenue)||0).toFixed(2)+"</td><td style=\"text-align:right;color:"+((parseFloat(r.net_profit)||0)>=0?"green":"red")+"\">$"+(parseFloat(r.net_profit)||0).toFixed(2)+"</td></tr>";
             }
-            var html = "<!DOCTYPE html><html><head><title>CCD Sales</title><style>body{font-family:Arial;padding:20px;font-size:11px;}h1{color:#4F46E5;font-size:18px;}table{width:100%;border-collapse:collapse;}th{background:#4F46E5;color:white;padding:6px 8px;text-align:left;font-size:10px;}td{padding:5px 8px;border-bottom:1px solid #ddd;font-size:10px;}.b{padding:10px 18px;border:none;border-radius:6px;font-weight:600;cursor:pointer;margin-right:8px;}@media print{.np{display:none;}}</style></head><body><div class=\"np\"><button class=\"b\" style=\"background:#6B7280;color:white\" onclick=\"window.close()\">Back</button> <button class=\"b\" style=\"background:#4F46E5;color:white\" onclick=\"window.print()\">Print</button></div><h1>CCD Sales Report</h1><div style=\"color:#666;margin-bottom:16px\">"+new Date().toLocaleString()+"</div><div style=\"margin-bottom:16px\"><b>Total:</b> "+_salesFiltered.length+" sales | <b>Revenue:</b> $"+tR.toFixed(2)+" | <b>Profit:</b> $"+tP.toFixed(2)+" | <b>Units:</b> "+tQ+"</div><table><thead><tr><th>Date</th><th>Channel</th><th>Source</th><th>SKU</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead><tbody>"+tr+"</tbody></table></body></html>";
-            var w = window.open("","_blank"); if (w) { w.document.write(html); w.document.close(); } else alert("Enable popups");
+            var html="<!DOCTYPE html><html><head><title>CCD Sales</title><style>body{font-family:Arial;padding:20px;font-size:11px}h1{color:#4F46E5;font-size:18px}table{width:100%;border-collapse:collapse}th{background:#4F46E5;color:white;padding:6px 8px;text-align:left;font-size:10px}td{padding:5px 8px;border-bottom:1px solid #ddd;font-size:10px}.b{padding:10px 18px;border:none;border-radius:6px;font-weight:600;cursor:pointer;margin-right:8px}@media print{.np{display:none}}</style></head><body><div class=\"np\"><button class=\"b\" style=\"background:#6B7280;color:white\" onclick=\"window.close()\">Back</button> <button class=\"b\" style=\"background:#4F46E5;color:white\" onclick=\"window.print()\">Print</button></div><h1>CCD Sales Report</h1><div style=\"color:#666;margin-bottom:16px\">"+new Date().toLocaleString()+"</div><div style=\"margin-bottom:16px\"><b>"+_salesFiltered.length+"</b> sales | Revenue: <b>$"+tR.toFixed(2)+"</b> | Profit: <b>$"+tP.toFixed(2)+"</b> | Units: <b>"+tQ+"</b></div><table><thead><tr><th>Date</th><th>Channel</th><th>Source</th><th>SKU</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Profit</th></tr></thead><tbody>"+tr+"</tbody></table></body></html>";
+            var w=window.open("","_blank"); if(w){w.document.write(html);w.document.close();}else alert("Enable popups");
         }
 
+    
         function recordSale(event) {
             event.preventDefault();
 
