@@ -19304,7 +19304,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 params.action.includes('listings') ||
                 params.action.includes('Listings')
             );
-            const timeoutMs = isLongOperation ? 300000 : 60000; // 5 min for sync, 1 min for others
+            const timeoutMs = isLongOperation ? 300000 : 5000; // 5 min for sync, 5 sec for simple fetches
             
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -126024,14 +126024,14 @@ function itemToSbRow(item) {
         wix_net_profit:     (() => { try { return parseFloat(calculateChannelMetrics(item,"wix").netProfit.toFixed(2)); } catch(e) { return null; } })(),
         wayfair_net_profit: (() => { try { return parseFloat(calculateChannelMetrics(item,"wayfair").netProfit.toFixed(2)); } catch(e) { return null; } })(),
         tm_net_profit:      (() => { try { return parseFloat(calculateChannelMetrics(item,"treasuremarts").netProfit.toFixed(2)); } catch(e) { return null; } })(),
-        cc_net_profit:      (() => { try { return parseFloat(calculateChannelMetrics(item,"crazychicks").netProfit.toFixed(2)); } catch(e) { return null; } })(),
+        cc_net_profit:      null, // CrazyChicks retired — requires full inventory scan, skipped here
 
         // Margin percentages
         etsy_margin_pct:    (() => { try { return parseFloat(calculateChannelMetrics(item,"etsy").netProfitMargin.toFixed(2)); } catch(e) { return null; } })(),
         wix_margin_pct:     (() => { try { return parseFloat(calculateChannelMetrics(item,"wix").netProfitMargin.toFixed(2)); } catch(e) { return null; } })(),
         wayfair_margin_pct: (() => { try { return parseFloat(calculateChannelMetrics(item,"wayfair").netProfitMargin.toFixed(2)); } catch(e) { return null; } })(),
         tm_margin_pct:      (() => { try { return parseFloat(calculateChannelMetrics(item,"treasuremarts").netProfitMargin.toFixed(2)); } catch(e) { return null; } })(),
-        cc_margin_pct:      (() => { try { return parseFloat(calculateChannelMetrics(item,"crazychicks").netProfitMargin.toFixed(2)); } catch(e) { return null; } })(),
+        cc_margin_pct:      null, // CrazyChicks retired — requires full inventory scan, skipped here
 
         // Total cost basis: wholesale + IB shipping + tariff + OB shipping
         total_cost_basis: (() => {
@@ -127135,8 +127135,9 @@ async function configureMasterFile() {
         // Load inventory from database
         await loadFromMasterFile();
         
-        // Start real-time subscriptions (replaces file polling)
-        startSupabaseRealtime();
+        // Start real-time subscriptions after a brief delay so the initial
+        // load completes before the subscription heartbeat competes for the auth lock
+        setTimeout(() => startSupabaseRealtime(), 2000);
         
         showNotification('✅ Connected to Supabase — ' + inventory.length + ' items loaded', 'success');
         updateBackupStatusIndicator();
@@ -128706,7 +128707,7 @@ function initializeBackupSystem() {
                         backupConfig.enabled = true;
                         backupConfig.permissionGranted = true;
                         await loadFromMasterFile();
-                        startSupabaseRealtime();
+                        setTimeout(() => startSupabaseRealtime(), 2000);
                         showNotification('✅ Auto-connected to Supabase — ' + inventory.length + ' items', 'success');
                         updateBackupStatusIndicator();
                     } else {
