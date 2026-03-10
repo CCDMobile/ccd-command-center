@@ -705,10 +705,16 @@
     // ============================================================
     
     function getSbCredentials() {
-        return {
-            url: localStorage.getItem('ccd_supabase_url') || '',
-            key: localStorage.getItem('ccd_supabase_key') || ''
-        };
+        let url = localStorage.getItem('ccd_supabase_url') || '';
+        let key = localStorage.getItem('ccd_supabase_key') || '';
+        // Sanitize stored URL in case it was saved with paste artifacts
+        if (url) {
+            url = url.replace(/<[^>]*>/g, '').replace(/\s+/g, '').trim();
+            const match = url.match(/(https?:\/\/[a-z0-9-]+\.supabase\.co)\/?/i);
+            if (match) url = match[1];
+            url = url.replace(/\/+$/, '');
+        }
+        return { url, key };
     }
     
     function saveSbCredentials(url, key) {
@@ -719,8 +725,20 @@
     async function connectSupabase() {
         const urlInput = document.getElementById('sbUrlInput');
         const keyInput = document.getElementById('sbKeyInput');
-        const url = urlInput?.value?.trim();
-        const key = keyInput?.value?.trim();
+        let url = urlInput?.value?.trim();
+        let key = keyInput?.value?.trim();
+        
+        // Sanitize URL — strip angle brackets, trailing spaces, duplicate URLs from paste artifacts
+        if (url) {
+            url = url.replace(/<[^>]*>/g, '').replace(/\s+/g, '').trim();
+            // If URL got doubled (paste artifact), extract just the first valid URL
+            const match = url.match(/(https?:\/\/[a-z0-9-]+\.supabase\.co)\/?/i);
+            if (match) url = match[1];
+            // Ensure no trailing slash
+            url = url.replace(/\/+$/, '');
+            // Write cleaned value back to input
+            if (urlInput) urlInput.value = url;
+        }
         
         if (!url || !key) {
             updateSupabaseUI(false, 0, 'Missing URL or key');
@@ -2008,10 +2026,6 @@
             );
         }
     }
-
-    }
-
-
 
     // === pullEtsyOrders ===
     async function pullEtsyOrders(startDate, endDate) {
