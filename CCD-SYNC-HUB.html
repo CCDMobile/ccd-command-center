@@ -442,6 +442,7 @@
         <button class="tab-btn" onclick="switchTab('channels')" id="tabChannels">🔗 Channel IDs</button>
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
         <button class="tab-btn" onclick="switchTab('settings')" id="tabSettings">⚙️ Settings</button>
+        <button class="tab-btn" onclick="switchTab('shippo')" id="tabShippo">📦 Shippo</button>
         <button class="tab-btn" onclick="switchTab('log')" id="tabLog">📋 Log</button>
     </div>
     
@@ -526,6 +527,12 @@
                     <div class="name">Wayfair</div>
                     <div class="status unknown" id="wayfairConnStatus">Not tested</div>
                     <button class="btn btn-sm btn-secondary" onclick="testWayfair()" style="margin-top: 8px;">Test</button>
+                </div>
+                <div class="conn-card" id="connShippo">
+                    <div class="icon">📦</div>
+                    <div class="name">Shippo</div>
+                    <div class="status unknown" id="shippoConnStatus">Not tested</div>
+                    <button class="btn btn-sm btn-secondary" onclick="testShippo()" style="margin-top: 8px;">Test</button>
                 </div>
                 <div class="conn-card" id="connDatabase">
                     <div class="icon">🗄️</div>
@@ -626,6 +633,43 @@
             <div style="margin-top: 16px; display: flex; gap: 10px;">
                 <button class="btn btn-success" onclick="saveSettings()">💾 Save Settings</button>
                 <button class="btn btn-secondary" onclick="loadSettingsToUI()">🔄 Reset</button>
+            </div>
+        </div>
+        
+        <!-- ==================== SHIPPO TAB ==================== -->
+        <div class="tab-content" id="tab-shippo">
+            <div class="card">
+                <div class="card-header">
+                    <h3>📦 Shippo Shipping Reconciliation</h3>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <select id="shippoDateRange" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.85rem;">
+                            <option value="7">Last 7 days</option>
+                            <option value="14">Last 14 days</option>
+                            <option value="30" selected>Last 30 days</option>
+                            <option value="60">Last 60 days</option>
+                            <option value="90">Last 90 days</option>
+                        </select>
+                        <button class="btn btn-primary" onclick="syncShippo()" id="btnSyncShippo">🔄 Sync Shippo</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="stats-bar" style="margin-bottom: 16px;">
+                        <div class="stat-item"><div class="stat-value" id="shippoTotal">0</div><div class="stat-label">Total Labels</div></div>
+                        <div class="stat-item"><div class="stat-value" id="shippoMatched">0</div><div class="stat-label">Matched</div></div>
+                        <div class="stat-item"><div class="stat-value" id="shippoUnmatched">0</div><div class="stat-label">Unmatched</div></div>
+                        <div class="stat-item"><div class="stat-value" id="shippoTotalCost">$0</div><div class="stat-label">Total Label Cost</div></div>
+                    </div>
+                    <div id="shippoStatus" style="padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; color: var(--text-dim);">
+                        Configure your Shippo Proxy URL in Settings, then click "Sync Shippo" to fetch transactions and reconcile with sales.
+                    </div>
+                    <div id="shippoResults" style="display: none;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                            <h4 style="margin: 0; font-size: 0.95rem;">Transaction Log</h4>
+                            <button class="btn btn-sm btn-secondary" onclick="reconcileShippoWithSales()" id="btnReconcile">🔗 Re-Reconcile</button>
+                        </div>
+                        <div id="shippoTransactionList" style="max-height: 500px; overflow-y: auto;"></div>
+                    </div>
+                </div>
             </div>
         </div>
         
@@ -889,7 +933,7 @@
         if (!sbClient || !sbConnected) return false;
         try {
             const row = itemToSbRow(item);
-            const { error } = await sbClient.from('items').upsert(row, { onConflict: 'sku' });
+            const { error } = await sbClient.from('items').update(row).eq('id', item.id);
             if (error) throw error;
             return true;
         } catch (e) {
@@ -945,7 +989,7 @@
         }
     }
     
-    async function recordSaleToSupabase(item, qty, channel, salePrice, orderId) {
+    async function recordSaleToSupabase(item, qty, channel, salePrice, orderId, order) {
         if (!sbClient || !sbConnected) return;
         try {
             const wholesalePrice = parseFloat(item.wholesalePrice) || 0;
@@ -977,6 +1021,11 @@
                 ib_shipping: ibShipping,
                 tariff: tariff,
                 ob_shipping: obShipping,
+                order_id: orderId || null,
+                order_number: order?.orderNumber || null,
+                customer_shipping_paid: order?.shipping || null,
+                tax_collected: order?.tax || null,
+                discount_amount: order?.discount || null,
                 notes: `Order ${orderId} via ${channel}`
             });
             console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}`);
@@ -1730,6 +1779,10 @@
                     date: new Date((order.create_timestamp || order.created_timestamp) * 1000).toISOString(),
                     buyer: order.buyer_email || order.name || 'Unknown',
                     total: Number((order.grandtotal?.amount || order.total || 0) / 100) || 0,
+                    shipping: Number((order.total_shipping_cost?.amount || 0) / 100) || 0,
+                    tax: Number((order.total_tax_cost?.amount || 0) / 100) || 0,
+                    discount: Number((order.discount_amt?.amount || 0) / 100) || 0,
+                    orderNumber: String(order.receipt_id || order.id || ''),
                     status: order.status || 'pending',
                     processed: false,
                     items: (order.transactions || []).map(item => ({
@@ -1757,6 +1810,10 @@
                     date: order.createdDate || order.dateCreated || new Date().toISOString(),
                     buyer: order.buyerInfo?.email || order.billingInfo?.contactDetails?.email || 'Unknown',
                     total: Number(order.priceSummary?.total?.amount || order.totals?.total || 0) || 0,
+                    shipping: Number(order.priceSummary?.shipping?.amount || 0) || 0,
+                    tax: Number(order.priceSummary?.tax?.amount || 0) || 0,
+                    discount: Number(order.priceSummary?.discount?.amount || 0) || 0,
+                    orderNumber: String(order.number || order.id || ''),
                     status: 'pending',
                     processed: false,
                     items: (order.lineItems || []).map(item => ({
@@ -3499,7 +3556,7 @@
             for (const item of (order.items || [])) {
                 const product = getMasterJsonProduct(item.sku);
                 if (product) {
-                    await recordSaleToSupabase(product, item.qty || 1, order.channel, item.price || 0, orderId);
+                    await recordSaleToSupabase(product, item.qty || 1, order.channel, item.price || 0, orderId, order);
                 }
             }
         }
@@ -4793,6 +4850,361 @@
                 `Wayfair API connection failed: ${error.message}`,
                 { channel: 'wayfair', error: error.message }
             );
+        }
+    }
+
+
+    // ============================================================
+    // SHIPPO SYNC — Session B
+    // ============================================================
+
+    async function testShippo() {
+        const url = state.settings.shippoProxyUrl;
+        const key = state.settings.ccdApiKey;
+        
+        if (!url) {
+            updateConnectionStatus('shippo', false, 'Not configured');
+            const el = document.getElementById('shippoConnStatus');
+            if (el) { el.className = 'status fail'; el.textContent = 'Not configured'; }
+            return;
+        }
+
+        try {
+            const result = await fetchOrJsonp(url, { action: 'status', key: key });
+            const ok = result.success || result.status === 'ok';
+            state.connections.shippo = ok;
+            const el = document.getElementById('shippoConnStatus');
+            if (el) { el.className = ok ? 'status ok' : 'status fail'; el.textContent = ok ? 'Connected' : (result.error || 'Failed'); }
+        } catch (error) {
+            state.connections.shippo = false;
+            const el = document.getElementById('shippoConnStatus');
+            if (el) { el.className = 'status fail'; el.textContent = error.message; }
+        }
+    }
+
+    /**
+     * Parse order ID from Shippo itemDescription metadata.
+     * 'Order 3999475179' → { orderId: 'ETSY-3999475179', channel: 'etsy' }
+     * 'Order 10015'      → { orderId: 'WIX-10015', channel: 'wix' }
+     * Returns null if no match.
+     */
+    function parseShippoOrderId(metadata) {
+        if (!metadata) return null;
+        const match = metadata.match(/Order\s+(\d+)/i);
+        if (!match) return null;
+        const digits = match[1];
+        if (digits.length >= 8) {
+            return { orderId: 'ETSY-' + digits, channel: 'etsy' };
+        } else if (digits.length >= 3 && digits.length <= 6) {
+            return { orderId: 'WIX-' + digits, channel: 'wix' };
+        }
+        return null;
+    }
+
+    /**
+     * Fetch transactions from Shippo proxy.
+     * Returns array of transaction objects from the proxy.
+     */
+    async function fetchShippoTransactions(days) {
+        const url = state.settings.shippoProxyUrl;
+        const key = state.settings.ccdApiKey;
+        if (!url) throw new Error('Shippo Proxy URL not configured');
+
+        const params = { action: 'getTransactions', key: key };
+        if (days) params.days = days;
+
+        const result = await fetchOrJsonp(url, params);
+        if (!result.success && !result.transactions) {
+            throw new Error(result.error || 'Shippo proxy returned no data');
+        }
+        return result.transactions || result.data || [];
+    }
+
+    /**
+     * Write Shippo transactions to shippo_transactions table.
+     * Uses ON CONFLICT (transaction_id) DO NOTHING to skip already-synced records.
+     * Returns { inserted, skipped }
+     */
+    async function upsertShippoTransactions(transactions) {
+        if (!sbClient || !sbConnected) throw new Error('Supabase not connected');
+        let inserted = 0, skipped = 0;
+
+        for (const tx of transactions) {
+            const parsed = parseShippoOrderId(tx.itemDescription || tx.metadata || '');
+            const row = {
+                transaction_id: tx.transactionId || tx.transaction_id || tx.id,
+                order_id: parsed?.orderId || null,
+                sale_channel: parsed?.channel || null,
+                label_cost: parseFloat(tx.rate || tx.label_cost || tx.cost || 0),
+                carrier: tx.carrier || null,
+                service_name: tx.serviceName || tx.service_name || null,
+                tracking_number: tx.trackingNumber || tx.tracking_number || null,
+                ship_date: tx.shipDate || tx.ship_date || tx.createdAt || new Date().toISOString(),
+                recipient_name: tx.recipientName || tx.recipient_name || null,
+                recipient_city: tx.recipientCity || tx.city || null,
+                recipient_state: tx.recipientState || tx.state || null,
+                recipient_zip: tx.recipientZip || tx.zip || null,
+                parcel_weight: tx.weight || tx.parcel_weight || null,
+                parcel_length: tx.length || tx.parcel_length || null,
+                parcel_width: tx.width || tx.parcel_width || null,
+                parcel_height: tx.height || tx.parcel_height || null,
+                raw_metadata: tx.itemDescription || tx.metadata || null,
+                matched_to_sale: false
+            };
+
+            try {
+                const { error } = await sbClient.from('shippo_transactions').upsert(row, { onConflict: 'transaction_id', ignoreDuplicates: true });
+                if (error) {
+                    if (error.code === '23505') { skipped++; }
+                    else { console.warn(`[Shippo] Upsert error for ${row.transaction_id}:`, error.message); skipped++; }
+                } else {
+                    inserted++;
+                }
+            } catch (e) {
+                console.warn(`[Shippo] Error writing ${row.transaction_id}:`, e.message);
+                skipped++;
+            }
+        }
+        return { inserted, skipped };
+    }
+
+    /**
+     * Reconcile unmatched shippo_transactions with sales_history.
+     * For each unmatched record, look up sales_history by order_id.
+     * If found, write actual_shipping_cost, carrier, tracking_number back.
+     * Returns { matched, unmatched, errors }
+     */
+    async function reconcileShippoWithSales() {
+        if (!sbClient || !sbConnected) {
+            addLog('❌ Supabase not connected — cannot reconcile', 'error');
+            return { matched: 0, unmatched: 0, errors: 0 };
+        }
+
+        addLog('🔗 Starting Shippo reconciliation...', 'info');
+
+        // Fetch all unmatched shippo transactions
+        const { data: unmatched, error: fetchErr } = await sbClient
+            .from('shippo_transactions')
+            .select('*')
+            .eq('matched_to_sale', false)
+            .not('order_id', 'is', null);
+
+        if (fetchErr) {
+            addLog(`❌ Failed to fetch unmatched Shippo records: ${fetchErr.message}`, 'error');
+            return { matched: 0, unmatched: 0, errors: 1 };
+        }
+
+        if (!unmatched || unmatched.length === 0) {
+            addLog('✅ No unmatched Shippo records to reconcile', 'success');
+            updateShippoStats();
+            return { matched: 0, unmatched: 0, errors: 0 };
+        }
+
+        let matched = 0, notFound = 0, errors = 0;
+
+        for (const shippo of unmatched) {
+            try {
+                // Find matching sale by order_id
+                const { data: sales, error: saleErr } = await sbClient
+                    .from('sales_history')
+                    .select('id')
+                    .eq('order_id', shippo.order_id)
+                    .limit(1);
+
+                if (saleErr) { errors++; continue; }
+                if (!sales || sales.length === 0) { notFound++; continue; }
+
+                const saleId = sales[0].id;
+
+                // Update sales_history with shipping data
+                const { error: updateSaleErr } = await sbClient
+                    .from('sales_history')
+                    .update({
+                        actual_shipping_cost: shippo.label_cost,
+                        carrier: shippo.carrier,
+                        tracking_number: shippo.tracking_number
+                    })
+                    .eq('id', saleId);
+
+                if (updateSaleErr) { errors++; continue; }
+
+                // Mark shippo record as matched
+                const { error: updateShippoErr } = await sbClient
+                    .from('shippo_transactions')
+                    .update({
+                        linked_sale_id: saleId,
+                        matched_to_sale: true
+                    })
+                    .eq('id', shippo.id);
+
+                if (updateShippoErr) { errors++; continue; }
+
+                matched++;
+            } catch (e) {
+                console.warn(`[Shippo] Reconcile error for ${shippo.order_id}:`, e.message);
+                errors++;
+            }
+        }
+
+        const msg = `🔗 Reconciliation complete: ${matched} matched, ${notFound} not found in sales, ${errors} errors`;
+        addLog(msg, matched > 0 ? 'success' : 'info');
+
+        logActivity('sync', 'shippo_reconciled', 'system', msg, {
+            matched, notFound, errors, totalProcessed: unmatched.length
+        });
+
+        await updateShippoStats();
+        await renderShippoTransactions();
+        return { matched, unmatched: notFound, errors };
+    }
+
+    /**
+     * Main Shippo sync orchestrator. Called by the "Sync Shippo" button.
+     */
+    async function syncShippo() {
+        const btn = document.getElementById('btnSyncShippo');
+        const statusEl = document.getElementById('shippoStatus');
+        if (btn) btn.disabled = true;
+
+        try {
+            if (!state.settings.shippoProxyUrl) {
+                statusEl.innerHTML = '⚠️ Shippo Proxy URL not configured. Go to Settings to add it.';
+                statusEl.style.color = 'var(--warning)';
+                return;
+            }
+            if (!sbClient || !sbConnected) {
+                statusEl.innerHTML = '⚠️ Supabase not connected.';
+                statusEl.style.color = 'var(--warning)';
+                return;
+            }
+
+            const days = parseInt(document.getElementById('shippoDateRange').value) || 30;
+
+            // Step 1: Fetch from proxy
+            statusEl.innerHTML = '🔄 Fetching transactions from Shippo...';
+            statusEl.style.color = 'var(--text)';
+            addLog(`📦 Fetching Shippo transactions (last ${days} days)...`, 'info');
+
+            const transactions = await fetchShippoTransactions(days);
+            addLog(`📦 Received ${transactions.length} transactions from Shippo`, 'info');
+
+            if (transactions.length === 0) {
+                statusEl.innerHTML = '✅ No transactions returned from Shippo for this date range.';
+                statusEl.style.color = 'var(--text-dim)';
+                return;
+            }
+
+            // Step 2: Write to DB
+            statusEl.innerHTML = `🔄 Writing ${transactions.length} transactions to database...`;
+            const { inserted, skipped } = await upsertShippoTransactions(transactions);
+            addLog(`📦 Shippo upsert: ${inserted} new, ${skipped} already existed`, 'success');
+
+            // Step 3: Reconcile
+            statusEl.innerHTML = '🔗 Reconciling with sales history...';
+            const reconcileResult = await reconcileShippoWithSales();
+
+            // Step 4: Final status
+            statusEl.innerHTML = `✅ Sync complete — ${inserted} new labels, ${reconcileResult.matched} reconciled, ${reconcileResult.unmatched} unmatched`;
+            statusEl.style.color = 'var(--success)';
+
+            document.getElementById('shippoResults').style.display = 'block';
+
+            logActivity('sync', 'shippo_synced', 'system',
+                `📦 Shippo sync: ${transactions.length} fetched, ${inserted} new, ${reconcileResult.matched} reconciled`,
+                { days, fetched: transactions.length, inserted, skipped, ...reconcileResult }
+            );
+
+        } catch (e) {
+            statusEl.innerHTML = `❌ Shippo sync failed: ${e.message}`;
+            statusEl.style.color = 'var(--error)';
+            addLog(`❌ Shippo sync error: ${e.message}`, 'error');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    /**
+     * Update Shippo stats bar from DB
+     */
+    async function updateShippoStats() {
+        if (!sbClient || !sbConnected) return;
+        try {
+            const { count: total } = await sbClient.from('shippo_transactions').select('*', { count: 'exact', head: true });
+            const { count: matched } = await sbClient.from('shippo_transactions').select('*', { count: 'exact', head: true }).eq('matched_to_sale', true);
+            const { count: unmatchedCount } = await sbClient.from('shippo_transactions').select('*', { count: 'exact', head: true }).eq('matched_to_sale', false);
+            const { data: costData } = await sbClient.from('shippo_transactions').select('label_cost');
+
+            const totalCost = (costData || []).reduce((sum, r) => sum + (parseFloat(r.label_cost) || 0), 0);
+
+            document.getElementById('shippoTotal').textContent = total || 0;
+            document.getElementById('shippoMatched').textContent = matched || 0;
+            document.getElementById('shippoUnmatched').textContent = unmatchedCount || 0;
+            document.getElementById('shippoTotalCost').textContent = '$' + totalCost.toFixed(2);
+        } catch (e) {
+            console.warn('[Shippo] Stats update error:', e.message);
+        }
+    }
+
+    /**
+     * Render Shippo transactions list in the tab
+     */
+    async function renderShippoTransactions() {
+        if (!sbClient || !sbConnected) return;
+        const container = document.getElementById('shippoTransactionList');
+        if (!container) return;
+
+        try {
+            const { data: rows, error } = await sbClient
+                .from('shippo_transactions')
+                .select('*')
+                .order('ship_date', { ascending: false })
+                .limit(200);
+
+            if (error || !rows) {
+                container.innerHTML = '<div style="color: var(--text-dim); padding: 12px;">Failed to load transactions.</div>';
+                return;
+            }
+
+            if (rows.length === 0) {
+                container.innerHTML = '<div style="color: var(--text-dim); padding: 12px;">No Shippo transactions in database yet.</div>';
+                return;
+            }
+
+            const html = `<table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                <thead>
+                    <tr style="background: var(--bg-input); border-bottom: 2px solid var(--border);">
+                        <th style="padding: 8px; text-align: left;">Date</th>
+                        <th style="padding: 8px; text-align: left;">Order ID</th>
+                        <th style="padding: 8px; text-align: left;">Carrier</th>
+                        <th style="padding: 8px; text-align: left;">Tracking</th>
+                        <th style="padding: 8px; text-align: left;">Recipient</th>
+                        <th style="padding: 8px; text-align: right;">Cost</th>
+                        <th style="padding: 8px; text-align: center;">Matched</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(r => {
+                        const date = r.ship_date ? new Date(r.ship_date).toLocaleDateString() : '—';
+                        const matchBadge = r.matched_to_sale
+                            ? '<span style="color: var(--success);">✅</span>'
+                            : '<span style="color: var(--warning);">⏳</span>';
+                        const channelBadge = r.sale_channel === 'etsy' ? '🛍️' : r.sale_channel === 'wix' ? '🌐' : '';
+                        return `<tr style="border-bottom: 1px solid var(--border);">
+                            <td style="padding: 6px 8px;">${date}</td>
+                            <td style="padding: 6px 8px;">${channelBadge} ${r.order_id || '<span style="color:var(--text-dim)">No order ID</span>'}</td>
+                            <td style="padding: 6px 8px;">${r.carrier || '—'}</td>
+                            <td style="padding: 6px 8px; font-family: monospace; font-size: 0.75rem;">${r.tracking_number || '—'}</td>
+                            <td style="padding: 6px 8px;">${r.recipient_name || '—'}${r.recipient_state ? ', ' + r.recipient_state : ''}</td>
+                            <td style="padding: 6px 8px; text-align: right; font-weight: 600;">$${(parseFloat(r.label_cost) || 0).toFixed(2)}</td>
+                            <td style="padding: 6px 8px; text-align: center;">${matchBadge}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>`;
+
+            container.innerHTML = html;
+        } catch (e) {
+            container.innerHTML = `<div style="color: var(--error); padding: 12px;">Error: ${e.message}</div>`;
         }
     }
 
