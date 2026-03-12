@@ -4,6 +4,14 @@
 CCD INVENTORY MANAGEMENT SYSTEM - VERSION HISTORY
 ================================================================================
 
+v23.4.0 (March 12, 2026) - Schema v2.2 + Shippo + Financial Pipeline
+- recordSaleToSupabase now writes platform_fee and platform_fee_pct to sales_history
+- Shipping History reads from shippo_transactions in Supabase (Sync Hub populates)
+- Schema v2.2: invoices, invoice_items, returns, fixed_expenses tables
+- Schema v2.1: shippo_tracking_events + 12 new columns on shippo_transactions
+- UPC field added to items table
+- Sync Hub v4.1: Shippo sync, order financial fields, 3-way order processing
+
 v23.3.11 (February 20, 2026) - Sync Hub Is Sole Allocation Sync Master
 ------------------------------------------------------------------------
 NEW FEATURES:
@@ -756,7 +764,7 @@ Previous versions documented in development guide.
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Inventory Management System v23.3.12 - Pricing Sync Notification</title>
+    <title>CCD Inventory Management System v23.4.0 - Schema v2.2 + Shippo + Financial</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
@@ -7718,7 +7726,7 @@ Previous versions documented in development guide.
                             </svg>
                         </div>
                         <div class="header-title-group">
-                            <h1>CCD Inventory System v23.3.11 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">FEB 20 - Sync Hub Master</span></h1>
+                            <h1>CCD Inventory System v23.4.0 <span style="background: #10b981; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 10px;">Ecosystem</span> <span style="background: #6366f1; color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.5em; font-weight: bold; margin-left: 5px;">MAR 12 - Schema v2.2 + Shippo</span></h1>
                             <p>Multi-User Sync + Backup Monitor + TM Rent Slider + Shippo API • Build: 2026-02-07 • Sync Indicators + Activity Logging</p>
                         </div>
                     </div>
@@ -7857,7 +7865,7 @@ Previous versions documented in development guide.
         
         <!-- Keep old header hidden for reference but don't display -->
         <div class="header" style="display: none;">
-            <h1>📦 CCD Inventory Management System v23.3.11</h1>
+            <h1>📦 CCD Inventory Management System v23.4.0</h1>
             <p>Design System Foundation: Spacing Scale | Typography System | Color Palette | Enhanced Buttons & Forms</p>
         </div>
         
@@ -10631,7 +10639,7 @@ const CCDSharedFiles = (function() {
     };
 })();
 
-console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
+console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
 </script>
 
 <script>
@@ -11178,13 +11186,13 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
          */
         async function initEcosystem() {
             console.log('🚀 ====================================');
-            console.log('🚀 CCD Inventory System v23.3.11');
+            console.log('🚀 CCD Inventory System v23.4.0');
             console.log('🚀 Build: 2026-02-20 • Sync Hub Allocation Master');
             console.log('🚀 ====================================');
-            console.log('[Ecosystem] Initializing CCD Ecosystem Integration v23.3.11...');
-            console.log('🔧 [VERSION] CCD Inventory System v23.3.11 - Feb 20, 2026');
+            console.log('[Ecosystem] Initializing CCD Ecosystem Integration v23.4.0...');
+            console.log('🔧 [VERSION] CCD Inventory System v23.4.0 - Feb 20, 2026');
             console.log('🔧 [CHANGE] Sync Hub "Auto-Push on Change" is sole allocation sync master');
-            console.log('🔧 [VERIFY] Version v23.3.11 confirmed');
+            console.log('🔧 [VERIFY] Version v23.4.0 confirmed');
             
             // Generate session ID
             if (!sessionStorage.getItem('ccd_session_id')) {
@@ -18153,8 +18161,59 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
         }
         
         /**
+         * v23.4.0: Load shipping history from Supabase shippo_transactions
+         * Joins through sales_history by SKU → order_id → shippo_transactions
+         * Returns array in the format renderShippingHistory expects
+         */
+        async function loadShippingHistoryFromDb(item) {
+            if (!sbClient || !sbConnected || !item.sku) return [];
+
+            try {
+                // Step 1: Get order_ids for this SKU from sales_history
+                const { data: sales, error: salesErr } = await sbClient
+                    .from('sales_history')
+                    .select('order_id')
+                    .eq('sku', item.sku)
+                    .not('order_id', 'is', null);
+
+                if (salesErr || !sales || sales.length === 0) return [];
+
+                const orderIds = [...new Set(sales.map(s => s.order_id).filter(Boolean))];
+                if (orderIds.length === 0) return [];
+
+                // Step 2: Get shippo_transactions matching those order_ids
+                const { data: shipments, error: shipErr } = await sbClient
+                    .from('shippo_transactions')
+                    .select('*')
+                    .in('order_id', orderIds)
+                    .order('shippo_created_at', { ascending: false });
+
+                if (shipErr || !shipments) return [];
+
+                // Step 3: Map to renderShippingHistory format
+                return shipments.map(s => ({
+                    date: s.shippo_created_at || s.synced_at,
+                    recipient: s.recipient_name || '',
+                    actualLength: parseFloat(s.parcel_length) || 0,
+                    actualWidth: parseFloat(s.parcel_width) || 0,
+                    actualHeight: parseFloat(s.parcel_height) || 0,
+                    actualWeight: parseFloat(s.parcel_weight) || 0,
+                    actualCost: parseFloat(s.label_cost) || 0,
+                    carrier: s.carrier || '',
+                    trackingNumber: s.tracking_number || '',
+                    trackingStatus: s.current_tracking_status || s.status || '',
+                    orderId: s.order_id,
+                    source: 'supabase'
+                }));
+            } catch (e) {
+                console.warn('[Shipping] DB load error:', e.message);
+                return [];
+            }
+        }
+
+        /**
          * Sync shipping history for the currently open item
-         * Uses automatic matching by SKU, product name, or dimensions
+         * v23.4.0: Uses Supabase shippo_transactions when connected, falls back to Shippo API
          */
         async function syncCurrentItemFromShippo() {
             const editId = document.getElementById('editId').value;
@@ -18214,6 +18273,55 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
             showNotification('🔄 Searching Shippo for SKU ' + item.sku + '... This may take a minute.', 'info');
             
             try {
+                // v23.4.0: Try Supabase first (Sync Hub populates shippo_transactions)
+                if (sbClient && sbConnected) {
+                    const dbHistory = await loadShippingHistoryFromDb(item);
+                    if (dbHistory.length > 0) {
+                        // Merge with existing history (avoid duplicates by tracking number)
+                        if (!item.shippingHistory) item.shippingHistory = { archive: [], stats: null };
+                        if (Array.isArray(item.shippingHistory)) {
+                            item.shippingHistory = { archive: item.shippingHistory, stats: null };
+                        }
+                        if (!item.shippingHistory.archive) item.shippingHistory.archive = [];
+                        
+                        const existingTracking = new Set(
+                            item.shippingHistory.archive.map(e => e.trackingNumber).filter(Boolean)
+                        );
+                        
+                        let added = 0;
+                        for (const entry of dbHistory) {
+                            if (entry.trackingNumber && existingTracking.has(entry.trackingNumber)) continue;
+                            item.shippingHistory.archive.push(entry);
+                            added++;
+                        }
+                        
+                        // Update stats
+                        const all = item.shippingHistory.archive;
+                        item.shippingHistory.stats = {
+                            totalShipments: all.length,
+                            averageCost: all.length > 0 ? all.reduce((s, e) => s + (e.actualCost || 0), 0) / all.length : 0
+                        };
+                        
+                        const shippingHistoryContent = document.getElementById('shippingHistoryContent');
+                        if (shippingHistoryContent) {
+                            shippingHistoryContent.innerHTML = renderShippingHistory(item);
+                        }
+                        
+                        if (added > 0) {
+                            showNotification(`✅ Loaded ${added} shipment(s) from Supabase (${dbHistory.length} total)`, 'success');
+                        } else {
+                            showNotification(`ℹ️ ${dbHistory.length} shipment(s) already synced`, 'info');
+                        }
+                        return;
+                    }
+                }
+                
+                // Fallback: Use legacy Shippo API sync
+                if (!isShippoConfigured()) {
+                    showNotification('ℹ️ No shipping data in Supabase and Shippo not configured', 'info');
+                    return;
+                }
+                
                 // Use cache-based sync that searches by SKU
                 const result = await syncFromShippoAPI(item.sku, item);
                 
@@ -81385,13 +81493,13 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                 var ob = parseFloat(item.obShipping) || 0;
                 
                 var rev = salePrice * qty;
-                var cost, profit, margin;
+                var cost, profit, margin, channelCosts = 0;
                 
                 // Use the full channel pricing engine for accurate profit
                 if (typeof calculateChannelMetrics === "function" && channel && channel !== "quick-sale") {
                     var metrics = calculateChannelMetrics(item, channel);
                     // Total real cost includes all channel fees (transaction, CC, commission, rent, etc.)
-                    var channelCosts = (parseFloat(metrics.transactionFee)||0) + (parseFloat(metrics.ccFee)||0) + 
+                    channelCosts = (parseFloat(metrics.transactionFee)||0) + (parseFloat(metrics.ccFee)||0) + 
                         (parseFloat(metrics.commission)||0) + (parseFloat(metrics.rent)||0) + 
                         (parseFloat(metrics.overheadFee)||0) + (parseFloat(metrics.recoveryFee)||0) + 
                         (parseFloat(metrics.wayfairFee)||0) + (parseFloat(metrics.surcharge)||0);
@@ -81419,6 +81527,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.3.11)');
                     sale_price: salePrice, total_revenue: rev, total_cost: cost,
                     net_profit: profit, profit_margin: margin,
                     wholesale_price: ws, ib_shipping: ib, tariff: tar, ob_shipping: ob,
+                    platform_fee: channelCosts > 0 ? parseFloat((channelCosts * qty).toFixed(2)) : null,
+                    platform_fee_pct: (rev > 0 && channelCosts > 0) ? parseFloat(((channelCosts * qty / rev) * 100).toFixed(2)) : null,
                     notes: "Manual sale via Inventory System"
                 });
                 console.log("[Sales] Recorded:", item.sku, "x" + qty, channel, "profit: $" + profit.toFixed(2), "margin:", (margin*100).toFixed(1) + "%");

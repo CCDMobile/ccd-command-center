@@ -722,7 +722,7 @@
             eventNotifications: {}
         },
         connections: { etsy: null, wix: null, wayfair: null },
-        skuMappings: {},
+        skuMappings: { mappings: {}, totalMappings: 0 },
         inventorySnapshot: {},
         _batchProcessing: false,
         autoPushEnabled: false,
@@ -4924,8 +4924,8 @@
         const key = state.settings.ccdApiKey;
         if (!url) throw new Error('Shippo Proxy URL not configured');
 
-        const params = { action: 'getTransactions', key: key };
-        if (days) params.days = days;
+        // Use fetchAllForCache for broad syncs, getNewTransactions for incremental
+        const params = { action: 'fetchAllForCache', key: key, months: Math.ceil(days / 30) || 1 };
 
         const result = await fetchOrJsonp(url, params);
         if (!result.success && !result.transactions) {
@@ -4945,24 +4945,31 @@
 
         for (const tx of transactions) {
             const parsed = parseShippoOrderId(tx.itemDescription || tx.metadata || '');
+            const rawDigits = (tx.itemDescription || tx.metadata || '').match(/Order\s+(\d+)/i);
             const row = {
                 transaction_id: tx.transactionId || tx.transaction_id || tx.id,
                 order_id: parsed?.orderId || null,
+                order_number_raw: rawDigits ? rawDigits[1] : null,
                 sale_channel: parsed?.channel || null,
                 label_cost: parseFloat(tx.rate || tx.label_cost || tx.cost || 0),
                 carrier: tx.carrier || null,
                 service_name: tx.serviceName || tx.service_name || null,
                 tracking_number: tx.trackingNumber || tx.tracking_number || null,
-                ship_date: tx.shipDate || tx.ship_date || tx.createdAt || new Date().toISOString(),
+                shippo_created_at: tx.createdAt || tx.shipDate || tx.ship_date || null,
+                synced_at: new Date().toISOString(),
                 recipient_name: tx.recipientName || tx.recipient_name || null,
                 recipient_city: tx.recipientCity || tx.city || null,
                 recipient_state: tx.recipientState || tx.state || null,
                 recipient_zip: tx.recipientZip || tx.zip || null,
-                parcel_weight: tx.weight || tx.parcel_weight || null,
-                parcel_length: tx.length || tx.parcel_length || null,
-                parcel_width: tx.width || tx.parcel_width || null,
-                parcel_height: tx.height || tx.parcel_height || null,
+                parcel_weight: tx.parcelWeight || tx.weight || tx.parcel_weight || null,
+                parcel_length: tx.parcelLength || tx.length || tx.parcel_length || null,
+                parcel_width: tx.parcelWidth || tx.width || tx.parcel_width || null,
+                parcel_height: tx.parcelHeight || tx.height || tx.parcel_height || null,
+                sku: tx.sku || null,
+                item_description: tx.itemDescription || null,
+                status: tx.status || null,
                 raw_metadata: tx.itemDescription || tx.metadata || null,
+                label_status: tx.status || null,
                 matched_to_sale: false
             };
 
@@ -5171,7 +5178,7 @@
             const { data: rows, error } = await sbClient
                 .from('shippo_transactions')
                 .select('*')
-                .order('ship_date', { ascending: false })
+                .order('shippo_created_at', { ascending: false })
                 .limit(200);
 
             if (error || !rows) {
@@ -5198,7 +5205,7 @@
                 </thead>
                 <tbody>
                     ${rows.map(r => {
-                        const date = r.ship_date ? new Date(r.ship_date).toLocaleDateString() : '—';
+                        const date = r.shippo_created_at ? new Date(r.shippo_created_at).toLocaleDateString() : '—';
                         const matchBadge = r.matched_to_sale
                             ? '<span style="color: var(--success);">✅</span>'
                             : '<span style="color: var(--warning);">⏳</span>';
@@ -5226,6 +5233,9 @@
     // ============================================================
     // NOTIFICATIONS
     // ============================================================
+
+    const _notificationThrottle = {};
+    const NOTIFICATION_THROTTLE_MS = 60000; // 60 seconds
 
     // === sendEventNotification ===
     async function sendEventNotification(eventType, message, data) {
@@ -5691,8 +5701,10 @@
                         ${itemsHtml}
                         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">${stockHtml}</div>
                         ${!order.processed ? `
-                            <div class="order-actions">
-                                <button class="btn btn-sm btn-success" onclick="processOrder('${order.id}')">▶ Process</button>
+                            <div class="order-actions" style="flex-wrap: wrap;">
+                                <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); processOrder('${order.id}')" title="Deduct inventory, record sale, queue channel updates (don't push yet)">✅ Process & Deduct Only</button>
+                                <button class="btn btn-sm" style="background: var(--info); color: white;" onclick="event.stopPropagation(); processOrderWithCascade('${order.id}')" title="Deduct inventory, record sale, AND push qty updates to all channels">📤 Process, Deduct & Push to Channels</button>
+                                <button class="btn btn-sm" style="background: #f59e0b; color: white;" onclick="event.stopPropagation(); markProcessedNoDeduct('${order.id}')" title="Mark as processed without changing inventory or recording a sale">🏷️ Mark Processed (No Deduct)</button>
                             </div>
                         ` : ''}
                     </div>
@@ -6143,6 +6155,43 @@
     /**
      * Mark order as processed without deducting inventory
      */
+    /**
+     * Mark an order as processed WITHOUT deducting inventory or recording a sale.
+     * Use for orders already handled manually, test orders, or orders processed elsewhere.
+     */
+    async function markProcessedNoDeduct(orderId) {
+        const order = state.orders.all.find(o => o.id === orderId);
+        if (!order) {
+            toast(`Order ${orderId} not found`, 'error');
+            return;
+        }
+
+        // Mark as processed in state + DB
+        markOrderProcessed(orderId);
+
+        // Record to processed_orders in Supabase
+        if (sbClient && sbConnected) {
+            try {
+                await sbClient.from('processed_orders').upsert({
+                    order_id: orderId,
+                    channel: order.channel,
+                    processed_at: new Date().toISOString(),
+                    details: { device: localStorage.getItem('ccd_hostname') || 'SyncHub', method: 'no_deduct', itemCount: order.items?.length || 0 }
+                }, { onConflict: 'order_id' });
+            } catch (e) {
+                console.warn('[markProcessedNoDeduct] DB error:', e.message);
+            }
+        }
+
+        addLog(`🏷️ Order ${orderId} marked as processed (no deduct)`, 'info');
+        logActivity('order', 'order_marked_no_deduct', order.channel,
+            `🏷️ Order ${orderId} marked processed without inventory deduction`,
+            { orderId, channel: order.channel, items: order.items?.map(i => i.sku) }
+        );
+
+        toast(`Order ${orderId} marked as processed (no deduction)`, 'success');
+    }
+
     function markOrderProcessed(orderId) {
         state.orders.processedIds.add(orderId);
         
@@ -6268,6 +6317,76 @@
 
 
     
+    // ============================================================
+    // SYNC REPORT FUNCTIONS (Channel ID Sync Report UI)
+    // ============================================================
+
+    function closeSyncReport() {
+        const modal = document.getElementById('syncReportModal');
+        if (modal) modal.remove();
+    }
+
+    function switchView(viewName) {
+        // Map view names to tab names
+        const viewToTab = { 'activity': 'log', 'orders': 'orders', 'queue': 'queue', 'settings': 'settings' };
+        switchTab(viewToTab[viewName] || viewName);
+    }
+
+    function exportSkuMismatchReport() {
+        // Collect mismatch data from last sync
+        const products = getProductsArray();
+        if (!products.length) { toast('No inventory loaded', 'error'); return; }
+
+        let csv = 'SKU,Product Name,Has Etsy ID,Has Wix ID,Has Wayfair ID\n';
+        for (const p of products) {
+            const sku = p.sku || p.SKU || '';
+            const name = (p.productName || p.name || '').replace(/,/g, ' ');
+            const hasEtsy = (p.etsyListingId || p.etsyListing) ? 'Yes' : 'No';
+            const hasWix = (p.wixProductId || p.wixId) ? 'Yes' : 'No';
+            const hasWayfair = (p.wayfairSku || p.supplierPartNumber) ? 'Yes' : 'No';
+            if (hasEtsy === 'No' || hasWix === 'No' || hasWayfair === 'No') {
+                csv += `"${sku}","${name}",${hasEtsy},${hasWix},${hasWayfair}\n`;
+            }
+        }
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `sku-mismatch-report-${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('SKU Mismatch Report downloaded', 'success');
+    }
+
+    function exportChannelSkuComparison() {
+        const products = getProductsArray();
+        if (!products.length) { toast('No inventory loaded', 'error'); return; }
+
+        let csv = 'SKU,Product Name,Etsy Listing ID,Wix Product ID,Wayfair SKU\n';
+        for (const p of products) {
+            const sku = p.sku || p.SKU || '';
+            const name = (p.productName || p.name || '').replace(/,/g, ' ');
+            const etsy = p.etsyListingId || p.etsyListing || '';
+            const wix = p.wixProductId || p.wixId || '';
+            const wayfair = p.wayfairSku || p.supplierPartNumber || '';
+            csv += `"${sku}","${name}","${etsy}","${wix}","${wayfair}"\n`;
+        }
+
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `channel-sku-comparison-${new Date().toISOString().split('T')[0]}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('Channel SKU Comparison downloaded', 'success');
+    }
+
+    function openSkuFixUtility() {
+        toast('SKU Fix Utility is a standalone tool — open IB-Shipping-Fix-Utility.html or use Channel Manager', 'info');
+    }
+
     // ============================================================
     // COMPATIBILITY ALIASES
     // ============================================================
