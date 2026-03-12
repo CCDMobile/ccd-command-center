@@ -3559,6 +3559,43 @@
                     await recordSaleToSupabase(product, item.qty || 1, order.channel, item.price || 0, orderId, order);
                 }
             }
+            
+            // v4.1: Auto-reconcile this order with Shippo (if transaction exists)
+            try {
+                const { data: shippoMatch } = await sbClient
+                    .from('shippo_transactions')
+                    .select('*')
+                    .eq('order_id', orderId)
+                    .eq('matched_to_sale', false)
+                    .limit(1);
+                
+                if (shippoMatch && shippoMatch.length > 0) {
+                    const shippo = shippoMatch[0];
+                    const { data: saleRow } = await sbClient
+                        .from('sales_history')
+                        .select('id')
+                        .eq('order_id', orderId)
+                        .limit(1);
+                    
+                    if (saleRow && saleRow.length > 0) {
+                        await sbClient.from('sales_history').update({
+                            actual_shipping_cost: shippo.label_cost,
+                            carrier: shippo.carrier,
+                            tracking_number: shippo.tracking_number
+                        }).eq('id', saleRow[0].id);
+                        
+                        await sbClient.from('shippo_transactions').update({
+                            linked_sale_id: saleRow[0].id,
+                            matched_to_sale: true
+                        }).eq('id', shippo.id);
+                        
+                        console.log(`[Shippo] Auto-reconciled ${orderId}: $${shippo.label_cost} via ${shippo.carrier}`);
+                        addLog(`📦 Shipping matched: ${orderId} → $${parseFloat(shippo.label_cost).toFixed(2)} ${shippo.carrier}`, 'success');
+                    }
+                }
+            } catch (e) {
+                console.warn('[Shippo] Auto-reconcile error:', e.message);
+            }
         }
         
         // Log order processed to activity log
@@ -6067,7 +6104,8 @@
         state.lowStockItems.sort((a, b) => b.deficit - a.deficit);
         
         // Update stats
-        document.getElementById('lowStockCount').textContent = state.lowStockItems.length;
+        const lowStockEl = document.getElementById('lowStockCount');
+        if (lowStockEl) lowStockEl.textContent = state.lowStockItems.length;
         
         // Show alert if there are low stock items
         if (state.lowStockItems.length > 0) {
