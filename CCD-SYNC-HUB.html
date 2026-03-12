@@ -5267,6 +5267,64 @@
     }
 
 
+    let _shippoSyncInterval = null;
+    const SHIPPO_AUTO_SYNC_MINUTES = 30;
+
+    /**
+     * v4.1: Background Shippo sync — runs silently without UI updates during sync.
+     * Fetches new transactions, upserts to DB, reconciles unmatched.
+     * Called on startup and by the auto-sync timer.
+     */
+    async function shippoBackgroundSync() {
+        if (!sbClient || !sbConnected || !state.settings.shippoProxyUrl) return;
+
+        try {
+            console.log('[Shippo Auto] Background sync starting...');
+            const transactions = await fetchShippoTransactions(30);
+            
+            if (transactions.length === 0) {
+                console.log('[Shippo Auto] No transactions returned');
+                return;
+            }
+
+            const { inserted, skipped } = await upsertShippoTransactions(transactions);
+            
+            // Only reconcile if we have new data or unmatched records
+            const { data: unmatchedCheck } = await sbClient
+                .from('shippo_transactions')
+                .select('id', { count: 'exact', head: true })
+                .eq('matched_to_sale', false)
+                .not('order_id', 'is', null);
+
+            let matched = 0;
+            if (unmatchedCheck) {
+                const result = await reconcileShippoWithSales();
+                matched = result.matched;
+            }
+
+            if (inserted > 0 || matched > 0) {
+                addLog(`📦 Shippo auto-sync: ${inserted} new labels, ${matched} reconciled`, 'success');
+                await updateShippoStats();
+            } else {
+                console.log(`[Shippo Auto] Sync complete: ${skipped} existing, 0 new, 0 reconciled`);
+            }
+        } catch (e) {
+            console.warn('[Shippo Auto] Background sync error:', e.message);
+        }
+    }
+
+    /**
+     * Start the Shippo auto-sync timer (every 30 minutes)
+     */
+    function startShippoAutoSync() {
+        if (_shippoSyncInterval) clearInterval(_shippoSyncInterval);
+        _shippoSyncInterval = setInterval(() => {
+            shippoBackgroundSync();
+        }, SHIPPO_AUTO_SYNC_MINUTES * 60 * 1000);
+        console.log(`[Shippo Auto] Timer started: every ${SHIPPO_AUTO_SYNC_MINUTES} minutes`);
+    }
+
+
     // ============================================================
     // NOTIFICATIONS
     // ============================================================
@@ -6494,6 +6552,12 @@
             // Channel ID status
             if (window.masterJsonData) {
                 updateChannelIdStatus();
+            }
+            
+            // v4.1: Auto-sync Shippo on startup + start background timer
+            if (sbConnected && state.settings.shippoProxyUrl) {
+                setTimeout(() => shippoBackgroundSync(), 5000); // 5s after init
+                startShippoAutoSync();
             }
             
             console.log('[Init] CCD Sync Hub v4.1 initialized successfully');
