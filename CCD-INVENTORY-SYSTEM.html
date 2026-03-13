@@ -10252,6 +10252,7 @@ Previous versions documented in development guide.
                 <div class="form-actions" style="margin-top: 20px;">
                     <button type="button" class="btn btn-secondary" onclick="closeImportInvoiceModal()">Cancel</button>
                     <button type="button" class="btn btn-primary" onclick="cancelImportSession()">Start Over</button>
+                    <button type="button" class="btn" style="background: #7c3aed; color: white;" onclick="updateAllExistingImportItems()">📝 Update All Existing</button>
                     <button type="button" class="btn btn-success" onclick="createAllImportItems()">➕ Create All Items</button>
                 </div>
             </div>
@@ -71509,7 +71510,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
         let savedEditItemId = null;  // v23.3.10: Track which item was being edited
         
         function closeModal() {
-            document.getElementById('itemModal').classList.remove('active');
+            const itemModal = document.getElementById('itemModal');
+            itemModal.classList.remove('active');
+            itemModal.style.zIndex = ''; // Reset z-index override
             
             // v23.3.10: Scroll to the specific item that was being edited
             setTimeout(() => {
@@ -71798,6 +71801,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 /Invoice[#:\s-]+([A-Z0-9.-]+)/i,        // Generic invoice pattern
                 /INV[-\s]?#?\s*(\d+)/i,                 // INV-12345 or INV #12345
                 /Invoice No\.?[:\s]+([A-Z0-9-]+)/i,     // Invoice No: 12345
+                /(SO-\d{6,})/,                            // CWI Order Confirmation: SO-001407743
+                /(INV-\d{6,})/,                           // CWI Invoice: INV-001481088
                 /Order\s*#?:?\s*(\d[A-Z]-\d+)/i         // Order # 1W-6553024
             ];
             
@@ -71889,26 +71894,72 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
         
         function parseCWIGiftsProducts(text) {
             const products = [];
-            const lines = text.split('\n');
+            console.log('=== CWI GIFTS PARSING ===');
             
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
+            // CWI PDFs may extract as few lines. Work on flattened text.
+            const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            
+            // CWI Invoice format (3 prices): SKU shipped description $retail $yourPrice $total
+            // Example: G60492 10 Distressed Metal Vintage Garden Post Box $59.59 $22.14 $221.40
+            // CWI Order Confirmation (2 prices): SKU qty description $netPrice $total
+            // Example: G60492 10 Distressed Metal Vintage Garden Post Box $22.14 $221.40
+            
+            // Try 3-price pattern first (Invoice format)
+            const pattern3 = /\b([A-Z]{1,4}\d{3,}[A-Z]?)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
+            let match;
+            while ((match = pattern3.exec(flat)) !== null) {
+                const sku = match[1];
+                const qty = parseInt(match[2]);
+                let description = match[3].trim();
+                const retailPrice = parseFloat(match[4].replace(/,/g, ''));
+                const yourPrice = parseFloat(match[5].replace(/,/g, ''));
+                const lineTotal = parseFloat(match[6].replace(/,/g, ''));
                 
-                // CWI pattern: G2737210 12 Resin Holiday Highland Cow, 2 Asstd. $8.59 $3.71 $44.52
-                const match = line.match(/^([A-Z]\d+)\s+(\d+)\s+(.+?)\s+\$?([\d,]+\.?\d*)\s+\$?([\d,]+\.?\d*)\s+\$?([\d,]+\.?\d*)$/);
+                // Skip header/footer words
+                if (/Merchandise|Subtotal|Sales Tax|Credits|Other|Item Name|Item Description|Sub Total|Invoice Total/i.test(description)) continue;
+                // Clean description artifacts
+                description = description.replace(/\d+\.\d{6}/g, '').trim();
                 
-                if (match) {
+                console.log(`✓ CWI item (3-price): ${sku} qty=${qty} retail=$${retailPrice} your=$${yourPrice} total=$${lineTotal} "${description.substring(0, 50)}"`);
+                
+                products.push({
+                    sku: sku,
+                    description: description || `CWI Item ${sku}`,
+                    qty: qty,
+                    unitPrice: yourPrice,  // "Your Price" = wholesale
+                    lineTotal: lineTotal,
+                    confidence: 'high'
+                });
+            }
+            
+            // Fallback: 2-price pattern (Order Confirmation format)
+            if (products.length === 0) {
+                console.log('Trying 2-price pattern (Order Confirmation)...');
+                const pattern2 = /\b([A-Z]{1,4}\d{3,}[A-Z]?)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
+                while ((match = pattern2.exec(flat)) !== null) {
+                    const sku = match[1];
+                    const qty = parseInt(match[2]);
+                    let description = match[3].trim();
+                    const netPrice = parseFloat(match[4].replace(/,/g, ''));
+                    const lineTotal = parseFloat(match[5].replace(/,/g, ''));
+                    
+                    if (/Merchandise|Subtotal|Sales Tax|Credits|Other|Item Name|Item Description|Sub Total|Invoice Total/i.test(description)) continue;
+                    description = description.replace(/\d+\.\d{6}/g, '').trim();
+                    
+                    console.log(`✓ CWI item (2-price): ${sku} qty=${qty} price=$${netPrice} total=$${lineTotal} "${description.substring(0, 50)}"`);
+                    
                     products.push({
-                        sku: match[1],
-                        description: match[3].trim(),
-                        qty: parseInt(match[2]),
-                        unitPrice: parseFloat(match[5].replace(/,/g, '')),
-                        lineTotal: parseFloat(match[6].replace(/,/g, '')),
+                        sku: sku,
+                        description: description || `CWI Item ${sku}`,
+                        qty: qty,
+                        unitPrice: netPrice,
+                        lineTotal: lineTotal,
                         confidence: 'high'
                     });
                 }
             }
             
+            console.log('CWI products found:', products.length);
             return products;
         }
         
@@ -72300,57 +72351,28 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
         
         /**
          * Split a flat description string into N product descriptions.
-         * Park Designs descriptions are typically ALL CAPS, 2-5 words each.
-         * Uses heuristics: common product-start words signal boundaries.
+         * Park Designs descriptions are ALL CAPS, concatenated with no delimiters.
+         * Uses even word distribution as primary strategy since keyword heuristics
+         * cause false positives (NAPKIN, FARMHOUSE, etc. trigger wrong splits).
          */
         function splitParkDesignsDescriptions(words, count) {
             if (count <= 1) return [words.join(' ')];
+            if (words.length <= count) return words.map(w => w); // One word per item
             
-            // Common Park Designs product-start keywords
-            const startWords = new Set([
-                'GARDEN', 'ANTIQUE', 'RUSTIC', 'COUNTRY', 'FARMHOUSE', 'VINTAGE',
-                'CHICKEN', 'ROOSTER', 'FLORAL', 'BRAIDED', 'QUILTED', 'WOODEN',
-                'IRON', 'METAL', 'GLASS', 'CERAMIC', 'COTTON', 'BURLAP',
-                'TABLE', 'DISH', 'CANDLE', 'BASKET', 'BOWL', 'PLATE', 'MUG',
-                'PILLOW', 'RUNNER', 'NAPKIN', 'PLACEMAT', 'CURTAIN', 'VALANCE',
-                'SALT', 'PEPPER', 'SOAP', 'TOWEL', 'HOOK', 'RACK', 'SHELF',
-                'BEAR', 'MOOSE', 'DEER', 'OWL', 'BEE', 'BIRD', 'BUNNY'
-            ]);
+            // Strategy: distribute words as evenly as possible
+            const baseSize = Math.floor(words.length / count);
+            const remainder = words.length % count;
             
-            // Find potential split points (indices where a new product description likely starts)
-            const splits = [0]; // First description always starts at 0
-            for (let i = 1; i < words.length; i++) {
-                const word = words[i].toUpperCase().replace(/[^A-Z]/g, '');
-                if (startWords.has(word) && splits.length < count) {
-                    splits.push(i);
-                }
-            }
-            
-            // If we didn't find enough splits, fall back to even distribution
-            if (splits.length < count) {
-                const chunkSize = Math.ceil(words.length / count);
-                const evenSplits = [];
-                for (let i = 0; i < count; i++) {
-                    evenSplits.push(i * chunkSize);
-                }
-                splits.length = 0;
-                splits.push(...evenSplits);
-            }
-            
-            // Build description strings from split points
             const descriptions = [];
-            for (let i = 0; i < splits.length; i++) {
-                const start = splits[i];
-                const end = i + 1 < splits.length ? splits[i + 1] : words.length;
-                descriptions.push(words.slice(start, end).join(' '));
+            let pos = 0;
+            for (let i = 0; i < count; i++) {
+                // Give extra word to earlier items if words don't divide evenly
+                const size = baseSize + (i < remainder ? 1 : 0);
+                descriptions.push(words.slice(pos, pos + size).join(' '));
+                pos += size;
             }
             
-            // Pad with empty strings if we still don't have enough
-            while (descriptions.length < count) {
-                descriptions.push('');
-            }
-            
-            return descriptions.slice(0, count);
+            return descriptions;
         }
         
         function parseGenericProducts(text) {
@@ -72658,13 +72680,22 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             if (importItem.duplicate && importItem.existingItem) {
                 // Auto-merge with confirmation
                 if (await handleImportDuplicate(importItem)) {
-                    markImportItemProcessed(itemIndex);
+                    markImportItemProcessed(itemIndex, '✓ Merged');
+                    // If running in batch mode, trigger next item callback
+                    if (typeof window.importCreateNextCallback === 'function') {
+                        window.importCreateNextCallback();
+                        window.importCreateNextCallback = null;
+                    }
                 }
                 return;
             }
             
             // Open the item form with pre-filled data
             openAddModal();
+            
+            // Bump z-index so item form appears ABOVE the import modal
+            const itemModal = document.getElementById('itemModal');
+            if (itemModal) itemModal.style.zIndex = '10001';
             
             // Wait for modal to be ready
             setTimeout(() => {
@@ -72714,16 +72745,18 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             }, 100);
         }
         
-        async function handleImportDuplicate(importItem) {
+        async function handleImportDuplicate(importItem, skipConfirm = false) {
             const existing = importItem.existingItem;
             const invoiceData = currentImportSession.invoiceData;
             
-            const message = `SKU ${importItem.sku} already exists!\n\n` +
-                           `Existing: ${existing.productName} (Qty: ${existing.qty})\n` +
-                           `New Purchase: ${importItem.description} (Qty: ${importItem.qty})\n\n` +
-                           `Merge this purchase into existing item?`;
-            
-            if (confirm(message)) {
+            if (!skipConfirm) {
+                const message = `SKU ${importItem.sku} already exists!\n\n` +
+                               `Existing: ${existing.productName} (Qty: ${existing.qty})\n` +
+                               `New Purchase: ${importItem.description} (Qty: ${importItem.qty})\n\n` +
+                               `Merge this purchase into existing item?`;
+                
+                if (!confirm(message)) return false;
+            }
                 // Add to purchase history with ACTUAL invoice values (not averages)
                 const newPurchase = {
                     date: invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
@@ -72812,9 +72845,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 
                 showToast(`Merged ${importItem.qty} units into existing item`, 'success');
                 return true;
-            }
             
-            return false;
         }
         
         function highlightPreFilledFields() {
@@ -72833,17 +72864,17 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             });
         }
         
-        function markImportItemProcessed(itemIndex) {
-            const row = document.getElementById(`import-item-${index}`);
+        function markImportItemProcessed(itemIndex, label) {
+            const row = document.getElementById(`import-item-${itemIndex}`);
             if (row) {
-                row.classList.add('import-item-processed');
+                row.style.background = '#d4edda';
+                row.style.opacity = '0.7';
                 
                 // Update button
-                const btn = row.querySelector('button');
-                btn.textContent = '✓ Created';
-                btn.disabled = true;
-                btn.classList.remove('btn-primary');
-                btn.classList.add('btn-secondary');
+                const actionCell = row.querySelector('td:last-child');
+                if (actionCell) {
+                    actionCell.innerHTML = `<span style="color: #16a34a; font-weight: 700; font-size: 12px;">${label || '✓ Done'}</span>`;
+                }
             }
             
             // Track in session
@@ -72865,6 +72896,55 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 showToast('All items imported successfully!', 'success');
                 clearImportSession();
             }
+        }
+        
+        async function updateAllExistingImportItems() {
+            // Validate shipping percentage
+            if (!validateShippingPercent()) {
+                alert('Please enter a valid IB Shipping Percentage (0 or higher) before updating items.');
+                document.getElementById('importShippingPercent').focus();
+                return;
+            }
+            
+            const duplicates = importedItems.filter((item, i) => 
+                item.duplicate && item.existingItem && 
+                !currentImportSession.processedItems?.includes(i)
+            );
+            
+            if (duplicates.length === 0) {
+                alert('No existing items to update. All items are new — use "Create All Items" instead.');
+                return;
+            }
+            
+            if (!confirm(`Update ${duplicates.length} existing item(s) with new purchase data?\n\nThis merges wholesale price, IB shipping %, and tariff from the new invoice.`)) {
+                return;
+            }
+            
+            let merged = 0, failed = 0;
+            for (let i = 0; i < importedItems.length; i++) {
+                const item = importedItems[i];
+                if (!item.duplicate || !item.existingItem) continue;
+                if (currentImportSession.processedItems?.includes(i)) continue;
+                
+                try {
+                    const ok = await handleImportDuplicate(item, true);
+                    if (ok) {
+                        markImportItemProcessed(i, '✓ Merged');
+                        merged++;
+                    } else {
+                        failed++;
+                    }
+                } catch (e) {
+                    console.error(`[Import] Merge failed for ${item.sku}:`, e);
+                    failed++;
+                }
+            }
+            
+            const msg = `✅ Updated ${merged} item(s)` + (failed > 0 ? ` (${failed} failed)` : '');
+            showToast(msg, failed > 0 ? 'warning' : 'success');
+            
+            // Check if all items are now processed
+            checkImportCompletion();
         }
         
         async function createAllImportItems() {
@@ -72900,7 +72980,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 
                 // Set up a listener for when this item is saved
                 window.importCreateNextCallback = () => {
-                    markImportItemProcessed(currentIndex);
+                    markImportItemProcessed(currentIndex, '✓ Created');
                     currentIndex++;
                     setTimeout(createNext, 500);
                 };
