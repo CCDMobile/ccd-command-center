@@ -5914,6 +5914,180 @@
     }
     
     // ============================================================
+    // SYNC QUEUE RELAY — Polls Supabase sync_queue table
+    // Desktop/Mobile write change events → Sync Hub picks them up
+    // and executes channel API pushes (Etsy, Wix, Wayfair)
+    // ============================================================
+    
+    let _syncQueueInterval = null;
+    let _syncQueueProcessing = false;
+    const SYNC_QUEUE_POLL_MS = 15000; // 15 seconds
+    const SYNC_QUEUE_MAX_RETRIES = 3;
+    
+    function startSyncQueuePolling() {
+        if (_syncQueueInterval) clearInterval(_syncQueueInterval);
+        _syncQueueInterval = setInterval(pollSyncQueue, SYNC_QUEUE_POLL_MS);
+        console.log(`[Sync Queue] Polling started (every ${SYNC_QUEUE_POLL_MS / 1000}s)`);
+        addLog('Sync Queue polling started', 'info');
+        // Run once immediately
+        setTimeout(pollSyncQueue, 2000);
+    }
+    
+    function stopSyncQueuePolling() {
+        if (_syncQueueInterval) {
+            clearInterval(_syncQueueInterval);
+            _syncQueueInterval = null;
+        }
+    }
+    
+    async function pollSyncQueue() {
+        if (!sbClient || !sbConnected || _syncQueueProcessing) return;
+        _syncQueueProcessing = true;
+        
+        try {
+            // Fetch pending items (max 20 per poll to avoid overload)
+            const { data: pending, error } = await sbClient
+                .from('sync_queue')
+                .select('*')
+                .eq('status', 'pending')
+                .lt('retry_count', SYNC_QUEUE_MAX_RETRIES)
+                .order('created_at', { ascending: true })
+                .limit(20);
+            
+            if (error) {
+                console.error('[Sync Queue] Poll error:', error.message);
+                _syncQueueProcessing = false;
+                return;
+            }
+            
+            if (!pending || pending.length === 0) {
+                _syncQueueProcessing = false;
+                return;
+            }
+            
+            console.log(`[Sync Queue] Found ${pending.length} pending item(s)`);
+            addLog(`📤 Processing ${pending.length} sync queue item(s)`, 'info');
+            
+            for (const row of pending) {
+                await processSyncQueueRow(row);
+            }
+            
+        } catch (e) {
+            console.error('[Sync Queue] Unexpected error:', e);
+        }
+        
+        _syncQueueProcessing = false;
+    }
+    
+    async function processSyncQueueRow(row) {
+        const fields = row.fields || {};
+        const channel = row.channel;
+        
+        console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
+        
+        // Check per-channel auto-push toggle — respect Sync Hub's settings
+        const channelEnabled = 
+            (channel === 'etsy' && state.settings.autoPushEtsy) ||
+            (channel === 'wix' && state.settings.autoPushWix) ||
+            (channel === 'wayfair' && state.settings.autoPushWayfair);
+        
+        if (!channelEnabled) {
+            console.log(`[Sync Queue] ⏭️ ${channel} auto-push is OFF — skipping (id=${row.id})`);
+            // Mark as skipped so it doesn't pile up, but keep it distinguishable
+            await sbClient.from('sync_queue').update({
+                status: 'skipped',
+                error_message: `${channel} auto-push disabled in Sync Hub settings`,
+                processed_at: new Date().toISOString()
+            }).eq('id', row.id);
+            return;
+        }
+        // Transform sync_queue row into the format processQueueItem expects
+        const product = {
+            sku: fields.sku || '',
+            productName: fields.productName || '',
+            // Quantity — used by updateEtsyInventory/updateWixInventory via product.qty
+            qty: fields.quantity != null ? fields.quantity : undefined,
+            quantity: fields.quantity != null ? fields.quantity : undefined,
+            // Pricing — used by pushToEtsy/pushToWix via product.retailPrice
+            retailPrice: fields.price != null ? fields.price : undefined,
+            price: fields.price != null ? fields.price : undefined,
+            // Channel IDs — each push function checks these
+            etsyListingId: fields.listingId || null,
+            etsyListing: fields.listingId || null,
+            listingId: fields.listingId || null,
+            wixProductId: fields.productId || null,
+            productId: fields.productId || null,
+            wayfairSku: fields.wayfairSku || null
+        };
+        
+        // Build fields flags from fieldTypes array
+        const fieldFlags = {};
+        if (fields.fieldTypes && Array.isArray(fields.fieldTypes)) {
+            fields.fieldTypes.forEach(ft => { fieldFlags[ft] = true; });
+        } else {
+            // Fallback: infer from data present
+            if (fields.quantity != null) fieldFlags.quantity = true;
+            if (fields.price != null) fieldFlags.price = true;
+        }
+        
+        try {
+            const result = await processQueueItem({
+                channel: channel,
+                product: product,
+                fields: fieldFlags,
+                action: row.operation || 'update'
+            });
+            
+            if (result && result.success) {
+                // Mark as completed
+                await sbClient.from('sync_queue').update({
+                    status: 'completed',
+                    processed_at: new Date().toISOString()
+                }).eq('id', row.id);
+                
+                console.log(`✅ [Sync Queue] ${channel} push succeeded for ${fields.sku}: ${result.message || 'OK'}`);
+                addLog(`✅ ${channel.toUpperCase()} push: ${fields.sku} — ${result.message || 'Success'}`, 'success');
+                
+                logActivity('sync', 'queue_push_success', channel,
+                    `✅ ${fields.sku}: ${channel} push via sync_queue`,
+                    { sku: fields.sku, channel, result: result.message, queueId: row.id }
+                );
+            } else {
+                // Push failed — increment retry
+                const newRetry = (row.retry_count || 0) + 1;
+                const newStatus = newRetry >= SYNC_QUEUE_MAX_RETRIES ? 'failed' : 'pending';
+                
+                await sbClient.from('sync_queue').update({
+                    status: newStatus,
+                    retry_count: newRetry,
+                    error_message: result?.error || 'Unknown error'
+                }).eq('id', row.id);
+                
+                console.warn(`⚠️ [Sync Queue] ${channel} push failed for ${fields.sku}: ${result?.error} (retry ${newRetry}/${SYNC_QUEUE_MAX_RETRIES})`);
+                addLog(`⚠️ ${channel.toUpperCase()} push failed: ${fields.sku} — ${result?.error} (retry ${newRetry})`, 'warning');
+                
+                if (newStatus === 'failed') {
+                    logActivity('error', 'queue_push_failed', channel,
+                        `❌ ${fields.sku}: ${channel} push permanently failed after ${SYNC_QUEUE_MAX_RETRIES} retries`,
+                        { sku: fields.sku, channel, error: result?.error, queueId: row.id }
+                    );
+                }
+            }
+        } catch (e) {
+            // Exception — increment retry
+            const newRetry = (row.retry_count || 0) + 1;
+            await sbClient.from('sync_queue').update({
+                status: newRetry >= SYNC_QUEUE_MAX_RETRIES ? 'failed' : 'pending',
+                retry_count: newRetry,
+                error_message: e.message
+            }).eq('id', row.id);
+            
+            console.error(`❌ [Sync Queue] Exception processing ${fields.sku}:`, e.message);
+            addLog(`❌ ${channel.toUpperCase()} push error: ${fields.sku} — ${e.message}`, 'error');
+        }
+    }
+    
+    // ============================================================
     // REFRESH DATA
     // ============================================================
     
@@ -6542,6 +6716,11 @@
             // Start auto-process if enabled
             if (state.settings.autoProcessEnabled) {
                 startAutoProcess();
+            }
+            
+            // Start sync_queue polling (Desktop/Mobile → Sync Hub relay)
+            if (sbConnected) {
+                startSyncQueuePolling();
             }
             
             // Load notification settings

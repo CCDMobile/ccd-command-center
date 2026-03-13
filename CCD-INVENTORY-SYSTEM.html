@@ -74355,6 +74355,136 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                     );
                 }
                 
+                // ======== SUPABASE: Write to sync_queue for cross-device relay ========
+                // Sync Hub polls this table and executes channel API pushes.
+                // One row per channel that actually changed.
+                if (typeof sbConnected !== 'undefined' && sbConnected && sbClient) {
+                    const itemId = sbItemMap[newItem.sku] || newItem._sbId || null;
+                    const queueRows = [];
+                    
+                    // Allocation changes — queue qty updates per channel
+                    const ch = change.changes.channels;
+                    if (ch.etsy.old !== ch.etsy.new && change.etsyListingId) {
+                        queueRows.push({
+                            item_id: itemId,
+                            channel: 'etsy',
+                            operation: 'update',
+                            fields: {
+                                sku: newItem.sku,
+                                productName: newItem.productName,
+                                quantity: ch.etsy.new,
+                                listingId: change.etsyListingId,
+                                fieldTypes: ['quantity']
+                            }
+                        });
+                    }
+                    if (ch.wix.old !== ch.wix.new && change.wixProductId) {
+                        queueRows.push({
+                            item_id: itemId,
+                            channel: 'wix',
+                            operation: 'update',
+                            fields: {
+                                sku: newItem.sku,
+                                productName: newItem.productName,
+                                quantity: ch.wix.new,
+                                productId: change.wixProductId,
+                                fieldTypes: ['quantity']
+                            }
+                        });
+                    }
+                    if (ch.wayfair.old !== ch.wayfair.new && change.wayfairSku) {
+                        queueRows.push({
+                            item_id: itemId,
+                            channel: 'wayfair',
+                            operation: 'update',
+                            fields: {
+                                sku: newItem.sku,
+                                productName: newItem.productName,
+                                quantity: ch.wayfair.new,
+                                wayfairSku: change.wayfairSku,
+                                fieldTypes: ['quantity']
+                            }
+                        });
+                    }
+                    
+                    // Pricing changes — queue price updates per channel
+                    if (pricingChanged && change.changes.pricing) {
+                        const cp = change.changes.pricing.channelPrices;
+                        if (cp.etsy.old !== cp.etsy.new && change.etsyListingId) {
+                            // Check if we already have an etsy row — merge price into it
+                            const existing = queueRows.find(r => r.channel === 'etsy');
+                            if (existing) {
+                                existing.fields.price = cp.etsy.new;
+                                existing.fields.fieldTypes.push('price');
+                            } else {
+                                queueRows.push({
+                                    item_id: itemId,
+                                    channel: 'etsy',
+                                    operation: 'update',
+                                    fields: {
+                                        sku: newItem.sku,
+                                        productName: newItem.productName,
+                                        price: cp.etsy.new,
+                                        listingId: change.etsyListingId,
+                                        fieldTypes: ['price']
+                                    }
+                                });
+                            }
+                        }
+                        if (cp.wix.old !== cp.wix.new && change.wixProductId) {
+                            const existing = queueRows.find(r => r.channel === 'wix');
+                            if (existing) {
+                                existing.fields.price = cp.wix.new;
+                                existing.fields.fieldTypes.push('price');
+                            } else {
+                                queueRows.push({
+                                    item_id: itemId,
+                                    channel: 'wix',
+                                    operation: 'update',
+                                    fields: {
+                                        sku: newItem.sku,
+                                        productName: newItem.productName,
+                                        price: cp.wix.new,
+                                        productId: change.wixProductId,
+                                        fieldTypes: ['price']
+                                    }
+                                });
+                            }
+                        }
+                        if (cp.wayfair.old !== cp.wayfair.new && change.wayfairSku) {
+                            const existing = queueRows.find(r => r.channel === 'wayfair');
+                            if (existing) {
+                                existing.fields.price = cp.wayfair.new;
+                                existing.fields.fieldTypes.push('price');
+                            } else {
+                                queueRows.push({
+                                    item_id: itemId,
+                                    channel: 'wayfair',
+                                    operation: 'update',
+                                    fields: {
+                                        sku: newItem.sku,
+                                        productName: newItem.productName,
+                                        price: cp.wayfair.new,
+                                        wayfairSku: change.wayfairSku,
+                                        fieldTypes: ['price']
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    
+                    // Insert queue rows
+                    if (queueRows.length > 0) {
+                        sbClient.from('sync_queue').insert(queueRows).then(({ error: sqErr }) => {
+                            if (sqErr) {
+                                console.error('[Sync Queue] Insert error:', sqErr.message);
+                            } else {
+                                console.log(`✅ [Sync Queue] ${queueRows.length} row(s) queued for ${newItem.sku}:`, queueRows.map(r => r.channel));
+                            }
+                        });
+                    }
+                }
+                
             } catch (e) {
                 console.warn('[Sync Hub Notify] Error queuing change:', e);
             }
@@ -81884,6 +82014,71 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                     notes: "Manual sale via Inventory System"
                 });
                 console.log("[Sales] Recorded:", item.sku, "x" + qty, channel, "profit: $" + profit.toFixed(2), "margin:", (margin*100).toFixed(1) + "%");
+                
+                // ======== SYNC QUEUE: Push updated channel quantities after sale ========
+                // Item's channel allocations were already adjusted by the caller (quickSell, quickSellChannel, recordSale).
+                // Queue sync_queue rows so Sync Hub pushes new quantities to channel APIs.
+                if (sbConnected && sbClient) {
+                    var itemId = row.data ? row.data.id : null;
+                    var saleQueueRows = [];
+                    
+                    // Push to every active channel that has a listing ID
+                    if (item.etsyListingId && (item.channels && item.channels.etsy !== undefined)) {
+                        saleQueueRows.push({
+                            item_id: itemId,
+                            channel: 'etsy',
+                            operation: 'update',
+                            fields: {
+                                sku: item.sku,
+                                productName: item.productName || '',
+                                quantity: item.channels.etsy || 0,
+                                listingId: item.etsyListingId,
+                                fieldTypes: ['quantity'],
+                                trigger: 'sale'
+                            }
+                        });
+                    }
+                    if ((item.wixProductId || item.wixId) && (item.channels && item.channels.wix !== undefined)) {
+                        saleQueueRows.push({
+                            item_id: itemId,
+                            channel: 'wix',
+                            operation: 'update',
+                            fields: {
+                                sku: item.sku,
+                                productName: item.productName || '',
+                                quantity: item.channels.wix || 0,
+                                productId: item.wixProductId || item.wixId,
+                                fieldTypes: ['quantity'],
+                                trigger: 'sale'
+                            }
+                        });
+                    }
+                    if ((item.wayfairSku || item.supplierPartNumber) && (item.channels && item.channels.wayfair !== undefined)) {
+                        saleQueueRows.push({
+                            item_id: itemId,
+                            channel: 'wayfair',
+                            operation: 'update',
+                            fields: {
+                                sku: item.sku,
+                                productName: item.productName || '',
+                                quantity: item.channels.wayfair || 0,
+                                wayfairSku: item.wayfairSku || item.supplierPartNumber,
+                                fieldTypes: ['quantity'],
+                                trigger: 'sale'
+                            }
+                        });
+                    }
+                    
+                    if (saleQueueRows.length > 0) {
+                        sbClient.from('sync_queue').insert(saleQueueRows).then(function(res) {
+                            if (res.error) {
+                                console.error('[Sync Queue] Sale queue error:', res.error.message);
+                            } else {
+                                console.log('[Sync Queue] Sale: ' + saleQueueRows.length + ' channel update(s) queued for ' + item.sku);
+                            }
+                        });
+                    }
+                }
             } catch (e) { console.warn("[Sales] DB write failed:", e.message); }
         }
 
