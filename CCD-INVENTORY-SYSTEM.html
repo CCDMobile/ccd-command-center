@@ -18177,19 +18177,43 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                     .eq('sku', item.sku)
                     .not('order_id', 'is', null);
 
-                if (salesErr || !sales || sales.length === 0) return [];
-
-                const orderIds = [...new Set(sales.map(s => s.order_id).filter(Boolean))];
-                if (orderIds.length === 0) return [];
+                const orderIds = (!salesErr && sales) 
+                    ? [...new Set(sales.map(s => s.order_id).filter(Boolean))]
+                    : [];
 
                 // Step 2: Get shippo_transactions matching those order_ids
-                const { data: shipments, error: shipErr } = await sbClient
+                let shipments = [];
+                if (orderIds.length > 0) {
+                    const { data, error } = await sbClient
+                        .from('shippo_transactions')
+                        .select('*')
+                        .in('order_id', orderIds)
+                        .order('shippo_created_at', { ascending: false });
+                    if (!error && data) shipments = data;
+                }
+
+                // Step 2b: Also query by SKU directly (catches shipments without matching sales)
+                const { data: skuShipments, error: skuErr } = await sbClient
                     .from('shippo_transactions')
                     .select('*')
-                    .in('order_id', orderIds)
+                    .eq('sku', item.sku)
                     .order('shippo_created_at', { ascending: false });
 
-                if (shipErr || !shipments) return [];
+                if (!skuErr && skuShipments) {
+                    // Merge, dedup by shippo transaction id
+                    const existingIds = new Set(shipments.map(s => s.id));
+                    for (const s of skuShipments) {
+                        if (!existingIds.has(s.id)) {
+                            shipments.push(s);
+                            existingIds.add(s.id);
+                        }
+                    }
+                }
+
+                if (shipments.length === 0) return [];
+
+                // Sort by date descending
+                shipments.sort((a, b) => new Date(b.shippo_created_at || 0) - new Date(a.shippo_created_at || 0));
 
                 // Step 3: Map to renderShippingHistory format
                 return shipments.map(s => ({
