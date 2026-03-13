@@ -10238,6 +10238,7 @@ Previous versions documented in development guide.
                                 <th style="padding: 8px 6px; border-bottom: 2px solid #dee2e6; text-align: right; width: 80px;">Unit Price</th>
                                 <th style="padding: 8px 6px; border-bottom: 2px solid #dee2e6; text-align: right; width: 70px; font-size: 11px;">Ship %</th>
                                 <th style="padding: 8px 6px; border-bottom: 2px solid #dee2e6; text-align: right; width: 70px; font-size: 11px;">Ship $</th>
+                                <th style="padding: 8px 6px; border-bottom: 2px solid #dee2e6; text-align: right; width: 70px; font-size: 11px;">Tariff</th>
                                 <th style="padding: 8px 6px; border-bottom: 2px solid #dee2e6; text-align: right; width: 80px;">Line Total</th>
                                 <th style="padding: 8px 6px; border-bottom: 2px solid #dee2e6; text-align: center; width: 100px;">Actions</th>
                             </tr>
@@ -71747,7 +71748,9 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 { name: 'Primitives by Kathy', pattern: /Primitives by Kathy|PBK/i },
                 { name: 'Foreside', pattern: /Foreside/i },
                 { name: 'Sunset Vista Designs', pattern: /Sunset Vista/i },
-                { name: 'Adams & Co.', pattern: /Adams & Co/i }
+                { name: 'Adams & Co.', pattern: /Adams & Co/i },
+                { name: 'Park Designs', pattern: /Park\s*Designs|Split[\s-]*P|Goldsboro\s*NC\s*27532/i },
+                { name: 'K&K Interiors', pattern: /K\s*&\s*K\s*Interiors|Sandusky.*OH.*44870|kkinteriors\.com/i }
             ];
             
             for (const sp of supplierPatterns) {
@@ -71763,6 +71766,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             const invoicePatterns = [
                 /Invoice-#:\s*([A-Z0-9-]+)/i,           // "Invoice-#: 1W-6553024-01"
                 /Invoice #:\s*([A-Z0-9-]+)/i,           // "Invoice #: 1W-6553024-01"
+                /Invoice#\s+([A-Z0-9-]+)/i,             // "Invoice# CS0154832" (Park Designs - no space before #)
+                /(IN\d{10,})/,                            // K&K Interiors: IN0002741231 (direct match by format)
                 /Invoice:\s*([A-Z0-9-]+)/i,             // "Invoice: 1W-6553024-01"
                 /(\d[A-Z]-\d{7}-\d{2})/,                // Exact PBK format: 1W-6553024-01
                 /(\d[A-Z]-\d{6,})/,                     // PBK without suffix: 1W-6553024
@@ -71775,13 +71780,14 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             console.log('=== INVOICE NUMBER DETECTION ===');
             console.log('Searching for invoice number in text...');
             
+            const falsePositives = new Set(['invoice', 'acct', 'date', 'bill', 'ship', 'order', 'page', 'item', 'unit']);
             for (const pattern of invoicePatterns) {
                 const match = text.match(pattern);
                 if (match) {
                     // Filter out false positives
                     const candidate = match[1].trim();
-                    // Skip if it's just "Invoice" or too short
-                    if (candidate.length > 3 && candidate.toLowerCase() !== 'invoice') {
+                    // Skip if too short or a known false positive word
+                    if (candidate.length > 3 && !falsePositives.has(candidate.toLowerCase())) {
                         invoice.invoiceNumber = candidate;
                         console.log(`✓ Found invoice number with pattern ${pattern}: "${invoice.invoiceNumber}"`);
                         break;
@@ -71817,8 +71823,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             
             // Extract shipping cost
             const shippingPatterns = [
+                /FRT\d+\s+([\d,]+\.[\d]{2})/i,           // "FRT001 85.42" - K&K Interiors (must be before generic Freight)
                 /Freight[:\s]+\$?([\d,]+\.?\d*)/i,
                 /Shipping[:\s&]+[Hh]andling[:\s]+\$?([\d,]+\.?\d*)/i,
+                /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i,  // Park Designs
                 /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i,
                 /S&H[:\s]+\$?([\d,]+\.?\d*)/i
             ];
@@ -71842,6 +71850,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 invoice.items = parseForesideProducts(text);
             } else if (invoice.supplierName === 'Sunset Vista Designs') {
                 invoice.items = parseSunsetVistaProducts(text);
+            } else if (invoice.supplierName === 'Park Designs') {
+                invoice.items = parseParkDesignsProducts(text);
+            } else if (invoice.supplierName === 'K&K Interiors') {
+                invoice.items = parseKKInteriorsProducts(text);
             } else {
                 // Generic parsing
                 invoice.items = parseGenericProducts(text);
@@ -72082,6 +72094,241 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             return products;
         }
         
+        /**
+         * K&K Interiors invoice parser
+         * Line-based format: qty, b/o, item#, UPC, date, price, UOM, extended
+         * Description on following line(s). Tariff info embedded per item.
+         * Skips set sub-items (@S@), TRF/FRT surcharge lines.
+         */
+        function parseKKInteriorsProducts(text) {
+            const products = [];
+            console.log('=== K&K INTERIORS PARSING ===');
+            
+            // K&K PDFs extract as 2-4 long lines. Work on flattened text.
+            const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            
+            // Extract total tariff surcharge
+            let totalTariffSurcharge = 0;
+            const tariffMatch = flat.match(/TRF\d+\s+([\d,]+\.[\d]{2})/);
+            if (tariffMatch) {
+                totalTariffSurcharge = parseFloat(tariffMatch[1].replace(/,/g, ''));
+                console.log('Total tariff surcharge found:', totalTariffSurcharge);
+            }
+            
+            // K&K flat text pattern per item:
+            // qty  b/o  sku  price  UOM  extended  date  UPC:digits  description  Approximate Unit Price with Tariff: $X.XX
+            // Example: 12 0 15195A 5.99 EA 71.88 3/9/2026 UPC:842657169712 Assorted Mini Silver... Approximate Unit Price with Tariff: $6.89
+            
+            // Match all product blocks using global regex
+            const itemPattern = /(\d+)\s+(\d+)\s+([A-Z0-9]+-?[A-Z0-9]*)\s+([\d.]+)\s+(EA|SET|DZ|PR)\s+([\d.]+)\s+\d{1,2}\/\d{1,2}\/\d{4}\s+UPC:(\d+)\s+(.*?)\s*Approximate Unit Price with Tariff:\s*\$?([\d.]+)/gi;
+            
+            let match;
+            while ((match = itemPattern.exec(flat)) !== null) {
+                const qty = parseInt(match[1]);
+                const boQty = parseInt(match[2]);
+                const sku = match[3];
+                const unitPrice = parseFloat(match[4]);
+                const uom = match[5];
+                const extPrice = parseFloat(match[6]);
+                const upc = match[7];
+                let description = match[8].trim();
+                const priceWithTariff = parseFloat(match[9]);
+                
+                // Calculate per-unit tariff from the "with Tariff" price
+                let perUnitTariff = Math.round((priceWithTariff - unitPrice) * 100) / 100;
+                if (perUnitTariff < 0) perUnitTariff = 0;
+                
+                // Clean up description — remove sub-item lines like "18653A-1 @S@ | ..."
+                description = description.replace(/[A-Z0-9]+-\d+\s*@S@\s*\|[^$]*/gi, '').trim();
+                // Remove trailing UPC references
+                description = description.replace(/UPC:\s*\d+/gi, '').trim();
+                // Collapse whitespace
+                description = description.replace(/\s+/g, ' ').trim();
+                
+                console.log(`✓ K&K item: ${sku} qty=${qty} price=$${unitPrice} tariff=$${perUnitTariff} ext=$${extPrice} "${description.substring(0, 50)}"`);
+                
+                products.push({
+                    sku: sku,
+                    description: description || `K&K Item ${sku}`,
+                    qty: qty,
+                    unitPrice: unitPrice,
+                    lineTotal: extPrice,
+                    upc: upc,
+                    uom: uom,
+                    perUnitTariff: perUnitTariff,
+                    confidence: 'high'
+                });
+            }
+            
+            // If regex missed some items (last item might not have tariff line), try without tariff
+            if (products.length === 0) {
+                console.log('Trying fallback pattern without tariff requirement...');
+                const fallbackPattern = /(\d+)\s+(\d+)\s+([A-Z0-9]+-?[A-Z0-9]*)\s+([\d.]+)\s+(EA|SET|DZ|PR)\s+([\d.]+)\s+\d{1,2}\/\d{1,2}\/\d{4}\s+UPC:(\d+)\s+([^$]+?)(?=\d+\s+\d+\s+[A-Z0-9]|TRF\d|FRT\d|Subtotal|$)/gi;
+                while ((match = fallbackPattern.exec(flat)) !== null) {
+                    products.push({
+                        sku: match[3],
+                        description: match[8].replace(/Approximate.*$/i, '').replace(/\s+/g, ' ').trim() || `K&K Item ${match[3]}`,
+                        qty: parseInt(match[1]),
+                        unitPrice: parseFloat(match[4]),
+                        lineTotal: parseFloat(match[6]),
+                        upc: match[7],
+                        uom: match[5],
+                        perUnitTariff: 0,
+                        confidence: 'medium'
+                    });
+                }
+            }
+            
+            console.log('K&K Interiors products found:', products.length);
+            return products;
+        }
+        
+        /**
+         * Park Designs / Split-P invoice parser
+         * These invoices extract as columnar text from PDF.js:
+         * All Item IDs grouped, then Ordered, then B/O Qty, then Shipped, etc.
+         */
+        function parseParkDesignsProducts(text) {
+            const products = [];
+            console.log('=== PARK DESIGNS PARSING ===');
+            
+            // Normalize text — join all lines into one string for columnar extraction
+            const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            
+            // STEP 1: Extract Item IDs (between "Item ID" and "Ordered")
+            const itemIdSection = flat.match(/Item\s*ID\s+(.*?)\s+Ordered\b/i);
+            if (!itemIdSection) {
+                console.log('✗ Could not find Item ID section');
+                return products;
+            }
+            
+            // Park Designs SKUs: alphanumeric with dashes (e.g., 23-706A, 4996-820, 380-623, 22-439)
+            const skus = itemIdSection[1].match(/[A-Z0-9]+-[A-Z0-9]+[A-Z]?/gi) || [];
+            const itemCount = skus.length;
+            console.log(`Found ${itemCount} SKUs:`, skus);
+            
+            if (itemCount === 0) {
+                console.log('✗ No SKUs found in Item ID section');
+                return products;
+            }
+            
+            // STEP 2: Extract Ordered quantities
+            const orderedSection = flat.match(/Ordered\s+([\d\s]+?)\s*B\/O\s*Qty/i);
+            const orderedNums = orderedSection ? orderedSection[1].trim().split(/\s+/).map(Number) : [];
+            console.log('Ordered:', orderedNums);
+            
+            // STEP 3: Extract Shipped quantities
+            const shippedSection = flat.match(/Shipped\s+([\d\s]+?)\s*Units/i);
+            const shippedNums = shippedSection ? shippedSection[1].trim().split(/\s+/).map(Number) : [];
+            console.log('Shipped:', shippedNums);
+            
+            // STEP 4: Extract Unit Prices (decimal numbers between "Unit Price" and "Amount")
+            const priceSection = flat.match(/Unit\s*Price\s+(.*?)\s*Amount/i);
+            const prices = priceSection ? priceSection[1].match(/[\d]+\.[\d]{2}/g) || [] : [];
+            console.log('Unit Prices:', prices);
+            
+            // STEP 5: Extract Amounts (after last "Amount" up to "Tax Rate" or "Subtotal")
+            const amountSection = flat.match(/Amount\s+(.*?)(?:Tax\s*Rate|Subtotal)/i);
+            const amounts = amountSection ? amountSection[1].match(/[\d]+\.[\d]{2}/g) || [] : [];
+            console.log('Amounts:', amounts);
+            
+            // STEP 6: Extract Descriptions (between "Description" and "Unit Price")
+            const descSection = flat.match(/Description\s+(.*?)\s*Unit\s*Price/i);
+            let descriptions = [];
+            if (descSection) {
+                const descText = descSection[1].trim();
+                console.log('Raw description text:', descText);
+                
+                // Split descriptions using heuristic word grouping
+                const descWords = descText.split(/\s+/);
+                if (itemCount === 1) {
+                    descriptions = [descText];
+                } else {
+                    descriptions = splitParkDesignsDescriptions(descWords, itemCount);
+                }
+            }
+            console.log('Descriptions:', descriptions);
+            
+            // STEP 7: Build product objects
+            for (let i = 0; i < itemCount; i++) {
+                const shipped = shippedNums[i] != null ? shippedNums[i] : null;
+                const ordered = orderedNums[i] != null ? orderedNums[i] : 0;
+                const qty = shipped != null ? shipped : ordered;
+                const isBackordered = shipped === 0 && ordered > 0;
+                const unitPrice = prices[i] ? parseFloat(prices[i]) : 0;
+                const lineTotal = amounts[i] ? parseFloat(amounts[i]) : 0;
+                
+                products.push({
+                    sku: skus[i],
+                    description: (descriptions[i] || `Park Designs Item ${skus[i]}`) + (isBackordered ? ' [B/O]' : ''),
+                    qty: qty,
+                    qtyOrdered: ordered,
+                    unitPrice: unitPrice,
+                    lineTotal: lineTotal,
+                    backordered: isBackordered,
+                    confidence: prices[i] ? 'high' : 'medium'
+                });
+            }
+            
+            console.log('Park Designs products found:', products.length);
+            return products;
+        }
+        
+        /**
+         * Split a flat description string into N product descriptions.
+         * Park Designs descriptions are typically ALL CAPS, 2-5 words each.
+         * Uses heuristics: common product-start words signal boundaries.
+         */
+        function splitParkDesignsDescriptions(words, count) {
+            if (count <= 1) return [words.join(' ')];
+            
+            // Common Park Designs product-start keywords
+            const startWords = new Set([
+                'GARDEN', 'ANTIQUE', 'RUSTIC', 'COUNTRY', 'FARMHOUSE', 'VINTAGE',
+                'CHICKEN', 'ROOSTER', 'FLORAL', 'BRAIDED', 'QUILTED', 'WOODEN',
+                'IRON', 'METAL', 'GLASS', 'CERAMIC', 'COTTON', 'BURLAP',
+                'TABLE', 'DISH', 'CANDLE', 'BASKET', 'BOWL', 'PLATE', 'MUG',
+                'PILLOW', 'RUNNER', 'NAPKIN', 'PLACEMAT', 'CURTAIN', 'VALANCE',
+                'SALT', 'PEPPER', 'SOAP', 'TOWEL', 'HOOK', 'RACK', 'SHELF',
+                'BEAR', 'MOOSE', 'DEER', 'OWL', 'BEE', 'BIRD', 'BUNNY'
+            ]);
+            
+            // Find potential split points (indices where a new product description likely starts)
+            const splits = [0]; // First description always starts at 0
+            for (let i = 1; i < words.length; i++) {
+                const word = words[i].toUpperCase().replace(/[^A-Z]/g, '');
+                if (startWords.has(word) && splits.length < count) {
+                    splits.push(i);
+                }
+            }
+            
+            // If we didn't find enough splits, fall back to even distribution
+            if (splits.length < count) {
+                const chunkSize = Math.ceil(words.length / count);
+                const evenSplits = [];
+                for (let i = 0; i < count; i++) {
+                    evenSplits.push(i * chunkSize);
+                }
+                splits.length = 0;
+                splits.push(...evenSplits);
+            }
+            
+            // Build description strings from split points
+            const descriptions = [];
+            for (let i = 0; i < splits.length; i++) {
+                const start = splits[i];
+                const end = i + 1 < splits.length ? splits[i + 1] : words.length;
+                descriptions.push(words.slice(start, end).join(' '));
+            }
+            
+            // Pad with empty strings if we still don't have enough
+            while (descriptions.length < count) {
+                descriptions.push('');
+            }
+            
+            return descriptions.slice(0, count);
+        }
+        
         function parseGenericProducts(text) {
             const products = [];
             const lines = text.split('\n');
@@ -72135,21 +72382,26 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             document.getElementById('metaShippingCost').textContent = (invoiceData.shippingCost || 0).toFixed(2);
             
             // AUTO-CALCULATE shipping percentage from invoice
-            let shippingPercent = 15; // Default fallback
+            let shippingPercent = null; // No default — must be calculated or entered
             
-            // Calculate invoice subtotal
+            // Calculate invoice subtotal (only items with qty > 0)
             const invoiceSubtotal = invoiceData.items.reduce((sum, item) => 
                 sum + (item.unitPrice * item.qty), 0);
             
             // If we have shipping cost and subtotal, calculate percentage
             if (invoiceData.shippingCost > 0 && invoiceSubtotal > 0) {
                 shippingPercent = (invoiceData.shippingCost / invoiceSubtotal) * 100;
+                shippingPercent = Math.round(shippingPercent * 10) / 10;
                 console.log(`Auto-calculated IB Shipping: $${invoiceData.shippingCost.toFixed(2)} ÷ $${invoiceSubtotal.toFixed(2)} = ${shippingPercent.toFixed(1)}%`);
             }
             
-            // Set the calculated percentage (rounded to 1 decimal)
-            shippingPercent = Math.round(shippingPercent * 10) / 10;
-            document.getElementById('importShippingPercent').value = shippingPercent;
+            // Set the calculated percentage or leave blank for manual entry
+            if (shippingPercent !== null) {
+                document.getElementById('importShippingPercent').value = shippingPercent;
+            } else {
+                document.getElementById('importShippingPercent').value = '';
+                document.getElementById('importShippingPercent').placeholder = 'Enter %';
+            }
             
             // Populate table
             const tbody = document.getElementById('importReviewTableBody');
@@ -72159,11 +72411,12 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             
             invoiceData.items.forEach((item, index) => {
                 // Calculate shipping using percentage: Unit Price × (Percentage ÷ 100)
-                const shippingPerUnit = item.unitPrice * (shippingPercent / 100);
+                const pct = shippingPercent || 0;
+                const shippingPerUnit = item.unitPrice * (pct / 100);
                 const itemShippingCost = shippingPerUnit * item.qty;
                 
                 // Store shipping calculations on the item
-                item.shippingPercentage = shippingPercent;
+                item.shippingPercentage = pct;
                 item.shippingCost = itemShippingCost;
                 item.shippingPerUnit = shippingPerUnit;
                 
@@ -72202,11 +72455,14 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                                value="${item.unitPrice.toFixed(2)}" step="0.01" min="0"
                                onchange="updateImportItem(${index}, 'unitPrice', this.value)">
                     </td>
-                    <td style="padding: 6px 4px; text-align: right; font-size: 11px; color: #0066cc;">
-                        ${shippingPercent.toFixed(1)}%
+                    <td style="padding: 6px 4px; text-align: right; font-size: 11px; color: ${shippingPercent !== null ? '#0066cc' : '#cc0000'};">
+                        ${shippingPercent !== null ? pct.toFixed(1) + '%' : '—'}
                     </td>
                     <td style="padding: 6px 4px; text-align: right; font-size: 11px; color: #0066cc;">
                         $${itemShippingCost.toFixed(2)}
+                    </td>
+                    <td style="padding: 6px 4px; text-align: right; font-size: 11px; color: ${item.perUnitTariff ? '#dc6900' : '#999'};">
+                        ${item.perUnitTariff ? '$' + item.perUnitTariff.toFixed(2) + '/ea' : '—'}
                     </td>
                     <td style="padding: 6px 4px; text-align: right; font-weight: 600; font-size: 11px;">
                         $${item.lineTotal.toFixed(2)}
@@ -72242,7 +72498,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 let shippingPercent = parseFloat(document.getElementById('importShippingPercent').value);
                 // Handle empty/invalid but allow zero
                 if (isNaN(shippingPercent) || shippingPercent < 0) {
-                    shippingPercent = 15;
+                    shippingPercent = 0;
                 }
                 const shippingPerUnit = importedItems[index].unitPrice * (shippingPercent / 100);
                 const itemShippingCost = shippingPerUnit * importedItems[index].qty;
@@ -72261,8 +72517,10 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 // Update shipping $ (column 7)
                 cells[6].textContent = '$' + itemShippingCost.toFixed(2);
                 
-                // Update line total (column 8)
-                cells[7].textContent = '$' + importedItems[index].lineTotal.toFixed(2);
+                // Column 8 is tariff (no update needed on qty/price change)
+                
+                // Update line total (column 9)
+                cells[8].textContent = '$' + importedItems[index].lineTotal.toFixed(2);
             }
             
             saveImportSession();
@@ -72397,7 +72655,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 document.getElementById('orderDate').value = invoiceData.invoiceDate || '';
                 
                 // Use pre-calculated IB Shipping percentage from the review table
-                if (importItem.shippingPercentage !== undefined && importItem.shippingPercentage > 0) {
+                if (importItem.shippingPercentage !== undefined && importItem.shippingPercentage >= 0) {
                     const ibShippingPercent = Math.round(importItem.shippingPercentage * 10) / 10;
                     document.getElementById('ibShipping').value = ibShippingPercent;
                     document.getElementById('ibShippingSlider').value = ibShippingPercent;
@@ -72408,6 +72666,11 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                     const ibShippingPercent = (shippingPerItem / importItem.unitPrice) * 100;
                     document.getElementById('ibShipping').value = Math.round(ibShippingPercent * 10) / 10;
                     document.getElementById('ibShippingSlider').value = Math.round(ibShippingPercent * 10) / 10;
+                }
+                
+                // Pre-fill tariff from parsed invoice (K&K provides per-unit tariff)
+                if (importItem.perUnitTariff !== undefined && importItem.perUnitTariff >= 0) {
+                    document.getElementById('tariff').value = Math.round(importItem.perUnitTariff * 100) / 100;
                 }
                 
                 // Highlight pre-filled fields briefly
@@ -72440,46 +72703,88 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 // Add to purchase history with ACTUAL invoice values (not averages)
                 const newPurchase = {
                     date: invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
+                    orderDate: invoiceData.invoiceDate || new Date().toISOString().split('T')[0],
                     invoice: invoiceData.invoiceNumber || '',
+                    orderNumber: invoiceData.invoiceNumber || '',
                     qty: importItem.qty,
                     wholesalePrice: importItem.unitPrice,
                     ibShipping: importItem.shippingPercentage || 0,
-                    tariff: existing.tariff || 0  // Use existing tariff for now (could be from import if available)
+                    tariff: importItem.perUnitTariff || existing.tariff || 0
                 };
                 
                 if (!existing.purchaseHistory) {
                     existing.purchaseHistory = [];
                 }
+                
+                // Get the previous (last) purchase entry BEFORE appending new one
+                const prevEntry = existing.purchaseHistory.length > 0 
+                    ? existing.purchaseHistory[existing.purchaseHistory.length - 1] 
+                    : null;
+                
                 existing.purchaseHistory.push(newPurchase);
                 
+                // Qty before this merge (existing stock on hand)
+                const oldQty = existing.qty;
+                const newQty = importItem.qty;
+                
                 // Update quantity (ADD new to existing)
-                existing.qty += importItem.qty;
+                existing.qty += newQty;
                 
-                // Calculate WEIGHTED AVERAGE for wholesale price
-                const totalCost = existing.purchaseHistory.reduce((sum, p) => sum + (p.wholesalePrice * p.qty), 0);
-                const totalQty = existing.purchaseHistory.reduce((sum, p) => sum + p.qty, 0);
-                existing.wholesalePrice = totalCost / totalQty;
+                // WHOLESALE PRICE: Weighted average of LAST invoice and NEW invoice only.
+                // If old stock is depleted (oldQty <= newQty), just use new invoice price.
+                if (oldQty > newQty && prevEntry) {
+                    const prevPrice = prevEntry.wholesalePrice || 0;
+                    const newPrice = newPurchase.wholesalePrice || 0;
+                    existing.wholesalePrice = ((prevPrice * oldQty) + (newPrice * newQty)) / (oldQty + newQty);
+                } else {
+                    existing.wholesalePrice = newPurchase.wholesalePrice;
+                }
                 
-                // Calculate WEIGHTED AVERAGE for IB Shipping %
-                const totalShipping = existing.purchaseHistory.reduce((sum, p) => sum + ((p.ibShipping || 0) * p.qty), 0);
-                existing.ibShipping = totalShipping / totalQty;
+                // IB SHIPPING %: Same rule — last invoice + new invoice weighted, or just new if depleted.
+                if (oldQty > newQty && prevEntry) {
+                    const prevIB = prevEntry.ibShipping || 0;
+                    const newIB = newPurchase.ibShipping || 0;
+                    existing.ibShipping = ((prevIB * oldQty) + (newIB * newQty)) / (oldQty + newQty);
+                } else {
+                    existing.ibShipping = newPurchase.ibShipping || 0;
+                }
                 
-                // Calculate WEIGHTED AVERAGE for Tariff
-                const totalTariff = existing.purchaseHistory.reduce((sum, p) => sum + ((p.tariff || 0) * p.qty), 0);
-                existing.tariff = totalTariff / totalQty;
+                // TARIFF: Always use latest invoice value, no averaging.
+                existing.tariff = newPurchase.tariff || 0;
                 
-                console.log(`Merged ${importItem.qty} units into ${existing.sku}:`);
-                console.log(`  New Avg Wholesale: $${existing.wholesalePrice.toFixed(2)}`);
-                console.log(`  New Avg IB Shipping: ${existing.ibShipping.toFixed(1)}%`);
-                console.log(`  New Avg Tariff: $${existing.tariff.toFixed(2)}`);
-                console.log(`  Total Qty: ${existing.qty}`);
+                console.log(`Merged ${newQty} units into ${existing.sku}:`);
+                console.log(`  Old stock: ${oldQty}, New: ${newQty}, Total: ${existing.qty}`);
+                console.log(`  Wholesale: $${existing.wholesalePrice.toFixed(2)} ${oldQty > newQty ? '(weighted avg of last + new)' : '(new invoice price)'}`);
+                console.log(`  IB Shipping: ${existing.ibShipping.toFixed(1)}% ${oldQty > newQty ? '(weighted avg of last + new)' : '(new invoice %)'}`);
+                console.log(`  Tariff: $${existing.tariff.toFixed(2)} (latest invoice)`);
                 
-                // Update order info to most recent
+                // Update order info to most recent (old history entries preserved in purchaseHistory array)
                 existing.orderDate = invoiceData.invoiceDate || existing.orderDate;
                 existing.orderNumber = invoiceData.invoiceNumber || existing.orderNumber;
                 
                 renderCurrentView();
                 autoSave();
+                
+                // ======== SUPABASE: Write-through for merged purchase ========
+                if (typeof sbConnected !== 'undefined' && sbConnected) {
+                    // Save updated item to Supabase
+                    if (typeof saveItemToSupabase === 'function') {
+                        saveItemToSupabase(existing).then(ok => {
+                            if (ok) console.log(`✅ [Supabase] Merged item saved: ${existing.sku}`);
+                        }).catch(err => console.error('[Supabase] Merge save error:', err));
+                    }
+                    
+                    // Write invoice + line item to invoices/invoice_items
+                    if (typeof writePurchaseToSupabase === 'function') {
+                        writePurchaseToSupabase(existing, newPurchase, 'insert').then(result => {
+                            if (result) {
+                                console.log(`✅ [Supabase] Invoice write-through for merge: ${invoiceData.invoiceNumber} → invoice_item id=${result.invoiceItemId}`);
+                                newPurchase._invoiceItemId = result.invoiceItemId;
+                                newPurchase._invoiceId = result.invoiceId;
+                            }
+                        }).catch(err => console.error('[Supabase] Merge invoice write-through error:', err));
+                    }
+                }
                 
                 showToast(`Merged ${importItem.qty} units into existing item`, 'success');
                 return true;
@@ -72489,7 +72794,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
         }
         
         function highlightPreFilledFields() {
-            const fields = ['brandName', 'vendor', 'sku', 'productName', 'qty', 'wholesalePrice', 'orderNumber', 'orderDate', 'ibShipping'];
+            const fields = ['brandName', 'vendor', 'sku', 'productName', 'qty', 'wholesalePrice', 'orderNumber', 'orderDate', 'ibShipping', 'tariff'];
             
             fields.forEach(fieldId => {
                 const field = document.getElementById(fieldId);
@@ -74508,19 +74813,27 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                     // NEW PURCHASE - Append to history
                     console.log('📦 New purchase detected - appending to history');
                     item.purchaseHistory.push(newPurchaseEntry);
+                    item._purchaseWriteAction = 'insert';
                 } else if (item.purchaseHistory.length > 0) {
                     // EDIT of existing item - Update the most recent entry
                     console.log('✏️ Editing existing item - updating most recent history entry');
+                    // Preserve cached Supabase IDs from the entry being replaced
+                    const lastEntry = item.purchaseHistory[item.purchaseHistory.length - 1];
+                    newPurchaseEntry._invoiceItemId = lastEntry._invoiceItemId || null;
+                    newPurchaseEntry._invoiceId = lastEntry._invoiceId || null;
                     item.purchaseHistory[item.purchaseHistory.length - 1] = newPurchaseEntry;
+                    item._purchaseWriteAction = 'update';
                 } else if (item.orderNumber) {
                     // Edge case: Has order number but no history - create first entry
                     console.log('📝 Creating first history entry');
                     item.purchaseHistory.push(newPurchaseEntry);
+                    item._purchaseWriteAction = 'insert';
                 }
             } else if (!isEdit && item.orderNumber) {
                 // NEW ITEM - Create first history entry
                 console.log('🆕 New item - creating first history entry');
                 item.purchaseHistory.push(newPurchaseEntry);
+                item._purchaseWriteAction = 'insert';
             }
             
             console.log('📚 Purchase history count:', item.purchaseHistory.length);
@@ -74657,6 +74970,20 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                         console.warn('⚠️ [Supabase] Direct item save failed:', item.sku);
                     }
                 }).catch(err => console.error('[Supabase] Save error:', err));
+                
+                // ======== SUPABASE: Write-through to invoices/invoice_items ========
+                if (item._purchaseWriteAction && item.orderNumber && typeof writePurchaseToSupabase === 'function') {
+                    const lastEntry = item.purchaseHistory[item.purchaseHistory.length - 1];
+                    writePurchaseToSupabase(item, lastEntry, item._purchaseWriteAction).then(result => {
+                        if (result) {
+                            console.log('✅ [Supabase] Purchase history written:', item._purchaseWriteAction, item.orderNumber);
+                            // Cache the returned IDs back onto the entry
+                            if (result.invoiceItemId) lastEntry._invoiceItemId = result.invoiceItemId;
+                            if (result.invoiceId) lastEntry._invoiceId = result.invoiceId;
+                        }
+                    }).catch(err => console.error('[Supabase] Purchase write-through error:', err));
+                    delete item._purchaseWriteAction;
+                }
             }
             
             // v23.0.6: PAR Auto-Refill and Channel Sync Integration
@@ -76156,13 +76483,30 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             // Show the section
             section.style.display = 'block';
             
+            // Sort oldest first, newest at bottom
+            const sorted = [...item.purchaseHistory].sort((a, b) => {
+                const da = new Date(a.orderDate || a.date || 0);
+                const db = new Date(b.orderDate || b.date || 0);
+                return da - db;
+            });
+            
+            // Item-level ibShipping is the corrected source of truth (post IB-Shipping-Fix-Utility)
+            const itemIbShipping = item.ibShipping || 0;
+            
             // Generate the history HTML
-            const historyHTML = item.purchaseHistory.map((purchase, index) => {
+            const historyHTML = sorted.map((purchase, index) => {
                 const date = purchase.date ? new Date(purchase.date).toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
                     year: 'numeric'
                 }) : 'N/A';
+                
+                const ibPct = purchase.ibShipping || 0;
+                const ibDollar = (purchase.wholesalePrice || 0) * (ibPct / 100);
+                // Flag if this entry's ibShipping differs from item-level corrected value
+                const ibSuspect = Math.abs(ibPct - itemIbShipping) > 0.05 && ibPct !== 0;
+                const ibBg = ibSuspect ? 'background: #fff8e1; border-radius: 4px; padding: 2px 4px;' : '';
+                const ibTip = ibSuspect ? ' title="⚠ Pre-correction value — may be inaccurate (item-level is ' + itemIbShipping.toFixed(1) + '%)"' : '';
                 
                 return `
                     <div style="background: white; padding: 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #e9ecef;">
@@ -76188,8 +76532,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                                 <div style="font-weight: 600;">$${(purchase.tariff || 0).toFixed(2)}</div>
                             </div>
                             <div>
-                                <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px;">IB Shipping %</div>
-                                <div style="font-weight: 600;">${(purchase.ibShipping || 0).toFixed(1)}%</div>
+                                <div style="font-size: 10px; color: #6c757d; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px;">IB Shipping</div>
+                                <div style="font-weight: 600; ${ibBg}"${ibTip}>${ibSuspect ? '⚠ ' : ''}${ibPct.toFixed(1)}% ($${ibDollar.toFixed(2)})</div>
                             </div>
                         </div>
                     </div>
@@ -76208,7 +76552,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             event.stopPropagation();
             
             // ✅ v20.19: Show purchase history in a modal instead of inline
-            const item = inventory.find(i => i.id === itemId);
+            const item = inventory.find(i => i.id == itemId);
             if (!item || !item.purchaseHistory || item.purchaseHistory.length === 0) {
                 return;
             }
@@ -76297,21 +76641,29 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                                         <th style="padding: 12px 8px; text-align: left; font-weight: 600; width: 120px; white-space: nowrap;">Invoice</th>
                                         <th style="padding: 12px 8px; text-align: right; font-weight: 600; width: 60px; white-space: nowrap;">Qty</th>
                                         <th style="padding: 12px 8px; text-align: right; font-weight: 600; width: 90px; white-space: nowrap;">Wholesale</th>
-                                        <th style="padding: 12px 8px; text-align: right; font-weight: 600; width: 85px; white-space: nowrap;">IB Ship %</th>
+                                        <th style="padding: 12px 8px; text-align: right; font-weight: 600; width: 110px; white-space: nowrap;">IB Ship</th>
                                         <th style="padding: 12px 8px; text-align: right; font-weight: 600; width: 70px; white-space: nowrap;">Tariff</th>
                                         <th style="padding: 12px 8px; text-align: right; font-weight: 600; width: 95px; white-space: nowrap;">Total Cost</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    ${item.purchaseHistory.map((purchase, index) => {
+                                    ${[...item.purchaseHistory].sort((a, b) => {
+                                        const da = new Date(a.orderDate || a.date || 0);
+                                        const db = new Date(b.orderDate || b.date || 0);
+                                        return da - db;
+                                    }).map((purchase, index, sorted) => {
                                         const totalCost = (purchase.wholesalePrice || 0) + (purchase.tariff || 0);
-                                        const isRecent = index === item.purchaseHistory.length - 1;
+                                        const isRecent = index === sorted.length - 1;
                                         const formattedDate = purchase.orderDate || purchase.date ? 
                                             new Date(purchase.orderDate || purchase.date).toLocaleDateString('en-US', {
                                                 month: '2-digit',
                                                 day: '2-digit',
                                                 year: '2-digit'
                                             }) : 'N/A';
+                                        const ibPct = purchase.ibShipping || 0;
+                                        const ibDollar = (purchase.wholesalePrice || 0) * (ibPct / 100);
+                                        const ibSuspect = Math.abs(ibPct - (item.ibShipping || 0)) > 0.05 && ibPct !== 0;
+                                        const ibStyle = ibSuspect ? 'background: #fff8e1; padding: 2px 6px; border-radius: 4px;' : '';
                                         return `
                                             <tr style="
                                                 border-bottom: 1px solid #e5e7eb;
@@ -76322,7 +76674,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                                                 <td style="padding: 12px 8px; width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: monospace;">${purchase.orderNumber || purchase.invoice || 'N/A'}</td>
                                                 <td style="padding: 12px 8px; width: 60px; text-align: right; font-weight: 600; white-space: nowrap;">${purchase.qty || 0}</td>
                                                 <td style="padding: 12px 8px; width: 90px; text-align: right; white-space: nowrap;">$${(purchase.wholesalePrice || 0).toFixed(2)}</td>
-                                                <td style="padding: 12px 8px; width: 85px; text-align: right; white-space: nowrap;">${(purchase.ibShipping || 0).toFixed(1)}%</td>
+                                                <td style="padding: 12px 8px; width: 110px; text-align: right; white-space: nowrap;"><span style="${ibStyle}" ${ibSuspect ? 'title="⚠ Pre-correction value — may be inaccurate (item-level is ' + (item.ibShipping || 0).toFixed(1) + '%)"' : ''}>${ibSuspect ? '⚠ ' : ''}${ibPct.toFixed(1)}% ($${ibDollar.toFixed(2)})</span></td>
                                                 <td style="padding: 12px 8px; width: 70px; text-align: right; white-space: nowrap;">$${(purchase.tariff || 0).toFixed(2)}</td>
                                                 <td style="padding: 12px 8px; width: 95px; text-align: right; font-weight: 600; white-space: nowrap;">$${totalCost.toFixed(2)}</td>
                                             </tr>
@@ -126257,28 +126609,35 @@ async function loadInventoryFromSupabase() {
         return item;
     });
     
-    // Load purchase history for all items
-    const { data: purchases, error: phError } = await sbClient
-        .from('purchase_history')
-        .select('*');
+    // Load purchase history from invoices + invoice_items (Schema v2.2)
+    // Falls back to legacy purchase_history table if invoices are empty
+    const { data: invItems, error: iiError } = await sbClient
+        .from('invoice_items')
+        .select('*, invoices!inner(invoice_number, order_date, actual_ship_date, vendor)')
+        .order('created_at', { ascending: true });
     
-    if (!phError && purchases) {
+    if (!iiError && invItems && invItems.length > 0) {
+        console.log(`📋 Loaded ${invItems.length} invoice line items from invoices/invoice_items`);
         // Group by item_id
         const phByItem = {};
-        purchases.forEach(ph => {
-            if (!phByItem[ph.item_id]) phByItem[ph.item_id] = [];
-            phByItem[ph.item_id].push({
-                date: ph.order_date,
-                orderDate: ph.order_date,
-                shippedDate: ph.shipped_date,
-                invoice: ph.order_number,
-                orderNumber: ph.order_number,
-                qty: ph.qty,
-                wholesalePrice: parseFloat(ph.wholesale_price) || 0,
-                ibShipping: parseFloat(ph.ib_shipping) || 0,
-                tariff: parseFloat(ph.tariff) || 0,
-                retailPrice: ph.retail_price != null ? parseFloat(ph.retail_price) : null,
-                comments: ph.comments || ''
+        invItems.forEach(ii => {
+            const itemId = ii.item_id;
+            if (!itemId) return; // Skip orphaned line items
+            if (!phByItem[itemId]) phByItem[itemId] = [];
+            phByItem[itemId].push({
+                _invoiceItemId: ii.id,         // Cache for write-through updates
+                _invoiceId: ii.invoice_id,     // Cache for write-through updates
+                date: ii.invoices.order_date,
+                orderDate: ii.invoices.order_date,
+                shippedDate: ii.invoices.actual_ship_date,
+                invoice: ii.invoices.invoice_number,
+                orderNumber: ii.invoices.invoice_number,
+                qty: ii.qty_ordered || 0,
+                wholesalePrice: parseFloat(ii.unit_wholesale_price) || 0,
+                ibShipping: parseFloat(ii.ib_shipping_pct) || 0,
+                tariff: parseFloat(ii.line_tariff) || 0,
+                retailPrice: null,
+                comments: ii.damage_notes || ''
             });
         });
         
@@ -126289,6 +126648,42 @@ async function loadInventoryFromSupabase() {
                 item.purchaseHistory = phByItem[sbId];
             }
         });
+    } else {
+        // Fallback: try legacy purchase_history table
+        console.log('📋 No invoice_items found, trying legacy purchase_history table...');
+        const { data: purchases, error: phError } = await sbClient
+            .from('purchase_history')
+            .select('*');
+        
+        if (!phError && purchases && purchases.length > 0) {
+            console.log(`📋 Loaded ${purchases.length} entries from legacy purchase_history`);
+            const phByItem = {};
+            purchases.forEach(ph => {
+                if (!phByItem[ph.item_id]) phByItem[ph.item_id] = [];
+                phByItem[ph.item_id].push({
+                    date: ph.order_date,
+                    orderDate: ph.order_date,
+                    shippedDate: ph.shipped_date,
+                    invoice: ph.order_number,
+                    orderNumber: ph.order_number,
+                    qty: ph.qty,
+                    wholesalePrice: parseFloat(ph.wholesale_price) || 0,
+                    ibShipping: parseFloat(ph.ib_shipping) || 0,
+                    tariff: parseFloat(ph.tariff) || 0,
+                    retailPrice: ph.retail_price != null ? parseFloat(ph.retail_price) : null,
+                    comments: ph.comments || ''
+                });
+            });
+            
+            inventory.forEach(item => {
+                const sbId = sbItemMap[item.sku];
+                if (sbId && phByItem[sbId]) {
+                    item.purchaseHistory = phByItem[sbId];
+                }
+            });
+        } else {
+            console.log('📋 No purchase history found in either table');
+        }
     }
     
     // Load sales history
@@ -126374,6 +126769,153 @@ async function saveItemToSupabase(itemOrSku) {
     }
     
     return true;
+}
+
+/**
+ * Write-through: Save a purchase history entry to invoices/invoice_items in Supabase
+ * Called from saveItem() when a new purchase is detected or an existing one is edited.
+ * 
+ * @param {object} item - The inventory item (needs sku, vendor, _sbId or sbItemMap lookup)
+ * @param {object} entry - The purchase history entry (orderNumber, qty, wholesalePrice, etc.)
+ * @param {string} action - 'insert' for new purchase, 'update' for editing most recent
+ * @returns {object|null} - { invoiceId, invoiceItemId } on success, null on failure
+ */
+async function writePurchaseToSupabase(item, entry, action) {
+    if (!sbClient || !sbConnected) return null;
+    
+    const invoiceNumber = (entry.orderNumber || entry.invoice || '').trim();
+    if (!invoiceNumber) {
+        console.log('[Purchase Write-Through] No invoice number, skipping');
+        return null;
+    }
+    
+    const itemId = sbItemMap[item.sku] || item._sbId || null;
+    
+    try {
+        let invoiceId = entry._invoiceId || null;
+        
+        // STEP 1: Find or create the invoice
+        if (!invoiceId) {
+            // Check if this invoice already exists
+            const { data: existing, error: lookupErr } = await sbClient
+                .from('invoices')
+                .select('id')
+                .eq('invoice_number', invoiceNumber)
+                .maybeSingle();
+            
+            if (lookupErr) {
+                console.error('[Purchase Write-Through] Invoice lookup error:', lookupErr.message);
+                return null;
+            }
+            
+            if (existing) {
+                invoiceId = existing.id;
+                console.log(`[Purchase Write-Through] Found existing invoice ${invoiceNumber} → id=${invoiceId}`);
+            }
+        }
+        
+        if (!invoiceId) {
+            // Create new invoice
+            const invoiceRow = {
+                invoice_number: invoiceNumber,
+                vendor: item.vendor || item.brandName || null,
+                order_date: entry.orderDate || entry.date || null,
+                actual_ship_date: entry.shippedDate || null,
+                status: 'received',
+                notes: null,
+                created_by: 'desktop-write-through'
+            };
+            
+            const { data: newInv, error: invErr } = await sbClient
+                .from('invoices')
+                .insert(invoiceRow)
+                .select('id')
+                .single();
+            
+            if (invErr) {
+                console.error('[Purchase Write-Through] Invoice insert error:', invErr.message);
+                return null;
+            }
+            
+            invoiceId = newInv.id;
+            console.log(`[Purchase Write-Through] Created invoice ${invoiceNumber} → id=${invoiceId}`);
+        }
+        
+        // STEP 2: Insert or update the line item
+        const lineItemRow = {
+            invoice_id: invoiceId,
+            item_id: itemId,
+            sku: item.sku,
+            product_name: (item.productName || '').substring(0, 100),
+            qty_ordered: entry.qty || 0,
+            qty_shipped: entry.qty || 0,
+            qty_received: entry.qty || 0,
+            qty_damaged: 0,
+            unit_wholesale_price: entry.wholesalePrice || 0,
+            line_tariff: entry.tariff || 0,
+            ib_shipping_pct: entry.ibShipping || 0,
+            receiving_status: 'received'
+        };
+        
+        let invoiceItemId = entry._invoiceItemId || null;
+        
+        if (action === 'update' && invoiceItemId) {
+            // UPDATE existing line item
+            const { error: updateErr } = await sbClient
+                .from('invoice_items')
+                .update(lineItemRow)
+                .eq('id', invoiceItemId);
+            
+            if (updateErr) {
+                console.error('[Purchase Write-Through] Line item update error:', updateErr.message);
+                return null;
+            }
+            console.log(`[Purchase Write-Through] Updated invoice_item id=${invoiceItemId}`);
+        } else {
+            // Check for existing line item (same invoice + same SKU) to avoid duplicates
+            const { data: existingLI, error: liLookupErr } = await sbClient
+                .from('invoice_items')
+                .select('id')
+                .eq('invoice_id', invoiceId)
+                .eq('sku', item.sku)
+                .maybeSingle();
+            
+            if (!liLookupErr && existingLI) {
+                // Update existing line item instead of duplicating
+                invoiceItemId = existingLI.id;
+                const { error: updateErr } = await sbClient
+                    .from('invoice_items')
+                    .update(lineItemRow)
+                    .eq('id', invoiceItemId);
+                
+                if (updateErr) {
+                    console.error('[Purchase Write-Through] Line item upsert-update error:', updateErr.message);
+                    return null;
+                }
+                console.log(`[Purchase Write-Through] Updated existing invoice_item id=${invoiceItemId} (dedup by invoice+sku)`);
+            } else {
+                // INSERT new line item
+                const { data: newLI, error: insertErr } = await sbClient
+                    .from('invoice_items')
+                    .insert(lineItemRow)
+                    .select('id')
+                    .single();
+                
+                if (insertErr) {
+                    console.error('[Purchase Write-Through] Line item insert error:', insertErr.message);
+                    return null;
+                }
+                invoiceItemId = newLI.id;
+                console.log(`[Purchase Write-Through] Inserted invoice_item id=${invoiceItemId}`);
+            }
+        }
+        
+        return { invoiceId, invoiceItemId };
+        
+    } catch (err) {
+        console.error('[Purchase Write-Through] Unexpected error:', err);
+        return null;
+    }
 }
 
 /**
