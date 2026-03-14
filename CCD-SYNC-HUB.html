@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.1</title>
+    <title>CCD Sync Hub v4.1.1</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -416,7 +416,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.1 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.1.1 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -3862,6 +3862,22 @@
             
             // ============ UPDATE EXISTING LISTING ============
             if (action === 'update') {
+                // v4.1.1 FIX: If ONLY quantity is being updated, skip updateListing entirely
+                // and go straight to updateEtsyInventory. updateListing with no fields
+                // returns "No fields to update" error which blocks the inventory push.
+                const hasNonQtyFields = fields.title || fields.description || fields.price || fields.tags || fields.all;
+                const hasQtyField = fields.quantity || fields.qty;
+                
+                if (hasQtyField && !hasNonQtyFields) {
+                    // Qty-only shortcut — skip updateListing, go straight to inventory API
+                    const listingId = product.etsyListing || product.etsyListingId || product.listingId;
+                    if (!listingId) {
+                        return { success: false, error: 'No Etsy listing ID for qty update' };
+                    }
+                    console.log(`[Etsy] Qty-only update for ${product.sku} — skipping updateListing, using inventory API`);
+                    return await updateEtsyInventory(product, url, key);
+                }
+                
                 // Check what fields to update
                 // v3.3.5.13: Accept generic 'listingId' from cascade queue items
                 const updateData = {
