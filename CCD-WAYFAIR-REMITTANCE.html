@@ -141,6 +141,9 @@
     .upload-zone h3 { margin-bottom: 8px; font-size: 18px; }
     .upload-zone p { color: var(--text-dim); font-size: 14px; }
     .upload-zone input[type="file"] { display: none; }
+    .upload-zone.compact { padding: 16px; margin-bottom: 16px; }
+    .upload-zone.compact h3 { font-size: 14px; margin-bottom: 0; }
+    .upload-zone.compact p { display: none; }
     
     /* ── Buttons ── */
     .btn {
@@ -272,11 +275,21 @@
     .file-item .meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 16px; }
     .file-item.duplicate { border-color: var(--yellow); opacity: 0.7; }
     .file-item.duplicate .name::after {
-        content: 'DUPLICATE';
+        content: 'ALREADY IN DB';
         margin-left: 8px;
         font-size: 10px;
         background: var(--yellow-dim);
         color: var(--yellow);
+        padding: 1px 6px;
+        border-radius: 3px;
+    }
+    .file-item.imported { border-color: var(--green); }
+    .file-item.imported .name::after {
+        content: '✅ IMPORTED';
+        margin-left: 8px;
+        font-size: 10px;
+        background: var(--green-dim);
+        color: var(--green);
         padding: 1px 6px;
         border-radius: 3px;
     }
@@ -417,8 +430,8 @@
     <!-- ════════ IMPORT TAB ════════ -->
     <div class="view active" id="view-import">
         <div class="upload-zone" id="uploadZone">
-            <h3>📂 Drop Wayfair Remittance CSV Files Here</h3>
-            <p>Or click to browse — supports batch upload of multiple files</p>
+            <h3 id="uploadTitle">📂 Drop Wayfair Remittance CSV Files Here</h3>
+            <p>Or click to browse — drop multiple files to batch import</p>
             <input type="file" id="fileInput" multiple accept=".csv">
         </div>
         
@@ -432,7 +445,7 @@
                 <button class="btn btn-primary" id="btnImport" onclick="importToSupabase()" disabled>
                     ⬆️ Import to Supabase
                 </button>
-                <button class="btn btn-ghost" onclick="clearParsed()">Clear</button>
+                <button class="btn btn-ghost" onclick="clearParsed()">Clear All</button>
             </div>
         </div>
     </div>
@@ -771,6 +784,7 @@ function handleFiles(fileList) {
             readCount++;
             if (readCount === files.length) {
                 renderParsedResults();
+                fileInput.value = '';  // Reset so same file can be re-dropped
             }
         };
         reader.readAsText(file);
@@ -781,6 +795,10 @@ function clearParsed() {
     parsedFiles = [];
     document.getElementById('parsedResults').style.display = 'none';
     fileInput.value = '';
+    // Restore full-size upload zone
+    const zone = document.getElementById('uploadZone');
+    zone.classList.remove('compact');
+    document.getElementById('uploadTitle').textContent = '📂 Drop Wayfair Remittance CSV Files Here';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -789,25 +807,44 @@ function clearParsed() {
 function renderParsedResults() {
     document.getElementById('parsedResults').style.display = 'block';
     
+    // Compact the upload zone but keep it visible for more drops
+    const zone = document.getElementById('uploadZone');
+    zone.classList.add('compact');
+    document.getElementById('uploadTitle').textContent = `📂 Drop more CSV files here (${parsedFiles.length} loaded)`;
+    
     const totalFiles = parsedFiles.length;
     const totalLines = parsedFiles.reduce((s, pf) => s + pf.lines.length, 0);
     const totalCharges = parsedFiles.reduce((s, pf) => s + pf.vendorCharges.length, 0);
     const totalPayment = parsedFiles.reduce((s, pf) => s + pf.header.totalUSD, 0);
-    const duplicates = parsedFiles.filter(pf => pf.isDuplicate).length;
-    const newFiles = totalFiles - duplicates;
+    const duplicates = parsedFiles.filter(pf => pf.isDuplicate && !pf.justImported).length;
+    const justImported = parsedFiles.filter(pf => pf.justImported).length;
+    const newFiles = totalFiles - duplicates - justImported;
     
     document.getElementById('parseStats').innerHTML = `
-        <div class="stat-card purple"><div class="label">Files Parsed</div><div class="value">${totalFiles}</div></div>
+        <div class="stat-card purple"><div class="label">Files Loaded</div><div class="value">${totalFiles}</div></div>
         <div class="stat-card green"><div class="label">New to Import</div><div class="value">${newFiles}</div></div>
-        <div class="stat-card yellow"><div class="label">Duplicates</div><div class="value">${duplicates}</div></div>
+        ${justImported > 0 ? `<div class="stat-card green"><div class="label">Just Imported</div><div class="value">${justImported}</div></div>` : ''}
+        <div class="stat-card yellow"><div class="label">Already in DB</div><div class="value">${duplicates}</div></div>
         <div class="stat-card blue"><div class="label">Order Lines</div><div class="value">${totalLines}</div></div>
         <div class="stat-card"><div class="label">Vendor Charges</div><div class="value">${totalCharges}</div></div>
         <div class="stat-card"><div class="label">Total USD</div><div class="value">$${totalPayment.toFixed(2)}</div></div>
     `;
     
+    // Update import button text with count
+    const btn = document.getElementById('btnImport');
+    if (newFiles > 0) {
+        btn.textContent = `⬆️ Import ${newFiles} New Remittance${newFiles > 1 ? 's' : ''} to Supabase`;
+        btn.disabled = !sbConnected;
+    } else {
+        btn.textContent = '⬆️ All files already imported (duplicates)';
+        btn.disabled = true;
+    }
+    
     // File list
-    document.getElementById('fileList').innerHTML = parsedFiles.map(pf => `
-        <div class="file-item ${pf.isDuplicate ? 'duplicate' : ''}">
+    document.getElementById('fileList').innerHTML = parsedFiles.map(pf => {
+        const cls = pf.justImported ? 'imported' : (pf.isDuplicate ? 'duplicate' : '');
+        return `
+        <div class="file-item ${cls}">
             <div>
                 <div class="name">${esc(pf.fileName)}</div>
                 <div class="meta">
@@ -819,8 +856,8 @@ function renderParsedResults() {
                 <div style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:600;">$${pf.header.totalUSD.toFixed(2)}</div>
                 <div class="meta"><span>${pf.lines.length} orders</span><span>${pf.vendorCharges.length} charges</span></div>
             </div>
-        </div>
-    `).join('');
+        </div>`;
+    }).join('');
     
     // Preview table for all lines
     let allLines = [];
@@ -961,6 +998,7 @@ async function importToSupabase() {
             
             existingRemittances.add(pf.header.remittanceNumber);
             pf.isDuplicate = true;
+            pf.justImported = true;
             imported++;
             
         } catch (e) {
@@ -971,7 +1009,6 @@ async function importToSupabase() {
     }
     
     btn.disabled = false;
-    btn.innerHTML = '⬆️ Import to Supabase';
     
     toast(`Imported ${imported} remittance(s)${errors ? `, ${errors} error(s)` : ''}`, imported > 0 ? 'success' : 'error');
     renderParsedResults();
