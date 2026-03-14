@@ -1,0 +1,1420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Wayfair Remittance Import</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    
+    :root {
+        --bg: #0f1117;
+        --bg-card: #1a1d27;
+        --bg-card-hover: #1f2330;
+        --bg-input: #141620;
+        --border: #2a2d3a;
+        --border-focus: #6366f1;
+        --text: #e8eaed;
+        --text-dim: #9ca3af;
+        --text-muted: #6b7280;
+        --wayfair: #7b2d8e;
+        --wayfair-light: #9b4dbe;
+        --accent: #6366f1;
+        --accent-hover: #818cf8;
+        --green: #22c55e;
+        --green-dim: #166534;
+        --red: #ef4444;
+        --red-dim: #991b1b;
+        --yellow: #eab308;
+        --yellow-dim: #854d0e;
+        --blue: #3b82f6;
+        --orange: #f97316;
+        --radius: 8px;
+        --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+        font-family: 'DM Sans', -apple-system, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+    }
+    
+    /* ── Header ── */
+    .app-header {
+        background: linear-gradient(135deg, #1a1d27 0%, #2d1b3d 100%);
+        border-bottom: 1px solid var(--border);
+        padding: 20px 32px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+    }
+    .app-header h1 {
+        font-size: 22px;
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .app-header h1 .logo {
+        width: 36px; height: 36px;
+        background: var(--wayfair);
+        border-radius: 8px;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 18px;
+    }
+    .version { font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+    
+    /* ── Supabase Connection ── */
+    .sb-bar {
+        background: var(--bg-card);
+        border-bottom: 1px solid var(--border);
+        padding: 10px 32px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 13px;
+    }
+    .sb-bar input {
+        background: var(--bg-input);
+        border: 1px solid var(--border);
+        color: var(--text);
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        flex: 1;
+        max-width: 320px;
+    }
+    .sb-dot {
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        background: var(--red);
+        transition: background 0.3s;
+    }
+    .sb-dot.connected { background: var(--green); }
+    
+    /* ── Tabs ── */
+    .tab-bar {
+        display: flex;
+        gap: 0;
+        background: var(--bg-card);
+        border-bottom: 1px solid var(--border);
+        padding: 0 32px;
+    }
+    .tab {
+        padding: 12px 24px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-dim);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        transition: all 0.2s;
+        user-select: none;
+    }
+    .tab:hover { color: var(--text); background: var(--bg-card-hover); }
+    .tab.active { color: var(--wayfair-light); border-bottom-color: var(--wayfair); }
+    
+    /* ── Main Content ── */
+    .main { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+    .view { display: none; }
+    .view.active { display: block; }
+    
+    /* ── Upload Zone ── */
+    .upload-zone {
+        border: 2px dashed var(--border);
+        border-radius: var(--radius);
+        padding: 48px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: var(--bg-card);
+        margin-bottom: 24px;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+        border-color: var(--wayfair);
+        background: rgba(123, 45, 142, 0.08);
+    }
+    .upload-zone h3 { margin-bottom: 8px; font-size: 18px; }
+    .upload-zone p { color: var(--text-dim); font-size: 14px; }
+    .upload-zone input[type="file"] { display: none; }
+    
+    /* ── Buttons ── */
+    .btn {
+        padding: 8px 16px;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .btn-primary { background: var(--wayfair); color: white; }
+    .btn-primary:hover { background: var(--wayfair-light); }
+    .btn-accent { background: var(--accent); color: white; }
+    .btn-accent:hover { background: var(--accent-hover); }
+    .btn-green { background: var(--green); color: white; }
+    .btn-green:hover { background: #16a34a; }
+    .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--bg-card-hover); color: var(--text); }
+    .btn-red { background: var(--red); color: white; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-sm { padding: 5px 10px; font-size: 12px; }
+    
+    /* ── Stats Grid ── */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-bottom: 24px;
+    }
+    .stat-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px;
+    }
+    .stat-card .label { font-size: 12px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 24px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+    .stat-card.purple .value { color: var(--wayfair-light); }
+    .stat-card.green .value { color: var(--green); }
+    .stat-card.red .value { color: var(--red); }
+    .stat-card.yellow .value { color: var(--yellow); }
+    .stat-card.blue .value { color: var(--blue); }
+    
+    /* ── Tables ── */
+    .table-wrap {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        margin-bottom: 24px;
+    }
+    .table-title {
+        padding: 14px 16px;
+        font-weight: 600;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    th {
+        background: var(--bg);
+        padding: 10px 12px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--text-dim);
+        border-bottom: 1px solid var(--border);
+        white-space: nowrap;
+    }
+    td {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+    }
+    tr:hover td { background: var(--bg-card-hover); }
+    tr:last-child td { border-bottom: none; }
+    .text-right { text-align: right; }
+    .text-center { text-align: center; }
+    .amt-positive { color: var(--green); }
+    .amt-negative { color: var(--red); }
+    .amt-zero { color: var(--text-muted); }
+    
+    /* ── Badges ── */
+    .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: 'DM Sans', sans-serif;
+    }
+    .badge-green { background: var(--green-dim); color: var(--green); }
+    .badge-red { background: var(--red-dim); color: var(--red); }
+    .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-blue { background: rgba(59,130,246,0.15); color: var(--blue); }
+    .badge-purple { background: rgba(123,45,142,0.2); color: var(--wayfair-light); }
+    
+    /* ── Parsed Files List ── */
+    .file-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 20px;
+    }
+    .file-item {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .file-item .name { font-weight: 500; font-size: 14px; }
+    .file-item .meta { font-size: 12px; color: var(--text-dim); display: flex; gap: 16px; }
+    .file-item.duplicate { border-color: var(--yellow); opacity: 0.7; }
+    .file-item.duplicate .name::after {
+        content: 'DUPLICATE';
+        margin-left: 8px;
+        font-size: 10px;
+        background: var(--yellow-dim);
+        color: var(--yellow);
+        padding: 1px 6px;
+        border-radius: 3px;
+    }
+    
+    /* ── Toast ── */
+    .toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .toast {
+        padding: 12px 20px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 500;
+        box-shadow: var(--shadow);
+        animation: slideIn 0.3s ease;
+        max-width: 400px;
+    }
+    .toast-success { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .toast-error { background: var(--red-dim); color: #fca5a5; border: 1px solid var(--red); }
+    .toast-info { background: rgba(99,102,241,0.15); color: var(--accent-hover); border: 1px solid var(--accent); }
+    .toast-warning { background: var(--yellow-dim); color: var(--yellow); border: 1px solid var(--yellow); }
+    @keyframes slideIn { from { transform: translateX(100%); opacity:0; } to { transform: translateX(0); opacity:1; } }
+    
+    /* ── Reconciliation ── */
+    .recon-summary {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .recon-box {
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 20px;
+    }
+    .recon-box h3 {
+        font-size: 14px;
+        margin-bottom: 12px;
+        color: var(--text-dim);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .recon-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+    }
+    .recon-row:last-child { border-bottom: none; font-weight: 700; }
+    .recon-row .val { font-family: 'JetBrains Mono', monospace; }
+    
+    /* ── Section headers ── */
+    .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+    .section-header h2 { font-size: 18px; font-weight: 600; }
+    
+    /* ── Empty state ── */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+        color: var(--text-dim);
+    }
+    .empty-state .icon { font-size: 48px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 18px; color: var(--text); margin-bottom: 8px; }
+    
+    /* ── Scrollable table ── */
+    .table-scroll { overflow-x: auto; }
+    
+    /* ── Action bar ── */
+    .action-bar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+    }
+    
+    /* ── Loading ── */
+    .spinner {
+        width: 20px; height: 20px;
+        border: 2px solid var(--border);
+        border-top-color: var(--wayfair);
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        display: inline-block;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    @media (max-width: 768px) {
+        .main { padding: 16px; }
+        .app-header { padding: 16px; }
+        .tab-bar { padding: 0 16px; overflow-x: auto; }
+        .recon-summary { grid-template-columns: 1fr; }
+        .sb-bar { flex-wrap: wrap; padding: 10px 16px; }
+    }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+    <h1>
+        <span class="logo">W</span>
+        Wayfair Remittance Import
+    </h1>
+    <span class="version">CCD-WAYFAIR-REMITTANCE v1.0</span>
+</div>
+
+<!-- Supabase Connection Bar -->
+<div class="sb-bar">
+    <span class="sb-dot" id="sbDot"></span>
+    <span id="sbStatus">Not connected</span>
+    <input type="text" id="sbUrl" placeholder="Supabase URL">
+    <input type="password" id="sbKey" placeholder="Supabase anon key">
+    <button class="btn btn-sm btn-ghost" onclick="connectSupabase()">Connect</button>
+</div>
+
+<!-- Tabs -->
+<div class="tab-bar">
+    <div class="tab active" onclick="switchTab('import')">📥 Import</div>
+    <div class="tab" onclick="switchTab('browse')">📋 Browse Data</div>
+    <div class="tab" onclick="switchTab('reconcile')">🔗 Reconciliation</div>
+    <div class="tab" onclick="switchTab('reports')">📊 Reports</div>
+</div>
+
+<div class="main">
+    <!-- ════════ IMPORT TAB ════════ -->
+    <div class="view active" id="view-import">
+        <div class="upload-zone" id="uploadZone">
+            <h3>📂 Drop Wayfair Remittance CSV Files Here</h3>
+            <p>Or click to browse — supports batch upload of multiple files</p>
+            <input type="file" id="fileInput" multiple accept=".csv">
+        </div>
+        
+        <div id="parsedResults" style="display:none;">
+            <div class="stats-grid" id="parseStats"></div>
+            <div class="file-list" id="fileList"></div>
+            
+            <div id="parsedPreview"></div>
+            
+            <div class="action-bar" style="margin-top: 16px;">
+                <button class="btn btn-primary" id="btnImport" onclick="importToSupabase()" disabled>
+                    ⬆️ Import to Supabase
+                </button>
+                <button class="btn btn-ghost" onclick="clearParsed()">Clear</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ════════ BROWSE TAB ════════ -->
+    <div class="view" id="view-browse">
+        <div class="section-header">
+            <h2>Stored Remittances</h2>
+            <button class="btn btn-ghost btn-sm" onclick="loadBrowseData()">🔄 Refresh</button>
+        </div>
+        <div id="browseContent">
+            <div class="empty-state">
+                <div class="icon">📋</div>
+                <h3>Connect to Supabase to browse</h3>
+                <p>Import remittance data first, then browse it here.</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ════════ RECONCILIATION TAB ════════ -->
+    <div class="view" id="view-reconcile">
+        <div class="section-header">
+            <h2>Payment Reconciliation</h2>
+            <div>
+                <button class="btn btn-accent btn-sm" onclick="runReconciliation()">🔗 Run Reconciliation</button>
+                <button class="btn btn-ghost btn-sm" onclick="exportReconCSV()">📥 Export CSV</button>
+            </div>
+        </div>
+        <div id="reconContent">
+            <div class="empty-state">
+                <div class="icon">🔗</div>
+                <h3>Reconcile Wayfair payments to sales</h3>
+                <p>Matches remittance POs to sales_history records using the WF-{PO#} pattern.</p>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ════════ REPORTS TAB ════════ -->
+    <div class="view" id="view-reports">
+        <div class="section-header">
+            <h2>Wayfair Reports</h2>
+            <button class="btn btn-ghost btn-sm" onclick="loadReports()">🔄 Refresh</button>
+        </div>
+        <div id="reportsContent">
+            <div class="empty-state">
+                <div class="icon">📊</div>
+                <h3>Financial Reports</h3>
+                <p>Import remittance data to generate reports on fees, trends, and profitability.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+
+<!-- Supabase JS Client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+let sbClient = null;
+let sbConnected = false;
+let parsedFiles = [];       // Array of { fileName, header, lines, vendorCharges, subtotals, isDuplicate }
+let existingRemittances = new Set();  // remittance numbers already in DB
+
+// ═══════════════════════════════════════════════════════════
+// SUPABASE CONNECTION
+// ═══════════════════════════════════════════════════════════
+function connectSupabase() {
+    const url = document.getElementById('sbUrl').value.trim();
+    const key = document.getElementById('sbKey').value.trim();
+    if (!url || !key) { toast('Enter Supabase URL and key', 'warning'); return; }
+    
+    try {
+        sbClient = supabase.createClient(url, key);
+        // Test connection
+        sbClient.from('wayfair_remittances').select('remittance_number').limit(1).then(({ data, error }) => {
+            if (error && error.message.includes('does not exist')) {
+                toast('Tables not found — run the schema SQL first', 'error');
+                return;
+            }
+            sbConnected = true;
+            document.getElementById('sbDot').classList.add('connected');
+            document.getElementById('sbStatus').textContent = 'Connected';
+            document.getElementById('btnImport').disabled = false;
+            
+            // Cache existing remittance numbers for duplicate detection
+            loadExistingRemittances();
+            
+            // Save to localStorage (camelCase keys for Desktop compatibility)
+            localStorage.setItem('ccdSupabaseUrl', url);
+            localStorage.setItem('ccdSupabaseKey', key);
+            toast('Connected to Supabase', 'success');
+        });
+    } catch (e) {
+        toast('Connection failed: ' + e.message, 'error');
+    }
+}
+
+async function loadExistingRemittances() {
+    if (!sbClient) return;
+    const { data } = await sbClient.from('wayfair_remittances').select('remittance_number');
+    existingRemittances = new Set((data || []).map(r => r.remittance_number));
+    // Re-check parsed files for duplicates
+    parsedFiles.forEach(pf => {
+        pf.isDuplicate = existingRemittances.has(pf.header.remittanceNumber);
+    });
+}
+
+// Auto-connect from localStorage
+(function autoConnect() {
+    const url = localStorage.getItem('ccdSupabaseUrl');
+    const key = localStorage.getItem('ccdSupabaseKey');
+    if (url && key) {
+        document.getElementById('sbUrl').value = url;
+        document.getElementById('sbKey').value = key;
+        connectSupabase();
+    }
+})();
+
+// ═══════════════════════════════════════════════════════════
+// CSV PARSER
+// ═══════════════════════════════════════════════════════════
+function parseRemittanceCSV(text, fileName) {
+    const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    
+    const result = {
+        fileName: fileName,
+        header: {
+            remittanceNumber: '',
+            supplierName: '',
+            remittanceDate: '',
+            totalUSD: 0,
+            paymentMethod: ''
+        },
+        lines: [],
+        vendorCharges: [],
+        subtotals: {},
+        isDuplicate: false
+    };
+    
+    let section = 'header';  // header | orders | vendor_services | footer
+    let orderHeaderFound = false;
+    let vendorHeaderFound = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i];
+        // Parse CSV respecting quotes
+        const cells = parseCSVLine(raw);
+        const first = (cells[0] || '').trim();
+        
+        // ── Header Section ──
+        if (first.startsWith('Wayfair Remittance #:')) {
+            result.header.remittanceNumber = first.replace('Wayfair Remittance #:', '').trim();
+            continue;
+        }
+        if (first.startsWith('For Supplier:')) {
+            // Supplier name may contain commas (e.g. "Country Charm Decor, LLC")
+            let supplierParts = [first.replace('For Supplier:', '').trim()];
+            for (let c = 1; c < cells.length; c++) {
+                const part = (cells[c] || '').trim();
+                if (part) supplierParts.push(part);
+                else break;
+            }
+            result.header.supplierName = supplierParts.join(', ');
+            continue;
+        }
+        if (first.startsWith('Date:')) {
+            result.header.remittanceDate = first.replace('Date:', '').trim();
+            continue;
+        }
+        if (first.startsWith('Total (USD):') && section === 'header') {
+            result.header.totalUSD = parseFloat((cells[1] || first.replace('Total (USD):', '')).trim()) || 0;
+            continue;
+        }
+        if (first.startsWith('To be sent via')) {
+            result.header.paymentMethod = first.replace('To be sent via', '').trim();
+            continue;
+        }
+        
+        // ── Order Lines Header Row ──
+        if (first === 'Invoice #' && (cells[1] || '').trim() === 'PO #') {
+            section = 'orders';
+            orderHeaderFound = true;
+            continue;
+        }
+        
+        // ── Vendor Services Header ──
+        if (first === 'Vendor Services') {
+            section = 'vendor_services';
+            continue;
+        }
+        if (section === 'vendor_services' && first === 'Invoice #' && (cells[1] || '').trim() === 'Program Type') {
+            vendorHeaderFound = true;
+            continue;
+        }
+        
+        // ── Sub-total row ──
+        if ((cells[2] || '').trim() === 'Sub-total:') {
+            result.subtotals = {
+                productAmount: parseFloat(cells[3]) || 0,
+                damagesDefects: parseFloat(cells[4]) || 0,
+                earlyPay: parseFloat(cells[5]) || 0,
+                shipping: parseFloat(cells[6]) || 0,
+                other: parseFloat(cells[7]) || 0,
+                taxVat: parseFloat(cells[8]) || 0,
+                paymentAmount: parseFloat(cells[9]) || 0
+            };
+            section = 'footer';
+            continue;
+        }
+        
+        // ── Footer total ──
+        if ((cells[8] || '').trim() === 'Total (USD):') {
+            // Final total — already captured in header
+            continue;
+        }
+        
+        // ── Parse Order Lines ──
+        if (section === 'orders' && orderHeaderFound && first && first !== '') {
+            // Skip blank rows
+            const invoiceNum = first;
+            const poNum = (cells[1] || '').trim();
+            if (!poNum) continue;
+            
+            result.lines.push({
+                invoiceNumber: invoiceNum,
+                poNumber: poNum,
+                invoiceDate: (cells[2] || '').trim(),
+                productAmount: parseFloat(cells[3]) || 0,
+                damagesDefectsAmt: parseFloat(cells[4]) || 0,
+                earlyPayDiscount: parseFloat(cells[5]) || 0,
+                shipping: parseFloat(cells[6]) || 0,
+                other: parseFloat(cells[7]) || 0,
+                taxVat: parseFloat(cells[8]) || 0,
+                paymentAmount: parseFloat(cells[9]) || 0,
+                business: (cells[10] || 'Wayfair').trim(),
+                orderType: (cells[11] || 'Dropship').trim()
+            });
+            continue;
+        }
+        
+        // ── Parse Vendor Charges ──
+        if (section === 'vendor_services' && vendorHeaderFound && first && first !== '') {
+            const programType = (cells[1] || '').trim();
+            if (!programType) continue;
+            
+            result.vendorCharges.push({
+                invoiceNumber: first,
+                programType: programType,
+                invoiceDate: (cells[2] || '').trim(),
+                description: (cells[3] || '').trim(),
+                amount: parseFloat(cells[9]) || 0
+            });
+            continue;
+        }
+    }
+    
+    // Check duplicate
+    result.isDuplicate = existingRemittances.has(result.header.remittanceNumber);
+    
+    // Extract damages % from header text if available (usually 4%)
+    // It's in the column header: "Wayfair Allowance for Damages/ Defects [4.00%]"
+    result.damagesDefectsPct = 4.00;
+    
+    return result;
+}
+
+function parseCSVLine(line) {
+    const result = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (inQuotes) {
+            if (ch === '"' && line[i + 1] === '"') {
+                current += '"';
+                i++;
+            } else if (ch === '"') {
+                inQuotes = false;
+            } else {
+                current += ch;
+            }
+        } else {
+            if (ch === '"') {
+                inQuotes = true;
+            } else if (ch === ',') {
+                result.push(current);
+                current = '';
+            } else {
+                current += ch;
+            }
+        }
+    }
+    result.push(current);
+    return result;
+}
+
+// ═══════════════════════════════════════════════════════════
+// FILE HANDLING
+// ═══════════════════════════════════════════════════════════
+const uploadZone = document.getElementById('uploadZone');
+const fileInput = document.getElementById('fileInput');
+
+uploadZone.addEventListener('click', () => fileInput.click());
+uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+uploadZone.addEventListener('drop', e => {
+    e.preventDefault();
+    uploadZone.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+function handleFiles(fileList) {
+    const files = Array.from(fileList).filter(f => f.name.endsWith('.csv'));
+    if (!files.length) { toast('No CSV files found', 'warning'); return; }
+    
+    let readCount = 0;
+    files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            const parsed = parseRemittanceCSV(e.target.result, file.name);
+            
+            // Check if already in our parsed list
+            const alreadyParsed = parsedFiles.find(pf => pf.header.remittanceNumber === parsed.header.remittanceNumber);
+            if (alreadyParsed) {
+                toast(`Skipped ${file.name} — already loaded (Rem# ${parsed.header.remittanceNumber})`, 'warning');
+            } else {
+                parsedFiles.push(parsed);
+            }
+            
+            readCount++;
+            if (readCount === files.length) {
+                renderParsedResults();
+            }
+        };
+        reader.readAsText(file);
+    });
+}
+
+function clearParsed() {
+    parsedFiles = [];
+    document.getElementById('parsedResults').style.display = 'none';
+    fileInput.value = '';
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENDER PARSED RESULTS
+// ═══════════════════════════════════════════════════════════
+function renderParsedResults() {
+    document.getElementById('parsedResults').style.display = 'block';
+    
+    const totalFiles = parsedFiles.length;
+    const totalLines = parsedFiles.reduce((s, pf) => s + pf.lines.length, 0);
+    const totalCharges = parsedFiles.reduce((s, pf) => s + pf.vendorCharges.length, 0);
+    const totalPayment = parsedFiles.reduce((s, pf) => s + pf.header.totalUSD, 0);
+    const duplicates = parsedFiles.filter(pf => pf.isDuplicate).length;
+    const newFiles = totalFiles - duplicates;
+    
+    document.getElementById('parseStats').innerHTML = `
+        <div class="stat-card purple"><div class="label">Files Parsed</div><div class="value">${totalFiles}</div></div>
+        <div class="stat-card green"><div class="label">New to Import</div><div class="value">${newFiles}</div></div>
+        <div class="stat-card yellow"><div class="label">Duplicates</div><div class="value">${duplicates}</div></div>
+        <div class="stat-card blue"><div class="label">Order Lines</div><div class="value">${totalLines}</div></div>
+        <div class="stat-card"><div class="label">Vendor Charges</div><div class="value">${totalCharges}</div></div>
+        <div class="stat-card"><div class="label">Total USD</div><div class="value">$${totalPayment.toFixed(2)}</div></div>
+    `;
+    
+    // File list
+    document.getElementById('fileList').innerHTML = parsedFiles.map(pf => `
+        <div class="file-item ${pf.isDuplicate ? 'duplicate' : ''}">
+            <div>
+                <div class="name">${esc(pf.fileName)}</div>
+                <div class="meta">
+                    <span>Rem# ${esc(pf.header.remittanceNumber)}</span>
+                    <span>${esc(pf.header.remittanceDate)}</span>
+                </div>
+            </div>
+            <div style="text-align:right;">
+                <div style="font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:600;">$${pf.header.totalUSD.toFixed(2)}</div>
+                <div class="meta"><span>${pf.lines.length} orders</span><span>${pf.vendorCharges.length} charges</span></div>
+            </div>
+        </div>
+    `).join('');
+    
+    // Preview table for all lines
+    let allLines = [];
+    parsedFiles.forEach(pf => {
+        pf.lines.forEach(ln => {
+            allLines.push({ ...ln, remittanceNumber: pf.header.remittanceNumber, remittanceDate: pf.header.remittanceDate });
+        });
+    });
+    
+    document.getElementById('parsedPreview').innerHTML = `
+        <div class="table-wrap">
+            <div class="table-title">
+                <span>📦 Order Payment Lines (${allLines.length})</span>
+            </div>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr>
+                        <th>Remittance</th><th>PO #</th><th>Invoice Date</th>
+                        <th class="text-right">Product Amt</th><th class="text-right">Damages</th>
+                        <th class="text-right">Early Pay</th><th class="text-right">Shipping</th>
+                        <th class="text-right">Other</th><th class="text-right">Tax</th>
+                        <th class="text-right">Payment</th><th>Type</th>
+                    </tr></thead>
+                    <tbody>
+                        ${allLines.map(ln => `<tr>
+                            <td>${esc(ln.remittanceNumber)}</td>
+                            <td>${esc(ln.poNumber)}</td>
+                            <td>${esc(ln.invoiceDate)}</td>
+                            <td class="text-right">${fmtAmt(ln.productAmount)}</td>
+                            <td class="text-right amt-negative">${fmtAmt(ln.damagesDefectsAmt)}</td>
+                            <td class="text-right amt-negative">${fmtAmt(ln.earlyPayDiscount)}</td>
+                            <td class="text-right">${fmtAmt(ln.shipping)}</td>
+                            <td class="text-right">${fmtAmt(ln.other)}</td>
+                            <td class="text-right">${fmtAmt(ln.taxVat)}</td>
+                            <td class="text-right amt-positive">$${ln.paymentAmount.toFixed(2)}</td>
+                            <td>${esc(ln.orderType)}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        ${totalCharges > 0 ? `<div class="table-wrap">
+            <div class="table-title"><span>🏷️ Vendor Charges (${totalCharges})</span></div>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr>
+                        <th>Remittance</th><th>Invoice #</th><th>Program Type</th>
+                        <th>Date</th><th>Description</th><th class="text-right">Amount</th>
+                    </tr></thead>
+                    <tbody>
+                        ${parsedFiles.flatMap(pf => pf.vendorCharges.map(vc => `<tr>
+                            <td>${esc(pf.header.remittanceNumber)}</td>
+                            <td>${esc(vc.invoiceNumber)}</td>
+                            <td><span class="badge badge-purple">${esc(vc.programType)}</span></td>
+                            <td>${esc(vc.invoiceDate)}</td>
+                            <td>${esc(vc.description)}</td>
+                            <td class="text-right amt-negative">$${Math.abs(vc.amount).toFixed(2)}</td>
+                        </tr>`)).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>` : ''}
+    `;
+}
+
+// ═══════════════════════════════════════════════════════════
+// IMPORT TO SUPABASE
+// ═══════════════════════════════════════════════════════════
+async function importToSupabase() {
+    if (!sbConnected) { toast('Connect to Supabase first', 'error'); return; }
+    
+    const newFiles = parsedFiles.filter(pf => !pf.isDuplicate);
+    if (!newFiles.length) { toast('No new files to import — all duplicates', 'warning'); return; }
+    
+    const btn = document.getElementById('btnImport');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Importing...';
+    
+    let imported = 0;
+    let errors = 0;
+    
+    for (const pf of newFiles) {
+        try {
+            // 1. Insert remittance header
+            const { data: remData, error: remErr } = await sbClient
+                .from('wayfair_remittances')
+                .insert({
+                    remittance_number: pf.header.remittanceNumber,
+                    remittance_date: pf.header.remittanceDate,
+                    supplier_name: pf.header.supplierName,
+                    total_usd: pf.header.totalUSD,
+                    payment_method: pf.header.paymentMethod || 'Bank transfer'
+                })
+                .select('id')
+                .single();
+            
+            if (remErr) throw remErr;
+            const remId = remData.id;
+            
+            // 2. Insert order lines
+            if (pf.lines.length > 0) {
+                const lineRows = pf.lines.map(ln => ({
+                    remittance_id: remId,
+                    invoice_number: ln.invoiceNumber,
+                    po_number: ln.poNumber,
+                    invoice_date: ln.invoiceDate ? normalizeDate(ln.invoiceDate) : null,
+                    product_amount: ln.productAmount,
+                    damages_defects_pct: pf.damagesDefectsPct || 4.00,
+                    damages_defects_amt: ln.damagesDefectsAmt,
+                    early_pay_discount: ln.earlyPayDiscount,
+                    shipping: ln.shipping,
+                    other: ln.other,
+                    tax_vat: ln.taxVat,
+                    payment_amount: ln.paymentAmount,
+                    business: ln.business,
+                    order_type: ln.orderType
+                }));
+                
+                const { error: lineErr } = await sbClient.from('wayfair_remittance_lines').insert(lineRows);
+                if (lineErr) throw lineErr;
+            }
+            
+            // 3. Insert vendor charges
+            if (pf.vendorCharges.length > 0) {
+                const chargeRows = pf.vendorCharges.map(vc => ({
+                    remittance_id: remId,
+                    invoice_number: vc.invoiceNumber,
+                    program_type: vc.programType,
+                    invoice_date: vc.invoiceDate ? normalizeDate(vc.invoiceDate) : null,
+                    description: vc.description,
+                    amount: vc.amount
+                }));
+                
+                const { error: chargeErr } = await sbClient.from('wayfair_vendor_charges').insert(chargeRows);
+                if (chargeErr) throw chargeErr;
+            }
+            
+            existingRemittances.add(pf.header.remittanceNumber);
+            pf.isDuplicate = true;
+            imported++;
+            
+        } catch (e) {
+            console.error('Import error for', pf.fileName, e);
+            toast(`Error importing ${pf.fileName}: ${e.message}`, 'error');
+            errors++;
+        }
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = '⬆️ Import to Supabase';
+    
+    toast(`Imported ${imported} remittance(s)${errors ? `, ${errors} error(s)` : ''}`, imported > 0 ? 'success' : 'error');
+    renderParsedResults();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BROWSE DATA
+// ═══════════════════════════════════════════════════════════
+async function loadBrowseData() {
+    if (!sbConnected) { toast('Connect to Supabase first', 'warning'); return; }
+    
+    const { data: remittances, error } = await sbClient
+        .from('wayfair_remittances')
+        .select('*, wayfair_remittance_lines(count), wayfair_vendor_charges(count)')
+        .order('remittance_date', { ascending: false });
+    
+    if (error) { toast('Error loading: ' + error.message, 'error'); return; }
+    
+    if (!remittances || !remittances.length) {
+        document.getElementById('browseContent').innerHTML = `
+            <div class="empty-state"><div class="icon">📋</div><h3>No remittances imported yet</h3></div>`;
+        return;
+    }
+    
+    const totalPaid = remittances.reduce((s, r) => s + (r.total_usd || 0), 0);
+    
+    document.getElementById('browseContent').innerHTML = `
+        <div class="stats-grid">
+            <div class="stat-card purple"><div class="label">Remittances</div><div class="value">${remittances.length}</div></div>
+            <div class="stat-card green"><div class="label">Total Received</div><div class="value">$${totalPaid.toFixed(2)}</div></div>
+        </div>
+        <div class="table-wrap">
+            <div class="table-title"><span>All Remittances</span></div>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr>
+                        <th>Remittance #</th><th>Date</th><th>Supplier</th>
+                        <th class="text-right">Total USD</th><th class="text-center">Orders</th>
+                        <th class="text-center">Charges</th><th>Actions</th>
+                    </tr></thead>
+                    <tbody>
+                        ${remittances.map(r => `<tr>
+                            <td>${esc(r.remittance_number)}</td>
+                            <td>${displayDate(r.remittance_date)}</td>
+                            <td style="font-family:'DM Sans',sans-serif;">${esc(r.supplier_name || '')}</td>
+                            <td class="text-right">${fmtAmt(r.total_usd)}</td>
+                            <td class="text-center">${r.wayfair_remittance_lines?.[0]?.count || 0}</td>
+                            <td class="text-center">${r.wayfair_vendor_charges?.[0]?.count || 0}</td>
+                            <td>
+                                <button class="btn btn-sm btn-ghost" onclick="viewRemittance(${r.id})">View</button>
+                                <button class="btn btn-sm btn-ghost" style="color:var(--red);" onclick="deleteRemittance(${r.id}, '${esc(r.remittance_number)}')">Delete</button>
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+async function viewRemittance(id) {
+    const { data: lines } = await sbClient.from('wayfair_remittance_lines').select('*').eq('remittance_id', id).order('invoice_date');
+    const { data: charges } = await sbClient.from('wayfair_vendor_charges').select('*').eq('remittance_id', id);
+    
+    let html = '';
+    if (lines && lines.length) {
+        html += `<div class="table-wrap" style="margin-top:16px;">
+            <div class="table-title"><span>Order Lines (${lines.length})</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>PO #</th><th>Date</th><th class="text-right">Product</th><th class="text-right">Damages</th><th class="text-right">Early Pay</th><th class="text-right">Payment</th><th>Reconciled</th></tr></thead>
+                <tbody>${lines.map(ln => `<tr>
+                    <td>${esc(ln.po_number)}</td><td>${displayDate(ln.invoice_date)}</td>
+                    <td class="text-right">${fmtAmt(ln.product_amount)}</td>
+                    <td class="text-right amt-negative">${fmtAmt(ln.damages_defects_amt)}</td>
+                    <td class="text-right amt-negative">${fmtAmt(ln.early_pay_discount)}</td>
+                    <td class="text-right amt-positive">$${(ln.payment_amount||0).toFixed(2)}</td>
+                    <td>${ln.reconciled ? '<span class="badge badge-green">✓ Matched</span>' : '<span class="badge badge-yellow">Pending</span>'}</td>
+                </tr>`).join('')}</tbody>
+            </table></div></div>`;
+    }
+    if (charges && charges.length) {
+        html += `<div class="table-wrap" style="margin-top:12px;">
+            <div class="table-title"><span>Vendor Charges (${charges.length})</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>Invoice #</th><th>Type</th><th>Date</th><th>Description</th><th class="text-right">Amount</th></tr></thead>
+                <tbody>${charges.map(vc => `<tr>
+                    <td>${esc(vc.invoice_number)}</td>
+                    <td><span class="badge badge-purple">${esc(vc.program_type)}</span></td>
+                    <td>${displayDate(vc.invoice_date)}</td><td style="font-family:'DM Sans',sans-serif;">${esc(vc.description)}</td>
+                    <td class="text-right amt-negative">$${Math.abs(vc.amount||0).toFixed(2)}</td>
+                </tr>`).join('')}</tbody>
+            </table></div></div>`;
+    }
+    
+    // Insert after the browse table
+    const existing = document.getElementById('remDetail');
+    if (existing) existing.remove();
+    const div = document.createElement('div');
+    div.id = 'remDetail';
+    div.innerHTML = html;
+    document.getElementById('browseContent').appendChild(div);
+}
+
+async function deleteRemittance(id, number) {
+    if (!confirm(`Delete remittance ${number} and all its lines/charges? This cannot be undone.`)) return;
+    const { error } = await sbClient.from('wayfair_remittances').delete().eq('id', id);
+    if (error) { toast('Delete failed: ' + error.message, 'error'); return; }
+    existingRemittances.delete(number);
+    toast(`Deleted remittance ${number}`, 'success');
+    loadBrowseData();
+}
+
+// ═══════════════════════════════════════════════════════════
+// RECONCILIATION
+// ═══════════════════════════════════════════════════════════
+async function runReconciliation() {
+    if (!sbConnected) { toast('Connect to Supabase first', 'warning'); return; }
+    
+    document.getElementById('reconContent').innerHTML = '<div style="text-align:center;padding:40px;"><span class="spinner"></span> Running reconciliation...</div>';
+    
+    // Load all remittance lines
+    const { data: lines, error: lErr } = await sbClient
+        .from('wayfair_remittance_lines')
+        .select('*, wayfair_remittances(remittance_number, remittance_date)')
+        .order('invoice_date', { ascending: false });
+    
+    if (lErr) { toast('Error: ' + lErr.message, 'error'); return; }
+    
+    // Load all Wayfair sales from sales_history
+    const { data: sales, error: sErr } = await sbClient
+        .from('sales_history')
+        .select('*')
+        .like('order_id', 'WF-%');
+    
+    if (sErr) { toast('Error loading sales: ' + sErr.message, 'error'); return; }
+    
+    // Load vendor charges for fee summary
+    const { data: charges } = await sbClient.from('wayfair_vendor_charges').select('*');
+    
+    // Build sales lookup: order_id → sale record
+    const salesMap = {};
+    (sales || []).forEach(s => { salesMap[s.order_id] = s; });
+    
+    // Match lines to sales
+    const matched = [];
+    const unmatchedRemittance = [];
+    let totalProductAmt = 0;
+    let totalDamages = 0;
+    let totalEarlyPay = 0;
+    let totalShipping = 0;
+    let totalOther = 0;
+    let totalTax = 0;
+    let totalPayment = 0;
+    let totalVendorCharges = 0;
+    
+    for (const line of (lines || [])) {
+        totalProductAmt += line.product_amount || 0;
+        totalDamages += Math.abs(line.damages_defects_amt || 0);
+        totalEarlyPay += Math.abs(line.early_pay_discount || 0);
+        totalShipping += line.shipping || 0;
+        totalOther += line.other || 0;
+        totalTax += line.tax_vat || 0;
+        totalPayment += line.payment_amount || 0;
+        
+        const saleKey = 'WF-' + line.po_number;
+        const sale = salesMap[saleKey];
+        
+        if (sale) {
+            matched.push({ line, sale });
+            // Update reconciliation status if not already done
+            if (!line.reconciled) {
+                sbClient.from('wayfair_remittance_lines')
+                    .update({ reconciled: true, reconciled_at: new Date().toISOString(), sale_id: sale.id })
+                    .eq('id', line.id)
+                    .then(() => {});
+            }
+            // Remove from map to find unmatched sales
+            delete salesMap[saleKey];
+        } else {
+            unmatchedRemittance.push(line);
+        }
+    }
+    
+    // Remaining in salesMap = sales with no matching payment
+    const unmatchedSales = Object.values(salesMap);
+    
+    // Sum vendor charges
+    (charges || []).forEach(c => { totalVendorCharges += Math.abs(c.amount || 0); });
+    
+    const netReceived = totalPayment - totalVendorCharges;
+    
+    // Render
+    document.getElementById('reconContent').innerHTML = `
+        <div class="recon-summary">
+            <div class="recon-box">
+                <h3>💰 Payment Summary</h3>
+                <div class="recon-row"><span>Gross Product Amount</span><span class="val">$${totalProductAmt.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Damages/Defects (4%)</span><span class="val amt-negative">-$${totalDamages.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Early Pay Discount</span><span class="val amt-negative">-$${totalEarlyPay.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Shipping</span><span class="val">$${totalShipping.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Other</span><span class="val">$${totalOther.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Tax/VAT</span><span class="val">$${totalTax.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Vendor Charges</span><span class="val amt-negative">-$${totalVendorCharges.toFixed(2)}</span></div>
+                <div class="recon-row"><span>Net Received</span><span class="val" style="color:var(--green);font-size:16px;">$${netReceived.toFixed(2)}</span></div>
+            </div>
+            <div class="recon-box">
+                <h3>🔗 Match Status</h3>
+                <div class="recon-row"><span>Matched (payment ↔ sale)</span><span class="val" style="color:var(--green);">${matched.length}</span></div>
+                <div class="recon-row"><span>Paid but no sale recorded</span><span class="val" style="color:var(--yellow);">${unmatchedRemittance.length}</span></div>
+                <div class="recon-row"><span>Sale recorded but no payment</span><span class="val" style="color:var(--red);">${unmatchedSales.length}</span></div>
+                <div class="recon-row"><span>Total remittance lines</span><span class="val">${(lines||[]).length}</span></div>
+                <div class="recon-row"><span>Total Wayfair sales</span><span class="val">${(sales||[]).length}</span></div>
+                <div class="recon-row"><span>Match Rate</span><span class="val">${(lines||[]).length ? ((matched.length / (lines||[]).length) * 100).toFixed(1) : 0}%</span></div>
+            </div>
+        </div>
+        
+        ${unmatchedRemittance.length > 0 ? `
+        <div class="table-wrap">
+            <div class="table-title"><span style="color:var(--yellow);">⚠️ Paid but No Sale Recorded (${unmatchedRemittance.length})</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>PO #</th><th>Remittance</th><th>Date</th><th class="text-right">Product Amt</th><th class="text-right">Payment</th></tr></thead>
+                <tbody>${unmatchedRemittance.map(ln => `<tr>
+                    <td>${esc(ln.po_number)}</td>
+                    <td>${esc(ln.wayfair_remittances?.remittance_number || '')}</td>
+                    <td>${displayDate(ln.invoice_date)}</td>
+                    <td class="text-right">$${(ln.product_amount||0).toFixed(2)}</td>
+                    <td class="text-right">$${(ln.payment_amount||0).toFixed(2)}</td>
+                </tr>`).join('')}</tbody>
+            </table></div>
+        </div>` : ''}
+        
+        ${unmatchedSales.length > 0 ? `
+        <div class="table-wrap">
+            <div class="table-title"><span style="color:var(--red);">❌ Sale Recorded but No Payment (${unmatchedSales.length})</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>Order ID</th><th>SKU</th><th>Date</th><th class="text-right">Sale Price</th></tr></thead>
+                <tbody>${unmatchedSales.map(s => `<tr>
+                    <td>${esc(s.order_id)}</td>
+                    <td>${esc(s.sku || '')}</td>
+                    <td>${displayDate(s.sale_date || s.created_at)}</td>
+                    <td class="text-right">$${(s.sale_price || s.channel_price || 0).toFixed(2)}</td>
+                </tr>`).join('')}</tbody>
+            </table></div>
+        </div>` : ''}
+        
+        ${matched.length > 0 ? `
+        <div class="table-wrap">
+            <div class="table-title"><span style="color:var(--green);">✅ Matched Records (${matched.length})</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>PO #</th><th>SKU</th><th>Date</th><th class="text-right">Product Amt</th><th class="text-right">Fees Deducted</th><th class="text-right">Net Payment</th><th class="text-right">Sale Price</th><th>Diff</th></tr></thead>
+                <tbody>${matched.map(m => {
+                    const fees = Math.abs(m.line.damages_defects_amt||0) + Math.abs(m.line.early_pay_discount||0);
+                    const salePrice = m.sale.sale_price || m.sale.channel_price || 0;
+                    const diff = (m.line.product_amount || 0) - salePrice;
+                    return `<tr>
+                        <td>${esc(m.line.po_number)}</td>
+                        <td>${esc(m.sale.sku || '')}</td>
+                        <td>${displayDate(m.line.invoice_date)}</td>
+                        <td class="text-right">$${(m.line.product_amount||0).toFixed(2)}</td>
+                        <td class="text-right amt-negative">-$${fees.toFixed(2)}</td>
+                        <td class="text-right amt-positive">$${(m.line.payment_amount||0).toFixed(2)}</td>
+                        <td class="text-right">$${salePrice.toFixed(2)}</td>
+                        <td class="text-right ${Math.abs(diff) < 0.01 ? 'amt-zero' : diff > 0 ? 'amt-positive' : 'amt-negative'}">${diff >= 0 ? '+' : ''}$${diff.toFixed(2)}</td>
+                    </tr>`;
+                }).join('')}</tbody>
+            </table></div>
+        </div>` : ''}
+    `;
+}
+
+function exportReconCSV() {
+    toast('Export coming soon', 'info');
+}
+
+// ═══════════════════════════════════════════════════════════
+// REPORTS
+// ═══════════════════════════════════════════════════════════
+async function loadReports() {
+    if (!sbConnected) { toast('Connect to Supabase first', 'warning'); return; }
+    
+    document.getElementById('reportsContent').innerHTML = '<div style="text-align:center;padding:40px;"><span class="spinner"></span> Loading reports...</div>';
+    
+    // Fetch all data
+    const { data: remittances } = await sbClient.from('wayfair_remittances').select('*').order('remittance_date');
+    const { data: lines } = await sbClient.from('wayfair_remittance_lines').select('*').order('invoice_date');
+    const { data: charges } = await sbClient.from('wayfair_vendor_charges').select('*').order('invoice_date');
+    
+    if (!remittances || !remittances.length) {
+        document.getElementById('reportsContent').innerHTML = '<div class="empty-state"><div class="icon">📊</div><h3>No data to report</h3><p>Import remittance files first.</p></div>';
+        return;
+    }
+    
+    // ── Monthly Breakdown ──
+    const monthly = {};
+    (lines || []).forEach(ln => {
+        const month = displayMonth(ln.invoice_date);
+        if (!month) return;
+        if (!monthly[month]) monthly[month] = { gross: 0, damages: 0, earlyPay: 0, net: 0, orders: 0 };
+        monthly[month].gross += ln.product_amount || 0;
+        monthly[month].damages += Math.abs(ln.damages_defects_amt || 0);
+        monthly[month].earlyPay += Math.abs(ln.early_pay_discount || 0);
+        monthly[month].net += ln.payment_amount || 0;
+        monthly[month].orders++;
+    });
+    
+    // Monthly vendor charges
+    const monthlyCharges = {};
+    (charges || []).forEach(c => {
+        const month = displayMonth(c.invoice_date);
+        if (!month) return;
+        if (!monthlyCharges[month]) monthlyCharges[month] = { total: 0, items: [] };
+        monthlyCharges[month].total += Math.abs(c.amount || 0);
+        monthlyCharges[month].items.push(c);
+    });
+    
+    // ── Fee Type Breakdown ──
+    const feeTypes = {};
+    (charges || []).forEach(c => {
+        const t = c.program_type || 'Unknown';
+        if (!feeTypes[t]) feeTypes[t] = { count: 0, total: 0 };
+        feeTypes[t].count++;
+        feeTypes[t].total += Math.abs(c.amount || 0);
+    });
+    
+    const sortedMonths = Object.keys(monthly).sort();
+    
+    document.getElementById('reportsContent').innerHTML = `
+        <div class="stats-grid">
+            <div class="stat-card purple"><div class="label">Total Remittances</div><div class="value">${remittances.length}</div></div>
+            <div class="stat-card blue"><div class="label">Total Orders</div><div class="value">${(lines||[]).length}</div></div>
+            <div class="stat-card green"><div class="label">Gross Revenue</div><div class="value">$${(lines||[]).reduce((s,l)=>s+(l.product_amount||0),0).toFixed(2)}</div></div>
+            <div class="stat-card red"><div class="label">Total Fees</div><div class="value">$${((lines||[]).reduce((s,l)=>s+Math.abs(l.damages_defects_amt||0)+Math.abs(l.early_pay_discount||0),0) + (charges||[]).reduce((s,c)=>s+Math.abs(c.amount||0),0)).toFixed(2)}</div></div>
+            <div class="stat-card green"><div class="label">Net Received</div><div class="value">$${((lines||[]).reduce((s,l)=>s+(l.payment_amount||0),0) - (charges||[]).reduce((s,c)=>s+Math.abs(c.amount||0),0)).toFixed(2)}</div></div>
+        </div>
+        
+        <div class="table-wrap">
+            <div class="table-title"><span>📅 Monthly Breakdown</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr>
+                    <th>Month</th><th class="text-right">Orders</th><th class="text-right">Gross</th>
+                    <th class="text-right">Damages (4%)</th><th class="text-right">Early Pay</th>
+                    <th class="text-right">Order Net</th><th class="text-right">Vendor Charges</th>
+                    <th class="text-right">Month Net</th>
+                </tr></thead>
+                <tbody>${sortedMonths.map(m => {
+                    const d = monthly[m];
+                    const vc = monthlyCharges[m]?.total || 0;
+                    const monthNet = d.net - vc;
+                    return `<tr>
+                        <td style="font-family:'DM Sans',sans-serif;font-weight:600;">${m}</td>
+                        <td class="text-right">${d.orders}</td>
+                        <td class="text-right">$${d.gross.toFixed(2)}</td>
+                        <td class="text-right amt-negative">-$${d.damages.toFixed(2)}</td>
+                        <td class="text-right amt-negative">-$${d.earlyPay.toFixed(2)}</td>
+                        <td class="text-right">$${d.net.toFixed(2)}</td>
+                        <td class="text-right amt-negative">-$${vc.toFixed(2)}</td>
+                        <td class="text-right ${monthNet >= 0 ? 'amt-positive' : 'amt-negative'}">$${monthNet.toFixed(2)}</td>
+                    </tr>`;
+                }).join('')}</tbody>
+            </table></div>
+        </div>
+        
+        ${Object.keys(feeTypes).length > 0 ? `
+        <div class="table-wrap">
+            <div class="table-title"><span>🏷️ Vendor Charge Breakdown by Type</span></div>
+            <div class="table-scroll"><table>
+                <thead><tr><th>Program Type</th><th class="text-right">Count</th><th class="text-right">Total</th><th class="text-right">Avg Per Charge</th></tr></thead>
+                <tbody>${Object.entries(feeTypes).map(([type, d]) => `<tr>
+                    <td><span class="badge badge-purple">${esc(type)}</span></td>
+                    <td class="text-right">${d.count}</td>
+                    <td class="text-right amt-negative">$${d.total.toFixed(2)}</td>
+                    <td class="text-right">$${(d.total / d.count).toFixed(2)}</td>
+                </tr>`).join('')}</tbody>
+            </table></div>
+        </div>` : ''}
+    `;
+}
+
+// ═══════════════════════════════════════════════════════════
+// TAB SWITCHING
+// ═══════════════════════════════════════════════════════════
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    
+    event.target.classList.add('active');
+    document.getElementById('view-' + name).classList.add('active');
+    
+    // Auto-load data when switching to tabs
+    if (name === 'browse' && sbConnected) loadBrowseData();
+    if (name === 'reports' && sbConnected) loadReports();
+}
+
+// ═══════════════════════════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════════════════════════
+function esc(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function fmtAmt(val) {
+    const n = Number(val) || 0;
+    if (n === 0) return '<span class="amt-zero">$0.00</span>';
+    return `$${n.toFixed(2)}`;
+}
+
+function normalizeDate(dateStr) {
+    if (!dateStr) return null;
+    // Handle M/D/YYYY format from CSV
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+        const m = parts[0].padStart(2, '0');
+        const d = parts[1].padStart(2, '0');
+        const y = parts[2].length === 2 ? '20' + parts[2] : parts[2];
+        return `${y}-${m}-${d}`;
+    }
+    // Already YYYY-MM-DD (strip any time/timezone suffix Supabase may add)
+    return dateStr.substring(0, 10);
+}
+
+// Safe date display — NEVER uses new Date(), avoids timezone shift
+function displayDate(val) {
+    if (!val) return '';
+    // Supabase may return "2026-01-20", "2026-01-20T00:00:00+00:00", or "2026-01-20T00:00:00"
+    // Always extract just the YYYY-MM-DD portion as a string
+    return String(val).substring(0, 10);
+}
+
+// Safe month extraction for reporting — returns "YYYY-MM"
+function displayMonth(val) {
+    if (!val) return '';
+    return String(val).substring(0, 7);
+}
+
+function toast(msg, type = 'info') {
+    const container = document.getElementById('toasts');
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+}
+</script>
+</body>
+</html>
