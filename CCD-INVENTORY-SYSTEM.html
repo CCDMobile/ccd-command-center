@@ -10150,7 +10150,7 @@ Previous versions documented in development guide.
                         <button type="button" class="btn btn-primary" onclick="document.getElementById('pdfFileInput').click()">
                             Choose PDF File
                         </button>
-                        <p style="color: #999; font-size: 12px; margin-top: 15px;">Supports PDF invoices from CWI Gifts, Primitives by Kathy, Foreside, Sunset Vista, and more</p>
+                        <p style="color: #999; font-size: 12px; margin-top: 15px;">Supports PDF invoices from CWI Gifts, CTW Home Collection, Primitives by Kathy, Foreside, Sunset Vista, and more</p>
                     </div>
                 </div>
             </div>
@@ -71670,6 +71670,24 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 const invoiceData = parseInvoiceText(pdfText);
                 updateProcessingStatus('Validating items...', 80);
                 
+                // ✅ Check if this invoice was already imported
+                if (invoiceData.invoiceNumber && isInvoiceAlreadyProcessed(invoiceData.invoiceNumber)) {
+                    const info = getProcessedInvoiceInfo(invoiceData.invoiceNumber);
+                    const processedDate = info ? new Date(info.processedAt).toLocaleString() : 'unknown';
+                    const proceed = confirm(
+                        `⚠️ Invoice ${invoiceData.invoiceNumber} was already imported!\n\n` +
+                        `Processed: ${processedDate}\n` +
+                        `Items: ${info?.itemCount || '?'}\n\n` +
+                        `Reimporting will DUPLICATE inventory quantities.\n\n` +
+                        `Are you sure you want to continue?`
+                    );
+                    if (!proceed) {
+                        showToast('Import cancelled — invoice already processed', 'info');
+                        showImportStep(1);
+                        return;
+                    }
+                }
+                
                 // Check for duplicates
                 await checkDuplicateSKUs(invoiceData.items);
                 updateProcessingStatus('Complete!', 100);
@@ -71777,7 +71795,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 { name: 'Sunset Vista Designs', pattern: /Sunset Vista/i },
                 { name: 'Adams & Co.', pattern: /Adams & Co/i },
                 { name: 'Park Designs', pattern: /Park\s*Designs|Split[\s-]*P|Goldsboro\s*NC\s*27532/i },
-                { name: 'K&K Interiors', pattern: /K\s*&\s*K\s*Interiors|Sandusky.*OH.*44870|kkinteriors\.com/i }
+                { name: 'K&K Interiors', pattern: /K\s*&\s*K\s*Interiors|Sandusky.*OH.*44870|kkinteriors\.com/i },
+                { name: 'CTW Home Collection', pattern: /CTW\s*HOME|COLONIAL\s*TIN\s*WORKS|P\.?O\.?\s*BOX\s*49909/i }
             ];
             
             for (const sp of supplierPatterns) {
@@ -71803,6 +71822,7 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 /Invoice No\.?[:\s]+([A-Z0-9-]+)/i,     // Invoice No: 12345
                 /(SO-\d{6,})/,                            // CWI Order Confirmation: SO-001407743
                 /(INV-\d{6,})/,                           // CWI Invoice: INV-001481088
+                /(\d{7}-IN)/,                              // CTW Invoice: 0884612-IN
                 /Order\s*#?:?\s*(\d[A-Z]-\d+)/i         // Order # 1W-6553024
             ];
             
@@ -71883,6 +71903,8 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 invoice.items = parseParkDesignsProducts(text);
             } else if (invoice.supplierName === 'K&K Interiors') {
                 invoice.items = parseKKInteriorsProducts(text);
+            } else if (invoice.supplierName === 'CTW Home Collection') {
+                invoice.items = parseCTWProducts(text);
             } else {
                 // Generic parsing
                 invoice.items = parseGenericProducts(text);
@@ -71960,6 +71982,86 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             }
             
             console.log('CWI products found:', products.length);
+            return products;
+        }
+        
+        function parseCTWProducts(text) {
+            const products = [];
+            console.log('=== CTW HOME COLLECTION PARSING ===');
+            
+            // CTW Invoice format:
+            // Item Code | Description | Pieces per Box | Quantity | U/M | Price Each | Amount
+            // PDF extraction often puts Quantity on a separate line after UPC
+            // UPC lines appear between items — skip them
+            // Safest: match SKU + description + number + EACH + price + amount
+            // Then calculate total qty = amount / price_each
+            
+            const flat = text.replace(/\n/g, ' ').replace(/\s+/g, ' ');
+            
+            // Pattern: 6-digit SKU, description words, a number (pieces/box), EACH, price, amount
+            // The quantity column (usually 1) may or may not be between pieces/box and EACH
+            const pattern = /\b(\d{6})\s+([\w\s&.,'\-\/]+?)\s+(\d+)\s+(?:(\d+)\s+)?EACH\s+(\d+\.\d{2})\s+(\d+\.\d{2})/gi;
+            let match;
+            
+            while ((match = pattern.exec(flat)) !== null) {
+                const sku = match[1];
+                let description = match[2].trim();
+                const piecesPerBox = parseInt(match[3]);
+                const boxQty = match[4] ? parseInt(match[4]) : 1;
+                const priceEach = parseFloat(match[5]);
+                const lineAmount = parseFloat(match[6]);
+                
+                // Skip header/footer words
+                if (/Item Code|Description|Pieces per|Subtotal|Invoice|Continued|Merchandise/i.test(description)) continue;
+                
+                // Clean up description: remove trailing UPC fragments, numbers
+                description = description.replace(/UPC[\s:]*\d*/i, '').replace(/\s+\d{10,}$/, '').trim();
+                
+                // Calculate total qty from amount (most reliable)
+                // amount = piecesPerBox * boxQty * priceEach
+                const calculatedQty = priceEach > 0 ? Math.round(lineAmount / priceEach) : (piecesPerBox * boxQty);
+                
+                console.log(`✓ CTW item: ${sku} pcs/box=${piecesPerBox} boxes=${boxQty} calc_qty=${calculatedQty} price=$${priceEach} amount=$${lineAmount} "${description.substring(0, 50)}"`);
+                
+                products.push({
+                    sku: sku,
+                    description: description || `CTW Item ${sku}`,
+                    qty: calculatedQty,
+                    unitPrice: priceEach,  // wholesale per unit
+                    lineTotal: lineAmount,
+                    confidence: 'high'
+                });
+            }
+            
+            // Fallback: simpler pattern if main pattern misses items
+            if (products.length === 0) {
+                console.log('CTW: Trying fallback pattern...');
+                const fallback = /\b(\d{6})\s+([\w\s&.,'\-\/]+?)\s+(\d+\.\d{2})\s+(\d+\.\d{2})\b/gi;
+                while ((match = fallback.exec(flat)) !== null) {
+                    const sku = match[1];
+                    let description = match[2].trim();
+                    const price = parseFloat(match[3]);
+                    const amount = parseFloat(match[4]);
+                    
+                    if (/Item Code|Description|Subtotal|Invoice|Freight/i.test(description)) continue;
+                    if (price === 0) continue;
+                    
+                    const qty = Math.round(amount / price);
+                    
+                    console.log(`✓ CTW item (fallback): ${sku} qty=${qty} price=$${price} amount=$${amount} "${description.substring(0, 50)}"`);
+                    
+                    products.push({
+                        sku: sku,
+                        description: description || `CTW Item ${sku}`,
+                        qty: qty,
+                        unitPrice: price,
+                        lineTotal: amount,
+                        confidence: 'medium'
+                    });
+                }
+            }
+            
+            console.log('CTW products found:', products.length);
             return products;
         }
         
@@ -73009,10 +73111,42 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
         }
         
         function clearImportSession() {
+            // Track this invoice as processed before clearing
+            if (currentImportSession && currentImportSession.invoiceData?.invoiceNumber) {
+                markInvoiceAsProcessed(currentImportSession.invoiceData.invoiceNumber);
+            }
             localStorage.removeItem('pendingImportSession');
             currentImportSession = null;
             importedItems = [];
             document.getElementById('importInvoiceBtn').classList.remove('btn-flash');
+        }
+        
+        function markInvoiceAsProcessed(invoiceNumber) {
+            if (!invoiceNumber) return;
+            try {
+                const processed = JSON.parse(localStorage.getItem('ccd_processed_invoices') || '{}');
+                processed[invoiceNumber] = {
+                    processedAt: new Date().toISOString(),
+                    itemCount: importedItems?.length || 0
+                };
+                localStorage.setItem('ccd_processed_invoices', JSON.stringify(processed));
+                console.log(`[Invoice] Marked as processed: ${invoiceNumber}`);
+            } catch (e) { console.error('[Invoice] Error saving processed invoice:', e); }
+        }
+        
+        function isInvoiceAlreadyProcessed(invoiceNumber) {
+            if (!invoiceNumber) return false;
+            try {
+                const processed = JSON.parse(localStorage.getItem('ccd_processed_invoices') || '{}');
+                return !!processed[invoiceNumber];
+            } catch (e) { return false; }
+        }
+        
+        function getProcessedInvoiceInfo(invoiceNumber) {
+            try {
+                const processed = JSON.parse(localStorage.getItem('ccd_processed_invoices') || '{}');
+                return processed[invoiceNumber] || null;
+            } catch (e) { return null; }
         }
         
         function resumeImportSession(session) {
@@ -75275,8 +75409,16 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                 showSaveConfirmation('✅ Item saved successfully!');
                 
                 // ✅ IMPORT INVOICE: Call callback if creating from import
-                if (window.currentImportItemIndex !== undefined && window.importCreateNextCallback) {
-                    window.importCreateNextCallback();
+                if (window.currentImportItemIndex !== undefined) {
+                    // Mark import item as processed (works for both single and batch creates)
+                    if (typeof markImportItemProcessed === 'function') {
+                        markImportItemProcessed(window.currentImportItemIndex, '✓ Created');
+                    }
+                    // If batch mode, trigger next item
+                    if (typeof window.importCreateNextCallback === 'function') {
+                        window.importCreateNextCallback();
+                        window.importCreateNextCallback = null;
+                    }
                     window.currentImportItemIndex = undefined;
                 }
             }
