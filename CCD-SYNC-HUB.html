@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.1.1</title>
+    <title>CCD Sync Hub v4.1.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.1 — Clean Build Styles
+           CCD SYNC HUB v4.1.2 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -416,7 +416,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.1.1 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.1.2 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -685,7 +685,7 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.1 — CLEAN BUILD
+    // CCD SYNC HUB v4.1.2 — CLEAN BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
@@ -1335,7 +1335,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.1-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.1.2-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1513,7 +1513,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.1',
+                processedBy: 'Sync Hub v4.1.2',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -3129,6 +3129,13 @@
                     product = products.find(p => (p.sku || p.SKU) === sku);
                 }
                 
+                // v3.3.5.28: Store resolved master SKU for cascade lookup
+                // Wayfair channel SKUs (e.g. CCDCTW520035) differ from master SKUs (520035)
+                // Without this, cascade code fails to find products by channel SKU
+                if (product) {
+                    item.resolvedSku = product.sku || product.SKU;
+                }
+                
                 if (!product) {
                     addLog(`⚠️ SKU ${sku} not found in Master JSON`, 'warning');
                     continue;
@@ -3417,7 +3424,10 @@
             const sku = item.sku;
             if (sku === 'UNKNOWN') continue;
             
-            const product = products.find(p => (p.sku || p.SKU) === sku);
+            // v3.3.5.28: Use resolvedSku (set during GAP 3) for product lookup
+            // Wayfair channel SKUs (CCDCTW520035) differ from master SKUs (520035)
+            const lookupSku = item.resolvedSku || sku;
+            const product = products.find(p => (p.sku || p.SKU) === lookupSku);
             if (!product) continue;
             
             const sourceChannel = order.channel;
@@ -3428,7 +3438,7 @@
                 const etsyQty = channels.etsy || 0;
                 cascadeQueue.push({
                     channel: 'etsy',
-                    sku: sku,
+                    sku: lookupSku,
                     qty: etsyQty,
                     listingId: product.etsyListing || product.etsyListingId
                 });
@@ -3438,7 +3448,7 @@
                 const wixQty = channels.wix || 0;
                 cascadeQueue.push({
                     channel: 'wix',
-                    sku: sku,
+                    sku: lookupSku,
                     qty: wixQty,
                     productId: product.wixProductId || product.wixId
                 });
@@ -3451,7 +3461,7 @@
                 const wayfairQty = channels.wayfair || 0;
                 cascadeQueue.push({
                     channel: 'wayfair',
-                    sku: sku,
+                    sku: lookupSku,
                     qty: wayfairQty,
                     wayfairSku: product.wayfairSku || product.supplierPartNumber
                 });
@@ -3862,22 +3872,6 @@
             
             // ============ UPDATE EXISTING LISTING ============
             if (action === 'update') {
-                // v4.1.1 FIX: If ONLY quantity is being updated, skip updateListing entirely
-                // and go straight to updateEtsyInventory. updateListing with no fields
-                // returns "No fields to update" error which blocks the inventory push.
-                const hasNonQtyFields = fields.title || fields.description || fields.price || fields.tags || fields.all;
-                const hasQtyField = fields.quantity || fields.qty;
-                
-                if (hasQtyField && !hasNonQtyFields) {
-                    // Qty-only shortcut — skip updateListing, go straight to inventory API
-                    const listingId = product.etsyListing || product.etsyListingId || product.listingId;
-                    if (!listingId) {
-                        return { success: false, error: 'No Etsy listing ID for qty update' };
-                    }
-                    console.log(`[Etsy] Qty-only update for ${product.sku} — skipping updateListing, using inventory API`);
-                    return await updateEtsyInventory(product, url, key);
-                }
-                
                 // Check what fields to update
                 // v3.3.5.13: Accept generic 'listingId' from cascade queue items
                 const updateData = {
@@ -6686,7 +6680,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.1 — Clean Build');
+            console.log('[Init] CCD Sync Hub v4.1.2 — Clean Build');
             
             ensureHostnameSet();
             
@@ -6753,11 +6747,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.1 initialized successfully');
-            addLog('CCD Sync Hub v4.1 initialized (Clean Build)', 'success');
+            console.log('[Init] CCD Sync Hub v4.1.2 initialized successfully');
+            addLog('CCD Sync Hub v4.1.2 initialized (Clean Build)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.1 started (Clean Build)',
+                'Sync Hub v4.1.2 started (Clean Build)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
