@@ -641,19 +641,17 @@
             <div class="card">
                 <div class="card-header">
                     <h3>📦 Shippo Shipping Reconciliation</h3>
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <select id="shippoDateRange" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.85rem;">
-                            <option value="7">Last 7 days</option>
-                            <option value="14">Last 14 days</option>
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <select id="shippoDateRange" onchange="updateShippoDateInputs()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.85rem;">
                             <option value="30" selected>Last 30 days</option>
-                            <option value="60">Last 60 days</option>
                             <option value="90">Last 90 days</option>
                             <option value="180">Last 6 months</option>
                             <option value="365">Last 1 year</option>
-                            <option value="730">Last 2 years</option>
-                            <option value="1825">Last 5 years</option>
-                            <option value="3650">All time (~10 years)</option>
+                            <option value="custom">Custom range</option>
                         </select>
+                        <input type="date" id="shippoFromDate" style="padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.82rem; font-family: 'JetBrains Mono', monospace;">
+                        <span style="color: var(--text-dim); font-size: 0.8rem;">to</span>
+                        <input type="date" id="shippoToDate" style="padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.82rem; font-family: 'JetBrains Mono', monospace;">
                         <button class="btn btn-primary" onclick="syncShippo()" id="btnSyncShippo">🔄 Sync Shippo</button>
                     </div>
                 </div>
@@ -3455,7 +3453,8 @@
                     channel: 'wix',
                     sku: lookupSku,
                     qty: wixQty,
-                    productId: product.wixProductId || product.wixId
+                    productId: product.wixProductId || product.wixId,
+                    wixVariantId: product.wixVariantId || product.wix_variant_id || null  // v4.1.3: variant-level targeting
                 });
             }
             
@@ -4969,19 +4968,44 @@
      * Fetch transactions from Shippo proxy.
      * Returns array of transaction objects from the proxy.
      */
-    async function fetchShippoTransactions(days) {
+    async function fetchShippoTransactions(days, fromDate, toDate) {
         const url = state.settings.shippoProxyUrl;
         const key = state.settings.ccdApiKey;
         if (!url) throw new Error('Shippo Proxy URL not configured');
 
-        // Use fetchAllForCache for broad syncs, getNewTransactions for incremental
-        const params = { action: 'fetchAllForCache', key: key, months: Math.ceil(days / 30) || 1 };
+        // Calculate months from TODAY back to the earliest requested date
+        // Not the range width — we need the proxy to fetch far enough back
+        let months = Math.ceil(days / 30) || 1;
+        if (fromDate) {
+            const msBack = Date.now() - new Date(fromDate).getTime();
+            const monthsBack = Math.ceil(msBack / (30 * 24 * 60 * 60 * 1000));
+            months = Math.max(months, monthsBack + 1); // +1 buffer for partial months
+            console.log(`[Shippo] Custom range: need ${monthsBack} months back from today to reach ${fromDate}`);
+        }
+
+        const params = { action: 'fetchAllForCache', key: key, months: months };
+        console.log(`[Shippo] Requesting ${months} months of data from proxy`);
 
         const result = await fetchOrJsonp(url, params);
         if (!result.success && !result.transactions) {
             throw new Error(result.error || 'Shippo proxy returned no data');
         }
-        return result.transactions || result.data || [];
+        
+        let transactions = result.transactions || result.data || [];
+        
+        // Client-side date filtering when custom range is provided
+        if (fromDate && toDate) {
+            const from = fromDate; // YYYY-MM-DD
+            const to = toDate;
+            const beforeFilter = transactions.length;
+            transactions = transactions.filter(tx => {
+                const txDate = (tx.createdAt || tx.shipDate || tx.ship_date || '').substring(0, 10);
+                return txDate >= from && txDate <= to;
+            });
+            console.log(`[Shippo] Filtered ${beforeFilter} → ${transactions.length} transactions in range ${from} to ${to}`);
+        }
+        
+        return transactions;
     }
 
     /**
@@ -5130,6 +5154,35 @@
     }
 
     /**
+     * Update Shippo date inputs based on dropdown selection.
+     * Called on page load and when dropdown changes.
+     */
+    function updateShippoDateInputs() {
+        const sel = document.getElementById('shippoDateRange');
+        const fromInput = document.getElementById('shippoFromDate');
+        const toInput = document.getElementById('shippoToDate');
+        if (!sel || !fromInput || !toInput) return;
+        
+        const val = sel.value;
+        const today = new Date();
+        const toDate = today.toISOString().substring(0, 10);
+        toInput.value = toDate;
+        
+        if (val === 'custom') {
+            // Leave dates as-is for manual entry
+            fromInput.focus();
+            return;
+        }
+        
+        const days = parseInt(val) || 30;
+        const fromDateObj = new Date(today.getTime() - (days * 24 * 60 * 60 * 1000));
+        fromInput.value = fromDateObj.toISOString().substring(0, 10);
+    }
+    
+    // Initialize Shippo date inputs on load
+    setTimeout(() => { updateShippoDateInputs(); }, 100);
+
+    /**
      * Main Shippo sync orchestrator. Called by the "Sync Shippo" button.
      */
     async function syncShippo() {
@@ -5149,14 +5202,23 @@
                 return;
             }
 
-            const days = parseInt(document.getElementById('shippoDateRange').value) || 30;
+            const fromDate = document.getElementById('shippoFromDate').value;
+            const toDate = document.getElementById('shippoToDate').value;
+            
+            if (!fromDate || !toDate) {
+                statusEl.innerHTML = '⚠️ Please select a date range.';
+                statusEl.style.color = 'var(--warning)';
+                return;
+            }
+            
+            const daysDiff = Math.ceil((new Date(toDate) - new Date(fromDate)) / (1000 * 60 * 60 * 24));
 
             // Step 1: Fetch from proxy
-            statusEl.innerHTML = '🔄 Fetching transactions from Shippo...';
+            statusEl.innerHTML = `🔄 Fetching transactions from Shippo (${fromDate} to ${toDate})...`;
             statusEl.style.color = 'var(--text)';
-            addLog(`📦 Fetching Shippo transactions (last ${days} days)...`, 'info');
+            addLog(`📦 Fetching Shippo transactions (${fromDate} to ${toDate}, ~${daysDiff} days)...`, 'info');
 
-            const transactions = await fetchShippoTransactions(days);
+            const transactions = await fetchShippoTransactions(daysDiff, fromDate, toDate);
             addLog(`📦 Received ${transactions.length} transactions from Shippo`, 'info');
 
             if (transactions.length === 0) {
@@ -5182,7 +5244,7 @@
 
             logActivity('sync', 'shippo_synced', 'system',
                 `📦 Shippo sync: ${transactions.length} fetched, ${inserted} new, ${reconcileResult.matched} reconciled`,
-                { days, fetched: transactions.length, inserted, skipped, ...reconcileResult }
+                { fromDate, toDate, daysDiff, fetched: transactions.length, inserted, skipped, ...reconcileResult }
             );
 
         } catch (e) {
@@ -6030,6 +6092,7 @@
             listingId: fields.listingId || null,
             wixProductId: fields.productId || null,
             productId: fields.productId || null,
+            wixVariantId: fields.wixVariantId || fields.variantId || null,  // v4.1.3: variant-level targeting
             wayfairSku: fields.wayfairSku || null
         };
         
@@ -6213,10 +6276,16 @@
             addLog(`⚠️ ${msg}`, 'warning');
             return { success: false, error: msg };
         }
+        // v4.1.3: Include variantId for variant-level inventory targeting
+        const variantId = product.wixVariantId || product.wix_variant_id || null;
+        if (variantId) {
+            console.log(`[Wix Push] Variant-level update: ${product.sku} → productId=${productId} variantId=${variantId}`);
+        }
         return await corsSafePost(url, {
             key: key,
             action: 'updateInventory',
             productId: productId,
+            variantId: variantId,
             sku: product.sku,
             quantity: parseInt(product.qty || product.wixQty || product.quantity || 0)
         });
