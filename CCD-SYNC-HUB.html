@@ -283,6 +283,11 @@
         }
         
         /* === CONNECTION STATUS === */
+        .header-health { display: flex; gap: 4px; align-items: center; padding: 4px 8px; background: var(--bg-input); border-radius: 6px; border: 1px solid var(--border); }
+        .header-dot { font-size: 0.85rem; padding: 2px 4px; border-radius: 4px; cursor: help; opacity: 0.4; transition: opacity 0.3s; }
+        .header-dot.dot-ok { opacity: 1; }
+        .header-dot.dot-fail { opacity: 1; filter: grayscale(1) brightness(0.7); }
+        .header-dot.dot-unknown { opacity: 0.4; }
         .conn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
         .conn-card {
             background: var(--bg-card);
@@ -420,6 +425,12 @@
             </div>
         </div>
         <div class="header-right">
+            <div class="header-health" id="headerHealth" title="Channel health — auto-tested on startup">
+                <span class="header-dot dot-unknown" id="etsyHeaderDot" title="Etsy: Testing...">🛍️</span>
+                <span class="header-dot dot-unknown" id="wixHeaderDot" title="Wix: Testing...">🌐</span>
+                <span class="header-dot dot-unknown" id="wayfairHeaderDot" title="Wayfair: Testing...">🏠</span>
+                <span class="header-dot dot-unknown" id="shippoHeaderDot" title="Shippo: Testing...">📦</span>
+            </div>
             <span id="channelIdStatusBadge" class="channel-id-status"></span>
             <span id="inventoryCount" style="font-size: 0.8rem; color: var(--text-dim);">0 items</span>
             <button class="btn btn-sm btn-secondary" onclick="refreshData()">🔄 Refresh</button>
@@ -3570,12 +3581,31 @@
             
             // v4.1: Auto-reconcile this order with Shippo (if transaction exists)
             try {
-                const { data: shippoMatch } = await sbClient
+                // v4.1.4: Wix order_id is WIX-{uuid} but Shippo stores WIX-{number}
+                // Try direct order_id match first, then fall back to order_number_raw
+                let shippoMatch;
+                const { data: directMatch } = await sbClient
                     .from('shippo_transactions')
                     .select('*')
                     .eq('order_id', orderId)
                     .eq('matched_to_sale', false)
                     .limit(1);
+                
+                shippoMatch = directMatch;
+                
+                // Fallback: match by order number for Wix (UUID never matches Shippo's short number)
+                if ((!shippoMatch || shippoMatch.length === 0) && order.channel === 'wix' && order.orderNumber) {
+                    const { data: numberMatch } = await sbClient
+                        .from('shippo_transactions')
+                        .select('*')
+                        .eq('order_number_raw', String(order.orderNumber))
+                        .eq('matched_to_sale', false)
+                        .limit(1);
+                    shippoMatch = numberMatch;
+                    if (numberMatch && numberMatch.length > 0) {
+                        console.log(`[Shippo] Wix order matched via order_number_raw: ${order.orderNumber}`);
+                    }
+                }
                 
                 if (shippoMatch && shippoMatch.length > 0) {
                     const shippo = shippoMatch[0];
@@ -4765,30 +4795,54 @@
     /**
      * Auto-test all connections on startup (silent - no toasts)
      */
-    async function autoTestAllConnections() {
-        console.log('[Init] Auto-testing all connections...');
+    async function autoTestAllConnections(silent = false) {
+        console.log('[Health] Testing all connections...');
         
-        // Test each channel in parallel
-        const tests = [];
+        // v4.1.4: Always test every channel — individual test functions handle
+        // 'Not configured' case and update dots/cards accordingly.
+        // Without this, clearing a URL leaves the dot stuck on its last state.
+        const tests = [
+            testEtsy().catch(e => console.log('[AutoTest] Etsy failed:', e.message)),
+            testWix().catch(e => console.log('[AutoTest] Wix failed:', e.message)),
+            testWayfair().catch(e => console.log('[AutoTest] Wayfair failed:', e.message)),
+            testShippo().catch(e => console.log('[AutoTest] Shippo failed:', e.message))
+        ];
         
-        if (state.settings.etsyProxyUrl) {
-            tests.push(testEtsy().catch(e => console.log('[AutoTest] Etsy failed:', e.message)));
-        }
-        if (state.settings.wixProxyUrl) {
-            tests.push(testWix().catch(e => console.log('[AutoTest] Wix failed:', e.message)));
-        }
-        if (state.settings.wayfairProxyUrl) {
-            tests.push(testWayfair().catch(e => console.log('[AutoTest] Wayfair failed:', e.message)));
-        }
-        if (state.settings.shippoProxyUrl) {
-            tests.push(testShippo().catch(e => console.log('[AutoTest] Shippo failed:', e.message)));
-        }
         if (state.settings.syncHubProxyUrl) {
             tests.push(testSyncHubFromSettings().catch(e => console.log('[AutoTest] Sync Hub failed:', e.message)));
         }
         
         await Promise.allSettled(tests);
-        console.log('[Init] Connection tests complete');
+        console.log('[Health] Connection tests complete');
+        
+        // v4.1.4: Consolidated health summary
+        const channels = ['etsy', 'wix', 'wayfair', 'shippo'];
+        const results = channels.map(ch => {
+            const configured = !!state.settings[ch + 'ProxyUrl'] || (ch === 'etsy' && state.settings.etsyProxyUrl);
+            const connected = state.connections[ch] || false;
+            if (!configured) return `${ch}: ⚪ N/C`;
+            return `${ch}: ${connected ? '✅' : '❌'}`;
+        });
+        
+        const dbStatus = sbConnected ? '✅' : '❌';
+        const itemCount = window.masterJsonData?.inventory?.length || 0;
+        const pendingOrders = state.orders.all.filter(o => !o.processed).length;
+        const queuePending = state.queue.filter(q => q.status === 'pending').length;
+        
+        const summary = [
+            `DB: ${dbStatus} (${itemCount} items)`,
+            ...results,
+            `Orders: ${pendingOrders} pending`,
+            `Queue: ${queuePending} pending`,
+            `Auto-process: ${state.settings.autoProcessEnabled ? 'ON' : 'OFF'}`,
+            `Sync polling: ${_syncQueueInterval ? 'ON' : 'OFF'}`
+        ].join(' • ');
+        
+        // Only log to activity log on startup, not on every heartbeat
+        if (!silent) {
+            addLog(`🏥 Health: ${summary}`, 'info');
+        }
+        console.log(`[Health] ${summary}`);
     }
 
 
@@ -4799,6 +4853,7 @@
         const key = state.settings.etsyApiKey || state.settings.ccdApiKey; // Use Etsy key if set, else fall back
         
         if (!url) {
+            state.connections.etsy = false;
             updateConnectionStatus('etsy', false, 'Not configured');
             return;
         }
@@ -4852,6 +4907,7 @@
         const key = state.settings.ccdApiKey;
         
         if (!url) {
+            state.connections.wix = false;
             updateConnectionStatus('wix', false, 'Not configured');
             return;
         }
@@ -4888,6 +4944,7 @@
         const key = state.settings.ccdApiKey;
         
         if (!url) {
+            state.connections.wayfair = false;
             updateConnectionStatus('wayfair', false, 'Not configured');
             return;
         }
@@ -4927,9 +4984,8 @@
         const key = state.settings.ccdApiKey;
         
         if (!url) {
+            state.connections.shippo = false;
             updateConnectionStatus('shippo', false, 'Not configured');
-            const el = document.getElementById('shippoConnStatus');
-            if (el) { el.className = 'status fail'; el.textContent = 'Not configured'; }
             return;
         }
 
@@ -4937,12 +4993,10 @@
             const result = await fetchOrJsonp(url, { action: 'status', key: key });
             const ok = result.success || result.status === 'ok';
             state.connections.shippo = ok;
-            const el = document.getElementById('shippoConnStatus');
-            if (el) { el.className = ok ? 'status ok' : 'status fail'; el.textContent = ok ? 'Connected' : (result.error || 'Failed'); }
+            updateConnectionStatus('shippo', ok, ok ? 'Connected' : (result.error || 'Failed'));
         } catch (error) {
             state.connections.shippo = false;
-            const el = document.getElementById('shippoConnStatus');
-            if (el) { el.className = 'status fail'; el.textContent = error.message; }
+            updateConnectionStatus('shippo', false, error.message);
         }
     }
 
@@ -5116,13 +5170,31 @@
             try {
                 // Find matching sale by order_id
                 // v4.1.4: Also fetch sku to populate on shippo record
-                const { data: sales, error: saleErr } = await sbClient
+                let sales;
+                const { data: directMatch, error: saleErr } = await sbClient
                     .from('sales_history')
                     .select('id, sku')
                     .eq('order_id', shippo.order_id)
                     .limit(1);
 
                 if (saleErr) { errors++; continue; }
+                sales = directMatch;
+                
+                // v4.1.4: Fallback for Wix — order_id is WIX-{uuid} in sales but WIX-{number} in Shippo
+                // Match on order_number_raw (the sequential number) instead
+                if ((!sales || sales.length === 0) && shippo.order_number_raw && shippo.sale_channel === 'wix') {
+                    const { data: numberMatch, error: numErr } = await sbClient
+                        .from('sales_history')
+                        .select('id, sku')
+                        .eq('order_number', shippo.order_number_raw)
+                        .eq('sale_channel', 'wix')
+                        .limit(1);
+                    if (!numErr && numberMatch && numberMatch.length > 0) {
+                        sales = numberMatch;
+                        console.log(`[Shippo] Wix reconciled via order_number: ${shippo.order_number_raw}`);
+                    }
+                }
+                
                 if (!sales || sales.length === 0) { notFound++; continue; }
 
                 const saleId = sales[0].id;
@@ -5975,6 +6047,10 @@
         else { stopAutoProcess(); }
         
         toast('Settings saved', 'success');
+        
+        // v4.1.4: Retest all connections after settings change
+        // Catches URL additions, removals, and key changes immediately
+        setTimeout(() => autoTestAllConnections(), 500);
     }
     
     function loadSettingsFromLocalStorage() {
@@ -6015,6 +6091,31 @@
         if (state.autoProcessInterval) {
             clearInterval(state.autoProcessInterval);
             state.autoProcessInterval = null;
+        }
+    }
+    
+    // ============================================================
+    // HEALTH HEARTBEAT — Periodic connection recheck
+    // v4.1.4: Keeps header dots and connection cards accurate
+    // Runs every 5 minutes, silent (no toasts, no log spam)
+    // ============================================================
+    
+    let _healthHeartbeatInterval = null;
+    const HEALTH_HEARTBEAT_MS = 5 * 60 * 1000; // 5 minutes
+    
+    function startHealthHeartbeat() {
+        if (_healthHeartbeatInterval) clearInterval(_healthHeartbeatInterval);
+        _healthHeartbeatInterval = setInterval(async () => {
+            console.log('[Heartbeat] Rechecking connections...');
+            await autoTestAllConnections(true);  // silent — don't spam log
+        }, HEALTH_HEARTBEAT_MS);
+        console.log(`[Heartbeat] Started: every ${HEALTH_HEARTBEAT_MS / 60000} minutes`);
+    }
+    
+    function stopHealthHeartbeat() {
+        if (_healthHeartbeatInterval) {
+            clearInterval(_healthHeartbeatInterval);
+            _healthHeartbeatInterval = null;
         }
     }
     
@@ -6379,10 +6480,20 @@
 
     // === updateConnectionStatus (line 5450) ===
     function updateConnectionStatus(channel, connected, message) {
-        const statusEl = document.getElementById(channel + 'Status');
-        if (statusEl) {
-            const dotClass = connected ? 'connected' : 'disconnected';
-            statusEl.innerHTML = `<span class="connection-dot ${dotClass}"></span>${message}`;
+        const isNotConfigured = message === 'Not configured';
+        
+        // Update Connections tab card
+        const connEl = document.getElementById(channel + 'ConnStatus');
+        if (connEl) {
+            connEl.className = 'status ' + (isNotConfigured ? 'unknown' : (connected ? 'ok' : 'fail'));
+            connEl.textContent = message || (connected ? 'Connected' : 'Failed');
+        }
+        // Update header status dots
+        const headerDot = document.getElementById(channel + 'HeaderDot');
+        if (headerDot) {
+            const dotClass = isNotConfigured ? 'dot-unknown' : (connected ? 'dot-ok' : 'dot-fail');
+            headerDot.className = 'header-dot ' + dotClass;
+            headerDot.title = channel.charAt(0).toUpperCase() + channel.slice(1) + ': ' + (message || (connected ? 'Connected' : 'Failed'));
         }
     }
 
@@ -6820,9 +6931,10 @@
                 });
             }
             
-            // Auto-test connections
+            // Auto-test connections + start health heartbeat
             if (sbConnected) {
                 setTimeout(() => autoTestAllConnections(), 2000);
+                startHealthHeartbeat();
             }
             
             // Start auto-process if enabled
