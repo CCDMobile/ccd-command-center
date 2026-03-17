@@ -3579,9 +3579,10 @@
                 
                 if (shippoMatch && shippoMatch.length > 0) {
                     const shippo = shippoMatch[0];
+                    // v4.1.4: Also fetch sku to populate on shippo record
                     const { data: saleRow } = await sbClient
                         .from('sales_history')
-                        .select('id')
+                        .select('id, sku')
                         .eq('order_id', orderId)
                         .limit(1);
                     
@@ -3594,7 +3595,8 @@
                         
                         await sbClient.from('shippo_transactions').update({
                             linked_sale_id: saleRow[0].id,
-                            matched_to_sale: true
+                            matched_to_sale: true,
+                            sku: saleRow[0].sku || null  // v4.1.4: Populate SKU from matched sale
                         }).eq('id', shippo.id);
                         
                         console.log(`[Shippo] Auto-reconciled ${orderId}: $${shippo.label_cost} via ${shippo.carrier}`);
@@ -5113,9 +5115,10 @@
         for (const shippo of unmatched) {
             try {
                 // Find matching sale by order_id
+                // v4.1.4: Also fetch sku to populate on shippo record
                 const { data: sales, error: saleErr } = await sbClient
                     .from('sales_history')
-                    .select('id')
+                    .select('id, sku')
                     .eq('order_id', shippo.order_id)
                     .limit(1);
 
@@ -5123,6 +5126,7 @@
                 if (!sales || sales.length === 0) { notFound++; continue; }
 
                 const saleId = sales[0].id;
+                const saleSku = sales[0].sku || null;
 
                 // Update sales_history with shipping data
                 const { error: updateSaleErr } = await sbClient
@@ -5136,12 +5140,13 @@
 
                 if (updateSaleErr) { errors++; continue; }
 
-                // Mark shippo record as matched
+                // Mark shippo record as matched + populate SKU from sale
                 const { error: updateShippoErr } = await sbClient
                     .from('shippo_transactions')
                     .update({
                         linked_sale_id: saleId,
-                        matched_to_sale: true
+                        matched_to_sale: true,
+                        sku: saleSku  // v4.1.4: Populate SKU from matched sale
                     })
                     .eq('id', shippo.id);
 
