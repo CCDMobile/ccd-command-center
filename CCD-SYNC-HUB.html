@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.1.4</title>
+    <title>CCD Sync Hub v4.1.5</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.1.4 — Clean Build Styles
+           CCD SYNC HUB v4.1.5 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -421,7 +421,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.1.4 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.1.5 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -699,7 +699,7 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.1.4 — CLEAN BUILD
+    // CCD SYNC HUB v4.1.5 — CLEAN BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
@@ -1010,7 +1010,12 @@
             const ibShipping = parseFloat(item.ibShipping) || 0;
             const tariff = parseFloat(item.tariff) || 0;
             const obShipping = parseFloat(item.obShipping) || 0;
-            const totalCost = (wholesalePrice * (1 + ibShipping / 100) + tariff + obShipping) * qty;
+            
+            // v4.1.4: TreasureMarts is brick-and-mortar — no outbound shipping cost.
+            // Customer walks out the door with the item. OB shipping only applies to online channels.
+            const effectiveObShipping = (channel === 'treasuremarts') ? 0 : obShipping;
+            
+            const totalCost = (wholesalePrice * (1 + ibShipping / 100) + tariff + effectiveObShipping) * qty;
             const totalRevenue = salePrice * qty;
             const netProfit = totalRevenue - totalCost;
             const profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
@@ -1034,7 +1039,7 @@
                 wholesale_price: wholesalePrice,
                 ib_shipping: ibShipping,
                 tariff: tariff,
-                ob_shipping: obShipping,
+                ob_shipping: effectiveObShipping,
                 order_id: orderId || null,
                 order_number: order?.orderNumber || null,
                 customer_shipping_paid: order?.shipping || null,
@@ -3318,7 +3323,10 @@
                 // This keeps MASTER.json internally consistent even when autoCascade is false
                 const sourceChannel = order.channel;
                 
-                if (isFeatureEnabled('inventoryDeduction')) {
+                // v4.1.5 FIX: Was using isFeatureEnabled('inventoryDeduction') which defaults FALSE,
+                // causing cascade to push qty=0 even when deduction succeeded.
+                // Must use the same enableDeduction flag as the deduction block above.
+                if (enableDeduction) {
                     // Update allocations for OTHER channels (not the source)
                     // Source channel already updated by the sale itself
                     
@@ -6924,7 +6932,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.1.4 — Clean Build');
+            console.log('[Init] CCD Sync Hub v4.1.5 — Clean Build');
             
             ensureHostnameSet();
             
@@ -6992,8 +7000,8 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.1.4 initialized successfully');
-            addLog('CCD Sync Hub v4.1.4 initialized (Clean Build)', 'success');
+            console.log('[Init] CCD Sync Hub v4.1.5 initialized successfully');
+            addLog('CCD Sync Hub v4.1.5 initialized (Clean Build)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
                 'Sync Hub v4.1.4 started (Clean Build)',
