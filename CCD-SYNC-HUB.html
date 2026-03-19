@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.1.5</title>
+    <title>CCD Sync Hub v4.2.0</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.1.5 — Clean Build Styles
+           CCD SYNC HUB v4.2.0 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -421,7 +421,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.1.5 • Shippo + Schema v2 • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.2.0 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -495,16 +495,15 @@
         
         <!-- ==================== QUEUE TAB ==================== -->
         <div class="tab-content" id="tab-queue">
-            <div style="display: flex; gap: 10px; margin-bottom: 16px;">
-                <button class="btn btn-primary" onclick="processQueue()">▶ Process Queue</button>
-                <button class="btn btn-secondary" onclick="clearCompletedQueue()">🧹 Clear Completed</button>
-                <button class="btn btn-danger" onclick="clearAllQueue()">🗑️ Clear All</button>
+            <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center;">
+                <button class="btn btn-primary" onclick="refreshSyncQueue()">🔄 Refresh</button>
+                <span id="syncQueueStatus" style="font-size: 0.85rem; color: var(--text-dim);"></span>
             </div>
             <div id="queueContainer">
                 <div class="empty-state">
                     <div class="empty-state-icon">📤</div>
-                    <div class="empty-state-title">Queue is empty</div>
-                    <div style="color: var(--text-dim);">Channel push items will appear here</div>
+                    <div class="empty-state-title">Sync Queue</div>
+                    <div style="color: var(--text-dim);">Connect to Supabase to view pending channel pushes</div>
                 </div>
             </div>
         </div>
@@ -699,7 +698,7 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.1.5 — CLEAN BUILD
+    // CCD SYNC HUB v4.2.0 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
@@ -712,7 +711,7 @@
             wayfair: [],
             processedIds: new Set()
         },
-        queue: [],
+        // v4.2.0: queue removed — all pushes go through Supabase sync_queue
         log: [],
         settings: {
             ccdApiKey: '',
@@ -820,6 +819,23 @@
             
             // Load processed orders
             await loadProcessedOrdersFromDb();
+            
+            // v4.1.5: Reconcile — stamp processed:true on any order whose ID is
+            // already in processedIds. Fixes orders reappearing after reload because
+            // loadOrdersFromStorage restores objects with stale processed:false.
+            if (state.orders.processedIds.size > 0) {
+                let reconciled = 0;
+                state.orders.all.forEach(o => {
+                    if (!o.processed && state.orders.processedIds.has(o.id)) {
+                        o.processed = true;
+                        reconciled++;
+                    }
+                });
+                if (reconciled > 0) {
+                    console.log(`[Init] Reconciled ${reconciled} orders as processed from DB`);
+                    saveOrdersToStorage();
+                }
+            }
             
             // Load SKU mappings from Supabase
             await loadSkuMappingsFromDb();
@@ -1006,6 +1022,22 @@
     async function recordSaleToSupabase(item, qty, channel, salePrice, orderId, order) {
         if (!sbClient || !sbConnected) return;
         try {
+            // v4.1.5: Duplicate prevention — check if this order_id + sku already exists
+            // Catches: reprocessed orders, backfilled sales, double-clicks
+            if (orderId) {
+                const { data: existing, error: checkErr } = await sbClient
+                    .from('sales_history')
+                    .select('id')
+                    .eq('order_id', orderId)
+                    .eq('sku', item.sku)
+                    .maybeSingle();
+                
+                if (!checkErr && existing) {
+                    console.log(`[Sales] ⏭️ Skipped duplicate: order ${orderId} / SKU ${item.sku} already in sales_history`);
+                    addLog(`⏭️ Skipped duplicate sale: ${item.sku} (order ${orderId})`, 'info');
+                    return;
+                }
+            }
             const wholesalePrice = parseFloat(item.wholesalePrice) || 0;
             const ibShipping = parseFloat(item.ibShipping) || 0;
             const tariff = parseFloat(item.tariff) || 0;
@@ -1354,7 +1386,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.1.4-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.2.0-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1392,24 +1424,8 @@
     // DATA ACCESSORS
     // ============================================================
     
-    function getProductsArray() {
-        if (!window.masterJsonData) return [];
-        return window.masterJsonData.inventory || [];
-    }
-    
-    function getMasterJsonProduct(sku) {
-        const products = getProductsArray();
-        return products.find(p => (p.sku || p.SKU) === sku) || null;
-    }
-    
-    function updateMasterJsonProduct(sku, updates) {
-        const product = getMasterJsonProduct(sku);
-        if (product) {
-            Object.assign(product, updates);
-            return true;
-        }
-        return false;
-    }
+    // v4.2.0: getProductsArray, getMasterJsonProduct, updateMasterJsonProduct
+    // defined once below (near line ~1680). Duplicates removed.
     
     // ============================================================
     // ORDER PERSISTENCE (survives page refresh)
@@ -1436,113 +1452,88 @@
     }
     
     // ============================================================
-    // QUEUE MANAGEMENT
+    // SYNC QUEUE VIEWER (v4.2.0 — reads from Supabase sync_queue)
+    // All channel pushes now go through sync_queue. This section
+    // provides visibility into pending/completed/failed rows.
     // ============================================================
     
-    function loadQueue() {
-        try {
-            const saved = localStorage.getItem('ccd_sync_hub_queue');
-            if (saved) state.queue = JSON.parse(saved);
-            
-            // v4.1.4: One-time purge of stale cascade queue items.
-            // Prior to v4.1.4, startAutoProcess never called processQueue(),
-            // so cascade items piled up in localStorage with outdated quantities.
-            // Pushing these stale values would overwrite correct current inventory
-            // on all channel APIs. Purge once, then the flag prevents re-purging.
-            const purgeFlag = localStorage.getItem('ccd_queue_purged_v414');
-            if (!purgeFlag && state.queue.length > 0) {
-                const staleCount = state.queue.filter(i => i.status === 'pending').length;
-                if (staleCount > 0) {
-                    console.warn(`[v4.1.4] Purging ${staleCount} stale cascade queue items (accumulated before auto-process fix)`);
-                    addLog(`🧹 Purged ${staleCount} stale cascade queue items from pre-v4.1.4`, 'warning');
-                    state.queue = state.queue.filter(i => i.status !== 'pending');
-                    saveQueue();
-                }
-                localStorage.setItem('ccd_queue_purged_v414', new Date().toISOString());
-            }
-        } catch (e) { state.queue = []; }
-    }
-    
-    function saveQueue() {
-        localStorage.setItem('ccd_sync_hub_queue', JSON.stringify(state.queue));
-    }
-    
-    async function addToQueue(item) {
-        state.queue.push(item);
-        saveQueue();
-        renderQueue();
-        updateStats();
-    }
-    
-    async function removeFromQueue(itemId) {
-        state.queue = state.queue.filter(item => item.id !== itemId);
-        saveQueue();
-        renderQueue();
-        updateStats();
-    }
-    
-    async function processQueue() {
-        const pending = state.queue.filter(item => item.status === 'pending');
-        if (pending.length === 0) { toast('No pending items in queue', 'info'); return; }
-        
-        addLog(`Processing ${pending.length} queue items...`, 'info');
-        let succeeded = 0, failed = 0;
-        
-        for (const item of pending) {
-            item.status = 'processing';
-            renderQueue();
-            
-            try {
-                const result = await processQueueItem(item);
-                
-                // v4.1.4 FIX: Actually check result.success — was ignoring return value
-                // This caused silent failures that showed as "succeeded" in the log
-                if (result && result.success) {
-                    item.status = 'completed';
-                    item.completedAt = new Date().toISOString();
-                    succeeded++;
-                    addLog(`✅ ${item.channel?.toUpperCase()} push: ${item.product?.sku || '?'} — ${result.message || 'OK'}`, 'success');
-                } else {
-                    item.status = 'failed';
-                    item.error = result?.error || 'Push returned failure';
-                    item.retryCount = (item.retryCount || 0) + 1;
-                    failed++;
-                    addLog(`❌ ${item.channel?.toUpperCase()} push FAILED: ${item.product?.sku || '?'} — ${result?.error || 'Unknown error'}`, 'error');
-                    console.error(`[Queue] Push failed for ${item.product?.sku}:`, result);
-                }
-            } catch (error) {
-                item.status = 'failed';
-                item.error = error.message;
-                item.retryCount = (item.retryCount || 0) + 1;
-                failed++;
-                addLog(`❌ ${item.channel?.toUpperCase()} push ERROR: ${item.product?.sku || '?'} — ${error.message}`, 'error');
-                console.error(`[Queue] Exception for ${item.product?.sku}:`, error);
-            }
+    async function refreshSyncQueue() {
+        if (!sbClient || !sbConnected) {
+            const container = document.getElementById('queueContainer');
+            if (container) container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📤</div><div class="empty-state-title">Not connected</div><div style="color: var(--text-dim);">Connect to Supabase to view sync queue</div></div>';
+            return;
         }
         
-        saveQueue();
-        renderQueue();
-        updateStats();
+        try {
+            const { data, error } = await sbClient
+                .from('sync_queue')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(50);
+            
+            if (error) throw error;
+            renderSyncQueue(data || []);
+            
+            const statusEl = document.getElementById('syncQueueStatus');
+            const pendingCount = (data || []).filter(r => r.status === 'pending').length;
+            if (statusEl) statusEl.textContent = `${(data || []).length} rows (${pendingCount} pending) — last refreshed ${new Date().toLocaleTimeString()}`;
+        } catch (e) {
+            console.error('[Sync Queue Viewer] Error:', e);
+            toast('Failed to load sync queue: ' + e.message, 'error');
+        }
+    }
+    
+    function renderSyncQueue(rows) {
+        const container = document.getElementById('queueContainer');
+        if (!container) return;
         
-        addLog(`Queue processed: ${succeeded} succeeded, ${failed} failed`, succeeded > 0 ? 'success' : 'warning');
-        toast(`Queue: ${succeeded} ✅ ${failed > 0 ? failed + ' ❌' : ''}`, succeeded > 0 ? 'success' : 'warning');
+        if (rows.length === 0) {
+            container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📤</div><div class="empty-state-title">Sync queue is empty</div><div style="color: var(--text-dim);">All channel pushes are up to date</div></div>';
+            return;
+        }
+        
+        container.innerHTML = rows.map(row => {
+            const fields = row.fields || {};
+            const statusClass = row.status === 'completed' ? 'completed' : row.status === 'failed' ? 'failed' : 'pending';
+            const statusIcon = row.status === 'completed' ? '✅' : row.status === 'failed' ? '❌' : row.status === 'skipped' ? '⏭️' : '⏳';
+            const age = row.created_at ? getTimeAgo(row.created_at) : '';
+            const source = row.source || (fields._source) || 'desktop';
+            return `
+                <div class="queue-item">
+                    <span class="channel-badge ${row.channel}">${row.channel}</span>
+                    <span class="action-badge ${row.operation || 'update'}">${(row.operation || 'UPDATE').toUpperCase()}</span>
+                    <div class="queue-info">
+                        <div class="queue-product">${esc(fields.sku || 'Unknown SKU')}</div>
+                        <div class="queue-details">
+                            ${Array.isArray(fields.fieldTypes) ? fields.fieldTypes.join(', ') : (fields.fieldTypes || 'qty')}
+                            ${fields.quantity != null ? ' • qty=' + fields.quantity : ''}
+                            ${fields.price != null ? ' • price=$' + parseFloat(fields.price).toFixed(2) : ''}
+                            • ${age} • src: ${source}
+                            ${row.error_message ? '<br><span style="color:var(--error);">' + esc(row.error_message) + '</span>' : ''}
+                        </div>
+                    </div>
+                    <span class="status-badge ${statusClass}">${statusIcon} ${row.status}</span>
+                </div>
+            `;
+        }).join('');
     }
     
-    function clearCompletedQueue() {
-        state.queue = state.queue.filter(item => item.status !== 'completed');
-        saveQueue();
-        renderQueue();
-        updateStats();
-        toast('Cleared completed items', 'info');
+    function getTimeAgo(isoStr) {
+        const diff = Date.now() - new Date(isoStr).getTime();
+        const mins = Math.floor(diff / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return mins + 'm ago';
+        const hrs = Math.floor(mins / 60);
+        if (hrs < 24) return hrs + 'h ago';
+        return Math.floor(hrs / 24) + 'd ago';
     }
     
-    function clearAllQueue() {
-        if (!confirm('Clear all queue items?')) return;
-        state.queue = [];
-        saveQueue();
-        renderQueue();
-        updateStats();
-        toast('Queue cleared', 'info');
+    function getSyncQueuePendingCount() {
+        // Lightweight: return last known count from most recent render
+        const badges = document.querySelectorAll('#queueContainer .status-badge');
+        let pending = 0;
+        badges.forEach(b => { if (b.textContent.includes('pending')) pending++; });
+        return pending;
     }
     
     // ============================================================
@@ -1564,7 +1555,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.1.4',
+                processedBy: 'Sync Hub v4.2.0',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -1632,13 +1623,7 @@
 
 
     // === startAutoProcess ===
-    // =============================================
-    // AUTO-PROCESSING (queue drain)
-    // v4.1.4: Removed duplicate startAutoProcess/stopAutoProcess that were
-    // overwritten by the definitions near the bottom of the file.
-    // The overwritten version only checked state.queue but never pulled
-    // orders. The surviving version (near SYNC QUEUE RELAY) does both.
-    // =============================================
+    // v4.2.0: Auto-process is defined once near SYNC QUEUE RELAY section.
 
 
     // === updateNextRunTime ===
@@ -2973,24 +2958,17 @@
             return;
         }
         
-        // Auto-process retry logic with collision handling
-        let attempts = 0;
-        const maxAttempts = 3;
+        // v4.2.0: Direct Supabase writes — no collision retry needed
+        addLog(`Processing order ${orderId}...`, 'info');
         
-        while (attempts < maxAttempts) {
-            attempts++;
-            
-            addLog(`Processing order ${orderId}...${attempts > 1 ? ` (attempt ${attempts}/${maxAttempts})` : ''}`, 'info');
-            
-            const products = getProductsArray();
-            const updates = [];
-            const changes = []; // For change log
-            const cascadeQueue = [];
-            
-            // ===== GAP 3: INVENTORY DEDUCTION WRAPPER =====
-            // Check if inventory deduction is enabled via feature flag
-            const config = configData || {};
-            const enableDeduction = config.settings?.features?.inventoryDeduction ?? true; // Default TRUE for backward compatibility
+        const products = getProductsArray();
+        const updates = [];
+        const changes = []; // For change log
+        
+        // ===== GAP 3: INVENTORY DEDUCTION WRAPPER =====
+        // Check if inventory deduction is enabled via feature flag
+        const config = configData || {};
+        const enableDeduction = config.settings?.features?.inventoryDeduction ?? true; // Default TRUE for backward compatibility
             
             console.log(`[GAP 3] Processing order ${orderId}`);
             console.log(`[GAP 3] Inventory deduction: ${enableDeduction ? 'ENABLED' : 'DISABLED'}`);
@@ -3411,180 +3389,124 @@
                 }
             }
             
-            // Save Master JSON with collision detection
-            if (updates.length > 0) {
-                const saveResult = await saveMasterJson({
-                    isAutoProcess: isAutoProcess,
-                    actionDescription: `Order ${orderId}: ${updates.map(u => u.sku).join(', ')}`,
-                    changes: changes
-                });
-                
-                // Handle collision retry for auto-process
-                if (saveResult && typeof saveResult === 'object' && saveResult.reason === 'collision_reload') {
-                    if (attempts < maxAttempts) {
-                        addLog(`🔄 Collision retry ${attempts}/${maxAttempts} for order ${orderId}`, 'warning');
-                        continue; // Retry with fresh data
-                    } else {
-                        addLog(`❌ Max collision retries exceeded for order ${orderId}`, 'error');
-                        toast('Failed to save - max collision retries exceeded', 'error');
-                        return;
+            // ===== v4.2.0: SAVE DIRECTLY TO SUPABASE (per-item) =====
+            // No collision retry needed — Supabase handles concurrent writes.
+            if (updates.length > 0 && sbConnected) {
+                for (const u of updates) {
+                    const product = products.find(p => (p.sku || p.SKU) === u.sku);
+                    if (product) {
+                        try {
+                            await saveItemToSupabase(product);
+                            addLog(`✅ ${u.sku}: ${u.oldQty} → ${u.newQty} (-${u.deducted})`, 'success');
+                        } catch (saveErr) {
+                            addLog(`❌ Failed to save ${u.sku}: ${saveErr.message}`, 'error');
+                            console.error(`[processOrder] Save failed for ${u.sku}:`, saveErr);
+                        }
                     }
                 }
+            }
+        
+        // ===== v4.2.0: WRITE CASCADE ROWS TO sync_queue IN SUPABASE =====
+        // Instead of building in-memory queue items from mutated masterJsonData,
+        // write sync_queue rows with the computed values we already have.
+        // processSyncQueueRow() — the same proven path Desktop uses — handles the push.
+        let cascadeCount = 0;
+        
+        if (enableDeduction && sbConnected) {
+            for (const item of order.items) {
+                const sku = item.sku;
+                if (sku === 'UNKNOWN') continue;
                 
-                if (saveResult === true) {
-                    for (const u of updates) {
-                        addLog(`✅ ${u.sku}: ${u.oldQty} → ${u.newQty} (-${u.deducted})`, 'success');
-                    }
-                    // Success - break out of retry loop
-                    break;
-                } else if (saveResult === false) {
-                    // User cancelled or other error
-                    toast('Order processing cancelled', 'info');
-                    return;
+                const lookupSku = item.resolvedSku || sku;
+                const product = products.find(p => (p.sku || p.SKU) === lookupSku);
+                if (!product) continue;
+                
+                const sbId = product._sbId || product.id;
+                const sourceChannel = order.channel;
+                const channels = product.channels || {};
+                
+                // Etsy cascade
+                if ((product.etsyListingId || product.etsyListing) && sourceChannel !== 'etsy') {
+                    const etsyQty = parseInt(channels.etsy) || 0;
+                    try {
+                        await sbClient.from('sync_queue').insert({
+                            item_id: sbId,
+                            channel: 'etsy',
+                            operation: 'update',
+                            status: 'pending',
+                            fields: {
+                                sku: lookupSku,
+                                quantity: etsyQty,
+                                listingId: product.etsyListingId || product.etsyListing,
+                                fieldTypes: ['quantity'],
+                                _source: 'cascade'
+                            }
+                        });
+                        cascadeCount++;
+                        console.log(`[Cascade] Etsy sync_queue row: ${lookupSku} qty=${etsyQty}`);
+                    } catch (e) { console.error(`[Cascade] Etsy insert failed for ${lookupSku}:`, e.message); }
                 }
-            } else {
-                // No updates needed
-                break;
+                
+                // Wix cascade
+                if ((product.wixProductId || product.wixId) && sourceChannel !== 'wix') {
+                    const wixQty = parseInt(channels.wix) || 0;
+                    try {
+                        await sbClient.from('sync_queue').insert({
+                            item_id: sbId,
+                            channel: 'wix',
+                            operation: 'update',
+                            status: 'pending',
+                            fields: {
+                                sku: lookupSku,
+                                quantity: wixQty,
+                                productId: product.wixProductId || product.wixId,
+                                wixVariantId: product.wixVariantId || product.wix_variant_id || null,
+                                fieldTypes: ['quantity'],
+                                _source: 'cascade'
+                            }
+                        });
+                        cascadeCount++;
+                        console.log(`[Cascade] Wix sync_queue row: ${lookupSku} qty=${wixQty}, variantId=${product.wixVariantId || 'none'}`);
+                    } catch (e) { console.error(`[Cascade] Wix insert failed for ${lookupSku}:`, e.message); }
+                }
+                
+                // Wayfair cascade (always — Wayfair doesn't auto-reduce)
+                if (product.wayfairSku || product.supplierPartNumber) {
+                    const wayfairQty = parseInt(channels.wayfair) || 0;
+                    try {
+                        await sbClient.from('sync_queue').insert({
+                            item_id: sbId,
+                            channel: 'wayfair',
+                            operation: 'update',
+                            status: 'pending',
+                            fields: {
+                                sku: lookupSku,
+                                quantity: wayfairQty,
+                                wayfairSku: product.wayfairSku || product.supplierPartNumber,
+                                fieldTypes: ['quantity'],
+                                _source: 'cascade'
+                            }
+                        });
+                        cascadeCount++;
+                        console.log(`[Cascade] Wayfair sync_queue row: ${lookupSku} qty=${wayfairQty}`);
+                    } catch (e) { console.error(`[Cascade] Wayfair insert failed for ${lookupSku}:`, e.message); }
+                }
             }
         }
         
-        // Add cascade updates to queue
-        // v4.0: Use channel-specific quantities from auto-adjustment
-        const products = getProductsArray();
-        const cascadeQueue = [];
-        
-        for (const item of order.items) {
-            const sku = item.sku;
-            if (sku === 'UNKNOWN') continue;
+        if (cascadeCount > 0) {
+            addLog(`📤 Wrote ${cascadeCount} cascade rows to sync_queue`, 'info');
+            console.log(`📤 CASCADE: ${cascadeCount} sync_queue rows written for order ${orderId}`);
             
-            // v3.3.5.28: Use resolvedSku (set during GAP 3) for product lookup
-            // Wayfair channel SKUs (CCDCTW520035) differ from master SKUs (520035)
-            const lookupSku = item.resolvedSku || sku;
-            const product = products.find(p => (p.sku || p.SKU) === lookupSku);
-            if (!product) continue;
-            
-            const sourceChannel = order.channel;
-            const channels = product.channels || {};
-            
-            // v4.0: Push channel-specific qty (after auto-adjustment), not warehouse qty
-            if ((product.etsyListing || product.etsyListingId) && sourceChannel !== 'etsy') {
-                const etsyQty = channels.etsy || 0;
-                cascadeQueue.push({
-                    channel: 'etsy',
-                    sku: lookupSku,
-                    qty: etsyQty,
-                    listingId: product.etsyListing || product.etsyListingId
-                });
-            }
-            
-            if ((product.wixProductId || product.wixId) && sourceChannel !== 'wix') {
-                const wixQty = channels.wix || 0;
-                cascadeQueue.push({
-                    channel: 'wix',
-                    sku: lookupSku,
-                    qty: wixQty,
-                    productId: product.wixProductId || product.wixId,
-                    wixVariantId: product.wixVariantId || product.wix_variant_id || null  // v4.1.3: variant-level targeting
-                });
-            }
-            
-            // 🔧 WAYFAIR CASCADE FIX v3.3.5.8: Removed sourceChannel !== 'wayfair' check
-            // Wayfair does NOT auto-reduce inventory like Etsy/Wix do, so we MUST
-            // always push inventory updates to Wayfair, even for Wayfair-sourced orders
-            if (product.wayfairSku || product.supplierPartNumber) {
-                const wayfairQty = channels.wayfair || 0;
-                cascadeQueue.push({
-                    channel: 'wayfair',
-                    sku: lookupSku,
-                    qty: wayfairQty,
-                    wayfairSku: product.wayfairSku || product.supplierPartNumber
-                });
-            }
-        }
-        
-        for (const cascade of cascadeQueue) {
-            const queueItem = {
-                id: Date.now() + Math.random(),
-                type: 'inventory-sync',
-                channel: cascade.channel,
-                product: { sku: cascade.sku, ...cascade },
-                fields: { quantity: true },
-                status: 'pending',
-                timestamp: new Date().toISOString(),
-                reason: `Cascade from ${order.channel} order ${orderId}`
-            };
-            state.queue.push(queueItem);
-        }
-        
-        if (cascadeQueue.length > 0) {
-            await saveQueue();
-            addLog(`📤 Queued ${cascadeQueue.length} inventory updates to other channels`, 'info');
-            
-            // Enhanced cascade queue logging with complete queue details
             logActivity('sync', 'cascade_queued', order.channel,
-                `📤 Cascade queue created from ${order.channel} order ${orderId}`,
-                { 
+                `📤 Cascade: ${cascadeCount} sync_queue rows from ${order.channel} order ${orderId}`,
+                {
                     orderId: orderId,
                     sourceChannel: order.channel,
-                    cascadeCount: cascadeQueue.length,
-                    autoProcessScheduled: true,
-                    targets: cascadeQueue.map(c => ({
-                        channel: c.channel,
-                        sku: c.sku,
-                        qty: c.qty,
-                        channelId: c.listingId || c.productId || c.wayfairSku,
-                        reason: `Cascade from ${order.channel} order`,
-                        queuedAt: new Date().toISOString()
-                    })),
-                    autoPushSettings: {
-                        etsy: state.settings.autoPushEtsy,
-                        wix: state.settings.autoPushWix,
-                        wayfair: state.settings.autoPushWayfair
-                    },
-                    // Flag if auto-push disabled
-                    warnings: [
-                        !state.settings.autoPushEtsy ? 'Etsy auto-push DISABLED' : null,
-                        !state.settings.autoPushWix ? 'Wix auto-push DISABLED' : null,
-                        !state.settings.autoPushWayfair ? 'Wayfair auto-push DISABLED' : null
-                    ].filter(Boolean)
+                    cascadeCount: cascadeCount,
+                    method: 'sync_queue_direct'
                 }
             );
-            
-            // Also log to console for immediate visibility
-            console.log('📤 CASCADE QUEUE CREATED:', {
-                orderId: orderId,
-                sourceChannel: order.channel,
-                queue: cascadeQueue
-            });
-            
-            // ========== AUTO-PROCESS CASCADE ==========
-            // v3.3.5.23: Removed unfiltered processQueue() call here.
-            // processOrderWithCascade() now handles cascade with proper item isolation.
-            // "Process & Deduct Only" should NOT auto-cascade to channels.
-            // Stale queue items were being picked up by the old unfiltered call.
-            console.log('[processOrder] Cascade items queued. Use "Process, Deduct & Push to Channels" to push, or process queue manually.');
-        }
-        
-        // Log auto-cascade status for visibility
-        if (cascadeQueue.length > 0) {
-            const disabledChannels = [];
-            if (!state.settings.autoPushEtsy) disabledChannels.push('Etsy');
-            if (!state.settings.autoPushWix) disabledChannels.push('Wix');
-            if (!state.settings.autoPushWayfair) disabledChannels.push('Wayfair');
-            
-            if (disabledChannels.length > 0) {
-                console.warn(`⚠️ AUTO-PUSH DISABLED for: ${disabledChannels.join(', ')}`);
-                console.warn('Queue items will not be pushed to these channels automatically');
-                
-                logActivity('warning', 'auto_push_disabled', 'system',
-                    `⚠️ Auto-push disabled for some channels: ${disabledChannels.join(', ')}`,
-                    {
-                        disabledChannels: disabledChannels,
-                        cascadeQueue: cascadeQueue.map(c => c.channel),
-                        note: 'Items queued but will not auto-push to disabled channels'
-                    }
-                );
-            }
         }
         
         // Mark order as processed
@@ -3739,49 +3661,84 @@
         try {
             console.log('[processOrderWithCascade] Starting cascade for order:', orderId);
             
-            // v3.3.5.23: Track existing queue item IDs BEFORE processing
-            const existingItemIds = new Set(state.queue.map(i => i.id));
-            const queueBefore = state.queue ? state.queue.length : 0;
-            console.log('[processOrderWithCascade] Queue length before:', queueBefore);
+            // v4.2.0: Timestamp fence — only fetch cascade rows created AFTER this moment
+            const beforeTimestamp = new Date().toISOString();
             
-            // Process the order (deduct inventory, queue cascade updates)
+            // Process the order (deducts inventory, writes sync_queue rows to Supabase)
             await processOrder(orderId, false);
             
-            // Small delay to ensure queue is populated
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // Small delay to ensure sync_queue rows are committed
+            await new Promise(resolve => setTimeout(resolve, 300));
             
-            // v3.3.5.23: Identify ONLY the new items added by this order's cascade
-            const newItemIds = state.queue
-                .filter(i => !existingItemIds.has(i.id))
-                .map(i => i.id);
+            // v4.2.0: Fetch the cascade rows we just wrote and push them through
+            // the SAME processSyncQueueRow() path that Desktop uses successfully.
+            if (!sbConnected || !sbClient) {
+                toast('✅ Order processed (Supabase not connected — cascade rows saved for later)', 'info');
+                return;
+            }
             
-            const queueAfter = state.queue ? state.queue.length : 0;
-            console.log('[processOrderWithCascade] Queue length after:', queueAfter);
-            console.log('[processOrderWithCascade] New item IDs:', newItemIds.length);
+            // Fetch ONLY cascade rows created after our timestamp fence
+            const { data: cascadeRows, error } = await sbClient
+                .from('sync_queue')
+                .select('*')
+                .eq('status', 'pending')
+                .gte('created_at', beforeTimestamp)
+                .order('created_at', { ascending: true })
+                .limit(20);
             
-            if (newItemIds.length > 0) {
-                console.log(`[processOrderWithCascade] Processing ONLY ${newItemIds.length} new cascade items (ignoring ${state.queue.filter(i => i.status === 'pending' && !newItemIds.includes(i.id)).length} pre-existing)`);
-                toast(`🚀 Processing order and pushing ${newItemIds.length} update(s) to channels...`, 'info');
-                
-                // v3.3.5.23: Only process the new cascade items, not stale queue items
-                await processQueue(newItemIds);
-                
-                toast(`✅ Order processed and ${newItemIds.length} update(s) sent to channels!`, 'success');
-                console.log('[processOrderWithCascade] Cascade complete');
-            } else {
-                // Check if order exists and was processed
+            if (error) {
+                console.error('[processOrderWithCascade] Failed to fetch cascade rows:', error);
+                toast('✅ Order processed (cascade rows saved — poller will push them)', 'info');
+                return;
+            }
+            
+            if (!cascadeRows || cascadeRows.length === 0) {
+                // Check if order was duplicate/failed
                 const order = state.orders.all.find(o => o.id === orderId);
-                
                 if (order && (order.status === 'duplicate' || order.status === 'failed')) {
-                    console.log('[processOrderWithCascade] Order marked as duplicate or failed, no cascade needed');
+                    console.log('[processOrderWithCascade] Order marked as duplicate or failed');
                 } else {
-                    console.log('[processOrderWithCascade] No new queue items added, cascade may not be needed');
-                    toast(`✅ Order processed (no cascade updates needed)`, 'success');
+                    toast('✅ Order processed (no cascade updates needed)', 'success');
+                }
+                return;
+            }
+            
+            console.log(`[processOrderWithCascade] Pushing ${cascadeRows.length} cascade rows via processSyncQueueRow...`);
+            toast(`🚀 Pushing ${cascadeRows.length} update(s) to channels...`, 'info');
+            
+            let succeeded = 0, failed = 0;
+            for (const row of cascadeRows) {
+                try {
+                    await processSyncQueueRow(row, true);  // forceProcess=true bypasses auto-push toggles
+                    // processSyncQueueRow handles its own status updates in sync_queue
+                    // Check if it succeeded by re-reading the row
+                    const { data: updated } = await sbClient
+                        .from('sync_queue')
+                        .select('status')
+                        .eq('id', row.id)
+                        .single();
+                    if (updated && updated.status === 'completed') {
+                        succeeded++;
+                    } else {
+                        failed++;
+                    }
+                } catch (pushErr) {
+                    failed++;
+                    console.error(`[processOrderWithCascade] Push error for row ${row.id}:`, pushErr.message);
                 }
             }
+            
+            const msg = `✅ Order processed: ${succeeded} push${succeeded !== 1 ? 'es' : ''} succeeded${failed > 0 ? ', ' + failed + ' failed' : ''}`;
+            toast(msg, failed > 0 ? 'warning' : 'success');
+            addLog(msg, failed > 0 ? 'warning' : 'success');
+            console.log(`[processOrderWithCascade] Complete: ${succeeded} succeeded, ${failed} failed`);
+            
+            // Refresh the sync queue viewer
+            refreshSyncQueue();
+            
         } catch (error) {
             console.error('[processOrderWithCascade] Error:', error);
-            toast(`❌ Error processing order with cascade: ${error.message}`, 'error');
+            toast(`❌ Error: ${error.message}`, 'error');
         }
     }
 
@@ -4854,7 +4811,7 @@
         const dbStatus = sbConnected ? '✅' : '❌';
         const itemCount = window.masterJsonData?.inventory?.length || 0;
         const pendingOrders = state.orders.all.filter(o => !o.processed).length;
-        const queuePending = state.queue.filter(q => q.status === 'pending').length;
+        const queuePending = getSyncQueuePendingCount();
         
         const summary = [
             `DB: ${dbStatus} (${itemCount} items)`,
@@ -5899,7 +5856,7 @@
             else { orderBadge.style.display = 'none'; }
         }
         
-        const queuePending = state.queue.filter(q => q.status === 'pending').length;
+        const queuePending = getSyncQueuePendingCount();
         const queueBadge = document.getElementById('queueBadge');
         if (queueBadge) {
             if (queuePending > 0) { queueBadge.textContent = queuePending; queueBadge.style.display = 'inline'; }
@@ -5908,30 +5865,12 @@
     }
     
     // ============================================================
-    // UI: RENDER QUEUE
+    // UI: RENDER QUEUE (v4.2.0: replaced by renderSyncQueue)
     // ============================================================
     
     function renderQueue() {
-        const container = document.getElementById('queueContainer');
-        if (!container) return;
-        
-        if (state.queue.length === 0) {
-            container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📤</div><div class="empty-state-title">Queue is empty</div></div>';
-            return;
-        }
-        
-        container.innerHTML = state.queue.map((item, idx) => `
-            <div class="queue-item">
-                <span class="channel-badge ${item.channel}">${item.channel}</span>
-                <span class="action-badge ${item.action || 'update'}">${(item.action || 'UPDATE').toUpperCase()}</span>
-                <div class="queue-info">
-                    <div class="queue-product">${esc(item.product?.sku || item.sku || 'Unknown')}</div>
-                    <div class="queue-details">SKU: ${esc(item.sku || item.product?.sku || '?')} • Action: ${item.action || 'update'} • Status: ${item.status || 'pending'}${item.error ? '<br><span style="color:var(--error);">' + esc(item.error) + '</span>' : ''}</div>
-                </div>
-                <span class="status-badge ${item.status || 'pending'}">${item.status || 'pending'}</span>
-                <button class="btn btn-sm btn-danger" onclick="removeFromQueue('${item.id}')">✕</button>
-            </div>
-        `).join('');
+        // v4.2.0: No-op — sync queue is rendered by renderSyncQueue()
+        // Kept as stub so any lingering calls don't throw errors
     }
     
     // ============================================================
@@ -6099,17 +6038,11 @@
             await pullOrdersFromChannels(true);
             await processAllOrders(true);
             
-            // v4.1.4 FIX: Process cascade queue after order processing
-            // processAllOrders → processOrder builds cascade items in state.queue
-            // but never processes them. Without this, channel APIs never get
-            // updated quantities — the DB is correct but Etsy/Wix/Wayfair
-            // still show old stock levels.
-            const pending = state.queue.filter(i => i.status === 'pending');
-            if (pending.length > 0) {
-                console.log(`[Auto-Process] Processing ${pending.length} cascade queue items...`);
-                addLog(`📤 Auto-processing ${pending.length} cascade queue item(s)`, 'info');
-                await processQueue();
-            }
+            // v4.2.0: No need to call processQueue — cascade rows are written
+            // directly to Supabase sync_queue by processOrder. The 15-second
+            // poller (pollSyncQueue) picks them up and pushes to channels.
+            // This ensures one push path for everything.
+            console.log('[Auto-Process] Complete. Cascade rows in sync_queue for poller.');
         }, 5 * 60 * 1000); // Every 5 minutes
         addLog('Auto-process started (every 5 minutes)', 'success');
     }
@@ -6212,17 +6145,19 @@
         _syncQueueProcessing = false;
     }
     
-    async function processSyncQueueRow(row) {
+    async function processSyncQueueRow(row, forceProcess = false) {
         const fields = row.fields || {};
         const channel = row.channel;
         
         console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
         
         // Check per-channel auto-push toggle — respect Sync Hub's settings
-        const channelEnabled = 
-            (channel === 'etsy' && state.settings.autoPushEtsy) ||
-            (channel === 'wix' && state.settings.autoPushWix) ||
-            (channel === 'wayfair' && state.settings.autoPushWayfair);
+        // v4.2.0: forceProcess=true bypasses this check (used by "Process & Push" button)
+        if (!forceProcess) {
+            const channelEnabled = 
+                (channel === 'etsy' && state.settings.autoPushEtsy) ||
+                (channel === 'wix' && state.settings.autoPushWix) ||
+                (channel === 'wayfair' && state.settings.autoPushWayfair);
         
         if (!channelEnabled) {
             console.log(`[Sync Queue] ⏭️ ${channel} auto-push is OFF — skipping (id=${row.id})`);
@@ -6234,6 +6169,7 @@
             }).eq('id', row.id);
             return;
         }
+        } // end forceProcess check
         // Transform sync_queue row into the format processQueueItem expects
         const product = {
             sku: fields.sku || '',
@@ -6332,8 +6268,7 @@
                 updateSupabaseUI(true, window.masterJsonData?.inventory?.length || 0);
             } catch (e) { console.error('[Refresh] Error:', e); }
         }
-        loadQueue();
-        renderQueue();
+        refreshSyncQueue();
         renderOrders();
         updateStats();
         toast('Refreshed', 'success');
@@ -6932,16 +6867,17 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.1.5 — Clean Build');
+            console.log('[Init] CCD Sync Hub v4.2.0 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
             // Load settings from localStorage first
             loadSettingsFromLocalStorage();
             
-            // Load persisted orders and queue
+            // Load persisted orders
             loadOrdersFromStorage();
-            loadQueue();
+            
+            // v4.2.0: No localStorage queue — sync_queue is in Supabase
             
             // Try auto-connect to Supabase
             const sbCreds = getSbCredentials();
@@ -6956,8 +6892,10 @@
             // Populate UI
             loadSettingsToUI();
             renderOrders();
-            renderQueue();
             updateStats();
+            
+            // v4.2.0: Refresh sync queue viewer after Supabase connects
+            if (sbConnected) refreshSyncQueue();
             
             // Custom date range toggle
             const pullTimeRange = document.getElementById('pullTimeRange');
@@ -7000,11 +6938,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.1.5 initialized successfully');
-            addLog('CCD Sync Hub v4.1.5 initialized (Clean Build)', 'success');
+            console.log('[Init] CCD Sync Hub v4.2.0 initialized successfully');
+            addLog('CCD Sync Hub v4.2.0 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.1.4 started (Clean Build)',
+                'Sync Hub v4.2.0 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
