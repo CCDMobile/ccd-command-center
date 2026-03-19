@@ -3297,8 +3297,9 @@
                 // ===== END INVENTORY DEDUCTION =====
                 
                 // ===== UPDATE ALLOCATIONS IN MASTER.json =====
-                // v3.3.5.4: Update channel allocations locally (before pushing to websites)
-                // This keeps MASTER.json internally consistent even when autoCascade is false
+                // v4.2.0: Reduce each non-source channel by sale qty (option B).
+                // Preserves Desktop-set allocations instead of overwriting with warehouse qty.
+                // Cap: can't go below 0, can't exceed warehouse qty.
                 const sourceChannel = order.channel;
                 
                 // v4.1.5 FIX: Was using isFeatureEnabled('inventoryDeduction') which defaults FALSE,
@@ -3309,57 +3310,56 @@
                     // Source channel already updated by the sale itself
                     
                     if (sourceChannel !== 'etsy' && (product.etsyListing || product.etsyListingId)) {
-                        const oldEtsyQty = product.etsyQty || product.warehouseQty || 0;
-                        product.etsyQty = newQty;
-                        // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.etsy = newQty;
-                        console.log(`[Allocation] Updated Etsy allocation: ${oldEtsyQty} → ${newQty}`);
+                        const oldEtsyQty = product.etsyQty || 0;
+                        const reducedEtsy = Math.min(Math.max(0, oldEtsyQty - item.qty), newQty);
+                        product.etsyQty = reducedEtsy;
+                        if (product.channels) product.channels.etsy = reducedEtsy;
+                        console.log(`[Allocation] Etsy: ${oldEtsyQty} - ${item.qty} = ${reducedEtsy} (capped at warehouse ${newQty})`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'etsyQty',
                             before: oldEtsyQty,
-                            after: newQty,
-                            reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
+                            after: reducedEtsy,
+                            reason: `Cascade from ${order.channel} order ${orderId}`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
                     }
                     
                     if (sourceChannel !== 'wix' && (product.wixProductId || product.wixId)) {
-                        const oldWixQty = product.wixQty || product.warehouseQty || 0;
-                        product.wixQty = newQty;
-                        // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.wix = newQty;
-                        console.log(`[Allocation] Updated Wix allocation: ${oldWixQty} → ${newQty}`);
+                        const oldWixQty = product.wixQty || 0;
+                        const reducedWix = Math.min(Math.max(0, oldWixQty - item.qty), newQty);
+                        product.wixQty = reducedWix;
+                        if (product.channels) product.channels.wix = reducedWix;
+                        console.log(`[Allocation] Wix: ${oldWixQty} - ${item.qty} = ${reducedWix} (capped at warehouse ${newQty})`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'wixQty',
                             before: oldWixQty,
-                            after: newQty,
-                            reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
+                            after: reducedWix,
+                            reason: `Cascade from ${order.channel} order ${orderId}`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
                     }
                     
-                    // 🔧 WAYFAIR CASCADE FIX v3.3.5.8: Removed sourceChannel !== 'wayfair' check
-                    // Wayfair allocations must ALWAYS be updated, even for Wayfair orders
+                    // Wayfair: always update (Wayfair doesn't auto-reduce on their side)
                     if (product.wayfairSku || product.supplierPartNumber) {
-                        const oldWayfairQty = product.wayfairQty || product.warehouseQty || 0;
-                        product.wayfairQty = newQty;
-                        // v3.3.5.23: Sync channels object so cascade queue reads correct qty
-                        if (product.channels) product.channels.wayfair = newQty;
-                        console.log(`[Allocation] Updated Wayfair allocation: ${oldWayfairQty} → ${newQty}`);
+                        const oldWayfairQty = product.wayfairQty || 0;
+                        const reducedWayfair = Math.min(Math.max(0, oldWayfairQty - item.qty), newQty);
+                        product.wayfairQty = reducedWayfair;
+                        if (product.channels) product.channels.wayfair = reducedWayfair;
+                        console.log(`[Allocation] Wayfair: ${oldWayfairQty} - ${item.qty} = ${reducedWayfair} (capped at warehouse ${newQty})`);
                         
                         changes.push({
                             changeType: 'allocation',
                             sku: sku,
                             field: 'wayfairQty',
                             before: oldWayfairQty,
-                            after: newQty,
-                            reason: `Cascade from ${order.channel} order ${orderId} (file only, not pushed yet)`,
+                            after: reducedWayfair,
+                            reason: `Cascade from ${order.channel} order ${orderId}`,
                             user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
                         });
                     }
@@ -3602,9 +3602,9 @@
                 isAutoProcess: isAutoProcess,
                 featureFlags: {
                     inventoryDeduction: isFeatureEnabled('inventoryDeduction'),
-                    autoPushEtsy: state.settings.autoPushEtsy,
-                    autoPushWix: state.settings.autoPushWix,
-                    autoPushWayfair: state.settings.autoPushWayfair
+                    autoPushEtsy: state.settings.autoPushEtsy || state.settings.enableEtsySync,
+                    autoPushWix: state.settings.autoPushWix || state.settings.enableWixSync,
+                    autoPushWayfair: state.settings.autoPushWayfair || state.settings.enableWayfairSync
                 }
             }
         );
@@ -6155,9 +6155,9 @@
         // v4.2.0: forceProcess=true bypasses this check (used by "Process & Push" button)
         if (!forceProcess) {
             const channelEnabled = 
-                (channel === 'etsy' && state.settings.autoPushEtsy) ||
-                (channel === 'wix' && state.settings.autoPushWix) ||
-                (channel === 'wayfair' && state.settings.autoPushWayfair);
+                (channel === 'etsy' && (state.settings.autoPushEtsy || state.settings.enableEtsySync)) ||
+                (channel === 'wix' && (state.settings.autoPushWix || state.settings.enableWixSync)) ||
+                (channel === 'wayfair' && (state.settings.autoPushWayfair || state.settings.enableWayfairSync));
         
         if (!channelEnabled) {
             console.log(`[Sync Queue] ⏭️ ${channel} auto-push is OFF — skipping (id=${row.id})`);
