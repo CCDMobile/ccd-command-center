@@ -71729,8 +71729,64 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
                         for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
                             const page = await pdf.getPage(pageNum);
                             const textContent = await page.getTextContent();
-                            const pageText = textContent.items.map(item => item.str).join(' ');
-                            fullText += pageText + '\n';
+                            
+                            // v23.4.3: Position-aware text reconstruction.
+                            // pdf.js items include transform[4]=X, transform[5]=Y.
+                            // Group by Y (same row), sort by X (left-to-right),
+                            // insert spacing based on X gaps. Fixes PBK column
+                            // scrambling where Page# and UPC got treated as prices.
+                            const items = textContent.items.filter(item => item.str.trim());
+                            
+                            if (items.length === 0) continue;
+                            
+                            // Group items into rows by Y position (tolerance: 3 units)
+                            const rows = [];
+                            const yTolerance = 3;
+                            
+                            for (const item of items) {
+                                const x = item.transform[4];
+                                const y = item.transform[5];
+                                
+                                // Find existing row with similar Y
+                                let foundRow = null;
+                                for (const row of rows) {
+                                    if (Math.abs(row.y - y) < yTolerance) {
+                                        foundRow = row;
+                                        break;
+                                    }
+                                }
+                                
+                                if (foundRow) {
+                                    foundRow.items.push({ str: item.str, x, y, width: item.width || 0 });
+                                } else {
+                                    rows.push({ y, items: [{ str: item.str, x, y, width: item.width || 0 }] });
+                                }
+                            }
+                            
+                            // Sort rows top-to-bottom (highest Y first in PDF coords)
+                            rows.sort((a, b) => b.y - a.y);
+                            
+                            // Build text: sort items left-to-right within each row
+                            const pageLines = [];
+                            for (const row of rows) {
+                                row.items.sort((a, b) => a.x - b.x);
+                                
+                                // Join items with spacing based on X gaps
+                                let lineText = '';
+                                for (let i = 0; i < row.items.length; i++) {
+                                    const item = row.items[i];
+                                    if (i > 0) {
+                                        const prev = row.items[i - 1];
+                                        const gap = item.x - (prev.x + prev.width);
+                                        // Large gap = column separator, small gap = same word
+                                        lineText += gap > 8 ? '  ' : (gap > 1 ? ' ' : '');
+                                    }
+                                    lineText += item.str;
+                                }
+                                pageLines.push(lineText);
+                            }
+                            
+                            fullText += pageLines.join('\n') + '\n';
                         }
                         
                         resolve(fullText);
