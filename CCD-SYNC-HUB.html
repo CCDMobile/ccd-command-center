@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.2.0</title>
+    <title>CCD Sync Hub v4.2.1</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.2.0 — Clean Build Styles
+           CCD SYNC HUB v4.2.1 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -316,7 +316,11 @@
             border-radius: 8px;
             padding: 12px 16px;
             min-width: 120px;
+            cursor: pointer;
+            transition: border-color 0.2s;
         }
+        .stat-item:hover { border-color: var(--accent); }
+        .stat-item.active-filter { border-color: var(--accent); background: rgba(59, 130, 246, 0.08); }
         .stat-value { font-size: 1.4rem; font-weight: 700; }
         .stat-label { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
         
@@ -421,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.2.0 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.2.1 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -432,6 +436,7 @@
                 <span class="header-dot dot-unknown" id="shippoHeaderDot" title="Shippo: Testing...">📦</span>
             </div>
             <span id="channelIdStatusBadge" class="channel-id-status"></span>
+            <span id="autoProcessIndicator" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; font-weight: 600; display: none;">⚡ AUTO</span>
             <span id="inventoryCount" style="font-size: 0.8rem; color: var(--text-dim);">0 items</span>
             <button class="btn btn-sm btn-secondary" onclick="refreshData()">🔄 Refresh</button>
         </div>
@@ -450,7 +455,6 @@
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('orders')" id="tabOrders">📦 Orders <span class="badge" id="ordersBadge" style="display:none">0</span></button>
         <button class="tab-btn" onclick="switchTab('queue')" id="tabQueue">📤 Push Queue <span class="badge" id="queueBadge" style="display:none">0</span></button>
-        <button class="tab-btn" onclick="switchTab('channels')" id="tabChannels">🔗 Channel IDs</button>
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
         <button class="tab-btn" onclick="switchTab('settings')" id="tabSettings">⚙️ Settings</button>
         <button class="tab-btn" onclick="switchTab('shippo')" id="tabShippo">📦 Shippo</button>
@@ -460,17 +464,18 @@
     <div class="main">
         <!-- ==================== ORDERS TAB ==================== -->
         <div class="tab-content active" id="tab-orders">
-            <div class="stats-bar">
-                <div class="stat-item"><div class="stat-value" id="statPending">0</div><div class="stat-label">Pending</div></div>
-                <div class="stat-item"><div class="stat-value" id="statProcessed">0</div><div class="stat-label">Processed</div></div>
-                <div class="stat-item"><div class="stat-value" id="statEtsy">0</div><div class="stat-label">Etsy</div></div>
-                <div class="stat-item"><div class="stat-value" id="statWix">0</div><div class="stat-label">Wix</div></div>
-                <div class="stat-item"><div class="stat-value" id="statWayfair">0</div><div class="stat-label">Wayfair</div></div>
+            <div class="stats-bar" id="orderStatsBar">
+                <div class="stat-item" onclick="filterOrders('pending')" title="Click to filter"><div class="stat-value" id="statPending">0</div><div class="stat-label">Pending</div></div>
+                <div class="stat-item" onclick="filterOrders('processed')" title="Click to filter"><div class="stat-value" id="statProcessed">0</div><div class="stat-label">Processed</div></div>
+                <div class="stat-item" onclick="filterOrders('etsy')" title="Click to filter"><div class="stat-value" id="statEtsy">0</div><div class="stat-label">Etsy</div></div>
+                <div class="stat-item" onclick="filterOrders('wix')" title="Click to filter"><div class="stat-value" id="statWix">0</div><div class="stat-label">Wix</div></div>
+                <div class="stat-item" onclick="filterOrders('wayfair')" title="Click to filter"><div class="stat-value" id="statWayfair">0</div><div class="stat-label">Wayfair</div></div>
             </div>
             
             <div style="display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
                 <button class="btn btn-primary" onclick="pullOrdersFromChannels()">🔄 Pull All Orders</button>
                 <button class="btn btn-success" onclick="processAllOrders()">▶ Process All Pending</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearProcessedOrders()" title="Remove processed orders from the list">🗑️ Clear Processed</button>
                 <select id="pullTimeRange" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
                     <option value="last_7days">Last 7 days</option>
                     <option value="last_24h">Last 24 hours</option>
@@ -495,8 +500,12 @@
         
         <!-- ==================== QUEUE TAB ==================== -->
         <div class="tab-content" id="tab-queue">
-            <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center;">
+            <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
                 <button class="btn btn-primary" onclick="refreshSyncQueue()">🔄 Refresh</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('completed')" title="Delete completed rows from sync_queue">🗑️ Clear Completed</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('failed')" title="Delete failed rows from sync_queue">🗑️ Clear Failed</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('skipped')" title="Delete skipped rows from sync_queue">🗑️ Clear Skipped</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--error); border: 1px solid var(--border);" onclick="clearAllSyncQueueRows()" title="Delete ALL rows from sync_queue">🗑️ Clear All</button>
                 <span id="syncQueueStatus" style="font-size: 0.85rem; color: var(--text-dim);"></span>
             </div>
             <div id="queueContainer">
@@ -698,7 +707,7 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.2.0 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.2.1 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
@@ -1386,7 +1395,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.2.0-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.2.1-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1536,6 +1545,51 @@
         return pending;
     }
     
+    // v4.2.1: Clear completed or failed rows from sync_queue
+    async function clearSyncQueueRows(status) {
+        if (!sbClient || !sbConnected) {
+            toast('Connect to Supabase first', 'warning');
+            return;
+        }
+        try {
+            const { data, error } = await sbClient
+                .from('sync_queue')
+                .delete()
+                .eq('status', status)
+                .select('id');
+            if (error) throw error;
+            const count = data?.length || 0;
+            toast(`Cleared ${count} ${status} row(s)`, count > 0 ? 'success' : 'info');
+            addLog(`🗑️ Cleared ${count} ${status} sync_queue rows`, 'info');
+            await refreshSyncQueue();
+        } catch (e) {
+            toast('Failed to clear: ' + e.message, 'error');
+        }
+    }
+    
+    // v4.2.1: Clear ALL sync_queue rows (with confirmation)
+    async function clearAllSyncQueueRows() {
+        if (!sbClient || !sbConnected) {
+            toast('Connect to Supabase first', 'warning');
+            return;
+        }
+        if (!confirm('Delete ALL rows from the sync queue?\n\nThis includes pending rows that haven\'t been pushed yet.')) return;
+        try {
+            const { data, error } = await sbClient
+                .from('sync_queue')
+                .delete()
+                .gte('id', 0)
+                .select('id');
+            if (error) throw error;
+            const count = data?.length || 0;
+            toast(`Cleared all ${count} sync_queue row(s)`, count > 0 ? 'success' : 'info');
+            addLog(`🗑️ Cleared ALL ${count} sync_queue rows`, 'info');
+            await refreshSyncQueue();
+        } catch (e) {
+            toast('Failed to clear: ' + e.message, 'error');
+        }
+    }
+    
     // ============================================================
     // PROCESSED ORDER TRACKING
     // ============================================================
@@ -1555,7 +1609,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.2.0',
+                processedBy: 'Sync Hub v4.2.1',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -1946,8 +2000,10 @@
             }
         }
         
-        // Add to channel-specific array
-        state.orders[channel] = [...(state.orders[channel] || []), ...formatted];
+        // Add to channel-specific array (v4.2.1: dedup against existing channel orders)
+        const existingChannelIds = new Set((state.orders[channel] || []).map(o => o.id));
+        const newChannelOrders = formatted.filter(o => !existingChannelIds.has(o.id));
+        state.orders[channel] = [...(state.orders[channel] || []), ...newChannelOrders];
         
         // Add to combined array (avoiding duplicates)
         const existingIds = new Set(state.orders.all.map(o => o.id));
@@ -1980,6 +2036,16 @@
             return;
         }
         
+        // v4.2.1: Prevent duplicate pulls — disable button + show loading state
+        const pullBtn = document.querySelector('[onclick="pullOrdersFromChannels()"]');
+        if (pullBtn) {
+            if (pullBtn.disabled) return; // Already pulling
+            pullBtn.disabled = true;
+            pullBtn._originalText = pullBtn.textContent;
+            pullBtn.textContent = '⏳ Pulling...';
+        }
+        
+        try {
         // Determine date range
         const timeRangeEl = document.getElementById('pullTimeRange');
         const timeRange = timeRangeEl ? timeRangeEl.value : 'last_7days';
@@ -2018,7 +2084,7 @@
             try {
                 const r = await pullEtsyOrders(startDate, endDate);
                 results.etsy = r;
-                addLog(`Etsy: ${r.orders || 0} orders, ${r.items || 0} items`, (r.orders || 0) > 0 ? 'success' : 'info');
+                addLog(`Etsy: ${r.orders?.length || 0} orders, ${r.items || 0} items`, (r.orders?.length || 0) > 0 ? 'success' : 'info');
             } catch (e) {
                 results.etsy.error = e.message;
                 addLog(`Etsy pull failed: ${e.message}`, 'error');
@@ -2029,7 +2095,7 @@
             try {
                 const r = await pullWixOrders(startDate, endDate);
                 results.wix = r;
-                addLog(`Wix: ${r.orders || 0} orders, ${r.items || 0} items`, (r.orders || 0) > 0 ? 'success' : 'info');
+                addLog(`Wix: ${r.orders?.length || 0} orders, ${r.items || 0} items`, (r.orders?.length || 0) > 0 ? 'success' : 'info');
             } catch (e) {
                 results.wix.error = e.message;
                 addLog(`Wix pull failed: ${e.message}`, 'error');
@@ -2040,15 +2106,16 @@
             try {
                 const r = await pullWayfairOrders(startDate, endDate);
                 results.wayfair = r;
-                addLog(`Wayfair: ${r.orders || 0} orders, ${r.items || 0} items`, (r.orders || 0) > 0 ? 'success' : 'info');
+                addLog(`Wayfair: ${r.orders?.length || 0} orders, ${r.items || 0} items`, (r.orders?.length || 0) > 0 ? 'success' : 'info');
             } catch (e) {
                 results.wayfair.error = e.message;
                 addLog(`Wayfair pull failed: ${e.message}`, 'error');
             }
         }
         
-        // Totals
-        const totalOrders = (results.etsy.orders || 0) + (results.wix.orders || 0) + (results.wayfair.orders || 0);
+        // Totals (v4.2.1: orders may be an array or 0)
+        const _oLen = o => Array.isArray(o) ? o.length : (o || 0);
+        const totalOrders = _oLen(results.etsy.orders) + _oLen(results.wix.orders) + _oLen(results.wayfair.orders);
         const totalItems = (results.etsy.items || 0) + (results.wix.items || 0) + (results.wayfair.items || 0);
         
         // Add orders to state (always enabled in clean build)
@@ -2096,6 +2163,13 @@
                 `Order pull: ${totalOrders} orders, ${totalItems} items`,
                 { etsy: results.etsy, wix: results.wix, wayfair: results.wayfair, totalOrders, totalItems }
             );
+        }
+        } finally {
+            // v4.2.1: Re-enable pull button
+            if (pullBtn) {
+                pullBtn.disabled = false;
+                pullBtn.textContent = pullBtn._originalText || '🔄 Pull All Orders';
+            }
         }
     }
 
@@ -4818,7 +4892,7 @@
             ...results,
             `Orders: ${pendingOrders} pending`,
             `Queue: ${queuePending} pending`,
-            `Auto-process: ${state.settings.autoProcessEnabled ? 'ON' : 'OFF'}`,
+            `Auto-process: ${state.autoProcessInterval ? 'ON' : 'OFF'}`,
             `Sync polling: ${_syncQueueInterval ? 'ON' : 'OFF'}`
         ].join(' • ');
         
@@ -5483,6 +5557,12 @@
 
     // === sendEventNotification ===
     async function sendEventNotification(eventType, message, data) {
+        // v4.2.1: Check master email toggle before anything else
+        if (!state.settings.emailEnabled) {
+            console.log(`[Email] Skipping ${eventType} — email notifications disabled`);
+            return false;
+        }
+        
         // v3.3.5.21: Throttle repeated notifications of the same type
         const now = Date.now();
         const lastSent = _notificationThrottle[eventType] || 0;
@@ -5877,13 +5957,66 @@
     // UI: RENDER ORDERS
     // ============================================================
     
+    // v4.2.1: Clear processed orders from UI (keeps them in processed_orders DB table)
+    function clearProcessedOrders() {
+        const processedCount = state.orders.all.filter(o => o.processed).length;
+        if (processedCount === 0) {
+            toast('No processed orders to clear', 'info');
+            return;
+        }
+        if (!confirm(`Remove ${processedCount} processed order(s) from the list?\n\nThis only clears the display — processed orders remain in the database.`)) return;
+        
+        state.orders.all = state.orders.all.filter(o => !o.processed);
+        for (const ch of ['etsy', 'wix', 'wayfair']) {
+            state.orders[ch] = (state.orders[ch] || []).filter(o => !o.processed);
+        }
+        saveOrdersToStorage();
+        renderOrders();
+        updateStats();
+        toast(`Cleared ${processedCount} processed orders`, 'success');
+        addLog(`🗑️ Cleared ${processedCount} processed orders from display`, 'info');
+    }
+    
+    // v4.2.1: Order filter state for click-to-filter stats
+    let _orderFilter = null; // null = show all, 'pending', 'processed', 'etsy', 'wix', 'wayfair'
+    
+    function filterOrders(filter) {
+        // Toggle off if clicking same filter
+        if (_orderFilter === filter) {
+            _orderFilter = null;
+        } else {
+            _orderFilter = filter;
+        }
+        // Update active-filter visual
+        document.querySelectorAll('#orderStatsBar .stat-item').forEach(el => el.classList.remove('active-filter'));
+        if (_orderFilter) {
+            const labels = { pending: 'Pending', processed: 'Processed', etsy: 'Etsy', wix: 'Wix', wayfair: 'Wayfair' };
+            document.querySelectorAll('#orderStatsBar .stat-item').forEach(el => {
+                if (el.querySelector('.stat-label')?.textContent === labels[_orderFilter]) {
+                    el.classList.add('active-filter');
+                }
+            });
+        }
+        renderOrders();
+    }
+    
     function renderOrders() {
         const container = document.getElementById('ordersContainer');
         if (!container) return;
         
-        const orders = state.orders.all;
+        let orders = state.orders.all;
+        
+        // v4.2.1: Apply filter
+        if (_orderFilter === 'pending') orders = orders.filter(o => !o.processed);
+        else if (_orderFilter === 'processed') orders = orders.filter(o => o.processed);
+        else if (_orderFilter === 'etsy') orders = orders.filter(o => o.channel === 'etsy');
+        else if (_orderFilter === 'wix') orders = orders.filter(o => o.channel === 'wix');
+        else if (_orderFilter === 'wayfair') orders = orders.filter(o => o.channel === 'wayfair');
+        
+        const filterLabel = _orderFilter ? ` (filtered: ${_orderFilter})` : '';
+        
         if (orders.length === 0) {
-            container.innerHTML = '<div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">No orders loaded</div><div style="color: var(--text-dim);">Pull orders from channels to get started</div></div>';
+            container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">No orders${filterLabel}</div><div style="color: var(--text-dim);">${_orderFilter ? 'Click the active filter again to clear' : 'Pull orders from channels to get started'}</div></div>`;
             return;
         }
         
@@ -6045,12 +6178,28 @@
             console.log('[Auto-Process] Complete. Cascade rows in sync_queue for poller.');
         }, 5 * 60 * 1000); // Every 5 minutes
         addLog('Auto-process started (every 5 minutes)', 'success');
+        toast('⚡ Auto-process ON — pulling & processing every 5 minutes', 'success');
+        updateAutoProcessIndicator(true);
     }
     
     function stopAutoProcess() {
         if (state.autoProcessInterval) {
             clearInterval(state.autoProcessInterval);
             state.autoProcessInterval = null;
+        }
+        updateAutoProcessIndicator(false);
+    }
+    
+    // v4.2.1: Header indicator for auto-process state
+    function updateAutoProcessIndicator(isOn) {
+        const el = document.getElementById('autoProcessIndicator');
+        if (!el) return;
+        if (isOn) {
+            el.style.display = 'inline';
+            el.style.background = 'rgba(16, 185, 129, 0.15)';
+            el.style.color = 'var(--success)';
+        } else {
+            el.style.display = 'none';
         }
     }
     
@@ -6867,7 +7016,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.2.0 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.2.1 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -6938,11 +7087,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.2.0 initialized successfully');
-            addLog('CCD Sync Hub v4.2.0 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.2.1 initialized successfully');
+            addLog('CCD Sync Hub v4.2.1 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.2.0 started (Supabase-Native Push)',
+                'Sync Hub v4.2.1 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
