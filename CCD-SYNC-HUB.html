@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.2.1</title>
+    <title>CCD Sync Hub v4.2.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -1058,12 +1058,37 @@
             
             const totalCost = (wholesalePrice * (1 + ibShipping / 100) + tariff + effectiveObShipping) * qty;
             const totalRevenue = salePrice * qty;
-            const netProfit = totalRevenue - totalCost;
-            const profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
-            
+            let netProfit = totalRevenue - totalCost;
+            let profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
+
+            // v4.1.5: Call calculate_sale_profit() for full fee breakdown.
+            // Additive only — if RPC fails, sale still records with simplified formula.
+            // Fee columns stay NULL on failure. No sale is ever lost.
+            let feeBreakdown = null;
+            try {
+                const { data: profitData, error: profitErr } = await sbClient.rpc('calculate_sale_profit', {
+                    p_channel: channel,
+                    p_wholesale: wholesalePrice,
+                    p_ib_pct: ibShipping,
+                    p_tariff: tariff,
+                    p_ob_shipping: effectiveObShipping,
+                    p_sale_price: salePrice,
+                    p_qty: qty,
+                    p_sale_date: new Date().toISOString().split('T')[0]
+                });
+                if (!profitErr && profitData) {
+                    feeBreakdown = profitData;
+                    // Override simplified formula with accurate channel-specific values
+                    netProfit = profitData.net_profit;
+                    profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
+                }
+            } catch (feeErr) {
+                console.warn('[Sales] Fee calculation skipped, using simplified formula:', feeErr.message);
+            }
+
             // Find item_id from database
             const { data: itemRow } = await sbClient.from('items').select('id').eq('sku', item.sku).single();
-            
+
             await sbClient.from('sales_history').insert({
                 item_id: itemRow?.id || null,
                 sku: item.sku,
@@ -1074,7 +1099,7 @@
                 sale_date: new Date().toISOString().split('T')[0],
                 sale_price: salePrice,
                 total_revenue: totalRevenue,
-                total_cost: totalCost,
+                total_cost: feeBreakdown ? feeBreakdown.total_cost : totalCost,
                 net_profit: netProfit,
                 profit_margin: profitMargin,
                 wholesale_price: wholesalePrice,
@@ -1086,9 +1111,22 @@
                 customer_shipping_paid: order?.shipping || null,
                 tax_collected: order?.tax || null,
                 discount_amount: order?.discount || null,
-                notes: `Order ${orderId} via ${channel}`
+                notes: `Order ${orderId} via ${channel}`,
+                // Fee breakdown columns — NULL if RPC unavailable (backward compatible)
+                oh_fee:                feeBreakdown ? feeBreakdown.oh_fee                : null,
+                surcharge:             feeBreakdown ? feeBreakdown.surcharge             : null,
+                transaction_fee:       feeBreakdown ? feeBreakdown.transaction_fee       : null,
+                cc_fee:                feeBreakdown ? feeBreakdown.cc_fee                : null,
+                wayfair_fee:           feeBreakdown ? feeBreakdown.wayfair_fee           : null,
+                recovery_fee:          feeBreakdown ? feeBreakdown.recovery_fee          : null,
+                commission:            feeBreakdown ? feeBreakdown.commission             : null,
+                rent:                  feeBreakdown ? feeBreakdown.rent                  : null,
+                marketplace_deduction: feeBreakdown ? feeBreakdown.marketplace_deduction : null,
+                gross_revenue:         feeBreakdown ? feeBreakdown.gross_revenue         : null,
+                total_fees:            feeBreakdown ? feeBreakdown.total_fees            : null,
+                accounting_category:   feeBreakdown ? feeBreakdown.accounting_category   : null
             });
-            console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}`);
+            console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
         } catch (e) {
             console.warn('[Supabase] Sales record error:', e.message);
         }
@@ -7016,7 +7054,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.2.1 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.2.2 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -7087,8 +7125,8 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.2.1 initialized successfully');
-            addLog('CCD Sync Hub v4.2.1 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.2.2 initialized successfully');
+            addLog('CCD Sync Hub v4.2.2 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
                 'Sync Hub v4.2.1 started (Supabase-Native Push)',

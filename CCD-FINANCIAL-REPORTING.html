@@ -1,0 +1,2000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Financial Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root {
+  --bg:       #070c18;
+  --bg1:      #0c1322;
+  --bg2:      #111827;
+  --bg3:      #172035;
+  --border:   #1e2d45;
+  --border2:  #263550;
+  --text:     #e2e8f8;
+  --muted:    #5a6e94;
+  --dim:      #8899bb;
+  --gold:     #d4a853;
+  --gold2:    #f0c97a;
+  --green:    #2dd4a0;
+  --red:      #f05c5c;
+  --blue:     #4d9fff;
+  --etsy:     #f97316;
+  --wix:      #3b82f6;
+  --wayfair:  #a855f7;
+  --tm:       #10b981;
+  --r: 8px;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+
+body {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── CONNECT OVERLAY ── */
+#connectOverlay {
+  position: fixed; inset: 0;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 9999;
+}
+.connect-card {
+  background: var(--bg1);
+  border: 1px solid var(--border2);
+  border-radius: 16px;
+  padding: 48px;
+  width: 440px;
+  text-align: center;
+}
+.connect-logo {
+  font-family: 'Instrument Serif', serif;
+  font-size: 28px;
+  color: var(--gold);
+  margin-bottom: 6px;
+}
+.connect-sub { color: var(--muted); font-size: 13px; margin-bottom: 36px; }
+.connect-field { margin-bottom: 14px; text-align: left; }
+.connect-field label { display: block; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+.connect-field input {
+  width: 100%; padding: 10px 14px;
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: var(--r); color: var(--text);
+  font-family: 'DM Mono', monospace; font-size: 12px;
+}
+.connect-field input:focus { outline: none; border-color: var(--gold); }
+.btn-connect {
+  width: 100%; padding: 13px;
+  background: var(--gold); color: #070c18;
+  border: none; border-radius: var(--r);
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 14px; font-weight: 700;
+  cursor: pointer; margin-top: 8px;
+  transition: background .15s;
+}
+.btn-connect:hover { background: var(--gold2); }
+#connectError { color: var(--red); font-size: 12px; margin-top: 10px; min-height: 18px; }
+
+/* ── APP SHELL ── */
+#app { display: none; height: 100vh; overflow: hidden; flex-direction: column; }
+#app.active { display: flex; }
+
+/* ── TOP BAR ── */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 0 20px;
+  height: 52px; min-height: 52px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.topbar-brand {
+  font-family: 'Instrument Serif', serif;
+  font-size: 18px; color: var(--gold);
+  white-space: nowrap; margin-right: 8px;
+}
+.topbar-divider { width: 1px; height: 24px; background: var(--border2); flex-shrink: 0; }
+
+/* Date range pills */
+.dr-pills { display: flex; gap: 4px; }
+.dr-pill {
+  padding: 5px 11px; border-radius: 20px;
+  border: 1px solid var(--border2);
+  background: transparent; color: var(--muted);
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: all .15s; white-space: nowrap;
+}
+.dr-pill:hover { border-color: var(--gold); color: var(--gold); }
+.dr-pill.active { background: var(--gold); border-color: var(--gold); color: #070c18; }
+
+/* Custom date inputs */
+.dr-custom { display: none; align-items: center; gap: 6px; }
+.dr-custom.visible { display: flex; }
+.dr-custom input {
+  padding: 4px 8px;
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: 6px; color: var(--text);
+  font-family: 'DM Mono', monospace; font-size: 11px;
+  width: 110px;
+}
+.dr-custom input:focus { outline: none; border-color: var(--gold); }
+
+/* Compare toggle */
+.compare-toggle {
+  display: flex; align-items: center; gap: 7px;
+  padding: 5px 12px; border-radius: 20px;
+  border: 1px solid var(--border2);
+  cursor: pointer; font-size: 11px; color: var(--muted);
+  font-weight: 600; transition: all .15s; white-space: nowrap;
+}
+.compare-toggle.active { border-color: var(--blue); color: var(--blue); background: rgba(77,159,255,.08); }
+.compare-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* Channel filter */
+.ch-filter { display: flex; gap: 4px; margin-left: auto; }
+.ch-pill {
+  padding: 4px 10px; border-radius: 20px;
+  border: 1px solid var(--border2);
+  background: transparent; color: var(--muted);
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: all .15s;
+}
+.ch-pill.active { color: white; }
+.ch-pill[data-ch="all"].active   { background: var(--gold);    border-color: var(--gold);    color: #070c18; }
+.ch-pill[data-ch="etsy"].active  { background: var(--etsy);    border-color: var(--etsy); }
+.ch-pill[data-ch="wix"].active   { background: var(--wix);     border-color: var(--wix); }
+.ch-pill[data-ch="wayfair"].active { background: var(--wayfair); border-color: var(--wayfair); }
+.ch-pill[data-ch="tm"].active    { background: var(--tm);      border-color: var(--tm); }
+
+/* Settings btn */
+.topbar-settings {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: var(--bg2); border: 1px solid var(--border2);
+  color: var(--muted); cursor: pointer; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .15s; flex-shrink: 0;
+}
+.topbar-settings:hover { color: var(--gold); border-color: var(--gold); }
+
+/* ── BODY LAYOUT ── */
+.body-layout { display: flex; flex: 1; overflow: hidden; }
+
+/* ── SIDEBAR ── */
+.sidebar {
+  width: 200px; min-width: 200px;
+  background: var(--bg1);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  padding: 16px 0;
+  overflow-y: auto;
+}
+.sidebar-section { padding: 0 12px; margin-bottom: 4px; }
+.sidebar-label {
+  font-size: 9px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: 1.2px;
+  padding: 8px 12px 4px; display: block;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: var(--r);
+  cursor: pointer; font-size: 12px; font-weight: 500;
+  color: var(--dim); transition: all .15s;
+  white-space: nowrap; border: none; background: none;
+  width: 100%; text-align: left;
+}
+.nav-item:hover { background: var(--bg3); color: var(--text); }
+.nav-item.active { background: rgba(212,168,83,.1); color: var(--gold); }
+.nav-item .nav-icon { font-size: 14px; flex-shrink: 0; }
+.nav-item .nav-badge {
+  margin-left: auto; font-size: 9px; padding: 1px 5px;
+  border-radius: 8px; background: var(--bg3); color: var(--muted);
+}
+.nav-item.active .nav-badge { background: rgba(212,168,83,.2); color: var(--gold); }
+.nav-divider { height: 1px; background: var(--border); margin: 8px 12px; }
+.sidebar-bottom {
+  margin-top: auto; padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.conn-status {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 11px; color: var(--muted);
+}
+.conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+
+/* ── MAIN CONTENT ── */
+.main-content {
+  flex: 1; overflow-y: auto;
+  padding: 24px;
+  display: flex; flex-direction: column; gap: 24px;
+}
+
+/* ── PAGE SECTIONS ── */
+.page-section { display: none; flex-direction: column; gap: 20px; }
+.page-section.active { display: flex; }
+
+.page-header {
+  display: flex; align-items: flex-start;
+  justify-content: space-between; gap: 12px;
+}
+.page-title {
+  font-family: 'Instrument Serif', serif;
+  font-size: 26px; color: var(--text);
+  line-height: 1.1;
+}
+.page-subtitle { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+/* Export buttons */
+.export-btns { display: flex; gap: 8px; }
+.btn-export {
+  padding: 7px 14px; border-radius: var(--r);
+  border: 1px solid var(--border2);
+  background: var(--bg2); color: var(--dim);
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: all .15s; white-space: nowrap;
+}
+.btn-export:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ── KPI CARDS ── */
+.kpi-grid { display: grid; grid-template-columns: repeat(6,1fr); gap: 14px; }
+.kpi-card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--r); padding: 18px 20px;
+  transition: border-color .2s;
+}
+.kpi-card:hover { border-color: var(--border2); }
+.kpi-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 10px; }
+.kpi-value {
+  font-family: 'Instrument Serif', serif;
+  font-size: 28px; color: var(--text); line-height: 1;
+  margin-bottom: 8px;
+}
+.kpi-value.positive { color: var(--green); }
+.kpi-value.negative { color: var(--red); }
+.kpi-delta {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 600;
+}
+.kpi-delta.up { color: var(--green); }
+.kpi-delta.down { color: var(--red); }
+.kpi-delta.neutral { color: var(--muted); }
+
+/* ── CHARTS ── */
+.chart-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+.chart-grid-4 { display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; }
+.card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--r); overflow: hidden;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; border-bottom: 1px solid var(--border);
+}
+.card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.card-action { font-size: 11px; color: var(--muted); cursor: pointer; }
+.card-action:hover { color: var(--gold); }
+.card-body { padding: 20px; }
+.chart-wrap { position: relative; }
+
+/* ── ALERTS ── */
+.alerts-list { display: flex; flex-direction: column; gap: 8px; }
+.alert-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; border-radius: 6px;
+  font-size: 12px;
+}
+.alert-item.warn { background: rgba(240,92,92,.08); border: 1px solid rgba(240,92,92,.2); color: #f8a0a0; }
+.alert-item.info { background: rgba(77,159,255,.06); border: 1px solid rgba(77,159,255,.15); color: #9dc8ff; }
+.alert-item.ok   { background: rgba(45,212,160,.06); border: 1px solid rgba(45,212,160,.15); color: #7de8cc; }
+.alert-icon { font-size: 14px; flex-shrink: 0; }
+.alert-empty { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; }
+
+/* ── DATA TABLE ── */
+.data-table-wrap { overflow-x: auto; }
+.data-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12px;
+}
+.data-table th {
+  padding: 10px 14px;
+  text-align: left; font-size: 10px; font-weight: 700;
+  color: var(--muted); text-transform: uppercase; letter-spacing: .6px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap; cursor: pointer; user-select: none;
+}
+.data-table th:hover { color: var(--gold); }
+.data-table th.sorted { color: var(--gold); }
+.data-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap; font-family: 'DM Mono', monospace;
+  font-size: 11px;
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--bg3); cursor: pointer; }
+.data-table .text-right { text-align: right; }
+.data-table .text-center { text-align: center; }
+
+/* Money values */
+.mono { font-family: 'DM Mono', monospace; font-size: 11px; }
+.val-pos { color: var(--green); }
+.val-neg { color: var(--red); }
+.val-dim { color: var(--muted); }
+.val-gold { color: var(--gold); }
+
+/* Channel badges */
+.ch-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 10px;
+  font-size: 10px; font-weight: 700; text-transform: uppercase;
+}
+.ch-etsy    { background: rgba(249,115,22,.15); color: var(--etsy); }
+.ch-wix     { background: rgba(59,130,246,.15); color: var(--wix); }
+.ch-wayfair { background: rgba(168,85,247,.15); color: var(--wayfair); }
+.ch-tm      { background: rgba(16,185,129,.15); color: var(--tm); }
+
+/* Loading state */
+.loading {
+  display: flex; align-items: center; justify-content: center;
+  padding: 60px; color: var(--muted); gap: 10px; font-size: 13px;
+}
+.spinner {
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border2);
+  border-top-color: var(--gold);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.empty-state {
+  text-align: center; padding: 60px 20px; color: var(--muted);
+}
+.empty-state .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: .4; }
+.empty-state .empty-msg { font-size: 13px; }
+
+/* ── DRILL-DOWN PANEL ── */
+#drillPanel {
+  position: fixed; top: 0; right: -520px;
+  width: 520px; height: 100vh;
+  background: var(--bg1);
+  border-left: 1px solid var(--border2);
+  z-index: 200; transition: right .25s ease;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+#drillPanel.open { right: 0; }
+.drill-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 18px 20px; border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.drill-title { font-family: 'Instrument Serif', serif; font-size: 18px; flex: 1; }
+.drill-close {
+  width: 28px; height: 28px; border-radius: 6px;
+  background: var(--bg2); border: none; color: var(--muted);
+  cursor: pointer; font-size: 16px; display: flex;
+  align-items: center; justify-content: center;
+}
+.drill-close:hover { color: var(--text); }
+.drill-body { flex: 1; overflow-y: auto; padding: 20px; }
+.drill-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 0; border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.drill-row:last-child { border-bottom: none; }
+.drill-row-label { color: var(--muted); }
+.drill-row-value { font-family: 'DM Mono', monospace; font-size: 12px; }
+.drill-section-title {
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .8px;
+  margin: 16px 0 8px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.drill-big {
+  text-align: center; padding: 20px 0;
+  border-bottom: 1px solid var(--border); margin-bottom: 4px;
+}
+.drill-big .val {
+  font-family: 'Instrument Serif', serif;
+  font-size: 40px; margin-bottom: 4px;
+}
+.drill-big .lbl { font-size: 11px; color: var(--muted); }
+.drill-fees-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.drill-fee-item {
+  background: var(--bg2); border-radius: 6px; padding: 10px 12px;
+}
+.drill-fee-label { font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+.drill-fee-value { font-family: 'DM Mono', monospace; font-size: 13px; }
+
+/* ── PAGINATION ── */
+.pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.page-btns { display: flex; gap: 4px; }
+.page-btn {
+  padding: 4px 10px; border-radius: 5px;
+  border: 1px solid var(--border2);
+  background: transparent; color: var(--muted);
+  font-size: 11px; cursor: pointer; transition: all .15s;
+}
+.page-btn:hover, .page-btn.active { border-color: var(--gold); color: var(--gold); }
+.page-btn:disabled { opacity: .3; cursor: default; }
+
+/* ── CHANNEL PERF BARS ── */
+.perf-bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.perf-bar-label { width: 80px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
+.perf-bar-track { flex: 1; height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+.perf-bar-fill { height: 100%; border-radius: 3px; transition: width .6s ease; }
+.perf-bar-val { width: 70px; text-align: right; font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text); }
+
+/* ── COMPARISON ROW ── */
+.compare-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; font-size: 11px;
+}
+.compare-curr { font-family: 'DM Mono', monospace; color: var(--text); }
+.compare-prev { font-family: 'DM Mono', monospace; color: var(--muted); }
+.compare-delta { font-size: 10px; font-weight: 700; }
+.compare-delta.up { color: var(--green); }
+.compare-delta.down { color: var(--red); }
+
+/* ── SETTINGS MODAL ── */
+#settingsModal {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.6);
+  display: none; align-items: center; justify-content: center;
+  z-index: 500;
+}
+#settingsModal.open { display: flex; }
+.settings-card {
+  background: var(--bg1); border: 1px solid var(--border2);
+  border-radius: 12px; width: 420px; padding: 28px;
+}
+.settings-title { font-family: 'Instrument Serif', serif; font-size: 20px; margin-bottom: 20px; }
+.settings-row { margin-bottom: 14px; }
+.settings-row label { display: block; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .8px; margin-bottom: 6px; }
+.settings-row input {
+  width: 100%; padding: 9px 12px;
+  background: var(--bg2); border: 1px solid var(--border2);
+  border-radius: var(--r); color: var(--text);
+  font-family: 'DM Mono', monospace; font-size: 12px;
+}
+.settings-row input:focus { outline: none; border-color: var(--gold); }
+.settings-btns { display: flex; gap: 10px; margin-top: 20px; }
+.btn-save {
+  flex: 1; padding: 11px; background: var(--gold); color: #070c18;
+  border: none; border-radius: var(--r);
+  font-weight: 700; font-size: 13px; cursor: pointer;
+}
+.btn-cancel {
+  flex: 1; padding: 11px; background: var(--bg2); color: var(--muted);
+  border: 1px solid var(--border2); border-radius: var(--r);
+  font-size: 13px; cursor: pointer;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* Animate KPI numbers */
+@keyframes fadeUp {
+  from { opacity:0; transform: translateY(8px); }
+  to   { opacity:1; transform: translateY(0); }
+}
+.kpi-card { animation: fadeUp .3s ease both; }
+.kpi-card:nth-child(1) { animation-delay: .05s; }
+.kpi-card:nth-child(2) { animation-delay: .10s; }
+.kpi-card:nth-child(3) { animation-delay: .15s; }
+.kpi-card:nth-child(4) { animation-delay: .20s; }
+.kpi-card:nth-child(5) { animation-delay: .25s; }
+.kpi-card:nth-child(6) { animation-delay: .30s; }
+</style>
+</head>
+<body>
+
+<!-- ── CONNECT OVERLAY ── -->
+<div id="connectOverlay">
+  <div class="connect-card">
+    <div class="connect-logo">CCD Financial Intelligence</div>
+    <div class="connect-sub">Connect to your Supabase database to begin</div>
+    <div class="connect-field">
+      <label>Supabase URL</label>
+      <input type="text" id="ci-url" placeholder="https://xxxxx.supabase.co">
+    </div>
+    <div class="connect-field">
+      <label>Anon Key</label>
+      <input type="password" id="ci-key" placeholder="eyJ...">
+    </div>
+    <button class="btn-connect" onclick="initConnect()">Connect</button>
+    <div id="connectError"></div>
+  </div>
+</div>
+
+<!-- ── APP ── -->
+<div id="app">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="topbar-brand">CCD Financial</div>
+    <div class="topbar-divider"></div>
+
+    <!-- Date pills -->
+    <div class="dr-pills">
+      <button class="dr-pill" data-preset="today" onclick="setPreset('today')">Today</button>
+      <button class="dr-pill" data-preset="week"  onclick="setPreset('week')">Week</button>
+      <button class="dr-pill active" data-preset="mtd"  onclick="setPreset('mtd')">MTD</button>
+      <button class="dr-pill" data-preset="month" onclick="setPreset('month')">Month</button>
+      <button class="dr-pill" data-preset="ytd"   onclick="setPreset('ytd')">YTD</button>
+      <button class="dr-pill" data-preset="custom" onclick="setPreset('custom')">Custom</button>
+    </div>
+
+    <div class="dr-custom" id="customDates">
+      <input type="date" id="dr-from" onchange="applyCustom()">
+      <span style="color:var(--muted);font-size:11px;">→</span>
+      <input type="date" id="dr-to" onchange="applyCustom()">
+    </div>
+
+    <div class="topbar-divider"></div>
+
+    <button class="compare-toggle" id="compareToggle" onclick="toggleCompare()">
+      <span class="dot"></span> vs Prior Year
+    </button>
+
+    <div class="topbar-divider"></div>
+
+    <!-- Channel filter -->
+    <div class="ch-filter">
+      <button class="ch-pill active" data-ch="all"     onclick="setChannel('all')">All</button>
+      <button class="ch-pill"        data-ch="etsy"    onclick="setChannel('etsy')">Etsy</button>
+      <button class="ch-pill"        data-ch="wix"     onclick="setChannel('wix')">Wix</button>
+      <button class="ch-pill"        data-ch="wayfair" onclick="setChannel('wayfair')">Wayfair</button>
+      <button class="ch-pill"        data-ch="tm"      onclick="setChannel('tm')">TM</button>
+    </div>
+
+    <div style="margin-left:auto;"></div>
+    <button class="topbar-settings" onclick="openSettings()">⚙</button>
+  </div>
+
+  <!-- BODY -->
+  <div class="body-layout">
+
+    <!-- SIDEBAR -->
+    <div class="sidebar">
+      <span class="sidebar-label">Reports</span>
+      <button class="nav-item active" data-page="dashboard" onclick="navTo('dashboard')">
+        <span class="nav-icon">◈</span> Executive
+      </button>
+      <button class="nav-item" data-page="sales" onclick="navTo('sales')">
+        <span class="nav-icon">≡</span> Sales Detail
+      </button>
+      <button class="nav-item" data-page="daily" onclick="navTo('daily')">
+        <span class="nav-icon">▦</span> Daily Summary
+      </button>
+      <button class="nav-item" data-page="channel" onclick="navTo('channel')">
+        <span class="nav-icon">◑</span> Channel Perf.
+      </button>
+
+      <div class="nav-divider"></div>
+      <span class="sidebar-label">Coming Soon</span>
+
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">◎</span> Products
+        <span class="nav-badge">Ph3</span>
+      </button>
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">◈</span> Brands
+        <span class="nav-badge">Ph3</span>
+      </button>
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">▶</span> Shipping
+        <span class="nav-badge">Ph3</span>
+      </button>
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">▣</span> Inventory
+        <span class="nav-badge">Ph3</span>
+      </button>
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">≋</span> Wayfair Recon
+        <span class="nav-badge">Ph4</span>
+      </button>
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">◪</span> P&amp;L
+        <span class="nav-badge">Ph4</span>
+      </button>
+      <button class="nav-item" style="opacity:.4;cursor:default;">
+        <span class="nav-icon">◉</span> Geographic
+        <span class="nav-badge">Ph5</span>
+      </button>
+
+      <div class="sidebar-bottom">
+        <div class="conn-status">
+          <div class="conn-dot"></div>
+          <span id="connLabel" style="font-size:10px;">Connected</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main-content" id="mainContent">
+
+      <!-- ─── EXECUTIVE DASHBOARD ─── -->
+      <section class="page-section active" id="page-dashboard">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Executive Dashboard</div>
+            <div class="page-subtitle" id="dash-period-label">Loading...</div>
+          </div>
+          <div class="export-btns">
+            <input type="text" id="dashSearch" placeholder="Search SKU or product…"
+              style="padding:7px 12px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-size:12px;width:200px;"
+              oninput="quickSearchDash(this.value)">
+            <button class="btn-export" onclick="exportDashboardPDF()">⎙ Print</button>
+          </div>
+        </div>
+
+        <!-- KPI Row -->
+        <div class="kpi-grid" id="kpiGrid">
+          <div class="kpi-card"><div class="kpi-label">Revenue</div><div class="kpi-value" id="kpi-revenue">—</div><div class="kpi-delta neutral" id="kpi-revenue-d">—</div></div>
+          <div class="kpi-card"><div class="kpi-label">Net Profit</div><div class="kpi-value positive" id="kpi-profit">—</div><div class="kpi-delta neutral" id="kpi-profit-d">—</div></div>
+          <div class="kpi-card"><div class="kpi-label">Avg Margin</div><div class="kpi-value" id="kpi-margin">—</div><div class="kpi-delta neutral" id="kpi-margin-d">—</div></div>
+          <div class="kpi-card"><div class="kpi-label">Orders</div><div class="kpi-value" id="kpi-orders">—</div><div class="kpi-delta neutral" id="kpi-orders-d">—</div></div>
+          <div class="kpi-card"><div class="kpi-label">Units Sold</div><div class="kpi-value" id="kpi-units">—</div><div class="kpi-delta neutral" id="kpi-units-d">—</div></div>
+          <div class="kpi-card"><div class="kpi-label">Actual Shipping</div><div class="kpi-value" id="kpi-shipping">—</div><div class="kpi-delta neutral" id="kpi-shipping-d">—</div></div>
+        </div>
+
+        <!-- Charts row -->
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Revenue Trend</div><div class="card-action" id="trendLabel"></div></div>
+            <div class="card-body"><div class="chart-wrap" style="height:200px;"><canvas id="trendChart"></canvas></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">Profit by Channel</div></div>
+            <div class="card-body"><div class="chart-wrap" style="height:200px;"><canvas id="channelChart"></canvas></div></div>
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Top 5 Products by Profit</div></div>
+            <div class="card-body"><div class="chart-wrap" style="height:180px;"><canvas id="topProductsChart"></canvas></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">Alerts</div></div>
+            <div class="card-body" id="alertsPanel"><div class="loading"><div class="spinner"></div> Checking...</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── SALES DETAIL ─── -->
+      <section class="page-section" id="page-sales">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Sales Detail</div>
+            <div class="page-subtitle" id="sales-period-label">—</div>
+          </div>
+          <div class="export-btns">
+            <button class="btn-export" onclick="exportSalesExcel()">↓ Excel</button>
+            <button class="btn-export" onclick="exportSalesPDF()">⎙ Print</button>
+          </div>
+        </div>
+
+        <!-- Quick filters -->
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <input type="text" id="salesSearch" placeholder="Search SKU or product…"
+            style="padding:7px 12px;background:var(--bg1);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-size:12px;width:220px;"
+            oninput="filterSalesTable()">
+          <select id="salesGroupBy" onchange="loadSalesDetail()"
+            style="padding:7px 10px;background:var(--bg1);border:1px solid var(--border2);border-radius:var(--r);color:var(--dim);font-size:11px;">
+            <option value="none">No grouping</option>
+            <option value="channel">Group by Channel</option>
+            <option value="date">Group by Date</option>
+            <option value="brand">Group by Brand</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);cursor:pointer;">
+            <input type="checkbox" id="showNegOnly" onchange="filterSalesTable()" style="accent-color:var(--red);"> Negative margin only
+          </label>
+        </div>
+
+        <div class="card" id="salesCard">
+          <div class="data-table-wrap" id="salesTableWrap">
+            <div class="loading"><div class="spinner"></div> Loading sales...</div>
+          </div>
+          <div class="pagination" id="salesPagination" style="display:none;">
+            <span id="salesPageInfo"></span>
+            <div class="page-btns" id="salesPageBtns"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── DAILY SUMMARY ─── -->
+      <section class="page-section" id="page-daily">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Daily Summary</div>
+            <div class="page-subtitle" id="daily-period-label">—</div>
+          </div>
+          <div class="export-btns">
+            <button class="btn-export" onclick="exportDailyExcel()">↓ Excel</button>
+            <button class="btn-export" onclick="window.print()">⎙ Print</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Revenue + Profit by Day</div></div>
+          <div class="card-body"><div class="chart-wrap" style="height:200px;"><canvas id="dailyChart"></canvas></div></div>
+        </div>
+
+        <div class="card" id="dailyCard">
+          <div class="data-table-wrap" id="dailyTableWrap">
+            <div class="loading"><div class="spinner"></div> Loading...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─── CHANNEL PERFORMANCE ─── -->
+      <section class="page-section" id="page-channel">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Channel Performance</div>
+            <div class="page-subtitle" id="channel-period-label">—</div>
+          </div>
+          <div class="export-btns">
+            <button class="btn-export" onclick="exportChannelExcel()">↓ Excel</button>
+            <button class="btn-export" onclick="window.print()">⎙ Print</button>
+          </div>
+        </div>
+
+        <div id="channelPerfGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;">
+          <!-- Channel cards populated by JS -->
+        </div>
+
+        <div class="chart-grid">
+          <div class="card">
+            <div class="card-header"><div class="card-title">Revenue by Channel — Monthly</div></div>
+            <div class="card-body"><div class="chart-wrap" style="height:200px;"><canvas id="chRevenueChart"></canvas></div></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">Margin % by Channel</div></div>
+            <div class="card-body"><div class="chart-wrap" style="height:200px;"><canvas id="chMarginChart"></canvas></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Fee Breakdown by Channel</div></div>
+          <div class="card-body" id="channelFeeBreakdown"><div class="loading"><div class="spinner"></div></div></div>
+        </div>
+      </section>
+
+    </div><!-- /main-content -->
+  </div><!-- /body-layout -->
+</div><!-- /app -->
+
+<!-- ── DRILL-DOWN PANEL ── -->
+<div id="drillPanel">
+  <div class="drill-header">
+    <div class="drill-title" id="drillTitle">Sale Detail</div>
+    <button class="drill-close" onclick="closeDrill()">✕</button>
+  </div>
+  <div class="drill-body" id="drillBody"></div>
+</div>
+
+<!-- ── SETTINGS MODAL ── -->
+<div id="settingsModal">
+  <div class="settings-card">
+    <div class="settings-title">Settings</div>
+    <div class="settings-row">
+      <label>Supabase URL</label>
+      <input type="text" id="s-url">
+    </div>
+    <div class="settings-row">
+      <label>Anon Key</label>
+      <input type="password" id="s-key">
+    </div>
+    <div class="settings-btns">
+      <button class="btn-cancel" onclick="closeSettings()">Cancel</button>
+      <button class="btn-save" onclick="saveSettings()">Save & Reconnect</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// CCD FINANCIAL REPORTING PLATFORM — Phase 2
+// v1.0.0 — March 2026
+// ALL financial values read from sales_history columns — zero recalculation.
+// ============================================================================
+
+// ── STATE ──────────────────────────────────────────────────────────────────
+let sbClient = null;
+let currentPage = 'dashboard';
+let currentPreset = 'mtd';
+let customFrom = '', customTo = '';
+let compareMode = false;
+let channelFilter = 'all';
+let salesData = [];
+let salesFiltered = [];
+let salesPage = 0;
+const SALES_PER_PAGE = 50;
+let sortCol = 'sale_date', sortDir = 'desc';
+
+// Chart instances
+let trendChartInst = null, channelChartInst = null, topProductsChartInst = null;
+let dailyChartInst = null, chRevenueChartInst = null, chMarginChartInst = null;
+
+// Channel display map
+const CH_LABEL = { etsy:'Etsy', wix:'Wix', wayfair:'Wayfair', treasuremarts:'TreasureMarts' };
+const CH_COLOR = { etsy:'#f97316', wix:'#3b82f6', wayfair:'#a855f7', treasuremarts:'#10b981' };
+const CH_DB    = { all:null, etsy:'etsy', wix:'wix', wayfair:'wayfair', tm:'treasuremarts' };
+
+// ── SUPABASE CONNECT ───────────────────────────────────────────────────────
+async function initConnect() {
+  const url = document.getElementById('ci-url').value.trim();
+  const key = document.getElementById('ci-key').value.trim();
+  const err = document.getElementById('connectError');
+  err.textContent = '';
+  if (!url || !key) { err.textContent = 'URL and key are required.'; return; }
+  try {
+    sbClient = window.supabase.createClient(url, key);
+    const { error } = await sbClient.from('sales_history').select('id', { count:'exact', head:true });
+    if (error) throw error;
+    localStorage.setItem('ccdSupabaseUrl', url);
+    localStorage.setItem('ccdSupabaseKey', key);
+    localStorage.setItem('ccdUseSupabase', 'true');
+    document.getElementById('connectOverlay').style.display = 'none';
+    document.getElementById('app').classList.add('active');
+    document.getElementById('connLabel').textContent = url.match(/\/\/([^.]+)/)?.[1] || 'Connected';
+    initApp();
+  } catch(e) {
+    err.textContent = 'Connection failed: ' + e.message;
+  }
+}
+
+function autoConnect() {
+  const url = localStorage.getItem('ccdSupabaseUrl');
+  const key = localStorage.getItem('ccdSupabaseKey');
+  if (!url || !key) return;
+  document.getElementById('ci-url').value = url;
+  document.getElementById('ci-key').value = key;
+  initConnect();
+}
+
+// ── DATE RANGES ────────────────────────────────────────────────────────────
+function fmt(d) { return d.toISOString().split('T')[0]; }
+
+function getRange() {
+  const today = new Date();
+  let from, to;
+  switch(currentPreset) {
+    case 'today':
+      from = to = fmt(today); break;
+    case 'week': {
+      const s = new Date(today); s.setDate(today.getDate() - today.getDay());
+      from = fmt(s); to = fmt(today); break;
+    }
+    case 'mtd':
+      from = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+      to = fmt(today); break;
+    case 'month':
+      from = fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+      to = fmt(new Date(today.getFullYear(), today.getMonth()+1, 0)); break;
+    case 'ytd':
+      from = fmt(new Date(today.getFullYear(), 0, 1));
+      to = fmt(today); break;
+    case 'custom':
+      from = customFrom || fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+      to = customTo || fmt(today); break;
+  }
+  let priorFrom, priorTo;
+  if (compareMode) {
+    const f = new Date(from), t = new Date(to);
+    f.setFullYear(f.getFullYear()-1); t.setFullYear(t.getFullYear()-1);
+    priorFrom = fmt(f); priorTo = fmt(t);
+  }
+  return { from, to, priorFrom, priorTo };
+}
+
+function periodLabel() {
+  const { from, to } = getRange();
+  const opts = { month:'short', day:'numeric' };
+  const f = new Date(from+'T12:00:00').toLocaleDateString('en-US', opts);
+  const t = new Date(to+'T12:00:00').toLocaleDateString('en-US', opts);
+  return from === to ? f : `${f} — ${t}`;
+}
+
+function setPreset(p) {
+  currentPreset = p;
+  document.querySelectorAll('.dr-pill').forEach(el => el.classList.toggle('active', el.dataset.preset === p));
+  document.getElementById('customDates').classList.toggle('visible', p === 'custom');
+  refreshCurrentPage();
+}
+
+function applyCustom() {
+  customFrom = document.getElementById('dr-from').value;
+  customTo   = document.getElementById('dr-to').value;
+  if (customFrom && customTo) refreshCurrentPage();
+}
+
+function toggleCompare() {
+  compareMode = !compareMode;
+  document.getElementById('compareToggle').classList.toggle('active', compareMode);
+  refreshCurrentPage();
+}
+
+function setChannel(ch) {
+  channelFilter = ch;
+  document.querySelectorAll('.ch-pill').forEach(el => el.classList.toggle('active', el.dataset.ch === ch));
+  refreshCurrentPage();
+}
+
+// ── NAVIGATION ─────────────────────────────────────────────────────────────
+function navTo(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
+  document.querySelectorAll('.page-section').forEach(el => el.classList.toggle('active', el.id === 'page-'+page));
+  refreshCurrentPage();
+}
+
+function refreshCurrentPage() {
+  if      (currentPage === 'dashboard') loadDashboard();
+  else if (currentPage === 'sales')     loadSalesDetail();
+  else if (currentPage === 'daily')     loadDailyReport();
+  else if (currentPage === 'channel')   loadChannelReport();
+}
+
+// ── SUPABASE QUERY HELPERS ─────────────────────────────────────────────────
+function buildQuery(table, cols) {
+  const { from, to } = getRange();
+  let q = sbClient.from(table).select(cols).gte('sale_date', from).lte('sale_date', to);
+  const chDb = CH_DB[channelFilter];
+  if (chDb) q = q.eq('sale_channel', chDb);
+  return q;
+}
+
+async function fetchAgg(from, to, ch) {
+  let q = sbClient.from('sales_history')
+    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,total_fees,actual_shipping_cost,ob_shipping,profit_margin')
+    .gte('sale_date', from).lte('sale_date', to);
+  if (ch) q = q.eq('sale_channel', ch);
+  const { data } = await q;
+  return data || [];
+}
+
+function aggregate(rows) {
+  const revenue   = rows.reduce((s,r) => s + (parseFloat(r.total_revenue)||0), 0);
+  const profit    = rows.reduce((s,r) => s + (parseFloat(r.net_profit)||0), 0);
+  const units     = rows.reduce((s,r) => s + (parseInt(r.qty_sold)||0), 0);
+  const orders    = rows.length;
+  const shipping  = rows.reduce((s,r) => s + (parseFloat(r.actual_shipping_cost)||0), 0);
+  const margin    = revenue > 0 ? (profit/revenue)*100 : 0;
+  return { revenue, profit, units, orders, shipping, margin };
+}
+
+// ── FORMAT HELPERS ─────────────────────────────────────────────────────────
+const $$ = n => n == null ? '—' : '$' + Math.abs(parseFloat(n)).toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2});
+const pct = n => n == null ? '—' : parseFloat(n).toFixed(1)+'%';
+const num = n => n == null ? '—' : parseInt(n).toLocaleString();
+
+function deltaHtml(curr, prior, isPercent) {
+  if (prior == null || prior === 0) return '<span class="kpi-delta neutral">No prior data</span>';
+  const d = ((curr - prior) / Math.abs(prior)) * 100;
+  const cls = d >= 0 ? 'up' : 'down';
+  const arrow = d >= 0 ? '↑' : '↓';
+  const fmt = isPercent ? pct(curr-prior) : (d >= 0 ? '+' : '') + d.toFixed(1)+'%';
+  return `<span class="kpi-delta ${cls}">${arrow} ${fmt} vs prior year</span>`;
+}
+
+function chBadge(ch) {
+  const map = { etsy:'ch-etsy', wix:'ch-wix', wayfair:'ch-wayfair', treasuremarts:'ch-tm' };
+  return `<span class="ch-badge ${map[ch]||''}">${CH_LABEL[ch]||ch}</span>`;
+}
+
+// ── DASHBOARD ──────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  const { from, to, priorFrom, priorTo } = getRange();
+  document.getElementById('dash-period-label').textContent = periodLabel();
+
+  const chDb = CH_DB[channelFilter] || null;
+  const [curr, prior] = await Promise.all([
+    fetchAgg(from, to, chDb),
+    compareMode ? fetchAgg(priorFrom, priorTo, chDb) : Promise.resolve([])
+  ]);
+
+  const c = aggregate(curr);
+  const p = aggregate(prior);
+
+  // KPIs
+  document.getElementById('kpi-revenue').textContent  = $$(c.revenue);
+  document.getElementById('kpi-profit').textContent   = $$(c.profit);
+  document.getElementById('kpi-margin').textContent   = pct(c.margin);
+  document.getElementById('kpi-orders').textContent   = num(c.orders);
+  document.getElementById('kpi-units').textContent    = num(c.units);
+  document.getElementById('kpi-shipping').textContent = $$(c.shipping);
+
+  if (compareMode) {
+    document.getElementById('kpi-revenue-d').innerHTML  = deltaHtml(c.revenue, p.revenue);
+    document.getElementById('kpi-profit-d').innerHTML   = deltaHtml(c.profit, p.profit);
+    document.getElementById('kpi-margin-d').innerHTML   = deltaHtml(c.margin, p.margin, true);
+    document.getElementById('kpi-orders-d').innerHTML   = deltaHtml(c.orders, p.orders);
+    document.getElementById('kpi-units-d').innerHTML    = deltaHtml(c.units, p.units);
+    document.getElementById('kpi-shipping-d').innerHTML = deltaHtml(c.shipping, p.shipping);
+  } else {
+    ['revenue','profit','margin','orders','units','shipping'].forEach(k => {
+      document.getElementById('kpi-'+k+'-d').innerHTML = '<span class="kpi-delta neutral">—</span>';
+    });
+  }
+
+  // Trend chart — group by day
+  await buildTrendChart(from, to, priorFrom, priorTo, chDb);
+
+  // Channel pie
+  buildChannelPie(curr);
+
+  // Top products bar
+  await buildTopProducts(from, to, chDb);
+
+  // Alerts
+  await buildAlerts(from, to);
+}
+
+async function buildTrendChart(from, to, priorFrom, priorTo, ch) {
+  let q = sbClient.from('sales_history')
+    .select('sale_date,total_revenue,net_profit')
+    .gte('sale_date', from).lte('sale_date', to);
+  if (ch) q = q.eq('sale_channel', ch);
+  const { data } = await q;
+
+  // Group by date
+  const byDate = {};
+  (data||[]).forEach(r => {
+    const d = r.sale_date.substring(0,10);
+    if (!byDate[d]) byDate[d] = { rev:0, profit:0 };
+    byDate[d].rev    += parseFloat(r.total_revenue)||0;
+    byDate[d].profit += parseFloat(r.net_profit)||0;
+  });
+  const labels = Object.keys(byDate).sort();
+  const revs   = labels.map(d => byDate[d].rev);
+  const profs  = labels.map(d => byDate[d].profit);
+
+  let priorRevs = [], priorLabels = [];
+  if (compareMode && priorFrom) {
+    let pq = sbClient.from('sales_history')
+      .select('sale_date,total_revenue')
+      .gte('sale_date', priorFrom).lte('sale_date', priorTo);
+    if (ch) pq = pq.eq('sale_channel', ch);
+    const { data: pd } = await pq;
+    const pByDate = {};
+    (pd||[]).forEach(r => {
+      const d = r.sale_date.substring(0,10);
+      if (!pByDate[d]) pByDate[d] = 0;
+      pByDate[d] += parseFloat(r.total_revenue)||0;
+    });
+    priorLabels = Object.keys(pByDate).sort();
+    priorRevs = priorLabels.map(d => pByDate[d]);
+  }
+
+  if (trendChartInst) trendChartInst.destroy();
+  trendChartInst = new Chart(document.getElementById('trendChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { type:'bar', label:'Revenue', data:revs, backgroundColor:'rgba(212,168,83,.25)', borderColor:'rgba(212,168,83,.6)', borderWidth:1 },
+        { type:'line', label:'Profit', data:profs, borderColor:'#2dd4a0', backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:.4 },
+        ...(compareMode && priorRevs.length ? [{ type:'line', label:'Prior Year Rev', data:priorRevs, borderColor:'rgba(212,168,83,.25)', backgroundColor:'transparent', borderWidth:1, borderDash:[4,4], pointRadius:0, tension:.4 }] : [])
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ display:false } },
+      scales:{
+        x:{ ticks:{ color:'#5a6e94', font:{size:9}, maxRotation:0 }, grid:{ color:'rgba(255,255,255,.04)' } },
+        y:{ ticks:{ color:'#5a6e94', font:{size:9}, callback: v=>'$'+v.toLocaleString() }, grid:{ color:'rgba(255,255,255,.04)' } }
+      }
+    }
+  });
+}
+
+function buildChannelPie(rows) {
+  const byChannel = {};
+  rows.forEach(r => {
+    const ch = r.sale_channel || 'other';
+    if (!byChannel[ch]) byChannel[ch] = 0;
+    byChannel[ch] += parseFloat(r.net_profit)||0;
+  });
+  const channels = Object.keys(byChannel).filter(ch => byChannel[ch] > 0);
+  const profits  = channels.map(ch => byChannel[ch]);
+  const colors   = channels.map(ch => CH_COLOR[ch] || '#8899bb');
+
+  if (channelChartInst) channelChartInst.destroy();
+  channelChartInst = new Chart(document.getElementById('channelChart'), {
+    type: 'doughnut',
+    data: { labels: channels.map(c => CH_LABEL[c]||c), datasets:[{ data:profits, backgroundColor:colors, borderWidth:0, hoverOffset:4 }] },
+    options: {
+      responsive:true, maintainAspectRatio:false, cutout:'65%',
+      plugins:{ legend:{ position:'right', labels:{ color:'#8899bb', font:{size:10}, boxWidth:10 } } }
+    }
+  });
+}
+
+async function buildTopProducts(from, to, ch) {
+  let q = sbClient.from('sales_history')
+    .select('product_name,net_profit,sku')
+    .gte('sale_date', from).lte('sale_date', to);
+  if (ch) q = q.eq('sale_channel', ch);
+  const { data } = await q;
+
+  const byProd = {};
+  (data||[]).forEach(r => {
+    const k = r.sku || r.product_name || '?';
+    if (!byProd[k]) byProd[k] = { name: r.product_name || r.sku, profit:0 };
+    byProd[k].profit += parseFloat(r.net_profit)||0;
+  });
+  const sorted = Object.values(byProd).sort((a,b) => b.profit-a.profit).slice(0,5);
+
+  if (topProductsChartInst) topProductsChartInst.destroy();
+  topProductsChartInst = new Chart(document.getElementById('topProductsChart'), {
+    type:'bar',
+    data: {
+      labels: sorted.map(p => p.name.substring(0,20)),
+      datasets:[{ data: sorted.map(p=>p.profit), backgroundColor:'rgba(45,212,160,.3)', borderColor:'#2dd4a0', borderWidth:1, borderRadius:4 }]
+    },
+    options: {
+      indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ ticks:{color:'#5a6e94', font:{size:9}, callback: v=>'$'+v.toFixed(0)}, grid:{color:'rgba(255,255,255,.04)'} },
+        y:{ ticks:{color:'#8899bb', font:{size:9}}, grid:{display:false} }
+      }
+    }
+  });
+}
+
+async function buildAlerts(from, to) {
+  const panel = document.getElementById('alertsPanel');
+  const alerts = [];
+
+  // Negative margin sales today
+  const todayStr = fmt(new Date());
+  const { data: negToday } = await sbClient.from('sales_history')
+    .select('id,sku,net_profit')
+    .eq('sale_date', todayStr)
+    .lt('net_profit', 0);
+  if (negToday?.length) alerts.push({ type:'warn', icon:'⚠', text: `${negToday.length} negative-margin sale${negToday.length>1?'s':''} today` });
+
+  // Unreconciled Wayfair (sales with no remittance match)
+  const { data: unrecon } = await sbClient.from('wayfair_remittance_lines')
+    .select('id').eq('reconciled', false).limit(1);
+  if (unrecon?.length) alerts.push({ type:'info', icon:'≋', text: 'Unreconciled Wayfair payments pending' });
+
+  // Sales with no fee data (backfill gaps)
+  const { data: noFees } = await sbClient.from('sales_history')
+    .select('id').gte('sale_date', from).lte('sale_date', to)
+    .is('oh_fee', null).gt('wholesale_price', 0).limit(1);
+  if (noFees?.length) alerts.push({ type:'info', icon:'◎', text: 'Some sales missing fee breakdown (UNKNOWN SKUs excluded)' });
+
+  if (!alerts.length) alerts.push({ type:'ok', icon:'✓', text: 'No alerts for this period' });
+
+  panel.innerHTML = `<div class="alerts-list">${alerts.map(a =>
+    `<div class="alert-item ${a.type}"><span class="alert-icon">${a.icon}</span><span>${a.text}</span></div>`
+  ).join('')}</div>`;
+}
+
+// ── SALES DETAIL ───────────────────────────────────────────────────────────
+async function loadSalesDetail() {
+  const { from, to } = getRange();
+  document.getElementById('sales-period-label').textContent = periodLabel();
+  salesPage = 0;
+
+  const chDb = CH_DB[channelFilter] || null;
+  let q = sbClient.from('sales_history')
+    .select('*')
+    .gte('sale_date', from).lte('sale_date', to)
+    .order(sortCol, { ascending: sortDir === 'asc' });
+  if (chDb) q = q.eq('sale_channel', chDb);
+  const { data } = await q;
+
+  salesData = data || [];
+  filterSalesTable();
+}
+
+function filterSalesTable() {
+  const srch = (document.getElementById('salesSearch')?.value||'').toLowerCase();
+  const negOnly = document.getElementById('showNegOnly')?.checked;
+
+  salesFiltered = salesData.filter(r => {
+    if (srch && !(r.sku||'').toLowerCase().includes(srch) && !(r.product_name||'').toLowerCase().includes(srch)) return false;
+    if (negOnly && (parseFloat(r.net_profit)||0) >= 0) return false;
+    return true;
+  });
+  salesPage = 0;
+  renderSalesTable();
+}
+
+function renderSalesTable() {
+  const wrap = document.getElementById('salesTableWrap');
+  const pagInfo = document.getElementById('salesPageInfo');
+  const pagBtns = document.getElementById('salesPageBtns');
+  const pag = document.getElementById('salesPagination');
+
+  if (!salesFiltered.length) {
+    wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-msg">No sales found for this period</div></div>';
+    pag.style.display = 'none'; return;
+  }
+
+  const total = salesFiltered.length;
+  const pages = Math.ceil(total / SALES_PER_PAGE);
+  const start = salesPage * SALES_PER_PAGE;
+  const rows  = salesFiltered.slice(start, start + SALES_PER_PAGE);
+
+  // Running totals
+  const totRev  = salesFiltered.reduce((s,r) => s+(parseFloat(r.total_revenue)||0), 0);
+  const totProf = salesFiltered.reduce((s,r) => s+(parseFloat(r.net_profit)||0), 0);
+  const avgMarg = totRev > 0 ? (totProf/totRev)*100 : 0;
+
+  wrap.innerHTML = `
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th onclick="sortSales('sale_date')">Date ${sortArrow('sale_date')}</th>
+        <th onclick="sortSales('sale_channel')">Channel ${sortArrow('sale_channel')}</th>
+        <th onclick="sortSales('sku')">SKU ${sortArrow('sku')}</th>
+        <th onclick="sortSales('product_name')">Product ${sortArrow('product_name')}</th>
+        <th class="text-right" onclick="sortSales('qty_sold')">Qty ${sortArrow('qty_sold')}</th>
+        <th class="text-right" onclick="sortSales('sale_price')">Price ${sortArrow('sale_price')}</th>
+        <th class="text-right" onclick="sortSales('total_revenue')">Revenue ${sortArrow('total_revenue')}</th>
+        <th class="text-right" onclick="sortSales('total_cost')">COGS ${sortArrow('total_cost')}</th>
+        <th class="text-right" onclick="sortSales('total_fees')">Fees ${sortArrow('total_fees')}</th>
+        <th class="text-right" onclick="sortSales('net_profit')">Net Profit ${sortArrow('net_profit')}</th>
+        <th class="text-right" onclick="sortSales('profit_margin')">Margin ${sortArrow('profit_margin')}</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(r => {
+        const margin  = r.profit_margin != null ? (parseFloat(r.profit_margin)*100) : null;
+        const profCls = (parseFloat(r.net_profit)||0) >= 0 ? 'val-pos' : 'val-neg';
+        const margCls = margin != null ? (margin >= 20 ? 'val-pos' : margin < 0 ? 'val-neg' : '') : 'val-dim';
+        const dateStr = r.sale_date ? r.sale_date.substring(0,10) : '—';
+        const adjShip = r.actual_shipping_cost != null && r.ob_shipping != null
+          ? (parseFloat(r.net_profit)||0) + (parseFloat(r.ob_shipping)||0) - (parseFloat(r.actual_shipping_cost)||0)
+          : null;
+        return `<tr onclick="openDrill(${JSON.stringify(r).replace(/"/g,'&quot;')})">
+          <td>${dateStr}</td>
+          <td>${chBadge(r.sale_channel)}</td>
+          <td class="val-gold">${r.sku||'—'}</td>
+          <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;font-family:inherit;">${r.product_name||'—'}</td>
+          <td class="text-right">${r.qty_sold||1}</td>
+          <td class="text-right">${$$(r.sale_price)}</td>
+          <td class="text-right">${$$(r.total_revenue)}</td>
+          <td class="text-right val-dim">${$$(r.total_cost)}</td>
+          <td class="text-right val-dim">${$$(r.total_fees)}</td>
+          <td class="text-right ${profCls}">${$$(r.net_profit)}${adjShip != null ? `<span style="font-size:9px;color:var(--muted);display:block;">adj:${$$(adjShip)}</span>` : ''}</td>
+          <td class="text-right ${margCls}">${margin != null ? pct(margin) : '—'}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+    <tfoot>
+      <tr style="background:var(--bg3);">
+        <td colspan="6" style="padding:10px 14px;font-size:11px;color:var(--muted);">${total.toLocaleString()} sales</td>
+        <td class="text-right val-gold">${$$(totRev)}</td>
+        <td></td><td></td>
+        <td class="text-right ${totProf>=0?'val-pos':'val-neg'}">${$$(totProf)}</td>
+        <td class="text-right">${pct(avgMarg)}</td>
+      </tr>
+    </tfoot>
+  </table>`;
+
+  // Pagination
+  pag.style.display = 'flex';
+  pagInfo.textContent = `${start+1}–${Math.min(start+SALES_PER_PAGE,total)} of ${total.toLocaleString()}`;
+  let btnHtml = `<button class="page-btn" onclick="goPage(${salesPage-1})" ${salesPage===0?'disabled':''}>‹ Prev</button>`;
+  for (let i=0;i<pages;i++) {
+    if (pages > 7 && Math.abs(i-salesPage)>2 && i!==0 && i!==pages-1) {
+      if (i===1||i===pages-2) btnHtml += '<span style="color:var(--muted);padding:0 4px">…</span>';
+      continue;
+    }
+    btnHtml += `<button class="page-btn ${i===salesPage?'active':''}" onclick="goPage(${i})">${i+1}</button>`;
+  }
+  btnHtml += `<button class="page-btn" onclick="goPage(${salesPage+1})" ${salesPage>=pages-1?'disabled':''}>Next ›</button>`;
+  pagBtns.innerHTML = btnHtml;
+}
+
+function sortArrow(col) {
+  if (sortCol !== col) return '<span style="opacity:.3">↕</span>';
+  return sortDir === 'asc' ? '↑' : '↓';
+}
+
+function sortSales(col) {
+  if (sortCol === col) sortDir = sortDir==='asc'?'desc':'asc';
+  else { sortCol = col; sortDir = 'desc'; }
+  salesFiltered.sort((a,b) => {
+    let va = a[col], vb = b[col];
+    if (va == null) return 1; if (vb == null) return -1;
+    if (typeof va === 'string') return sortDir==='asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+    return sortDir==='asc' ? va-vb : vb-va;
+  });
+  renderSalesTable();
+}
+
+function goPage(p) {
+  const pages = Math.ceil(salesFiltered.length / SALES_PER_PAGE);
+  if (p<0||p>=pages) return;
+  salesPage = p;
+  renderSalesTable();
+  document.getElementById('mainContent').scrollTop = 0;
+}
+
+// ── DRILL-DOWN PANEL ───────────────────────────────────────────────────────
+function openDrill(r) {
+  const panel = document.getElementById('drillPanel');
+  document.getElementById('drillTitle').textContent = r.product_name || r.sku || 'Sale Detail';
+
+  const margin = r.profit_margin != null ? (parseFloat(r.profit_margin)*100).toFixed(1) : null;
+  const adjProfit = r.actual_shipping_cost != null && r.ob_shipping != null
+    ? (parseFloat(r.net_profit)||0) + (parseFloat(r.ob_shipping)||0) - (parseFloat(r.actual_shipping_cost)||0)
+    : null;
+  const profCls = (parseFloat(r.net_profit)||0) >= 0 ? 'val-pos' : 'val-neg';
+
+  document.getElementById('drillBody').innerHTML = `
+    <div class="drill-big">
+      <div class="val ${profCls}">${$$(r.net_profit)}</div>
+      <div class="lbl">Net Profit${margin!=null?' · '+pct(parseFloat(margin)):''}</div>
+    </div>
+
+    <div class="drill-section-title">Sale</div>
+    ${dr('Date', r.sale_date?.substring(0,10)||'—')}
+    ${dr('Channel', chBadge(r.sale_channel))}
+    ${dr('SKU', `<span class="val-gold">${r.sku||'—'}</span>`)}
+    ${dr('Product', r.product_name||'—')}
+    ${dr('Brand', r.brand_name||'—')}
+    ${dr('Qty Sold', r.qty_sold||1)}
+    ${dr('Sale Price (unit)', $$(r.sale_price))}
+    ${dr('Total Revenue', `<span class="val-gold">${$$(r.total_revenue)}</span>`)}
+
+    <div class="drill-section-title">Cost Basis</div>
+    ${dr('Wholesale (unit)', $$(r.wholesale_price))}
+    ${dr('IB Shipping %', r.ib_shipping != null ? parseFloat(r.ib_shipping).toFixed(1)+'%' : '—')}
+    ${dr('OB Shipping (est.)', $$(r.ob_shipping))}
+    ${dr('Tariff', $$(r.tariff))}
+    ${dr('Total COGS', `<span class="val-dim">${$$(r.total_cost)}</span>`)}
+
+    <div class="drill-section-title">Channel Fees</div>
+    <div class="drill-fees-grid">
+      ${feeItem('OH Fee', r.oh_fee)}
+      ${feeItem('Transaction', r.transaction_fee)}
+      ${feeItem('CC Fee', r.cc_fee)}
+      ${feeItem('Wayfair Fee', r.wayfair_fee)}
+      ${feeItem('Recovery Fee', r.recovery_fee)}
+      ${feeItem('Commission', r.commission)}
+      ${feeItem('Rent', r.rent)}
+      ${feeItem('Mkt Deduction', r.marketplace_deduction)}
+    </div>
+    ${dr('Total Fees', `<span class="val-dim">${$$(r.total_fees)}</span>`)}
+
+    ${r.actual_shipping_cost != null ? `
+    <div class="drill-section-title">Shipping Actuals</div>
+    ${dr('Actual Shipping (Shippo)', $$(r.actual_shipping_cost))}
+    ${dr('Shipping Variance', `<span class="${(parseFloat(r.ob_shipping||0)-parseFloat(r.actual_shipping_cost||0))>=0?'val-pos':'val-neg'}">${$$(parseFloat(r.ob_shipping||0)-parseFloat(r.actual_shipping_cost||0))}</span>`)}
+    ${adjProfit != null ? dr('Adjusted Net Profit', `<span class="${adjProfit>=0?'val-pos':'val-neg'}">${$$(adjProfit)}</span>`) : ''}
+    ${r.carrier ? dr('Carrier', r.carrier) : ''}
+    ` : ''}
+
+    ${r.order_id ? `
+    <div class="drill-section-title">Order</div>
+    ${dr('Order ID', r.order_id)}
+    ${r.order_number ? dr('Order #', r.order_number) : ''}
+    ${r.customer_shipping_paid != null ? dr('Customer Paid Shipping', $$(r.customer_shipping_paid)) : ''}
+    ${r.tax_collected != null ? dr('Tax Collected', $$(r.tax_collected)) : ''}
+    ` : ''}
+
+    ${r.accounting_category ? `
+    <div class="drill-section-title">Accounting</div>
+    ${dr('Category', r.accounting_category)}
+    ` : ''}
+  `;
+
+  panel.classList.add('open');
+}
+
+function dr(label, value) {
+  return `<div class="drill-row"><span class="drill-row-label">${label}</span><span class="drill-row-value">${value??'—'}</span></div>`;
+}
+function feeItem(label, val) {
+  if (!val || parseFloat(val) === 0) return '';
+  return `<div class="drill-fee-item"><div class="drill-fee-label">${label}</div><div class="drill-fee-value val-dim">${$$(val)}</div></div>`;
+}
+function closeDrill() { document.getElementById('drillPanel').classList.remove('open'); }
+
+// ── DAILY SUMMARY ──────────────────────────────────────────────────────────
+async function loadDailyReport() {
+  const { from, to } = getRange();
+  document.getElementById('daily-period-label').textContent = periodLabel();
+  const chDb = CH_DB[channelFilter] || null;
+
+  let q = sbClient.from('sales_history')
+    .select('sale_date,total_revenue,net_profit,qty_sold,actual_shipping_cost,sale_channel')
+    .gte('sale_date', from).lte('sale_date', to).order('sale_date');
+  if (chDb) q = q.eq('sale_channel', chDb);
+  const { data } = await q;
+
+  // Group by date
+  const byDate = {};
+  (data||[]).forEach(r => {
+    const d = r.sale_date.substring(0,10);
+    if (!byDate[d]) byDate[d] = { date:d, revenue:0, profit:0, units:0, orders:0, shipping:0 };
+    byDate[d].revenue  += parseFloat(r.total_revenue)||0;
+    byDate[d].profit   += parseFloat(r.net_profit)||0;
+    byDate[d].units    += parseInt(r.qty_sold)||0;
+    byDate[d].orders   += 1;
+    byDate[d].shipping += parseFloat(r.actual_shipping_cost)||0;
+  });
+  const rows = Object.values(byDate).sort((a,b) => b.date.localeCompare(a.date));
+
+  // Chart
+  const cLabels = rows.map(r=>r.date).reverse();
+  const cRevs   = rows.map(r=>r.revenue).reverse();
+  const cProfs  = rows.map(r=>r.profit).reverse();
+
+  if (dailyChartInst) dailyChartInst.destroy();
+  dailyChartInst = new Chart(document.getElementById('dailyChart'), {
+    type:'bar',
+    data: {
+      labels: cLabels,
+      datasets: [
+        { label:'Revenue', data:cRevs, backgroundColor:'rgba(212,168,83,.2)', borderColor:'rgba(212,168,83,.5)', borderWidth:1, borderRadius:3 },
+        { type:'line', label:'Profit', data:cProfs, borderColor:'#2dd4a0', backgroundColor:'transparent', borderWidth:2, pointRadius:0, tension:.4 }
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{ color:'#8899bb', font:{size:10}, boxWidth:10 } } },
+      scales:{
+        x:{ ticks:{color:'#5a6e94',font:{size:9}}, grid:{color:'rgba(255,255,255,.03)'} },
+        y:{ ticks:{color:'#5a6e94',font:{size:9},callback:v=>'$'+v.toLocaleString()}, grid:{color:'rgba(255,255,255,.03)'} }
+      }
+    }
+  });
+
+  // Table
+  const tableWrap = document.getElementById('dailyTableWrap');
+  if (!rows.length) {
+    tableWrap.innerHTML = '<div class="empty-state"><div class="empty-icon">▦</div><div class="empty-msg">No sales in this period</div></div>';
+    return;
+  }
+
+  tableWrap.innerHTML = `
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th class="text-right">Orders</th>
+        <th class="text-right">Units</th>
+        <th class="text-right">Revenue</th>
+        <th class="text-right">Profit</th>
+        <th class="text-right">Margin</th>
+        <th class="text-right">Shipping</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(r => {
+        const margin = r.revenue > 0 ? (r.profit/r.revenue)*100 : 0;
+        const profCls = r.profit >= 0 ? 'val-pos' : 'val-neg';
+        const margCls = margin >= 20 ? 'val-pos' : margin < 0 ? 'val-neg' : '';
+        const dateDisp = new Date(r.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+        return `<tr onclick="drillDailyDate('${r.date}')" style="cursor:pointer;">
+          <td style="color:var(--text);">${dateDisp}</td>
+          <td class="text-right">${r.orders}</td>
+          <td class="text-right">${r.units}</td>
+          <td class="text-right val-gold">${$$(r.revenue)}</td>
+          <td class="text-right ${profCls}">${$$(r.profit)}</td>
+          <td class="text-right ${margCls}">${pct(margin)}</td>
+          <td class="text-right val-dim">${r.shipping > 0 ? $$(r.shipping) : '—'}</td>
+        </tr>`;
+      }).join('')}
+    </tbody>
+  </table>`;
+}
+
+function drillDailyDate(date) {
+  // Navigate to Sales Detail filtered to this date
+  currentPreset = 'custom';
+  customFrom = date; customTo = date;
+  document.getElementById('dr-from').value = date;
+  document.getElementById('dr-to').value   = date;
+  document.getElementById('customDates').classList.add('visible');
+  document.querySelectorAll('.dr-pill').forEach(el => el.classList.toggle('active', el.dataset.preset==='custom'));
+  navTo('sales');
+}
+
+// ── CHANNEL PERFORMANCE ────────────────────────────────────────────────────
+async function loadChannelReport() {
+  const { from, to, priorFrom, priorTo } = getRange();
+  document.getElementById('channel-period-label').textContent = periodLabel();
+
+  const channels = ['etsy','wix','wayfair','treasuremarts'];
+  const [curr, prior] = await Promise.all([
+    fetchAgg(from, to, null),
+    compareMode ? fetchAgg(priorFrom, priorTo, null) : Promise.resolve([])
+  ]);
+
+  // Aggregate by channel
+  const currByCh = {}, priorByCh = {};
+  channels.forEach(ch => {
+    currByCh[ch]  = aggregate(curr.filter(r=>r.sale_channel===ch));
+    priorByCh[ch] = aggregate(prior.filter(r=>r.sale_channel===ch));
+  });
+
+  // Channel cards
+  const perfGrid = document.getElementById('channelPerfGrid');
+  perfGrid.innerHTML = channels.map(ch => {
+    const c = currByCh[ch], p = priorByCh[ch];
+    const profCls = c.profit >= 0 ? 'val-pos' : 'val-neg';
+    const delta = compareMode && p.revenue > 0
+      ? `<div class="compare-row"><span class="compare-prev">Prior: ${$$(p.revenue)}</span><span class="compare-delta ${c.revenue>=p.revenue?'up':'down'}">${c.revenue>=p.revenue?'↑':'↓'}${Math.abs(((c.revenue-p.revenue)/p.revenue)*100).toFixed(0)}%</span></div>`
+      : '';
+    return `<div class="card" onclick="drillChannel('${ch}')" style="cursor:pointer;">
+      <div style="padding:16px 18px;border-bottom:3px solid ${CH_COLOR[ch]};">
+        <div style="font-size:10px;font-weight:700;color:${CH_COLOR[ch]};text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;">${CH_LABEL[ch]}</div>
+        <div style="font-family:'Instrument Serif',serif;font-size:24px;color:var(--text);">${$$(c.revenue)}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;">Revenue</div>
+        ${delta}
+      </div>
+      <div style="padding:12px 18px;display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div><div style="font-size:9px;color:var(--muted);">Profit</div><div class="mono ${profCls}">${$$(c.profit)}</div></div>
+        <div><div style="font-size:9px;color:var(--muted);">Margin</div><div class="mono">${pct(c.margin)}</div></div>
+        <div><div style="font-size:9px;color:var(--muted);">Orders</div><div class="mono">${num(c.orders)}</div></div>
+        <div><div style="font-size:9px;color:var(--muted);">Units</div><div class="mono">${num(c.units)}</div></div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Monthly revenue chart
+  await buildChannelMonthlyChart(from, to, channels);
+
+  // Margin bars
+  buildChannelMarginChart(channels, currByCh);
+
+  // Fee breakdown table
+  buildChannelFeeBreakdown(channels, currByCh, curr);
+}
+
+async function buildChannelMonthlyChart(from, to, channels) {
+  const { data } = await sbClient.from('sales_history')
+    .select('sale_date,sale_channel,total_revenue')
+    .gte('sale_date', from).lte('sale_date', to);
+
+  // Group by month+channel
+  const byMonthCh = {};
+  (data||[]).forEach(r => {
+    const mo = r.sale_date.substring(0,7);
+    if (!byMonthCh[mo]) byMonthCh[mo] = {};
+    if (!byMonthCh[mo][r.sale_channel]) byMonthCh[mo][r.sale_channel] = 0;
+    byMonthCh[mo][r.sale_channel] += parseFloat(r.total_revenue)||0;
+  });
+  const months = Object.keys(byMonthCh).sort();
+
+  if (chRevenueChartInst) chRevenueChartInst.destroy();
+  chRevenueChartInst = new Chart(document.getElementById('chRevenueChart'), {
+    type:'bar',
+    data: {
+      labels: months.map(m => { const [y,mo]=m.split('-'); return new Date(+y,+mo-1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}); }),
+      datasets: channels.map(ch => ({
+        label: CH_LABEL[ch], data: months.map(mo => byMonthCh[mo]?.[ch]||0),
+        backgroundColor: CH_COLOR[ch]+'44', borderColor: CH_COLOR[ch], borderWidth:1, borderRadius:3
+      }))
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{ labels:{ color:'#8899bb', font:{size:10}, boxWidth:10 } } },
+      scales:{
+        x:{ stacked:true, ticks:{color:'#5a6e94',font:{size:9}}, grid:{color:'rgba(255,255,255,.03)'} },
+        y:{ stacked:true, ticks:{color:'#5a6e94',font:{size:9},callback:v=>'$'+v.toLocaleString()}, grid:{color:'rgba(255,255,255,.03)'} }
+      }
+    }
+  });
+}
+
+function buildChannelMarginChart(channels, byCh) {
+  if (chMarginChartInst) chMarginChartInst.destroy();
+  chMarginChartInst = new Chart(document.getElementById('chMarginChart'), {
+    type:'bar',
+    data: {
+      labels: channels.map(ch=>CH_LABEL[ch]),
+      datasets:[{
+        data: channels.map(ch=>byCh[ch].margin),
+        backgroundColor: channels.map(ch=>CH_COLOR[ch]+'55'),
+        borderColor: channels.map(ch=>CH_COLOR[ch]),
+        borderWidth:1, borderRadius:4
+      }]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false} },
+      scales:{
+        x:{ ticks:{color:'#8899bb',font:{size:10}}, grid:{display:false} },
+        y:{ ticks:{color:'#5a6e94',font:{size:9},callback:v=>v.toFixed(0)+'%'}, grid:{color:'rgba(255,255,255,.03)'} }
+      }
+    }
+  });
+}
+
+function buildChannelFeeBreakdown(channels, byCh, allRows) {
+  const el = document.getElementById('channelFeeBreakdown');
+  const feeKeys = [
+    { key:'oh_fee', label:'OH Fee' },
+    { key:'transaction_fee', label:'Transaction' },
+    { key:'cc_fee', label:'CC Fee' },
+    { key:'wayfair_fee', label:'Wayfair Fee' },
+    { key:'recovery_fee', label:'Recovery' },
+    { key:'commission', label:'Commission' },
+    { key:'rent', label:'Rent' },
+    { key:'marketplace_deduction', label:'Mkt Deduction' },
+  ];
+
+  const feesByCh = {};
+  channels.forEach(ch => { feesByCh[ch] = {}; feeKeys.forEach(f => feesByCh[ch][f.key] = 0); });
+  allRows.forEach(r => {
+    const ch = r.sale_channel;
+    if (!feesByCh[ch]) return;
+    feeKeys.forEach(f => feesByCh[ch][f.key] += parseFloat(r[f.key])||0);
+  });
+
+  el.innerHTML = `
+  <div class="data-table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Fee Type</th>
+        ${channels.map(ch=>`<th class="text-right" style="color:${CH_COLOR[ch]}">${CH_LABEL[ch]}</th>`).join('')}
+        <th class="text-right">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${feeKeys.map(f => {
+        const total = channels.reduce((s,ch)=>s+feesByCh[ch][f.key],0);
+        if (total === 0) return '';
+        return `<tr>
+          <td style="color:var(--dim);">${f.label}</td>
+          ${channels.map(ch=>`<td class="text-right val-dim">${feesByCh[ch][f.key]>0?$$(feesByCh[ch][f.key]):'—'}</td>`).join('')}
+          <td class="text-right">${$$(total)}</td>
+        </tr>`;
+      }).join('')}
+      <tr style="border-top:1px solid var(--border2);">
+        <td style="font-weight:700;">Total Fees</td>
+        ${channels.map(ch=>{
+          const t = feeKeys.reduce((s,f)=>s+feesByCh[ch][f.key],0);
+          return `<td class="text-right val-dim">${$$(t)}</td>`;
+        }).join('')}
+        <td class="text-right val-dim">${$$(feeKeys.reduce((s,f)=>s+channels.reduce((cs,ch)=>cs+feesByCh[ch][f.key],0),0))}</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>`;
+}
+
+function drillChannel(ch) {
+  channelFilter = ch;
+  document.querySelectorAll('.ch-pill').forEach(el => el.classList.toggle('active', el.dataset.ch === (ch==='treasuremarts'?'tm':ch)));
+  navTo('sales');
+}
+
+function quickSearchDash(val) {
+  // Quick search from dashboard navigates to Sales Detail with search pre-filled
+  if (val.length < 2) return;
+  navTo('sales');
+  setTimeout(() => {
+    const el = document.getElementById('salesSearch');
+    if (el) { el.value = val; filterSalesTable(); }
+  }, 300);
+}
+
+// ── EXPORTS ────────────────────────────────────────────────────────────────
+function exportSalesExcel() {
+  if (!salesFiltered.length) return;
+  const headers = ['Date','Channel','SKU','Product','Brand','Qty','Sale Price','Revenue','COGS','OH Fee','Transaction Fee','CC Fee','Wayfair Fee','Recovery Fee','Commission','Rent','Mkt Deduction','Total Fees','Net Profit','Adj Net Profit','Margin%','Accounting Category'];
+  const rows = salesFiltered.map(r => {
+    const margin = r.profit_margin != null ? (parseFloat(r.profit_margin)*100).toFixed(1)+'%' : '';
+    const adjP   = r.actual_shipping_cost != null && r.ob_shipping != null
+      ? ((parseFloat(r.net_profit)||0) + (parseFloat(r.ob_shipping)||0) - (parseFloat(r.actual_shipping_cost)||0)).toFixed(2) : '';
+    return [r.sale_date?.substring(0,10), CH_LABEL[r.sale_channel]||r.sale_channel, r.sku, r.product_name, r.brand_name,
+      r.qty_sold, r.sale_price, r.total_revenue, r.total_cost,
+      r.oh_fee, r.transaction_fee, r.cc_fee, r.wayfair_fee, r.recovery_fee,
+      r.commission, r.rent, r.marketplace_deduction, r.total_fees,
+      r.net_profit, adjP, margin, r.accounting_category];
+  });
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sales Detail');
+  XLSX.writeFile(wb, `CCD_Sales_${getRange().from}_${getRange().to}.xlsx`);
+}
+
+function exportDailyExcel() {
+  // Rebuild daily aggregation from current salesFiltered or re-query
+  const { from, to } = getRange();
+  const chDb = CH_DB[channelFilter] || null;
+  let q = sbClient.from('sales_history')
+    .select('sale_date,total_revenue,net_profit,qty_sold,actual_shipping_cost,ob_shipping,total_fees,sale_channel')
+    .gte('sale_date', from).lte('sale_date', to).order('sale_date');
+  if (chDb) q = q.eq('sale_channel', chDb);
+  q.then(({ data }) => {
+    const byDate = {};
+    (data||[]).forEach(r => {
+      const d = r.sale_date.substring(0,10);
+      if (!byDate[d]) byDate[d] = { date:d, revenue:0, profit:0, units:0, orders:0, shipping_est:0, shipping_actual:0, fees:0 };
+      byDate[d].revenue       += parseFloat(r.total_revenue)||0;
+      byDate[d].profit        += parseFloat(r.net_profit)||0;
+      byDate[d].units         += parseInt(r.qty_sold)||0;
+      byDate[d].orders        += 1;
+      byDate[d].shipping_est  += parseFloat(r.ob_shipping)||0;
+      byDate[d].shipping_actual += parseFloat(r.actual_shipping_cost)||0;
+      byDate[d].fees          += parseFloat(r.total_fees)||0;
+    });
+    const rows = Object.values(byDate).sort((a,b) => b.date.localeCompare(a.date));
+    const headers = ['Date','Orders','Units','Revenue','Net Profit','Margin %','Total Fees','Est. Shipping','Actual Shipping','Shipping Variance'];
+    const sheetRows = rows.map(r => {
+      const margin = r.revenue > 0 ? ((r.profit/r.revenue)*100).toFixed(1)+'%' : '0%';
+      const variance = (r.shipping_est - r.shipping_actual).toFixed(2);
+      return [r.date, r.orders, r.units,
+        parseFloat(r.revenue.toFixed(2)),
+        parseFloat(r.profit.toFixed(2)),
+        margin,
+        parseFloat(r.fees.toFixed(2)),
+        parseFloat(r.shipping_est.toFixed(2)),
+        parseFloat(r.shipping_actual.toFixed(2)),
+        parseFloat(variance)];
+    });
+    // Totals row
+    const totRev  = rows.reduce((s,r)=>s+r.revenue,0);
+    const totProf = rows.reduce((s,r)=>s+r.profit,0);
+    sheetRows.push([
+      'TOTAL',
+      rows.reduce((s,r)=>s+r.orders,0),
+      rows.reduce((s,r)=>s+r.units,0),
+      parseFloat(totRev.toFixed(2)),
+      parseFloat(totProf.toFixed(2)),
+      totRev>0?((totProf/totRev)*100).toFixed(1)+'%':'0%',
+      parseFloat(rows.reduce((s,r)=>s+r.fees,0).toFixed(2)),
+      parseFloat(rows.reduce((s,r)=>s+r.shipping_est,0).toFixed(2)),
+      parseFloat(rows.reduce((s,r)=>s+r.shipping_actual,0).toFixed(2)),
+      parseFloat((rows.reduce((s,r)=>s+r.shipping_est,0)-rows.reduce((s,r)=>s+r.shipping_actual,0)).toFixed(2))
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...sheetRows]);
+    // Style header row
+    ws['!cols'] = [10,8,8,12,12,10,12,14,16,16].map(w=>({wch:w}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Daily Summary');
+    XLSX.writeFile(wb, `CCD_Daily_${from}_${to}.xlsx`);
+  });
+}
+
+function exportChannelExcel() {
+  const { from, to } = getRange();
+  const channels = ['etsy','wix','wayfair','treasuremarts'];
+  sbClient.from('sales_history')
+    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,actual_shipping_cost,ob_shipping,profit_margin')
+    .gte('sale_date', from).lte('sale_date', to)
+    .then(({ data }) => {
+      const feeKeys = ['oh_fee','transaction_fee','cc_fee','wayfair_fee','recovery_fee','commission','rent','marketplace_deduction','total_fees'];
+      const feeLabels = ['OH Fee','Transaction Fee','CC Fee','Wayfair Fee','Recovery Fee','Commission','Rent','Mkt Deduction','Total Fees'];
+
+      // Summary sheet
+      const summaryHeaders = ['Channel','Orders','Units','Revenue','Net Profit','Avg Margin %','Actual Shipping',...feeLabels];
+      const summaryRows = channels.map(ch => {
+        const rows = (data||[]).filter(r=>r.sale_channel===ch);
+        const rev   = rows.reduce((s,r)=>s+(parseFloat(r.total_revenue)||0),0);
+        const prof  = rows.reduce((s,r)=>s+(parseFloat(r.net_profit)||0),0);
+        const units = rows.reduce((s,r)=>s+(parseInt(r.qty_sold)||0),0);
+        const ship  = rows.reduce((s,r)=>s+(parseFloat(r.actual_shipping_cost)||0),0);
+        const margin = rev>0?((prof/rev)*100).toFixed(1)+'%':'0%';
+        const fees   = feeKeys.map(k => parseFloat(rows.reduce((s,r)=>s+(parseFloat(r[k])||0),0).toFixed(2)));
+        return [CH_LABEL[ch], rows.length, units,
+          parseFloat(rev.toFixed(2)), parseFloat(prof.toFixed(2)), margin,
+          parseFloat(ship.toFixed(2)), ...fees];
+      });
+      // All channels total
+      const allRev  = (data||[]).reduce((s,r)=>s+(parseFloat(r.total_revenue)||0),0);
+      const allProf = (data||[]).reduce((s,r)=>s+(parseFloat(r.net_profit)||0),0);
+      summaryRows.push([
+        'ALL CHANNELS', (data||[]).length,
+        (data||[]).reduce((s,r)=>s+(parseInt(r.qty_sold)||0),0),
+        parseFloat(allRev.toFixed(2)), parseFloat(allProf.toFixed(2)),
+        allRev>0?((allProf/allRev)*100).toFixed(1)+'%':'0%',
+        parseFloat((data||[]).reduce((s,r)=>s+(parseFloat(r.actual_shipping_cost)||0),0).toFixed(2)),
+        ...feeKeys.map(k => parseFloat((data||[]).reduce((s,r)=>s+(parseFloat(r[k])||0),0).toFixed(2)))
+      ]);
+
+      const wb = XLSX.utils.book_new();
+      const wsSummary = XLSX.utils.aoa_to_sheet([summaryHeaders, ...summaryRows]);
+      wsSummary['!cols'] = [16,8,8,12,12,10,14,...feeKeys.map(()=>({wch:14}))].map(w=>typeof w==='number'?{wch:w}:w);
+      XLSX.utils.book_append_sheet(wb, wsSummary, 'Channel Summary');
+
+      // Individual channel sheets
+      channels.forEach(ch => {
+        const rows = (data||[]).filter(r=>r.sale_channel===ch);
+        if (!rows.length) return;
+        const detailHeaders = ['Sale Channel','Revenue','Net Profit','Units','Margin %',...feeLabels,'Est Shipping','Actual Shipping'];
+        const detailRows = rows.map(r => {
+          const margin = r.profit_margin != null ? (parseFloat(r.profit_margin)*100).toFixed(1)+'%' : '';
+          return [CH_LABEL[ch],
+            parseFloat(r.total_revenue||0), parseFloat(r.net_profit||0),
+            parseInt(r.qty_sold||0), margin,
+            ...feeKeys.map(k=>parseFloat(r[k]||0)),
+            parseFloat(r.ob_shipping||0), parseFloat(r.actual_shipping_cost||0)];
+        });
+        const ws = XLSX.utils.aoa_to_sheet([detailHeaders, ...detailRows]);
+        XLSX.utils.book_append_sheet(wb, ws, CH_LABEL[ch]);
+      });
+
+      XLSX.writeFile(wb, `CCD_Channel_Performance_${from}_${to}.xlsx`);
+    });
+}
+
+function exportDashboardPDF() {
+  // Inject print styles and trigger browser print
+  const style = document.createElement('style');
+  style.id = 'print-style';
+  style.textContent = `
+    @media print {
+      body { background: white !important; color: black !important; }
+      .sidebar, .topbar, #drillPanel, #settingsModal, .export-btns, .ch-filter, .dr-pills, .dr-custom, .compare-toggle, .topbar-settings { display: none !important; }
+      .body-layout { display: block !important; }
+      .main-content { overflow: visible !important; padding: 0 !important; }
+      .page-section { display: block !important; }
+      .kpi-card { background: #f5f5f5 !important; border: 1px solid #ddd !important; break-inside: avoid; }
+      .kpi-value, .kpi-label { color: black !important; }
+      .kpi-delta { color: #555 !important; }
+      .card { background: white !important; border: 1px solid #ddd !important; break-inside: avoid; }
+      .card-title { color: black !important; }
+      canvas { max-width: 100% !important; }
+    }
+  `;
+  document.head.appendChild(style);
+  window.print();
+  setTimeout(() => { const s = document.getElementById('print-style'); if (s) s.remove(); }, 1000);
+}
+
+function exportSalesPDF() {
+  const style = document.createElement('style');
+  style.id = 'print-style-sales';
+  style.textContent = `
+    @media print {
+      body { background: white !important; color: black !important; font-size: 9px !important; }
+      .sidebar, .topbar, #drillPanel, #settingsModal, .export-btns, .ch-filter, .dr-pills, .dr-custom, .compare-toggle, .topbar-settings, .pagination { display: none !important; }
+      .body-layout { display: block !important; }
+      .main-content { overflow: visible !important; padding: 8px !important; }
+      #page-dashboard, #page-daily, #page-channel { display: none !important; }
+      #page-sales { display: block !important; }
+      .card { background: white !important; border: 1px solid #ccc !important; }
+      .data-table th, .data-table td { color: black !important; border-color: #ddd !important; padding: 4px 6px !important; font-size: 8px !important; }
+      .data-table th { background: #f0f0f0 !important; }
+      .val-pos { color: #166534 !important; }
+      .val-neg { color: #991b1b !important; }
+      .val-gold { color: #92400e !important; }
+      .ch-badge { border: 1px solid #ccc !important; background: #f5f5f5 !important; color: black !important; }
+      tfoot td { background: #f0f0f0 !important; color: black !important; }
+    }
+  `;
+  document.head.appendChild(style);
+  // Temporarily show all rows for print
+  const origPage = salesPage;
+  salesPage = 0;
+  const origFiltered = salesFiltered;
+  // Show all rows
+  const wrap = document.getElementById('salesTableWrap');
+  const origHtml = wrap.innerHTML;
+  // Render all rows
+  const allRows = salesFiltered;
+  const totRev  = allRows.reduce((s,r) => s+(parseFloat(r.total_revenue)||0), 0);
+  const totProf = allRows.reduce((s,r) => s+(parseFloat(r.net_profit)||0), 0);
+  const avgMarg = totRev > 0 ? (totProf/totRev)*100 : 0;
+  wrap.innerHTML = `
+  <table class="data-table">
+    <thead><tr>
+      <th>Date</th><th>Channel</th><th>SKU</th><th>Product</th>
+      <th class="text-right">Qty</th><th class="text-right">Price</th>
+      <th class="text-right">Revenue</th><th class="text-right">COGS</th>
+      <th class="text-right">Fees</th><th class="text-right">Net Profit</th><th class="text-right">Margin</th>
+    </tr></thead>
+    <tbody>${allRows.map(r => {
+      const margin = r.profit_margin != null ? (parseFloat(r.profit_margin)*100) : null;
+      const profCls = (parseFloat(r.net_profit)||0) >= 0 ? 'val-pos' : 'val-neg';
+      return `<tr>
+        <td>${r.sale_date?.substring(0,10)||'—'}</td>
+        <td>${chBadge(r.sale_channel)}</td>
+        <td class="val-gold">${r.sku||'—'}</td>
+        <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;font-family:inherit;">${r.product_name||'—'}</td>
+        <td class="text-right">${r.qty_sold||1}</td>
+        <td class="text-right">${$$(r.sale_price)}</td>
+        <td class="text-right">${$$(r.total_revenue)}</td>
+        <td class="text-right val-dim">${$$(r.total_cost)}</td>
+        <td class="text-right val-dim">${$$(r.total_fees)}</td>
+        <td class="text-right ${profCls}">${$$(r.net_profit)}</td>
+        <td class="text-right">${margin!=null?pct(margin):'—'}</td>
+      </tr>`;
+    }).join('')}</tbody>
+    <tfoot><tr>
+      <td colspan="6" style="padding:6px 14px;font-size:9px;">
+        ${allRows.length.toLocaleString()} sales — printed ${new Date().toLocaleDateString()} — Period: ${periodLabel()}
+      </td>
+      <td class="text-right val-gold">${$$(totRev)}</td>
+      <td></td><td></td>
+      <td class="text-right ${totProf>=0?'val-pos':'val-neg'}">${$$(totProf)}</td>
+      <td class="text-right">${pct(avgMarg)}</td>
+    </tr></tfoot>
+  </table>`;
+  window.print();
+  setTimeout(() => {
+    wrap.innerHTML = origHtml;
+    salesPage = origPage;
+    const s = document.getElementById('print-style-sales');
+    if (s) s.remove();
+  }, 1500);
+}
+
+// ── SETTINGS ───────────────────────────────────────────────────────────────
+function openSettings() {
+  document.getElementById('s-url').value = localStorage.getItem('ccdSupabaseUrl')||'';
+  document.getElementById('s-key').value = localStorage.getItem('ccdSupabaseKey')||'';
+  document.getElementById('settingsModal').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settingsModal').classList.remove('open');
+}
+function saveSettings() {
+  localStorage.setItem('ccdSupabaseUrl', document.getElementById('s-url').value.trim());
+  localStorage.setItem('ccdSupabaseKey', document.getElementById('s-key').value.trim());
+  closeSettings();
+  location.reload();
+}
+
+// ── CHART DEFAULTS ─────────────────────────────────────────────────────────
+Chart.defaults.color = '#5a6e94';
+Chart.defaults.font.family = "'DM Mono', monospace";
+Chart.defaults.plugins.tooltip.backgroundColor = '#0c1322';
+Chart.defaults.plugins.tooltip.borderColor = '#1e2d45';
+Chart.defaults.plugins.tooltip.borderWidth = 1;
+Chart.defaults.plugins.tooltip.titleColor = '#d4a853';
+Chart.defaults.plugins.tooltip.bodyColor = '#e2e8f8';
+Chart.defaults.plugins.tooltip.callbacks = {
+  label: ctx => {
+    const v = ctx.raw;
+    if (typeof v === 'number' && Math.abs(v) > 1)
+      return ' ' + (ctx.dataset.label||'') + ': $' + v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    return ' ' + (ctx.dataset.label||'') + ': ' + v;
+  }
+};
+
+// ── INIT ───────────────────────────────────────────────────────────────────
+function initApp() {
+  // Set today dates as defaults for custom
+  const today = fmt(new Date());
+  document.getElementById('dr-from').value = today;
+  document.getElementById('dr-to').value   = today;
+  loadDashboard();
+}
+
+// Boot
+document.addEventListener('DOMContentLoaded', () => {
+  autoConnect();
+});
+</script>
+</body>
+</html>
