@@ -1145,6 +1145,25 @@ body {
           <button class="dr-pill" data-scenview="inventory" onclick="setScenarioView('inventory')">Inventory</button>
         </div>
 
+        <!-- SKU Filter -->
+        <div class="card" style="margin-bottom:8px;">
+          <div class="card-body" style="padding:10px 14px;">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+              <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;white-space:nowrap;">Filter SKUs</label>
+              <div style="position:relative;flex:1;min-width:200px;">
+                <input type="text" id="scenSkuSearch" class="form-input" placeholder="Search by SKU or product name..." 
+                  style="width:100%;padding:6px 10px;font-size:12px;background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:6px;"
+                  oninput="scenSkuAutocomplete(this.value)" onfocus="scenSkuAutocomplete(this.value)"
+                  autocomplete="off">
+                <div id="scenSkuDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:var(--bg2);border:1px solid var(--border);border-top:none;border-radius:0 0 6px 6px;z-index:50;"></div>
+              </div>
+              <span id="scenSkuCount" style="font-size:10px;color:var(--muted);white-space:nowrap;">All SKUs</span>
+              <button onclick="clearScenarioSkuFilter()" style="font-size:10px;color:var(--gold);background:none;border:none;cursor:pointer;white-space:nowrap;display:none;" id="scenSkuClearBtn">Clear Filter</button>
+            </div>
+            <div id="scenSkuChips" style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;"></div>
+          </div>
+        </div>
+
         <div class="card" id="scenarioControls">
           <div class="card-body" id="scenarioControlsInner"></div>
         </div>
@@ -1249,7 +1268,7 @@ body {
 <script>
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
-// v1.5.0 — March 2026
+// v1.6.0 — March 2026
 // ALL financial values read from sales_history columns — zero recalculation.
 // ============================================================================
 
@@ -1283,6 +1302,7 @@ let wayfairReconView = 'summary', wayfairReconData = {};
 let customResultData = [];
 let customerView = 'top', customerData = [], geoData = [];
 let scenarioView = 'pricing', scenarioBaseData = null;
+let selectedScenarioSkus = new Set();
 let vendorData = [], etsyAdsData = {}, priceCompData = [];
 let savedReports = JSON.parse(localStorage.getItem('ccd_saved_reports')||'[]');
 
@@ -1420,6 +1440,8 @@ function navTo(page) {
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.querySelectorAll('.page-section').forEach(el => el.classList.toggle('active', el.id === 'page-'+page));
+  // Update URL hash for deep-linking (Command Center quick actions)
+  try { history.replaceState(null, '', '#' + page); } catch(e) {}
   updateBackButton();
   refreshCurrentPage();
 }
@@ -3819,6 +3841,90 @@ async function loadDataHealth() {
 }
 
 // ── SCENARIO PLANNER ─────────────────────────────────────────────────────
+/* ── SCENARIO SKU FILTER ───────────────────────────────────────────────── */
+function getScenarioData() {
+  if (!scenarioBaseData) return [];
+  if (selectedScenarioSkus.size === 0) return scenarioBaseData;
+  return scenarioBaseData.filter(r => selectedScenarioSkus.has(r.sku));
+}
+
+function scenSkuAutocomplete(query) {
+  const dd = document.getElementById('scenSkuDropdown');
+  if (!scenarioBaseData || !query || query.length < 1) { dd.style.display = 'none'; return; }
+
+  const q = query.toLowerCase();
+  const seen = new Set();
+  const matches = [];
+  scenarioBaseData.forEach(r => {
+    if (!r.sku || seen.has(r.sku) || selectedScenarioSkus.has(r.sku)) return;
+    if (r.sku.toLowerCase().includes(q) || (r.product_name||'').toLowerCase().includes(q)) {
+      seen.add(r.sku);
+      matches.push({ sku: r.sku, name: r.product_name || '' });
+    }
+  });
+
+  if (matches.length === 0) { dd.style.display = 'none'; return; }
+
+  dd.innerHTML = matches.slice(0, 15).map(m =>
+    `<div onclick="addScenarioSku('${m.sku.replace(/'/g, "\\'")}')" 
+      style="padding:6px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid var(--border);color:var(--text);"
+      onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'">
+      <span style="color:var(--gold);font-family:'DM Mono',monospace;">${m.sku}</span>
+      <span style="color:var(--muted);margin-left:8px;">${m.name.substring(0,40)}</span>
+    </div>`
+  ).join('');
+  dd.style.display = 'block';
+}
+
+function addScenarioSku(sku) {
+  selectedScenarioSkus.add(sku);
+  document.getElementById('scenSkuSearch').value = '';
+  document.getElementById('scenSkuDropdown').style.display = 'none';
+  renderScenarioSkuChips();
+}
+
+function removeScenarioSku(sku) {
+  selectedScenarioSkus.delete(sku);
+  renderScenarioSkuChips();
+}
+
+function clearScenarioSkuFilter() {
+  selectedScenarioSkus.clear();
+  renderScenarioSkuChips();
+}
+
+function renderScenarioSkuChips() {
+  const wrap = document.getElementById('scenSkuChips');
+  const countEl = document.getElementById('scenSkuCount');
+  const clearBtn = document.getElementById('scenSkuClearBtn');
+
+  if (selectedScenarioSkus.size === 0) {
+    wrap.innerHTML = '';
+    countEl.textContent = 'All SKUs';
+    clearBtn.style.display = 'none';
+    return;
+  }
+
+  const filtered = getScenarioData();
+  countEl.textContent = `${selectedScenarioSkus.size} SKU${selectedScenarioSkus.size>1?'s':''} · ${filtered.length} sales`;
+  clearBtn.style.display = 'inline';
+
+  wrap.innerHTML = [...selectedScenarioSkus].map(sku =>
+    `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;background:rgba(212,168,83,0.15);border:1px solid rgba(212,168,83,0.3);border-radius:12px;font-size:10px;font-family:'DM Mono',monospace;color:var(--gold);">
+      ${sku}
+      <span onclick="removeScenarioSku('${sku.replace(/'/g, "\\'")}')" style="cursor:pointer;color:var(--muted);font-size:12px;line-height:1;">&times;</span>
+    </span>`
+  ).join('');
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('#scenSkuSearch') && !e.target.closest('#scenSkuDropdown')) {
+    const dd = document.getElementById('scenSkuDropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
+
 function setScenarioView(v) {
   scenarioView = v;
   document.querySelectorAll('[data-scenview]').forEach(el => el.classList.toggle('active', el.dataset.scenview === v));
@@ -3937,7 +4043,8 @@ function _scenTable(rows) {
 }
 
 function runPricingScenario() {
-  if (!scenarioBaseData?.length) return;
+  const data = getScenarioData();
+  if (!data.length) return;
   const adj = {
     etsy: parseFloat(document.getElementById('sc_etsy_pct').value)/100,
     wix: parseFloat(document.getElementById('sc_wix_pct').value)/100,
@@ -3949,7 +4056,7 @@ function runPricingScenario() {
   let projRev=0, projProfit=0, projFees=0, projCost=0;
   const byCh = {};
 
-  scenarioBaseData.forEach(r => {
+  data.forEach(r => {
     const ch = r.sale_channel;
     const pctAdj = adj[ch] || 0;
     const rev = parseFloat(r.total_revenue)||0;
@@ -4000,7 +4107,8 @@ function runPricingScenario() {
 }
 
 function runFeeScenario() {
-  if (!scenarioBaseData?.length) return;
+  const data = getScenarioData();
+  if (!data.length) return;
   const newTxnPct = parseFloat(document.getElementById('sc_etsy_txn').value)/100;
   const newCcPct = parseFloat(document.getElementById('sc_cc_fee').value)/100;
   const newWfPct = parseFloat(document.getElementById('sc_wayfair_fee').value)/100;
@@ -4010,7 +4118,7 @@ function runFeeScenario() {
   let actRev=0, actProfit=0, actFees=0;
   let projRev=0, projProfit=0, projFees=0;
 
-  scenarioBaseData.forEach(r => {
+  data.forEach(r => {
     const rev = parseFloat(r.total_revenue)||0;
     const cost = parseFloat(r.total_cost)||0;
     const ob = parseFloat(r.ob_shipping)||0;
@@ -4050,7 +4158,8 @@ function runFeeScenario() {
 }
 
 function runChannelScenario() {
-  if (!scenarioBaseData?.length) return;
+  const data = getScenarioData();
+  if (!data.length) return;
   const include = {
     etsy: document.getElementById('sc_ch_etsy').checked,
     wix: document.getElementById('sc_ch_wix').checked,
@@ -4063,7 +4172,7 @@ function runChannelScenario() {
   let projRev=0, projProfit=0, projFees=0, projOrders=0;
   const byCh = {};
 
-  scenarioBaseData.forEach(r => {
+  data.forEach(r => {
     const ch = r.sale_channel;
     const rev = parseFloat(r.total_revenue)||0;
     const profit = parseFloat(r.net_profit)||0;
@@ -4112,9 +4221,14 @@ async function runInventoryScenario() {
   const markdownPct = parseFloat(document.getElementById('sc_markdown_pct').value)/100;
 
   // Need inventory + velocity data
-  const { data: items } = await sbClient.from('items')
+  let invItems = (await sbClient.from('items')
     .select('sku,product_name,brand_name,qty,wholesale_price,ib_shipping,ob_shipping,tariff')
-    .gt('qty', 0).limit(5000);
+    .gt('qty', 0).limit(5000)).data || [];
+
+  // Apply SKU filter if active
+  if (selectedScenarioSkus.size > 0) {
+    invItems = invItems.filter(i => selectedScenarioSkus.has(i.sku));
+  }
 
   const d30 = new Date(); d30.setDate(d30.getDate()-30);
   const { data: recent } = await sbClient.from('sales_history')
@@ -4136,7 +4250,7 @@ async function runInventoryScenario() {
   const soldRecently = new Set((recent90||[]).map(r=>r.sku).filter(Boolean));
 
   // Reorder analysis — top velocity SKUs
-  const reorderCandidates = (items||[])
+  const reorderCandidates = invItems
     .filter(i => vel[i.sku] > 0)
     .map(i => {
       const ws = parseFloat(i.wholesale_price)||0;
@@ -4156,7 +4270,7 @@ async function runInventoryScenario() {
     .slice(0, topN);
 
   // Dead stock markdown
-  const deadItems = (items||[])
+  const deadItems = invItems
     .filter(i => !soldRecently.has(i.sku) && (parseInt(i.qty)||0) > 0)
     .map(i => {
       const ws = parseFloat(i.wholesale_price)||0;
@@ -5164,7 +5278,16 @@ function initApp() {
   document.getElementById('dr-from').value = today;
   document.getElementById('dr-to').value   = today;
   renderSavedReports();
-  loadDashboard();
+
+  // Deep-link: check URL hash for direct page navigation (e.g. #pnl, #inventory, #scenarios)
+  const hash = window.location.hash?.replace('#', '');
+  const validPages = ['dashboard','sales','daily','channel','products','brands','shipping','inventory',
+    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp'];
+  if (hash && validPages.includes(hash)) {
+    navTo(hash);
+  } else {
+    loadDashboard();
+  }
 }
 
 // Boot
