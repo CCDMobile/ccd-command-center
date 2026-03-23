@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.0</title>
+<title>CCD Command Center v3.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -885,7 +885,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.0</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.1</span>
         </div>
     </div>
 
@@ -1277,8 +1277,10 @@ body::before {
 
             <div class="flex-gap mt-4">
                 <button class="btn-gold" onclick="saveSettings()">Save Settings</button>
+                <button class="btn-ghost" onclick="testSettingsConnection()">Test Connection</button>
                 <button class="btn-ghost" onclick="closeSettings()">Cancel</button>
             </div>
+            <div id="settingsTestResult" style="margin-top:10px;font-size:12px;display:none;"></div>
         </div>
     </div>
 </div>
@@ -1585,48 +1587,44 @@ async function loadKPIs() {
     const yearStartStr = today.substring(0, 5) + '01-01';
 
     try {
-        // Today's sales
-        const { data: todaySales } = await sb.from('sales_history')
-            .select('sale_price')
-            .gte('sale_date', today)
-            .lte('sale_date', today + 'T23:59:59');
+        // Revenue KPIs via server-side RPC (no row limits)
+        // Falls back to client-side if RPC not yet deployed
+        const rpcCall = async (from, to) => {
+            try {
+                const { data, error } = await sb.rpc('get_revenue_summary', { from_date: from, to_date: to });
+                if (error) throw error;
+                return data || { revenue: 0, order_count: 0 };
+            } catch (rpcErr) {
+                // Fallback: client-side sum (works up to limit)
+                console.warn('RPC fallback for', from, '-', to, rpcErr.message);
+                const { data: rows } = await sb.from('sales_history')
+                    .select('sale_price')
+                    .gte('sale_date', from)
+                    .lte('sale_date', to + 'T23:59:59')
+                    .limit(10000);
+                const rev = (rows || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
+                return { revenue: rev, order_count: (rows || []).length };
+            }
+        };
 
-        const todayRev = (todaySales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
-        animateValue('kpiRevenue', todayRev, true);
-        document.getElementById('kpiRevenueOrders').textContent = `${(todaySales || []).length} orders`;
+        const [todayKpi, weekKpi, monthKpi, yearKpi] = await Promise.all([
+            rpcCall(today, today),
+            rpcCall(weekStartStr, today),
+            rpcCall(monthStartStr, today),
+            rpcCall(yearStartStr, today)
+        ]);
 
-        // This week sales
-        const { data: weekSales } = await sb.from('sales_history')
-            .select('sale_price')
-            .gte('sale_date', weekStartStr)
-            .lte('sale_date', today + 'T23:59:59')
-            .limit(5000);
+        animateValue('kpiRevenue', todayKpi.revenue, true);
+        document.getElementById('kpiRevenueOrders').textContent = `${todayKpi.order_count} orders`;
 
-        const weekRev = (weekSales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
-        animateValue('kpiWeek', weekRev, true);
-        document.getElementById('kpiWeekOrders').textContent = `${(weekSales || []).length} orders`;
+        animateValue('kpiWeek', weekKpi.revenue, true);
+        document.getElementById('kpiWeekOrders').textContent = `${weekKpi.order_count} orders`;
 
-        // This month sales
-        const { data: monthSales } = await sb.from('sales_history')
-            .select('sale_price')
-            .gte('sale_date', monthStartStr)
-            .lte('sale_date', today + 'T23:59:59')
-            .limit(5000);
+        animateValue('kpiMonth', monthKpi.revenue, true);
+        document.getElementById('kpiMonthOrders').textContent = `${monthKpi.order_count} orders`;
 
-        const monthRev = (monthSales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
-        animateValue('kpiMonth', monthRev, true);
-        document.getElementById('kpiMonthOrders').textContent = `${(monthSales || []).length} orders`;
-
-        // This year sales — use count for orders, paginate for revenue if needed
-        const { data: yearSales, count: yearCount } = await sb.from('sales_history')
-            .select('sale_price', { count: 'exact' })
-            .gte('sale_date', yearStartStr)
-            .lte('sale_date', today + 'T23:59:59')
-            .limit(10000);
-
-        const yearRev = (yearSales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
-        animateValue('kpiYear', yearRev, true);
-        document.getElementById('kpiYearOrders').textContent = `${yearCount || (yearSales || []).length} orders`;
+        animateValue('kpiYear', yearKpi.revenue, true);
+        document.getElementById('kpiYearOrders').textContent = `${yearKpi.order_count} orders`;
 
         // Sync queue
         const { count: queueCount } = await sb.from('sync_queue')
@@ -2287,6 +2285,32 @@ function openSettings() {
 
 function closeSettings() {
     document.getElementById('settingsOverlay').classList.remove('visible');
+}
+
+async function testSettingsConnection() {
+    const url = document.getElementById('settingsUrl').value.trim();
+    const key = document.getElementById('settingsKey').value.trim();
+    const resultEl = document.getElementById('settingsTestResult');
+    resultEl.style.display = 'block';
+    resultEl.style.color = 'var(--muted)';
+    resultEl.textContent = 'Testing connection...';
+
+    if (!url || !key) {
+        resultEl.style.color = 'var(--red, #ff6b6b)';
+        resultEl.textContent = '✗ Please enter both Supabase URL and Key';
+        return;
+    }
+
+    try {
+        const testClient = supabase.createClient(url, key);
+        const { count, error } = await testClient.from('items').select('*', { count: 'exact', head: true });
+        if (error) throw error;
+        resultEl.style.color = 'var(--green, #34d399)';
+        resultEl.textContent = `✓ Connected — ${count} items found`;
+    } catch (e) {
+        resultEl.style.color = 'var(--red, #ff6b6b)';
+        resultEl.textContent = `✗ Connection failed: ${e.message || e}`;
+    }
 }
 
 function saveSettings() {
