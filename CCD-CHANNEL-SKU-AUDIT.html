@@ -1,0 +1,1067 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Channel SKU Audit v1.0</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    :root {
+        --bg: #0f1117; --bg-card: #1a1d27; --bg-input: #141620;
+        --border: #2a2d3a; --text: #e8eaed; --text-dim: #9ca3af; --text-muted: #6b7280;
+        --wayfair: #7b2d8e; --wayfair-light: #9b4dbe;
+        --etsy: #f1641e; --etsy-light: #f4845f;
+        --wix: #0c6efc; --wix-light: #5a9bff;
+        --green: #22c55e; --green-dim: #166534;
+        --red: #ef4444; --red-dim: #991b1b;
+        --yellow: #eab308; --yellow-dim: #854d0e;
+        --blue: #3b82f6; --accent: #6366f1;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    
+    .header {
+        background: linear-gradient(135deg, #1a1d27 0%, #1b2838 100%);
+        border-bottom: 1px solid var(--border); padding: 20px 32px;
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .header h1 { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .header .logo { width: 36px; height: 36px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; }
+    .version { font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+    
+    .sb-bar {
+        background: var(--bg-card); border-bottom: 1px solid var(--border);
+        padding: 10px 32px; display: flex; align-items: center; gap: 12px; font-size: 13px;
+    }
+    .sb-bar input {
+        background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+        padding: 6px 10px; border-radius: 6px; font-size: 12px; font-family: 'JetBrains Mono', monospace; flex: 1; max-width: 320px;
+    }
+    .sb-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+    .sb-dot.connected { background: var(--green); }
+    
+    .main { padding: 24px 32px; max-width: 1400px; margin: 0 auto; }
+    
+    .proxy-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    .proxy-box { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .proxy-box h3 { font-size: 13px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+    .proxy-box input {
+        width: 100%; background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+        padding: 6px 10px; border-radius: 6px; font-size: 11px; font-family: 'JetBrains Mono', monospace; margin-bottom: 8px;
+    }
+    
+    .btn {
+        padding: 10px 20px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600;
+        font-family: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-green { background: var(--green); color: white; }
+    .btn-ghost { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .stat-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 22px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+    .stat-card.green .value { color: var(--green); }
+    .stat-card.red .value { color: var(--red); }
+    .stat-card.yellow .value { color: var(--yellow); }
+    
+    .table-wrap { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+    .table-title { padding: 12px 16px; font-weight: 600; font-size: 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .table-scroll { overflow-x: auto; max-height: 600px; overflow-y: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { background: var(--bg); padding: 8px 12px; text-align: left; font-size: 11px; text-transform: uppercase; color: var(--text-dim); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 1; }
+    td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    tr.gap-row { background: rgba(239,68,68,0.06); }
+    tr.ok-row { opacity: 0.5; }
+    
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; font-family: 'DM Sans', sans-serif; }
+    .badge-green { background: var(--green-dim); color: var(--green); }
+    .badge-red { background: var(--red-dim); color: var(--red); }
+    .badge-yellow { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-channel { padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 700; color: white; }
+    .badge-etsy { background: var(--etsy); }
+    .badge-wix { background: var(--wix); }
+    .badge-wayfair { background: var(--wayfair); }
+    
+    .channel-section { margin-bottom: 32px; }
+    .channel-header { font-size: 18px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; }
+    
+    #logArea {
+        background: var(--bg-input); border: 1px solid var(--border); border-radius: 6px;
+        padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 11px;
+        max-height: 150px; overflow-y: auto; margin-bottom: 16px; color: var(--text-dim); display: none;
+    }
+    .log-ok { color: var(--green); }
+    .log-err { color: var(--red); }
+    .log-warn { color: var(--yellow); }
+    .log-info { color: var(--blue); }
+    
+    .toast-container { position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 8px; }
+    .toast { padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; box-shadow: 0 4px 24px rgba(0,0,0,0.4); animation: slideIn 0.3s ease; max-width: 400px; }
+    .toast-success { background: var(--green-dim); color: var(--green); border: 1px solid var(--green); }
+    .toast-error { background: var(--red-dim); color: #fca5a5; border: 1px solid var(--red); }
+    .toast-info { background: rgba(99,102,241,0.15); color: #818cf8; border: 1px solid var(--accent); }
+    @keyframes slideIn { from { transform: translateX(100%); opacity:0; } to { transform: translateX(0); opacity:1; } }
+    .spinner { width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    
+    .filter-bar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+    .filter-bar label { font-size: 12px; color: var(--text-dim); }
+    .filter-bar select {
+        background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+        padding: 4px 8px; border-radius: 4px; font-size: 12px;
+    }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1><span class="logo">🔗</span> CCD Channel SKU Audit</h1>
+    <span class="version">v1.0 — Cross-Channel SKU Gap Finder</span>
+</div>
+
+<div class="sb-bar">
+    <span class="sb-dot" id="sbDot"></span>
+    <span id="sbStatus">Not connected</span>
+    <input type="text" id="sbUrl" placeholder="Supabase URL">
+    <input type="password" id="sbKey" placeholder="Supabase anon key">
+    <button class="btn btn-sm btn-ghost" onclick="connectSupabase()">Connect</button>
+</div>
+
+<div class="main">
+    <div class="proxy-grid">
+        <div class="proxy-box">
+            <h3>🛒 Etsy Proxy</h3>
+            <input type="text" id="etsyProxyUrl" placeholder="https://script.google.com/macros/s/.../exec">
+        </div>
+        <div class="proxy-box">
+            <h3>🌐 Wix Proxy</h3>
+            <input type="text" id="wixProxyUrl" placeholder="https://script.google.com/macros/s/.../exec">
+        </div>
+        <div class="proxy-box">
+            <h3>🏠 Wayfair</h3>
+            <p style="font-size:12px;color:var(--text-dim);line-height:1.5;">No listing API — audits items with Wayfair allocation but no <code>wayfair_sku</code> set.</p>
+        </div>
+    </div>
+    
+    <div style="margin-bottom: 24px;">
+        <button class="btn btn-primary" id="btnAudit" onclick="runFullAudit()">🔍 Run Full Audit</button>
+        <span id="auditStatus" style="margin-left: 12px; font-size: 13px; color: var(--text-dim);"></span>
+    </div>
+    
+    <div id="logArea"></div>
+    
+    <div id="resultsArea" style="display:none;">
+        <div class="stats-grid" id="statsGrid"></div>
+        
+        <!-- ETSY GAPS -->
+        <div class="channel-section" id="etsySection" style="display:none;">
+            <div class="channel-header"><span class="badge-channel badge-etsy">ETSY</span> SKU Gaps</div>
+            <div class="filter-bar">
+                <label>Show:</label>
+                <select id="etsyFilter" onchange="renderEtsyTable()">
+                    <option value="gaps">Gaps only</option>
+                    <option value="all">All listings</option>
+                </select>
+                <button class="btn btn-sm btn-green" onclick="saveAllEtsy()">💾 Save All Changes</button>
+            </div>
+            <div class="table-wrap">
+                <div class="table-title"><span id="etsyTableTitle">Etsy Listings</span></div>
+                <div class="table-scroll">
+                    <table><thead><tr>
+                        <th>Listing ID</th><th>Etsy SKU</th><th>Title</th>
+                        <th>Master SKU</th><th>Items etsy_sku</th><th>Items etsy_listing_id</th>
+                        <th>Status</th><th>Action</th>
+                    </tr></thead><tbody id="etsyBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- WIX GAPS -->
+        <div class="channel-section" id="wixSection" style="display:none;">
+            <div class="channel-header"><span class="badge-channel badge-wix">WIX</span> SKU Gaps</div>
+            <div class="filter-bar">
+                <label>Show:</label>
+                <select id="wixFilter" onchange="renderWixTable()">
+                    <option value="gaps">Gaps only</option>
+                    <option value="all">All products</option>
+                </select>
+                <button class="btn btn-sm btn-green" onclick="saveAllWix()">💾 Save All Changes</button>
+            </div>
+            <div class="table-wrap">
+                <div class="table-title"><span id="wixTableTitle">Wix Products</span></div>
+                <div class="table-scroll">
+                    <table><thead><tr>
+                        <th>Product ID</th><th>Wix SKU</th><th>Name</th>
+                        <th>Master SKU</th><th>Items wix_sku</th><th>Items wix_product_id</th>
+                        <th>Status</th><th>Action</th>
+                    </tr></thead><tbody id="wixBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- WAYFAIR GAPS -->
+        <div class="channel-section" id="wayfairSection" style="display:none;">
+            <div class="channel-header"><span class="badge-channel badge-wayfair">WAYFAIR</span> SKU Gaps</div>
+            <div class="filter-bar">
+                <label>Show:</label>
+                <select id="wayfairFilter" onchange="renderWayfairTable()">
+                    <option value="gaps">Gaps only</option>
+                    <option value="all">All allocated items</option>
+                </select>
+                <button class="btn btn-sm btn-green" onclick="saveAllWayfair()">💾 Save All Changes</button>
+            </div>
+            <div class="table-wrap">
+                <div class="table-title"><span id="wayfairTableTitle">Wayfair Allocated Items</span></div>
+                <div class="table-scroll">
+                    <table><thead><tr>
+                        <th>SKU</th><th>Product Name</th><th>Wayfair Qty</th>
+                        <th>wayfair_sku</th><th>Status</th><th>Set wayfair_sku</th><th>Action</th>
+                    </tr></thead><tbody id="wayfairBody"></tbody></table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="toast-container" id="toasts"></div>
+<datalist id="skuList"></datalist>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// ═══════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════
+let sbClient = null;
+let sbConnected = false;
+let itemsList = [];
+let itemsBysku = {};
+let itemsByEtsySku = {};
+let itemsByWixSku = {};
+let itemsByWixVariantId = {};
+let itemsByEtsyVariantId = {};
+let itemsByEtsyListingId = {};  // listing_id → [items] (array, multiple variants)
+let itemsByWixProductId = {};   // product_id → [items] (array, multiple variants)
+
+let etsyListings = [];
+let wixProducts = [];
+let wayfairItems = []; // items with wayfair allocation
+
+let etsyAudit = [];  // { listing, matchedItem, gaps }
+let wixAudit = [];
+let wayfairAudit = [];
+
+const CCD_KEY = 'ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF';
+
+// ═══════════════════════════════════════
+// SUPABASE
+// ═══════════════════════════════════════
+function connectSupabase() {
+    const url = document.getElementById('sbUrl').value.trim();
+    const key = document.getElementById('sbKey').value.trim();
+    if (!url || !key) { toast('Enter Supabase URL and key', 'error'); return; }
+    
+    try {
+        sbClient = supabase.createClient(url, key);
+        sbClient.from('items').select('id, sku, product_name, wayfair_sku, etsy_sku, etsy_listing_id, wix_sku, wix_product_id, wayfair_qty, etsy_qty, wix_qty, qty, wholesale_price, parent_sku, variant_label, wix_variant_id, etsy_variant_id').then(({ data, error }) => {
+            if (error) { toast('Connection error: ' + error.message, 'error'); return; }
+            sbConnected = true;
+            document.getElementById('sbDot').classList.add('connected');
+            document.getElementById('sbStatus').textContent = `Connected (${(data||[]).length} items)`;
+            
+            itemsList = data || [];
+            itemsBysku = {};
+            itemsByEtsySku = {};
+            itemsByWixSku = {};
+            
+            itemsList.forEach(item => {
+                if (item.sku) itemsBysku[item.sku.toUpperCase()] = item;
+                if (item.etsy_sku) itemsByEtsySku[item.etsy_sku.toUpperCase()] = item;
+                if (item.wix_sku) itemsByWixSku[item.wix_sku.toUpperCase()] = item;
+                if (item.wix_variant_id) itemsByWixVariantId[item.wix_variant_id] = item;
+                if (item.etsy_variant_id) itemsByEtsyVariantId[item.etsy_variant_id] = item;
+                if (item.etsy_listing_id) {
+                    if (!itemsByEtsyListingId[String(item.etsy_listing_id)]) itemsByEtsyListingId[String(item.etsy_listing_id)] = [];
+                    itemsByEtsyListingId[String(item.etsy_listing_id)].push(item);
+                }
+                if (item.wix_product_id) {
+                    if (!itemsByWixProductId[item.wix_product_id]) itemsByWixProductId[item.wix_product_id] = [];
+                    itemsByWixProductId[item.wix_product_id].push(item);
+                }
+            });
+            
+            // Build datalist
+            const dl = document.getElementById('skuList');
+            dl.innerHTML = '';
+            itemsList.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.sku;
+                opt.label = item.product_name ? `${item.sku} — ${item.product_name.substring(0, 40)}` : item.sku;
+                dl.appendChild(opt);
+            });
+            
+            log(`Loaded ${itemsList.length} items.`, 'ok');
+            localStorage.setItem('ccdSupabaseUrl', url);
+            localStorage.setItem('ccdSupabaseKey', key);
+        });
+    } catch (e) { toast('Connection failed: ' + e.message, 'error'); }
+}
+
+// Auto-connect
+(function() {
+    const url = localStorage.getItem('ccdSupabaseUrl');
+    const key = localStorage.getItem('ccdSupabaseKey');
+    if (url && key) {
+        document.getElementById('sbUrl').value = url;
+        document.getElementById('sbKey').value = key;
+        connectSupabase();
+    }
+    const ep = localStorage.getItem('ccd_etsy_proxy_url');
+    if (ep) document.getElementById('etsyProxyUrl').value = ep;
+    const wp = localStorage.getItem('ccd_wix_proxy_url');
+    if (wp) document.getElementById('wixProxyUrl').value = wp;
+})();
+
+// ═══════════════════════════════════════
+// FULL AUDIT
+// ═══════════════════════════════════════
+async function runFullAudit() {
+    if (!sbConnected) { toast('Connect to Supabase first', 'error'); return; }
+    
+    const btn = document.getElementById('btnAudit');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Auditing...';
+    document.getElementById('logArea').style.display = 'block';
+    
+    const etsyUrl = document.getElementById('etsyProxyUrl').value.trim();
+    const wixUrl = document.getElementById('wixProxyUrl').value.trim();
+    
+    if (etsyUrl) localStorage.setItem('ccd_etsy_proxy_url', etsyUrl);
+    if (wixUrl) localStorage.setItem('ccd_wix_proxy_url', wixUrl);
+    
+    // Run all three in parallel
+    const promises = [];
+    if (etsyUrl) promises.push(auditEtsy(etsyUrl));
+    else log('Etsy proxy not configured — skipping.', 'warn');
+    
+    if (wixUrl) promises.push(auditWix(wixUrl));
+    else log('Wix proxy not configured — skipping.', 'warn');
+    
+    promises.push(auditWayfair());
+    
+    await Promise.all(promises);
+    
+    renderStats();
+    document.getElementById('resultsArea').style.display = 'block';
+    
+    btn.disabled = false;
+    btn.innerHTML = '🔍 Run Full Audit';
+    document.getElementById('auditStatus').textContent = 'Audit complete';
+}
+
+// ═══════════════════════════════════════
+// ETSY AUDIT
+// ═══════════════════════════════════════
+async function auditEtsy(proxyUrl) {
+    log('[Etsy] Fetching listings...', 'info');
+    try {
+        const resp = await fetch(`${proxyUrl}?action=getListings&key=${CCD_KEY}&limit=2000`);
+        const data = await resp.json();
+        if (!data.success) { log(`[Etsy] Error: ${data.error}`, 'err'); return; }
+        
+        etsyListings = data.listings || [];
+        log(`[Etsy] Fetched ${etsyListings.length} listings.`, 'ok');
+        
+        etsyAudit = [];
+        let variantCount = 0;
+        
+        for (const listing of etsyListings) {
+            const listingId = String(listing.listing_id);
+            const allSkus = (listing.skus || []).filter(s => s && s.trim());
+            
+            // If listing has multiple SKUs, each is a variant — create a row per SKU
+            const skusToProcess = allSkus.length > 0 ? allSkus : [''];
+            const isVariant = allSkus.length > 1;
+            
+            for (const sku of skusToProcess) {
+                const upper = sku.toUpperCase();
+                if (isVariant) variantCount++;
+                
+                let matchedItem = null;
+                let matchMethod = '';
+                
+                // 1. etsy_variant_id match (if we have inventory data with product_id)
+                // 2. etsy_sku match
+                if (upper && itemsByEtsySku[upper]) { matchedItem = itemsByEtsySku[upper]; matchMethod = 'etsy_sku'; }
+                // 3. etsy_listing_id + check if variant already mapped
+                if (!matchedItem) {
+                    const listingItems = itemsByEtsyListingId[listingId] || [];
+                    const byVariantSku = listingItems.find(i => i.sku && i.sku.toUpperCase() === upper);
+                    if (byVariantSku) { matchedItem = byVariantSku; matchMethod = 'listing_id+sku'; }
+                }
+                // 4. master SKU exact match
+                if (!matchedItem && upper && itemsBysku[upper]) { matchedItem = itemsBysku[upper]; matchMethod = 'master_sku'; }
+                // 5. Normalized match
+                if (!matchedItem && upper) {
+                    const norm = upper.replace(/[\s\-\.]+/g, '');
+                    for (const item of itemsList) {
+                        if (item.sku && item.sku.toUpperCase().replace(/[\s\-\.]+/g, '') === norm) {
+                            matchedItem = item; matchMethod = 'normalized'; break;
+                        }
+                    }
+                }
+                
+                const gaps = [];
+                if (matchedItem) {
+                    if (!matchedItem.etsy_sku || matchedItem.etsy_sku.toUpperCase() !== upper) gaps.push('etsy_sku');
+                    if (!matchedItem.etsy_listing_id || String(matchedItem.etsy_listing_id) !== listingId) gaps.push('etsy_listing_id');
+                } else {
+                    gaps.push('no_match');
+                }
+                
+                etsyAudit.push({
+                    listing, matchedItem, matchMethod, gaps,
+                    variantSku: sku,
+                    isVariant: isVariant,
+                    parentSku: isVariant ? (allSkus[0] || '') : null,
+                    status: gaps.length === 0 ? 'ok' : (matchedItem ? 'partial' : 'unmatched')
+                });
+            }
+        }
+        
+        const gapCount = etsyAudit.filter(a => a.gaps.length > 0).length;
+        log(`[Etsy] Audit: ${etsyAudit.length} rows (${variantCount} variants from ${etsyListings.length} listings), ${gapCount} with gaps.`, gapCount > 0 ? 'warn' : 'ok');
+        
+        document.getElementById('etsySection').style.display = 'block';
+        renderEtsyTable();
+    } catch (e) { log(`[Etsy] Fetch error: ${e.message}`, 'err'); }
+}
+
+function renderEtsyTable() {
+    const filter = document.getElementById('etsyFilter').value;
+    const items = filter === 'gaps' ? etsyAudit.filter(a => a.gaps.length > 0 && a.status !== 'skipped') : etsyAudit;
+    const gapCount = etsyAudit.filter(a => a.gaps.length > 0 && a.status !== 'skipped').length;
+    
+    document.getElementById('etsyTableTitle').textContent = `Etsy Listings (${items.length} shown, ${gapCount} gaps)`;
+    
+    document.getElementById('etsyBody').innerHTML = items.map((a, idx) => {
+        const globalIdx = etsyAudit.indexOf(a);
+        const rowClass = a.status === 'ok' || a.status === 'skipped' ? 'ok-row' : 'gap-row';
+        const statusBadge = a.status === 'ok' ? '<span class="badge badge-green">✓ OK</span>' :
+            a.status === 'skipped' ? '<span class="badge" style="background:#444;color:#999;">Skipped</span>' :
+            a.status === 'partial' ? '<span class="badge badge-yellow">Partial</span>' :
+            '<span class="badge badge-red">No Match</span>';
+        
+        const displaySku = a.variantSku || a.listing.sku || '';
+        const masterSku = a.matchedItem ? a.matchedItem.sku : '';
+        const currentEtsySku = a.matchedItem ? (a.matchedItem.etsy_sku || '') : '';
+        const currentListingId = a.matchedItem ? (a.matchedItem.etsy_listing_id || '') : '';
+        const variantTag = a.isVariant ? '<span style="color:var(--etsy);font-size:10px;font-family:DM Sans;">⚡VAR</span> ' : '';
+        
+        return `<tr class="${rowClass}">
+            <td>${a.listing.listing_id}</td>
+            <td>${variantTag}${esc(displaySku)}</td>
+            <td style="font-family:'DM Sans',sans-serif;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((a.listing.title||'').substring(0,60))}</td>
+            <td>${a.matchedItem ? esc(masterSku) : `<input type="text" id="etsy_sku_${globalIdx}" placeholder="Master SKU" list="skuList" style="width:90px;padding:2px 4px;font-size:11px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:3px;font-family:'JetBrains Mono',monospace;">`}</td>
+            <td style="color:${currentEtsySku ? 'var(--green)' : 'var(--red)'}">${currentEtsySku || '—'}</td>
+            <td style="color:${currentListingId ? 'var(--green)' : 'var(--red)'}">${currentListingId || '—'}</td>
+            <td>${statusBadge}</td>
+            <td>${a.status !== 'ok' && a.status !== 'skipped' ? `<button class="btn btn-sm btn-green" onclick="fixEtsy(${globalIdx})" style="padding:2px 8px;font-size:10px;">Fix</button>${a.status === 'unmatched' ? ` <button class="btn btn-sm" onclick="createVariantItem('etsy',${globalIdx})" style="padding:2px 6px;font-size:10px;background:var(--accent);color:#fff;">+New</button> <button class="btn btn-sm" onclick="skipEtsy(${globalIdx})" style="padding:2px 6px;font-size:10px;background:#666;color:#fff;">Skip</button>` : ''}` : ''}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function fixEtsy(idx) {
+    const a = etsyAudit[idx];
+    let item = a.matchedItem;
+    
+    // If no match, try the manual input
+    if (!item) {
+        const input = document.getElementById('etsy_sku_' + idx);
+        const sku = (input?.value || '').trim();
+        if (!sku) { toast('Enter a master SKU', 'error'); return; }
+        item = itemsList.find(i => i.sku === sku);
+        if (!item) { toast(`SKU "${sku}" not found`, 'error'); return; }
+        a.matchedItem = item;
+        a.matchMethod = 'manual';
+    }
+    
+    const updates = {};
+    // Use variant SKU if available, then listing SKU, then master item SKU
+    const skuToWrite = a.variantSku || a.listing.sku || item.sku || '';
+    if ((!item.etsy_sku || item.etsy_sku.toUpperCase() !== skuToWrite.toUpperCase()) && skuToWrite) updates.etsy_sku = skuToWrite;
+    if (!item.etsy_listing_id || String(item.etsy_listing_id) !== String(a.listing.listing_id)) {
+        updates.etsy_listing_id = String(a.listing.listing_id);
+    }
+    
+    if (Object.keys(updates).length === 0) {
+        a.gaps = []; a.status = 'ok';
+        toast(`${item.sku} already up to date`, 'success');
+        renderEtsyTable(); renderStats();
+        return;
+    }
+    
+    const { error } = await sbClient.from('items').update(updates).eq('id', item.id);
+    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+    
+    Object.assign(item, updates);
+    a.gaps = []; a.status = 'ok';
+    
+    toast(`Fixed ${item.sku}: ${Object.keys(updates).join(', ')}`, 'success');
+    renderEtsyTable();
+}
+
+function skipEtsy(idx) {
+    const a = etsyAudit[idx];
+    a.gaps = []; a.status = 'skipped';
+    toast(`Skipped Etsy listing ${a.listing.listing_id} (discontinued)`, 'info');
+    renderEtsyTable();
+    renderStats();
+}
+
+async function saveAllEtsy() {
+    const toFix = etsyAudit.filter(a => a.status === 'partial' && a.matchedItem);
+    if (!toFix.length) { toast('No auto-fixable Etsy gaps', 'info'); return; }
+    if (!confirm(`Fix ${toFix.length} Etsy items? This will set etsy_sku and/or etsy_listing_id.`)) return;
+    
+    let fixed = 0;
+    for (const a of toFix) {
+        const item = a.matchedItem;
+        const updates = {};
+        const skuToWrite = a.variantSku || a.listing.sku || item.sku || '';
+        if ((!item.etsy_sku || item.etsy_sku.toUpperCase() !== skuToWrite.toUpperCase()) && skuToWrite) updates.etsy_sku = skuToWrite;
+        if (!item.etsy_listing_id || String(item.etsy_listing_id) !== String(a.listing.listing_id)) {
+            updates.etsy_listing_id = String(a.listing.listing_id);
+        }
+        if (Object.keys(updates).length === 0) continue;
+        
+        const { error } = await sbClient.from('items').update(updates).eq('id', item.id);
+        if (!error) {
+            Object.assign(item, updates);
+            a.gaps = []; a.status = 'ok';
+            fixed++;
+        }
+    }
+    toast(`Fixed ${fixed} Etsy items`, 'success');
+    renderEtsyTable();
+    renderStats();
+}
+
+// ═══════════════════════════════════════
+// WIX AUDIT
+// ═══════════════════════════════════════
+async function auditWix(proxyUrl) {
+    log('[Wix] Fetching products...', 'info');
+    try {
+        const resp = await fetch(`${proxyUrl}?action=listProducts&key=${CCD_KEY}&limit=500`);
+        const data = await resp.json();
+        if (!data.success) { log(`[Wix] Error: ${data.error}`, 'err'); return; }
+        
+        wixProducts = data.products || [];
+        log(`[Wix] Fetched ${wixProducts.length} products (${data.variantCount || 0} variant SKUs).`, 'ok');
+        
+        wixAudit = [];
+        let variantCount = 0;
+        
+        for (const product of wixProducts) {
+            const productId = product.id || '';
+            const variants = product.variants || [];
+            
+            if (variants.length > 0) {
+                // Product has variants — create a row per variant
+                for (const v of variants) {
+                    const vSku = (v.sku || '').toUpperCase();
+                    const vId = v.id || '';
+                    variantCount++;
+                    
+                    let matchedItem = null;
+                    let matchMethod = '';
+                    
+                    // 1. wix_variant_id match
+                    if (vId && itemsByWixVariantId[vId]) { matchedItem = itemsByWixVariantId[vId]; matchMethod = 'variant_id'; }
+                    // 2. wix_sku match
+                    if (!matchedItem && vSku && itemsByWixSku[vSku]) { matchedItem = itemsByWixSku[vSku]; matchMethod = 'wix_sku'; }
+                    // 3. wix_product_id + SKU match
+                    if (!matchedItem) {
+                        const productItems = itemsByWixProductId[productId] || [];
+                        const byVariantSku = productItems.find(i => i.sku && i.sku.toUpperCase() === vSku);
+                        if (byVariantSku) { matchedItem = byVariantSku; matchMethod = 'product_id+sku'; }
+                    }
+                    // 4. master SKU exact match
+                    if (!matchedItem && vSku && itemsBysku[vSku]) { matchedItem = itemsBysku[vSku]; matchMethod = 'master_sku'; }
+                    // 5. Normalized match
+                    if (!matchedItem && vSku) {
+                        const norm = vSku.replace(/[\s\-\.\/]+/g, '');
+                        for (const item of itemsList) {
+                            if (item.sku && item.sku.toUpperCase().replace(/[\s\-\.\/]+/g, '') === norm) {
+                                matchedItem = item; matchMethod = 'normalized'; break;
+                            }
+                        }
+                    }
+                    
+                    const gaps = [];
+                    if (matchedItem) {
+                        if (!matchedItem.wix_sku || matchedItem.wix_sku.toUpperCase() !== vSku) gaps.push('wix_sku');
+                        if (!matchedItem.wix_product_id || matchedItem.wix_product_id !== productId) gaps.push('wix_product_id');
+                        if (!matchedItem.wix_variant_id || matchedItem.wix_variant_id !== vId) gaps.push('wix_variant_id');
+                    } else {
+                        gaps.push('no_match');
+                    }
+                    
+                    const choiceLabel = v.choices ? Object.values(v.choices).join(', ') : '';
+                    
+                    wixAudit.push({
+                        product, matchedItem, matchMethod, gaps,
+                        variantSku: v.sku || '',
+                        variantId: vId,
+                        variantLabel: choiceLabel,
+                        isVariant: true,
+                        parentSku: product.sku || null,
+                        variantQty: v.quantity,
+                        status: gaps.length === 0 ? 'ok' : (matchedItem ? 'partial' : 'unmatched')
+                    });
+                }
+            } else {
+                // Simple product — single row (existing logic)
+                const sku = (product.sku || '').toUpperCase();
+                
+                let matchedItem = null;
+                let matchMethod = '';
+                
+                const byProductId = itemsList.find(i => i.wix_product_id === productId);
+                if (byProductId) { matchedItem = byProductId; matchMethod = 'product_id'; }
+                if (!matchedItem && sku && itemsByWixSku[sku]) { matchedItem = itemsByWixSku[sku]; matchMethod = 'wix_sku'; }
+                if (!matchedItem && sku && itemsBysku[sku]) { matchedItem = itemsBysku[sku]; matchMethod = 'master_sku'; }
+                if (!matchedItem && sku) {
+                    const norm = sku.replace(/[\s\-\.]+/g, '');
+                    for (const item of itemsList) {
+                        if (item.sku && item.sku.toUpperCase().replace(/[\s\-\.]+/g, '') === norm) {
+                            matchedItem = item; matchMethod = 'normalized'; break;
+                        }
+                    }
+                }
+                
+                const gaps = [];
+                if (matchedItem) {
+                    if (!matchedItem.wix_sku) gaps.push('wix_sku');
+                    if (!matchedItem.wix_product_id || matchedItem.wix_product_id !== productId) gaps.push('wix_product_id');
+                } else {
+                    gaps.push('no_match');
+                }
+                
+                wixAudit.push({
+                    product, matchedItem, matchMethod, gaps,
+                    variantSku: product.sku || '',
+                    variantId: null,
+                    variantLabel: null,
+                    isVariant: false,
+                    parentSku: null,
+                    status: gaps.length === 0 ? 'ok' : (matchedItem ? 'partial' : 'unmatched')
+                });
+            }
+        }
+        
+        const gapCount = wixAudit.filter(a => a.gaps.length > 0).length;
+        log(`[Wix] Audit: ${wixAudit.length} rows (${variantCount} variants from ${wixProducts.length} products), ${gapCount} with gaps.`, gapCount > 0 ? 'warn' : 'ok');
+        
+        document.getElementById('wixSection').style.display = 'block';
+        renderWixTable();
+    } catch (e) { log(`[Wix] Fetch error: ${e.message}`, 'err'); }
+}
+
+function renderWixTable() {
+    const filter = document.getElementById('wixFilter').value;
+    const items = filter === 'gaps' ? wixAudit.filter(a => a.gaps.length > 0 && a.status !== 'skipped') : wixAudit;
+    const gapCount = wixAudit.filter(a => a.gaps.length > 0 && a.status !== 'skipped').length;
+    
+    document.getElementById('wixTableTitle').textContent = `Wix Products (${items.length} shown, ${gapCount} gaps)`;
+    
+    document.getElementById('wixBody').innerHTML = items.map((a, idx) => {
+        const globalIdx = wixAudit.indexOf(a);
+        const rowClass = a.status === 'ok' || a.status === 'skipped' ? 'ok-row' : 'gap-row';
+        const statusBadge = a.status === 'ok' ? '<span class="badge badge-green">✓ OK</span>' :
+            a.status === 'skipped' ? '<span class="badge" style="background:#444;color:#999;">Skipped</span>' :
+            a.status === 'partial' ? '<span class="badge badge-yellow">Partial</span>' :
+            '<span class="badge badge-red">No Match</span>';
+        
+        const displaySku = a.variantSku || a.product.sku || '';
+        const masterSku = a.matchedItem ? a.matchedItem.sku : '';
+        const currentWixSku = a.matchedItem ? (a.matchedItem.wix_sku || '') : '';
+        const currentProductId = a.matchedItem ? (a.matchedItem.wix_product_id || '') : '';
+        const variantTag = a.isVariant ? `<span style="color:var(--wix);font-size:10px;font-family:DM Sans;">⚡${esc(a.variantLabel || 'VAR')}</span> ` : '';
+        
+        return `<tr class="${rowClass}">
+            <td style="font-size:10px;">${esc((a.product.id||'').substring(0,12))}...</td>
+            <td>${variantTag}${esc(displaySku)}</td>
+            <td style="font-family:'DM Sans',sans-serif;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc((a.product.name||'').substring(0,60))}</td>
+            <td>${a.matchedItem ? esc(masterSku) : `<input type="text" id="wix_sku_${globalIdx}" placeholder="Master SKU" list="skuList" style="width:90px;padding:2px 4px;font-size:11px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:3px;font-family:'JetBrains Mono',monospace;">`}</td>
+            <td style="color:${currentWixSku ? 'var(--green)' : 'var(--red)'}">${currentWixSku || '—'}</td>
+            <td style="color:${currentProductId ? 'var(--green)' : 'var(--red)'}; font-size:10px;">${currentProductId ? currentProductId.substring(0,12) + '...' : '—'}</td>
+            <td>${statusBadge}</td>
+            <td>${a.status !== 'ok' && a.status !== 'skipped' ? `<button class="btn btn-sm btn-green" onclick="fixWix(${globalIdx})" style="padding:2px 8px;font-size:10px;">Fix</button>${a.status === 'unmatched' ? ` <button class="btn btn-sm" onclick="createVariantItem('wix',${globalIdx})" style="padding:2px 6px;font-size:10px;background:var(--accent);color:#fff;">+New</button> <button class="btn btn-sm" onclick="skipWix(${globalIdx})" style="padding:2px 6px;font-size:10px;background:#666;color:#fff;">Skip</button>` : ''}` : ''}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function fixWix(idx) {
+    const a = wixAudit[idx];
+    let item = a.matchedItem;
+    
+    if (!item) {
+        const input = document.getElementById('wix_sku_' + idx);
+        const sku = (input?.value || '').trim();
+        if (!sku) { toast('Enter a master SKU', 'error'); return; }
+        item = itemsList.find(i => i.sku === sku);
+        if (!item) { toast(`SKU "${sku}" not found`, 'error'); return; }
+        a.matchedItem = item;
+        a.matchMethod = 'manual';
+    }
+    
+    const updates = {};
+    // Use variant SKU if available, then product SKU, then master item SKU
+    const skuToWrite = a.variantSku || a.product.sku || item.sku || '';
+    if ((!item.wix_sku || item.wix_sku.toUpperCase() !== skuToWrite.toUpperCase()) && skuToWrite) updates.wix_sku = skuToWrite;
+    if (!item.wix_product_id || item.wix_product_id !== a.product.id) {
+        updates.wix_product_id = a.product.id;
+    }
+    if (a.variantId && (!item.wix_variant_id || item.wix_variant_id !== a.variantId)) {
+        updates.wix_variant_id = a.variantId;
+    }
+    if (a.isVariant && a.parentSku && !item.parent_sku) {
+        updates.parent_sku = a.parentSku;
+    }
+    if (a.variantLabel && !item.variant_label) {
+        updates.variant_label = a.variantLabel;
+    }
+    
+    if (Object.keys(updates).length === 0) {
+        a.gaps = []; a.status = 'ok';
+        toast(`${item.sku} already up to date`, 'success');
+        renderWixTable(); renderStats();
+        return;
+    }
+    
+    const { error } = await sbClient.from('items').update(updates).eq('id', item.id);
+    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+    
+    Object.assign(item, updates);
+    a.gaps = []; a.status = 'ok';
+    
+    toast(`Fixed ${item.sku}: ${Object.keys(updates).join(', ')}`, 'success');
+    renderWixTable();
+}
+
+function skipWix(idx) {
+    const a = wixAudit[idx];
+    a.gaps = []; a.status = 'skipped';
+    toast(`Skipped Wix product ${(a.product.name || '').substring(0, 30)} (discontinued)`, 'info');
+    renderWixTable();
+    renderStats();
+}
+
+async function saveAllWix() {
+    const toFix = wixAudit.filter(a => a.status === 'partial' && a.matchedItem);
+    if (!toFix.length) { toast('No auto-fixable Wix gaps', 'info'); return; }
+    if (!confirm(`Fix ${toFix.length} Wix items? This will set wix_sku and/or wix_product_id.`)) return;
+    
+    let fixed = 0;
+    for (const a of toFix) {
+        const item = a.matchedItem;
+        const updates = {};
+        const skuToWrite = a.variantSku || a.product.sku || item.sku || '';
+        if ((!item.wix_sku || item.wix_sku.toUpperCase() !== skuToWrite.toUpperCase()) && skuToWrite) updates.wix_sku = skuToWrite;
+        if (!item.wix_product_id || item.wix_product_id !== a.product.id) {
+            updates.wix_product_id = a.product.id;
+        }
+        if (a.variantId && (!item.wix_variant_id || item.wix_variant_id !== a.variantId)) {
+            updates.wix_variant_id = a.variantId;
+        }
+        if (a.isVariant && a.parentSku && !item.parent_sku) {
+            updates.parent_sku = a.parentSku;
+        }
+        if (a.variantLabel && !item.variant_label) {
+            updates.variant_label = a.variantLabel;
+        }
+        if (Object.keys(updates).length === 0) continue;
+        
+        const { error } = await sbClient.from('items').update(updates).eq('id', item.id);
+        if (!error) {
+            Object.assign(item, updates);
+            a.gaps = []; a.status = 'ok';
+            fixed++;
+        }
+    }
+    toast(`Fixed ${fixed} Wix items`, 'success');
+    renderWixTable();
+    renderStats();
+}
+
+// ═══════════════════════════════════════
+// WAYFAIR AUDIT (DB-only, no API)
+// ═══════════════════════════════════════
+async function auditWayfair() {
+    log('[Wayfair] Checking items with Wayfair allocation...', 'info');
+    
+    // Items that have wayfair_qty > 0 OR have a wayfair_sku set
+    wayfairItems = itemsList.filter(item => {
+        const wfQty = item.wayfair_qty || 0;
+        const hasWfSku = !!item.wayfair_sku;
+        return wfQty > 0 || hasWfSku;
+    });
+    
+    wayfairAudit = wayfairItems.map(item => {
+        const gaps = [];
+        const wfQty = item.wayfair_qty || 0;
+        if (wfQty > 0 && !item.wayfair_sku) gaps.push('wayfair_sku');
+        
+        return {
+            item, gaps,
+            status: gaps.length === 0 ? 'ok' : 'gap'
+        };
+    });
+    
+    const gapCount = wayfairAudit.filter(a => a.gaps.length > 0).length;
+    log(`[Wayfair] ${wayfairItems.length} items with allocation, ${gapCount} missing wayfair_sku.`, gapCount > 0 ? 'warn' : 'ok');
+    
+    document.getElementById('wayfairSection').style.display = 'block';
+    renderWayfairTable();
+}
+
+function renderWayfairTable() {
+    const filter = document.getElementById('wayfairFilter').value;
+    const items = filter === 'gaps' ? wayfairAudit.filter(a => a.gaps.length > 0) : wayfairAudit;
+    const gapCount = wayfairAudit.filter(a => a.gaps.length > 0).length;
+    
+    document.getElementById('wayfairTableTitle').textContent = `Wayfair Items (${items.length} shown, ${gapCount} gaps)`;
+    
+    document.getElementById('wayfairBody').innerHTML = items.map((a, idx) => {
+        const globalIdx = wayfairAudit.indexOf(a);
+        const rowClass = a.status === 'ok' ? 'ok-row' : 'gap-row';
+        const statusBadge = a.status === 'ok' ? '<span class="badge badge-green">✓ OK</span>' : '<span class="badge badge-red">Missing</span>';
+        
+        return `<tr class="${rowClass}">
+            <td>${esc(a.item.sku)}</td>
+            <td style="font-family:'DM Sans',sans-serif;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(a.item.product_name || '')}</td>
+            <td>${a.item.wayfair_qty || 0}</td>
+            <td style="color:${a.item.wayfair_sku ? 'var(--green)' : 'var(--red)'}">${a.item.wayfair_sku || '—'}</td>
+            <td>${statusBadge}</td>
+            <td>${a.status !== 'ok' ? `<input type="text" id="wf_sku_${globalIdx}" value="" placeholder="Wayfair SKU" style="width:120px;padding:2px 4px;font-size:11px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:3px;font-family:'JetBrains Mono',monospace;">` : esc(a.item.wayfair_sku || '')}</td>
+            <td>${a.status !== 'ok' ? `<button class="btn btn-sm btn-green" onclick="fixWayfair(${globalIdx})" style="padding:2px 8px;font-size:10px;">Fix</button>` : ''}</td>
+        </tr>`;
+    }).join('');
+}
+
+async function fixWayfair(idx) {
+    const a = wayfairAudit[idx];
+    const input = document.getElementById('wf_sku_' + idx);
+    const wfSku = (input?.value || '').trim();
+    if (!wfSku) { toast('Enter Wayfair SKU', 'error'); return; }
+    
+    const { error } = await sbClient.from('items').update({ wayfair_sku: wfSku }).eq('id', a.item.id);
+    if (error) { toast('Save failed: ' + error.message, 'error'); return; }
+    
+    a.item.wayfair_sku = wfSku;
+    a.gaps = []; a.status = 'ok';
+    toast(`Fixed ${a.item.sku}: wayfair_sku = ${wfSku}`, 'success');
+    renderWayfairTable();
+}
+
+async function saveAllWayfair() {
+    // For Wayfair, auto-fix can suggest CCD-prefixed SKUs
+    const toFix = wayfairAudit.filter(a => a.status === 'gap');
+    if (!toFix.length) { toast('No Wayfair gaps to fix', 'info'); return; }
+    
+    // Collect manually entered values
+    let fixed = 0;
+    for (let i = 0; i < wayfairAudit.length; i++) {
+        const a = wayfairAudit[i];
+        if (a.status !== 'gap') continue;
+        const input = document.getElementById('wf_sku_' + i);
+        const val = (input?.value || '').trim();
+        if (!val) continue;
+        
+        const { error } = await sbClient.from('items').update({ wayfair_sku: val }).eq('id', a.item.id);
+        if (!error) {
+            a.item.wayfair_sku = val;
+            a.gaps = []; a.status = 'ok';
+            fixed++;
+        }
+    }
+    toast(`Fixed ${fixed} Wayfair items`, 'success');
+    renderWayfairTable();
+    renderStats();
+}
+
+// ═══════════════════════════════════════
+// STATS
+// ═══════════════════════════════════════
+// ═══════════════════════════════════════
+// CREATE VARIANT ITEM (inserts new row in items table)
+// ═══════════════════════════════════════
+async function createVariantItem(channel, idx) {
+    const audit = channel === 'etsy' ? etsyAudit : wixAudit;
+    const a = audit[idx];
+    if (!a) { toast('Item not found', 'error'); return; }
+    
+    const variantSku = a.variantSku || '';
+    if (!variantSku) { toast('No variant SKU available', 'error'); return; }
+    
+    // Check if SKU already exists in items table
+    const existing = itemsList.find(i => i.sku && i.sku.toUpperCase() === variantSku.toUpperCase());
+    if (existing) {
+        toast(`SKU ${variantSku} already exists in items table (id: ${existing.id})`, 'info');
+        a.matchedItem = existing;
+        a.matchMethod = 'existing';
+        // Just fix the channel fields
+        if (channel === 'etsy') await fixEtsy(idx);
+        else await fixWix(idx);
+        return;
+    }
+    
+    // Build the new item
+    const productName = channel === 'etsy' 
+        ? (a.listing.title || '').substring(0, 200)
+        : (a.product.name || '').substring(0, 200);
+    
+    const variantLabel = a.variantLabel || '';
+    const displayName = variantLabel ? `${productName} — ${variantLabel}` : productName;
+    
+    const parentSku = a.parentSku || null;
+    
+    const newItem = {
+        sku: variantSku,
+        product_name: displayName,
+        parent_sku: parentSku,
+        variant_label: variantLabel || null,
+        qty: 0,
+        wholesale_price: 0,
+        etsy_sku: channel === 'etsy' ? variantSku : null,
+        etsy_listing_id: channel === 'etsy' ? String(a.listing.listing_id) : null,
+        etsy_variant_id: null,  // Would need getInventory call to get product_id
+        wix_sku: channel === 'wix' ? variantSku : null,
+        wix_product_id: channel === 'wix' ? a.product.id : null,
+        wix_variant_id: channel === 'wix' ? (a.variantId || null) : null
+    };
+    
+    // If same product exists on both channels, try to set both
+    if (channel === 'wix') {
+        // Look for matching Etsy listing by parent SKU
+        const etsyMatch = etsyAudit.find(e => 
+            e.variantSku && e.variantSku.toUpperCase() === variantSku.toUpperCase()
+        );
+        if (etsyMatch) {
+            newItem.etsy_sku = variantSku;
+            newItem.etsy_listing_id = String(etsyMatch.listing.listing_id);
+        }
+    } else if (channel === 'etsy') {
+        const wixMatch = wixAudit.find(w =>
+            w.variantSku && w.variantSku.toUpperCase() === variantSku.toUpperCase()
+        );
+        if (wixMatch) {
+            newItem.wix_sku = variantSku;
+            newItem.wix_product_id = wixMatch.product.id;
+            newItem.wix_variant_id = wixMatch.variantId || null;
+        }
+    }
+    
+    const confirmMsg = `Create new item for variant?\n\n` +
+        `SKU: ${variantSku}\n` +
+        `Name: ${displayName}\n` +
+        `Parent: ${parentSku || 'none'}\n` +
+        `Label: ${variantLabel || 'none'}\n\n` +
+        `This creates a new row in the items table.`;
+    
+    if (!confirm(confirmMsg)) return;
+    
+    const { data, error } = await sbClient.from('items').insert(newItem).select('id').single();
+    if (error) {
+        toast('Create failed: ' + error.message, 'error');
+        log(`[Create] Failed for ${variantSku}: ${error.message}`, 'err');
+        return;
+    }
+    
+    // Update local state
+    newItem.id = data.id;
+    itemsList.push(newItem);
+    if (newItem.sku) itemsBysku[newItem.sku.toUpperCase()] = newItem;
+    if (newItem.wix_sku) itemsByWixSku[newItem.wix_sku.toUpperCase()] = newItem;
+    if (newItem.etsy_sku) itemsByEtsySku[newItem.etsy_sku.toUpperCase()] = newItem;
+    if (newItem.wix_variant_id) itemsByWixVariantId[newItem.wix_variant_id] = newItem;
+    
+    a.matchedItem = newItem;
+    a.matchMethod = 'created';
+    a.gaps = [];
+    a.status = 'ok';
+    
+    // Also fix matching audit entries on the other channel
+    if (channel === 'wix') {
+        etsyAudit.filter(e => e.variantSku?.toUpperCase() === variantSku.toUpperCase() && e.status !== 'ok').forEach(e => {
+            e.matchedItem = newItem;
+            e.gaps = [];
+            e.status = 'ok';
+        });
+    } else {
+        wixAudit.filter(w => w.variantSku?.toUpperCase() === variantSku.toUpperCase() && w.status !== 'ok').forEach(w => {
+            w.matchedItem = newItem;
+            w.gaps = [];
+            w.status = 'ok';
+        });
+    }
+    
+    toast(`Created item: ${variantSku} (id: ${data.id})`, 'success');
+    log(`[Create] New variant item: ${variantSku} parent=${parentSku} label="${variantLabel}"`, 'ok');
+    
+    if (channel === 'etsy') renderEtsyTable();
+    else renderWixTable();
+    renderStats();
+}
+
+function renderStats() {
+    const etsyGaps = etsyAudit.filter(a => a.gaps.length > 0 && a.status !== 'skipped').length;
+    const etsyOk = etsyAudit.filter(a => a.status === 'ok' || a.status === 'skipped').length;
+    const wixGaps = wixAudit.filter(a => a.gaps.length > 0 && a.status !== 'skipped').length;
+    const wixOk = wixAudit.filter(a => a.status === 'ok' || a.status === 'skipped').length;
+    const wfGaps = wayfairAudit.filter(a => a.gaps.length > 0).length;
+    const wfOk = wayfairAudit.length - wfGaps;
+    const totalGaps = etsyGaps + wixGaps + wfGaps;
+    
+    document.getElementById('statsGrid').innerHTML = `
+        <div class="stat-card ${totalGaps > 0 ? 'red' : 'green'}"><div class="label">Total Gaps</div><div class="value">${totalGaps}</div></div>
+        <div class="stat-card ${etsyGaps > 0 ? 'yellow' : 'green'}"><div class="label">Etsy Gaps</div><div class="value">${etsyGaps}<span style="font-size:12px;color:var(--text-dim);">/${etsyAudit.length}</span></div></div>
+        <div class="stat-card ${wixGaps > 0 ? 'yellow' : 'green'}"><div class="label">Wix Gaps</div><div class="value">${wixGaps}<span style="font-size:12px;color:var(--text-dim);">/${wixAudit.length}</span></div></div>
+        <div class="stat-card ${wfGaps > 0 ? 'yellow' : 'green'}"><div class="label">Wayfair Gaps</div><div class="value">${wfGaps}<span style="font-size:12px;color:var(--text-dim);">/${wayfairAudit.length}</span></div></div>
+        <div class="stat-card green"><div class="label">Etsy OK</div><div class="value">${etsyOk}</div></div>
+        <div class="stat-card green"><div class="label">Wix OK</div><div class="value">${wixOk}</div></div>
+        <div class="stat-card green"><div class="label">Wayfair OK</div><div class="value">${wfOk}</div></div>
+    `;
+}
+
+// ═══════════════════════════════════════
+// UTILITIES
+// ═══════════════════════════════════════
+function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
+
+function log(msg, type = '') {
+    const area = document.getElementById('logArea');
+    area.style.display = 'block';
+    const ts = new Date().toLocaleTimeString();
+    area.innerHTML += `<div class="log-${type}">[${ts}] ${esc(msg)}</div>`;
+    area.scrollTop = area.scrollHeight;
+}
+
+function toast(msg, type = 'info') {
+    const c = document.getElementById('toasts');
+    const el = document.createElement('div');
+    el.className = `toast toast-${type}`;
+    el.textContent = msg;
+    c.appendChild(el);
+    setTimeout(() => el.remove(), 5000);
+}
+</script>
+</body>
+</html>
