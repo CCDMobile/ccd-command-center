@@ -890,15 +890,15 @@ body::before {
     </div>
 
     <div class="topbar-center">
-        <div class="status-chip" id="statusDb" title="Database">
+        <div class="status-chip" id="statusDb" title="Database" onclick="toggleHealth()" style="cursor:pointer;">
             <div class="status-dot" id="dotDb"></div>
             <span>Database</span>
         </div>
-        <div class="status-chip" id="statusProxies" title="Proxies">
+        <div class="status-chip" id="statusProxies" title="Proxies" onclick="toggleHealth()" style="cursor:pointer;">
             <div class="status-dot" id="dotProxies"></div>
             <span>Proxies</span>
         </div>
-        <div class="status-chip" id="statusSync" title="Sync Hub">
+        <div class="status-chip" id="statusSync" title="Sync Hub" onclick="toggleHealth()" style="cursor:pointer;">
             <div class="status-dot" id="dotSync"></div>
             <span>Sync</span>
         </div>
@@ -1995,7 +1995,8 @@ async function checkProxies() {
     let anyChecked = false;
     const responseTimes = [];
 
-    for (const proxy of proxyConfigs) {
+    // Check all proxies in parallel for speed
+    const checks = proxyConfigs.map(async (proxy) => {
         const url = resolveKey('ccd' + proxy.key);
         const el = document.getElementById(proxy.el);
         const msEl = document.getElementById(proxy.msEl);
@@ -2005,76 +2006,53 @@ async function checkProxies() {
         if (!url) {
             el.textContent = 'Not configured'; el.className = 'value warn';
             msEl.textContent = '—'; verEl.textContent = '—';
-            allOk = false;
-            responseTimes.push({ key: proxy.key, ms: 0 });
-            continue;
+            return { key: proxy.key, ms: 0, barEl: proxy.barEl, ok: false, configured: false };
         }
 
-        anyChecked = true;
         el.textContent = 'Checking...'; el.className = 'value';
-
         const apiKey = resolveKey('ccdApiKey') || API_KEY;
         const startTime = Date.now();
-        let proxyOk = false;
-        let latency = 0;
 
-        // Try action=health first (gets version, uptime, error rate)
         try {
-            const healthUrl = `${url}?action=health&key=${encodeURIComponent(apiKey)}&cb=${Date.now()}`;
-            const resp = await fetchWithTimeout(healthUrl, 10000);
-            latency = Date.now() - startTime;
+            // Use JSONP as primary — only reliable method from GitHub Pages to GAS
+            // GAS 302 redirects break CORS fetch, but JSONP (script tag) bypasses CORS entirely
+            const data = await jsonpCheck(url, apiKey, 10000);
+            const latency = Date.now() - startTime;
 
-            if (resp.ok || resp.type === 'opaque') {
-                try {
-                    const data = await resp.json();
-                    // Extract version from health response
-                    if (data?.proxy?.version) {
-                        verEl.textContent = data.proxy.version;
-                    }
-                    proxyOk = true;
-                } catch {
-                    proxyOk = true; // Got a response even if not JSON
-                }
-            }
-        } catch {
-            // Fall back to ping via JSONP
-            try {
-                const pingStart = Date.now();
-                await jsonpPing(url, apiKey);
-                latency = Date.now() - pingStart;
-                proxyOk = true;
-            } catch {
-                latency = Date.now() - startTime;
-                proxyOk = false;
-            }
-        }
-
-        if (proxyOk) {
-            const status = latency > 5000 ? 'degraded' : 'ok';
             el.textContent = latency > 5000 ? 'Degraded' : 'Online';
             el.className = 'value ' + (latency > 5000 ? 'warn' : 'ok');
             msEl.textContent = latency + 'ms';
             msEl.style.color = latency > 5000 ? 'var(--yellow)' : latency > 2000 ? 'var(--text2)' : 'var(--green)';
-            if (!allOk) {} // keep allOk false if already false
-            if (latency > 5000) allOk = false;
-        } else {
+
+            // Extract version if available
+            if (data?.proxy?.version) verEl.textContent = data.proxy.version;
+            else if (data?.version) verEl.textContent = data.version;
+
+            checkedEl.textContent = 'Last check: ' + new Date().toLocaleTimeString();
+            return { key: proxy.key, ms: latency, barEl: proxy.barEl, ok: latency <= 5000 };
+
+        } catch (e) {
+            const latency = Date.now() - startTime;
             el.textContent = 'Unreachable'; el.className = 'value err';
             msEl.textContent = 'timeout';
-            allOk = false;
+            checkedEl.textContent = 'Last check: ' + new Date().toLocaleTimeString();
+            return { key: proxy.key, ms: latency, barEl: proxy.barEl, ok: false, configured: true };
         }
+    });
 
-        checkedEl.textContent = 'Last check: ' + new Date().toLocaleTimeString();
-        responseTimes.push({ key: proxy.key, ms: latency, barEl: proxy.barEl });
-    }
+    const results = await Promise.all(checks);
 
     // Update response time bars
-    const maxMs = Math.max(...responseTimes.map(r => r.ms), 1);
-    responseTimes.forEach(r => {
+    const maxMs = Math.max(...results.map(r => r.ms), 1);
+    results.forEach(r => {
         const bar = document.getElementById(r.barEl);
         if (bar && r.ms > 0) {
             bar.style.height = Math.max(4, (r.ms / maxMs) * 40) + 'px';
         }
     });
+
+    anyChecked = results.some(r => r.configured !== false);
+    allOk = results.filter(r => r.configured !== false).every(r => r.ok);
 
     const dot = document.getElementById('dotProxies');
     const chip = document.getElementById('statusProxies');
@@ -2086,6 +2064,61 @@ async function checkProxies() {
     } else {
         dot.className = 'status-dot err'; chip.className = 'status-chip err';
     }
+}
+
+/* JSONP proxy check — bypasses CORS by injecting a script tag.
+   GAS 302 redirects break regular fetch from GitHub Pages, but script tags follow redirects. */
+function jsonpCheck(baseUrl, apiKey, timeout) {
+    return new Promise((resolve, reject) => {
+        const cb = 'ccdCheck_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+        let settled = false;
+
+        // Cleanup
+        const cleanup = () => {
+            settled = true;
+            delete window[cb];
+            if (script.parentNode) script.parentNode.removeChild(script);
+        };
+
+        // Callback — proxy wraps response in callback(data)
+        window[cb] = (data) => {
+            if (settled) return;
+            cleanup();
+            resolve(data);
+        };
+
+        // Create script tag — tries action=ping with callback
+        const script = document.createElement('script');
+        script.src = `${baseUrl}?action=ping&key=${encodeURIComponent(apiKey)}&callback=${cb}&_=${Date.now()}`;
+
+        script.onload = () => {
+            // Script loaded but callback may not have fired (if proxy doesn't support callback param)
+            // Wait a tick then check
+            setTimeout(() => {
+                if (!settled) {
+                    cleanup();
+                    // Script loaded = proxy responded, even if no JSONP callback support
+                    resolve({ success: true, note: 'loaded-no-callback' });
+                }
+            }, 200);
+        };
+
+        script.onerror = () => {
+            if (settled) return;
+            cleanup();
+            reject(new Error('Script load failed'));
+        };
+
+        // Timeout
+        setTimeout(() => {
+            if (!settled) {
+                cleanup();
+                reject(new Error('Timeout'));
+            }
+        }, timeout);
+
+        document.head.appendChild(script);
+    });
 }
 
 /* Auto-refresh for health checks */
@@ -2102,25 +2135,6 @@ function toggleAutoRefresh() {
         btn.textContent = '60s';
         btn.style.color = 'var(--green)';
     }
-}
-
-function fetchWithTimeout(url, ms) {
-    return Promise.race([
-        fetch(url).catch(() => fetch(url, { mode: 'no-cors' })),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
-    ]);
-}
-
-function jsonpPing(baseUrl, apiKey) {
-    return new Promise((resolve, reject) => {
-        const cb = 'ccdPing_' + Date.now();
-        window[cb] = (data) => { resolve(data); delete window[cb]; };
-        const s = document.createElement('script');
-        s.src = `${baseUrl}?action=ping&key=${encodeURIComponent(apiKey)}&callback=${cb}&cb=${Date.now()}`;
-        s.onerror = () => { reject(new Error('JSONP failed')); delete window[cb]; };
-        document.head.appendChild(s);
-        setTimeout(() => { reject(new Error('Timeout')); delete window[cb]; }, 8000);
-    });
 }
 
 async function checkDataHealth() {
