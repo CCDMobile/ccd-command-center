@@ -1,1862 +1,2310 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Command Center v2.1 - Activity Log Integration</title>
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='75' font-size='75'>🎯</text></svg>">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        :root {
-            --bg-primary: #0f172a;
-            --bg-secondary: #1e293b;
-            --bg-tertiary: #334155;
-            --text-primary: #f1f5f9;
-            --text-secondary: #94a3b8;
-            --text-dim: #64748b;
-            --border: #334155;
-            --success: #10b981;
-            --warning: #f59e0b;
-            --error: #ef4444;
-            --info: #3b82f6;
-            --purple: #8b5cf6;
-            --pink: #ec4899;
-        }
-
-        body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-primary);
-            line-height: 1.6;
-            overflow-x: hidden;
-        }
-
-        .container {
-            max-width: 1600px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        /* Header */
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 20px 0;
-            margin-bottom: 30px;
-            border-bottom: 2px solid var(--border);
-        }
-
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .logo-icon {
-            font-size: 2rem;
-        }
-
-        .logo-text h1 {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-
-        .logo-text p {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-        }
-
-        .header-actions {
-            display: flex;
-            gap: 12px;
-        }
-
-        .btn {
-            padding: 10px 20px;
-            border: none;
-            border-radius: 8px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .btn-primary {
-            background: var(--info);
-            color: white;
-        }
-
-        .btn-primary:hover {
-            background: #2563eb;
-            transform: translateY(-2px);
-        }
-
-        .btn-secondary {
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-        }
-
-        .btn-secondary:hover {
-            background: #475569;
-        }
-
-        /* System Health Banner */
-        .health-banner {
-            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 30px;
-            border: 1px solid var(--border);
-        }
-
-        .health-status {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .health-icon {
-            font-size: 2rem;
-        }
-
-        .health-text h2 {
-            font-size: 1.3rem;
-            font-weight: 600;
-        }
-
-        .health-text p {
-            color: var(--text-secondary);
-            font-size: 0.9rem;
-        }
-
-        .health-metrics {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-top: 20px;
-        }
-
-        .health-metric {
-            background: var(--bg-secondary);
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-        }
-
-        .metric-label {
-            color: var(--text-secondary);
-            font-size: 0.85rem;
-            margin-bottom: 8px;
-        }
-
-        .metric-value {
-            font-size: 1.3rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .status-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-
-        .status-dot.healthy { background: var(--success); }
-        .status-dot.warning { background: var(--warning); }
-        .status-dot.error { background: var(--error); }
-
-        /* Grid Layout */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-            gap: 24px;
-            margin-bottom: 30px;
-        }
-
-        /* Section Containers */
-        .section {
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            padding: 24px;
-            border: 1px solid var(--border);
-        }
-
-        .section-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 12px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .section-title {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 1.1rem;
-            font-weight: 600;
-        }
-
-        .section-icon {
-            font-size: 1.3rem;
-        }
-
-        /* App Cards */
-        .app-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-            gap: 16px;
-        }
-
-        .app-card {
-            background: var(--bg-tertiary);
-            border-radius: 10px;
-            padding: 20px;
-            border: 1px solid var(--border);
-            transition: all 0.3s;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .app-card:hover {
-            transform: translateY(-4px);
-            border-color: var(--info);
-            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.2);
-        }
-
-        .app-card::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 4px;
-            background: linear-gradient(90deg, var(--app-color, var(--info)), transparent);
-        }
-
-        .app-icon {
-            font-size: 2.5rem;
-            margin-bottom: 12px;
-        }
-
-        .app-name {
-            font-size: 1rem;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .app-version {
-            color: var(--text-secondary);
-            font-size: 0.85rem;
-            margin-bottom: 12px;
-        }
-
-        .app-status {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.8rem;
-            margin-bottom: 12px;
-        }
-
-        .app-actions {
-            display: flex;
-            gap: 8px;
-            margin-top: 12px;
-        }
-
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 0.8rem;
-            border-radius: 6px;
-            border: none;
-            cursor: pointer;
-            transition: all 0.2s;
-            flex: 1;
-        }
-
-        .btn-launch {
-            background: var(--info);
-            color: white;
-        }
-
-        .btn-launch:hover {
-            background: #2563eb;
-        }
-
-        .btn-configure {
-            background: var(--bg-secondary);
-            color: var(--text-secondary);
-            border: 1px solid var(--border);
-        }
-
-        .btn-configure:hover {
-            background: var(--bg-tertiary);
-            color: var(--text-primary);
-        }
-
-        /* Quick Actions */
-        .quick-actions {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-            gap: 12px;
-        }
-
-        .quick-action-btn {
-            background: var(--bg-tertiary);
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            cursor: pointer;
-            transition: all 0.2s;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 8px;
-            text-align: center;
-        }
-
-        .quick-action-btn:hover {
-            background: var(--bg-primary);
-            border-color: var(--info);
-            transform: translateY(-2px);
-        }
-
-        .quick-action-icon {
-            font-size: 1.8rem;
-        }
-
-        .quick-action-label {
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-
-        /* Activity Feed */
-        .activity-feed {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-
-        .activity-item {
-            padding: 12px 0;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            gap: 12px;
-            align-items: start;
-        }
-
-        .activity-item:last-child {
-            border-bottom: none;
-        }
-
-        .activity-icon {
-            font-size: 1.2rem;
-            margin-top: 2px;
-        }
-
-        .activity-content {
-            flex: 1;
-        }
-
-        .activity-text {
-            font-size: 0.9rem;
-            margin-bottom: 4px;
-        }
-
-        .activity-time {
-            color: var(--text-dim);
-            font-size: 0.75rem;
-        }
-
-        /* File Connection Status */
-        .file-list {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .file-item {
-            background: var(--bg-tertiary);
-            padding: 16px;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .file-info {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .file-icon {
-            font-size: 1.5rem;
-        }
-
-        .file-details h4 {
-            font-size: 0.95rem;
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-
-        .file-details p {
-            color: var(--text-secondary);
-            font-size: 0.8rem;
-        }
-
-        .file-status {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-
-        /* Modal */
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 1000;
-            justify-content: center;
-            align-items: center;
-        }
-
-        .modal.active {
-            display: flex;
-        }
-
-        .modal-content {
-            background: var(--bg-secondary);
-            border-radius: 12px;
-            padding: 30px;
-            max-width: 600px;
-            width: 90%;
-            border: 1px solid var(--border);
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid var(--border);
-        }
-
-        .modal-title {
-            font-size: 1.3rem;
-            font-weight: 600;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: var(--text-secondary);
-            padding: 4px 8px;
-        }
-
-        .modal-close:hover {
-            color: var(--text-primary);
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            color: var(--text-secondary);
-        }
-
-        .form-input {
-            width: 100%;
-            padding: 12px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-primary);
-            font-size: 0.9rem;
-        }
-
-        .form-input:focus {
-            outline: none;
-            border-color: var(--info);
-        }
-
-        .form-help {
-            margin-top: 6px;
-            font-size: 0.8rem;
-            color: var(--text-dim);
-        }
-
-        /* Scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: var(--bg-tertiary);
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: var(--border);
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: var(--text-dim);
-        }
-
-        /* Loading */
-        .loading {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--border);
-            border-top-color: var(--info);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .dashboard-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .app-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .quick-actions {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Command Center v3.0</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+
+/* ═══════════════════════════════════════════
+   CSS RESET & VARIABLES
+   ═══════════════════════════════════════════ */
+:root {
+    --bg:  #070c18;
+    --bg1: #0c1322;
+    --bg2: #111827;
+    --bg3: #172035;
+    --bg4: #1c2740;
+    --gold:  #d4a853;
+    --gold2: #f0c97a;
+    --gold3: #b8923e;
+    --gold-glow: rgba(212,168,83,0.15);
+    --green:  #2dd4a0;
+    --green2: #34d399;
+    --red:    #f05c5c;
+    --red2:   #ef4444;
+    --blue:   #4d9fff;
+    --blue2:  #60a5fa;
+    --yellow: #fbbf24;
+    --purple: #a78bfa;
+    --etsy:    #f97316;
+    --wix:     #3b82f6;
+    --wayfair: #a855f7;
+    --tm:      #10b981;
+    --text:    #e2e8f8;
+    --text2:   #c9d1e5;
+    --muted:   #5a6e94;
+    --muted2:  #3d5178;
+    --border:  #1e2d4a;
+    --border2: #283a5e;
+    --card-radius: 12px;
+    --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+
+body {
+    font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* Background texture */
+body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+        radial-gradient(ellipse 120% 60% at 50% 0%, rgba(212,168,83,0.04) 0%, transparent 60%),
+        radial-gradient(ellipse 80% 50% at 80% 100%, rgba(77,159,255,0.03) 0%, transparent 50%),
+        radial-gradient(ellipse 60% 40% at 10% 60%, rgba(168,85,247,0.02) 0%, transparent 40%);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--muted2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ═══════════════════════════════════════════
+   ZONE 1: TOP BAR
+   ═══════════════════════════════════════════ */
+.topbar {
+    position: sticky; top: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px; height: 56px;
+    background: rgba(7,12,24,0.85);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+}
+
+.topbar-left {
+    display: flex; align-items: center; gap: 14px;
+}
+
+.brand {
+    font-family: 'Instrument Serif', serif;
+    font-size: 20px; color: var(--gold);
+    letter-spacing: 0.3px;
+    display: flex; align-items: center; gap: 10px;
+}
+
+.brand-icon {
+    width: 32px; height: 32px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold3) 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; color: var(--bg);
+    box-shadow: 0 2px 8px rgba(212,168,83,0.25);
+}
+
+.topbar-center {
+    display: flex; align-items: center; gap: 16px;
+}
+
+.status-chip {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 500; color: var(--muted);
+    padding: 4px 10px; border-radius: 20px;
+    background: var(--bg2); border: 1px solid var(--border);
+    transition: var(--transition);
+}
+
+.status-chip.ok { color: var(--green); border-color: rgba(45,212,160,0.2); }
+.status-chip.warn { color: var(--yellow); border-color: rgba(251,191,36,0.2); }
+.status-chip.err { color: var(--red); border-color: rgba(240,92,92,0.2); }
+
+.status-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--muted);
+    transition: var(--transition);
+}
+
+.status-dot.ok { background: var(--green); box-shadow: 0 0 6px rgba(45,212,160,0.5); }
+.status-dot.warn { background: var(--yellow); box-shadow: 0 0 6px rgba(251,191,36,0.5); }
+.status-dot.err { background: var(--red); box-shadow: 0 0 6px rgba(240,92,92,0.5); animation: pulse-red 2s infinite; }
+.status-dot.checking { background: var(--blue); animation: pulse-blue 1.2s infinite; }
+
+@keyframes pulse-red { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+@keyframes pulse-blue { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.5; transform:scale(1.3); } }
+
+.topbar-right {
+    display: flex; align-items: center; gap: 12px;
+}
+
+.greeting {
+    font-size: 13px; color: var(--muted); font-weight: 400;
+}
+
+.greeting strong { color: var(--text2); font-weight: 600; }
+
+.datetime {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px; color: var(--muted); letter-spacing: 0.5px;
+}
+
+.topbar-btn {
+    width: 34px; height: 34px; border-radius: 8px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; transition: var(--transition);
+}
+
+.topbar-btn:hover { background: var(--bg3); color: var(--text); border-color: var(--border2); }
+
+/* ═══════════════════════════════════════════
+   ALERT BANNER
+   ═══════════════════════════════════════════ */
+.alert-banner {
+    display: none;
+    padding: 10px 28px;
+    background: linear-gradient(90deg, rgba(240,92,92,0.12) 0%, rgba(240,92,92,0.05) 100%);
+    border-bottom: 1px solid rgba(240,92,92,0.2);
+    font-size: 13px; color: var(--red);
+    align-items: center; gap: 8px;
+    animation: slideDown 0.3s ease-out;
+}
+
+.alert-banner.visible { display: flex; }
+
+@keyframes slideDown { from { transform: translateY(-100%); opacity:0; } to { transform: translateY(0); opacity:1; } }
+
+/* ═══════════════════════════════════════════
+   MAIN CONTENT
+   ═══════════════════════════════════════════ */
+.main {
+    position: relative; z-index: 1;
+    max-width: 1320px; margin: 0 auto;
+    padding: 28px 28px 60px;
+}
+
+/* ═══════════════════════════════════════════
+   ZONE 2: HERO KPIs
+   ═══════════════════════════════════════════ */
+.kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 14px; margin-bottom: 24px;
+}
+
+.kpi-card {
+    background: linear-gradient(135deg, rgba(17,24,39,0.7) 0%, rgba(23,32,53,0.5) 100%);
+    border: 1px solid rgba(212,168,83,0.08);
+    border-radius: var(--card-radius);
+    padding: 18px 20px;
+    position: relative; overflow: hidden;
+    cursor: pointer;
+    transition: var(--transition);
+    opacity: 0; transform: translateY(12px);
+    animation: fadeUp 0.5s ease-out forwards;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+
+.kpi-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent 0%, rgba(212,168,83,0.12) 50%, transparent 100%);
+    pointer-events: none;
+}
+
+.kpi-card:hover {
+    border-color: rgba(212,168,83,0.20);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.kpi-card canvas {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    width: 100%; height: 40px; opacity: 0.25;
+}
+
+.kpi-label {
+    font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--muted); margin-bottom: 6px;
+}
+
+.kpi-value {
+    font-family: 'Instrument Serif', serif;
+    font-size: 28px; color: var(--text); line-height: 1.1;
+    transition: var(--transition);
+}
+
+.kpi-sub {
+    font-size: 11px; color: var(--muted); margin-top: 4px;
+    font-family: 'DM Mono', monospace;
+}
+
+.kpi-card:nth-child(1) { animation-delay: 0.05s; }
+.kpi-card:nth-child(2) { animation-delay: 0.1s; }
+.kpi-card:nth-child(3) { animation-delay: 0.15s; }
+.kpi-card:nth-child(4) { animation-delay: 0.2s; }
+.kpi-card:nth-child(5) { animation-delay: 0.25s; }
+.kpi-card:nth-child(6) { animation-delay: 0.3s; }
+.kpi-card:nth-child(7) { animation-delay: 0.35s; }
+.kpi-card:nth-child(8) { animation-delay: 0.4s; }
+
+@keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ═══════════════════════════════════════════
+   QUICK ACTIONS BAR
+   ═══════════════════════════════════════════ */
+.quick-actions {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 24px; padding: 14px 18px;
+    background: linear-gradient(135deg, rgba(12,19,34,0.7) 0%, rgba(17,24,39,0.5) 100%);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: var(--card-radius);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    position: relative; overflow: hidden;
+}
+
+.quick-actions::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%);
+    pointer-events: none;
+}
+
+.qa-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 14px; border-radius: 8px;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text2); font-size: 12px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
+    transition: var(--transition); text-decoration: none;
+}
+
+.qa-btn:hover { background: var(--bg4); border-color: var(--gold3); color: var(--gold2); }
+.qa-btn .icon { font-size: 14px; }
+
+/* ═══════════════════════════════════════════
+   FAVORITES ROW
+   ═══════════════════════════════════════════ */
+.favorites-section {
+    margin-bottom: 24px; display: none;
+}
+
+.favorites-section.has-items { display: block; }
+
+.section-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; color: var(--muted); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 8px;
+}
+
+.section-label::after {
+    content: ''; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--border) 0%, transparent 100%);
+}
+
+.favorites-grid {
+    display: flex; gap: 12px; overflow-x: auto;
+    padding-bottom: 4px;
+}
+
+/* ═══════════════════════════════════════════
+   SEARCH & FILTER
+   ═══════════════════════════════════════════ */
+.search-bar {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 20px; flex-wrap: wrap;
+}
+
+.search-input-wrap {
+    position: relative; flex: 1; min-width: 200px; max-width: 360px;
+}
+
+.search-input-wrap .icon {
+    position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+    color: var(--muted); font-size: 14px; pointer-events: none;
+}
+
+.search-input {
+    width: 100%; padding: 9px 12px 9px 36px;
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px;
+    font-family: inherit; outline: none;
+    transition: var(--transition);
+}
+
+.search-input:focus { border-color: var(--gold3); box-shadow: 0 0 0 2px var(--gold-glow); }
+
+.filter-pills {
+    display: flex; gap: 6px; flex-wrap: wrap;
+}
+
+.filter-pill {
+    padding: 6px 12px; border-radius: 20px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); font-size: 11px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
+    transition: var(--transition);
+}
+
+.filter-pill:hover { border-color: var(--muted); color: var(--text2); }
+.filter-pill.active { background: var(--gold); border-color: var(--gold); color: var(--bg); }
+
+.toggle-coming-soon {
+    margin-left: auto;
+    font-size: 11px; color: var(--muted); cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+    background: none; border: none; font-family: inherit;
+}
+
+.toggle-coming-soon:hover { color: var(--text2); }
+
+/* ═══════════════════════════════════════════
+   APP GRID
+   ═══════════════════════════════════════════ */
+.category-section {
+    margin-bottom: 28px;
+    opacity: 0; transform: translateY(16px);
+    animation: fadeUp 0.5s ease-out forwards;
+    background: linear-gradient(135deg, rgba(17,24,39,0.65) 0%, rgba(23,32,53,0.45) 50%, rgba(12,19,34,0.55) 100%);
+    border: 1px solid var(--cat-border, rgba(255,255,255,0.05));
+    border-radius: 16px;
+    padding: 22px;
+    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    position: relative; overflow: hidden;
+    transition: border-color 0.4s, box-shadow 0.4s, transform 0.3s;
+}
+
+.category-section:hover {
+    border-color: var(--cat-border-hover, rgba(255,255,255,0.1));
+    box-shadow: 0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04);
+    transform: translateY(-1px);
+}
+
+/* Top-edge glass highlight */
+.category-section::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--cat-edge, rgba(255,255,255,0.06)) 20%,
+        var(--cat-edge-bright, rgba(255,255,255,0.12)) 50%,
+        var(--cat-edge, rgba(255,255,255,0.06)) 80%,
+        transparent 100%);
+    pointer-events: none;
+    z-index: 2;
+}
+
+/* Liquid glow blob */
+.category-section::after {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 16px;
+    background:
+        radial-gradient(ellipse 90% 50% at 15% -5%, var(--cat-glow, rgba(212,168,83,0.06)) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 60% at 90% 110%, var(--cat-glow2, rgba(212,168,83,0.03)) 0%, transparent 50%);
+    pointer-events: none;
+    opacity: 0.8;
+    transition: opacity 0.4s;
+    z-index: 0;
+}
+
+.category-section:hover::after { opacity: 1; }
+
+/* Make content sit above the glow */
+.category-section > * { position: relative; z-index: 1; }
+
+/* Category-specific colors — glow, border, edge, label */
+.category-section[data-cat="core"] {
+    --cat-glow:  rgba(212,168,83,0.08);
+    --cat-glow2: rgba(212,168,83,0.04);
+    --cat-border: rgba(212,168,83,0.10);
+    --cat-border-hover: rgba(212,168,83,0.20);
+    --cat-edge: rgba(212,168,83,0.10);
+    --cat-edge-bright: rgba(212,168,83,0.18);
+    --cat-label: #d4a853;
+}
+.category-section[data-cat="financial"] {
+    --cat-glow:  rgba(45,212,160,0.08);
+    --cat-glow2: rgba(45,212,160,0.04);
+    --cat-border: rgba(45,212,160,0.10);
+    --cat-border-hover: rgba(45,212,160,0.20);
+    --cat-edge: rgba(45,212,160,0.10);
+    --cat-edge-bright: rgba(45,212,160,0.18);
+    --cat-label: #2dd4a0;
+}
+.category-section[data-cat="channel"] {
+    --cat-glow:  rgba(249,115,22,0.08);
+    --cat-glow2: rgba(249,115,22,0.04);
+    --cat-border: rgba(249,115,22,0.10);
+    --cat-border-hover: rgba(249,115,22,0.20);
+    --cat-edge: rgba(249,115,22,0.10);
+    --cat-edge-bright: rgba(249,115,22,0.18);
+    --cat-label: #f97316;
+}
+.category-section[data-cat="ai"] {
+    --cat-glow:  rgba(167,139,250,0.08);
+    --cat-glow2: rgba(167,139,250,0.04);
+    --cat-border: rgba(167,139,250,0.10);
+    --cat-border-hover: rgba(167,139,250,0.20);
+    --cat-edge: rgba(167,139,250,0.10);
+    --cat-edge-bright: rgba(167,139,250,0.18);
+    --cat-label: #a78bfa;
+}
+.category-section[data-cat="coming"] {
+    --cat-glow:  rgba(90,110,148,0.05);
+    --cat-glow2: rgba(90,110,148,0.02);
+    --cat-border: rgba(90,110,148,0.06);
+    --cat-border-hover: rgba(90,110,148,0.12);
+    --cat-edge: rgba(90,110,148,0.06);
+    --cat-edge-bright: rgba(90,110,148,0.10);
+    --cat-label: #5a6e94;
+}
+
+.category-header {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.5px; color: var(--cat-label, var(--muted));
+    margin-bottom: 12px; padding-left: 4px;
+    display: flex; align-items: center; gap: 8px;
+}
+
+.category-header .cat-dot {
+    width: 8px; height: 8px; border-radius: 2px;
+}
+
+.category-header::after {
+    content: ''; flex: 1; height: 1px;
+    background: linear-gradient(90deg, var(--cat-border, var(--border)) 0%, transparent 100%);
+}
+
+.app-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.app-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: 18px 20px;
+    display: flex; align-items: flex-start; gap: 14px;
+    position: relative; overflow: hidden;
+    cursor: pointer; text-decoration: none;
+    transition: var(--transition);
+}
+
+.app-card::before {
+    content: ''; position: absolute;
+    left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--card-accent, var(--gold));
+    opacity: 0; transition: var(--transition);
+}
+
+.app-card:hover {
+    border-color: var(--border2);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.35);
+}
+
+.app-card:hover::before { opacity: 1; }
+
+.app-card .card-icon {
+    width: 42px; height: 42px; min-width: 42px;
+    border-radius: 10px;
+    background: var(--bg3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px;
+    transition: var(--transition);
+}
+
+.app-card:hover .card-icon {
+    background: var(--card-accent, var(--gold));
+    color: var(--bg);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.card-info { flex: 1; min-width: 0; }
+
+.card-title {
+    font-size: 14px; font-weight: 700; color: var(--text);
+    margin-bottom: 2px; display: flex; align-items: center; gap: 8px;
+}
+
+.card-version {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; color: var(--muted);
+    background: var(--bg3); padding: 1px 6px;
+    border-radius: 4px; white-space: nowrap;
+}
+
+.card-desc {
+    font-size: 12px; color: var(--muted); line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow: hidden;
+}
+
+.card-status {
+    position: absolute; top: 14px; right: 14px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 6px rgba(45,212,160,0.4);
+}
+
+.card-status.warn { background: var(--yellow); box-shadow: 0 0 6px rgba(251,191,36,0.4); }
+.card-status.offline { background: var(--muted2); box-shadow: none; }
+
+.card-pin {
+    position: absolute; bottom: 12px; right: 14px;
+    background: none; border: none; cursor: pointer;
+    color: var(--muted2); font-size: 14px;
+    padding: 4px; transition: var(--transition);
+    opacity: 0;
+}
+
+.app-card:hover .card-pin { opacity: 1; }
+.card-pin:hover { color: var(--gold); }
+.card-pin.pinned { opacity: 1; color: var(--gold); }
+
+/* Coming soon cards */
+.app-card.coming-soon {
+    opacity: 0.5;
+}
+
+.app-card.coming-soon:hover { opacity: 0.7; transform: none; box-shadow: none; }
+.app-card.coming-soon .card-icon { background: var(--bg3); color: var(--muted); }
+.app-card.coming-soon:hover .card-icon { background: var(--bg3); color: var(--muted); }
+
+.badge {
+    font-size: 9px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; padding: 2px 7px; border-radius: 4px;
+    background: var(--bg4); color: var(--muted);
+}
+
+.badge.scoped { background: rgba(168,85,247,0.15); color: var(--purple); }
+.badge.rebuild { background: rgba(251,191,36,0.15); color: var(--yellow); }
+.badge.future { background: rgba(77,159,255,0.15); color: var(--blue); }
+
+/* ═══════════════════════════════════════════
+   RECENT ACTIVITY FEED
+   ═══════════════════════════════════════════ */
+.activity-section {
+    margin-top: 32px;
+}
+
+.activity-list {
+    background: linear-gradient(135deg, rgba(12,19,34,0.7) 0%, rgba(17,24,39,0.5) 100%);
+    border: 1px solid rgba(255,255,255,0.04);
+    border-radius: var(--card-radius);
+    overflow: hidden;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    position: relative;
+}
+
+.activity-list::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 50%, transparent 100%);
+    pointer-events: none; z-index: 1;
+}
+
+.activity-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px; transition: var(--transition);
+}
+
+.activity-row:last-child { border-bottom: none; }
+.activity-row:hover { background: var(--bg2); }
+
+.activity-channel {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; padding: 2px 8px; border-radius: 4px;
+    min-width: 60px; text-align: center;
+}
+
+.activity-channel.etsy { background: rgba(249,115,22,0.15); color: var(--etsy); }
+.activity-channel.wix { background: rgba(59,130,246,0.15); color: var(--wix); }
+.activity-channel.wayfair { background: rgba(168,85,247,0.15); color: var(--wayfair); }
+.activity-channel.tm { background: rgba(16,185,129,0.15); color: var(--tm); }
+.activity-channel.manual { background: rgba(212,168,83,0.15); color: var(--gold); }
+
+.activity-sku {
+    font-family: 'DM Mono', monospace;
+    color: var(--text2); min-width: 120px;
+}
+
+.activity-desc { color: var(--muted); flex: 1; }
+
+.activity-amount {
+    font-family: 'DM Mono', monospace;
+    font-weight: 600; color: var(--green);
+}
+
+.activity-time {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; color: var(--muted2);
+    min-width: 70px; text-align: right;
+}
+
+/* ═══════════════════════════════════════════
+   HEALTH PANEL (collapsible at bottom)
+   ═══════════════════════════════════════════ */
+.health-toggle {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    z-index: 90;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 8px;
+    background: rgba(7,12,24,0.9);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 11px; font-weight: 600; color: var(--muted);
+    transition: var(--transition);
+}
+
+.health-toggle:hover { color: var(--text2); background: rgba(12,19,34,0.95); }
+
+.health-panel {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    z-index: 95;
+    background: var(--bg1);
+    border-top: 1px solid var(--border);
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    max-height: 55vh; overflow-y: auto;
+}
+
+.health-panel.open {
+    transform: translateY(0);
+}
+
+.health-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--bg1); z-index: 2;
+}
+
+.health-header h3 {
+    font-size: 13px; font-weight: 700; color: var(--text);
+    display: flex; align-items: center; gap: 8px;
+}
+
+.health-actions { display: flex; gap: 8px; }
+
+.health-btn {
+    padding: 5px 12px; border-radius: 6px;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text2); font-size: 11px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
+    transition: var(--transition);
+}
+
+.health-btn:hover { background: var(--bg4); border-color: var(--border2); }
+.health-btn.close-btn { background: transparent; border: none; font-size: 18px; color: var(--muted); }
+
+.health-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px; padding: 20px 24px;
+}
+
+.health-box {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px;
+}
+
+.health-box h4 {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--muted); margin-bottom: 12px;
+}
+
+.health-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0; font-size: 12px;
+}
+
+.health-row .label { color: var(--text2); }
+.health-row .value { font-family: 'DM Mono', monospace; color: var(--muted); }
+.health-row .value.ok { color: var(--green); }
+.health-row .value.err { color: var(--red); }
+.health-row .value.warn { color: var(--yellow); }
+
+/* ═══════════════════════════════════════════
+   SETTINGS OVERLAY
+   ═══════════════════════════════════════════ */
+.overlay {
+    position: fixed; inset: 0; z-index: 200;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    display: none; align-items: center; justify-content: center;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.overlay.visible { display: flex; }
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.modal {
+    background: var(--bg2);
+    border: 1px solid var(--border2);
+    border-radius: 16px;
+    width: 500px; max-width: 90vw; max-height: 85vh;
+    overflow-y: auto;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+    animation: modalIn 0.25s ease-out;
+}
+
+@keyframes modalIn { from { transform: translateY(16px) scale(0.98); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+
+.modal-header {
+    padding: 20px 24px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+}
+
+.modal-header h2 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 22px; color: var(--gold);
+}
+
+.modal-close {
+    background: none; border: none; color: var(--muted);
+    font-size: 22px; cursor: pointer; padding: 4px;
+    transition: var(--transition);
+}
+
+.modal-close:hover { color: var(--text); }
+
+.modal-body { padding: 20px 24px 24px; }
+
+.form-group { margin-bottom: 16px; }
+
+.form-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.8px; color: var(--muted); margin-bottom: 6px;
+    display: block;
+}
+
+.form-input {
+    width: 100%; padding: 10px 14px;
+    background: var(--bg1); border: 1px solid var(--border);
+    border-radius: 8px; color: var(--text); font-size: 13px;
+    font-family: 'DM Mono', monospace; outline: none;
+    transition: var(--transition);
+}
+
+.form-input:focus { border-color: var(--gold3); box-shadow: 0 0 0 2px var(--gold-glow); }
+
+.form-hint {
+    font-size: 10px; color: var(--muted2); margin-top: 4px;
+}
+
+.form-section-title {
+    font-size: 12px; font-weight: 700; color: var(--text2);
+    margin: 20px 0 12px; padding-top: 16px;
+    border-top: 1px solid var(--border);
+}
+
+.btn-gold {
+    padding: 10px 24px; border-radius: 8px;
+    background: linear-gradient(135deg, var(--gold) 0%, var(--gold3) 100%);
+    border: none; color: var(--bg); font-size: 13px;
+    font-weight: 700; font-family: inherit; cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-gold:hover { box-shadow: 0 4px 16px rgba(212,168,83,0.3); }
+
+.btn-ghost {
+    padding: 10px 24px; border-radius: 8px;
+    background: transparent; border: 1px solid var(--border);
+    color: var(--text2); font-size: 13px; font-weight: 600;
+    font-family: inherit; cursor: pointer;
+    transition: var(--transition);
+}
+
+.btn-ghost:hover { background: var(--bg3); border-color: var(--border2); }
+
+/* ═══════════════════════════════════════════
+   SETUP WIZARD (first time)
+   ═══════════════════════════════════════════ */
+.setup-wizard {
+    text-align: center; padding: 60px 24px;
+}
+
+.setup-wizard .logo-big {
+    font-family: 'Instrument Serif', serif;
+    font-size: 36px; color: var(--gold); margin-bottom: 8px;
+}
+
+.setup-wizard .subtitle {
+    font-size: 14px; color: var(--muted); margin-bottom: 36px;
+}
+
+.setup-wizard .form-group { text-align: left; max-width: 400px; margin: 0 auto 16px; }
+
+/* ═══════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════ */
+@media (max-width: 900px) {
+    .topbar-center { display: none; }
+    .kpi-row { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .app-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+}
+
+@media (max-width: 600px) {
+    .main { padding: 16px; }
+    .topbar { padding: 0 16px; }
+    .kpi-row { grid-template-columns: 1fr 1fr; }
+    .app-grid { grid-template-columns: 1fr; }
+    .quick-actions { gap: 6px; padding: 10px 12px; }
+    .qa-btn { font-size: 11px; padding: 6px 10px; }
+    .greeting { display: none; }
+}
+
+/* ═══════════════════════════════════════════
+   UTILITY CLASSES
+   ═══════════════════════════════════════════ */
+.hidden { display: none !important; }
+.mt-2 { margin-top: 8px; }
+.mt-4 { margin-top: 16px; }
+.flex-gap { display: flex; gap: 8px; }
+</style>
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header>
-            <div class="logo">
-                <div class="logo-icon">🎯</div>
-                <div class="logo-text">
-                    <h1>CCD Command Center</h1>
-                    <p>Mission Control v2.0 • All Systems</p>
-                </div>
-            </div>
-            <div class="header-actions">
-                <button class="btn btn-secondary" onclick="refreshAll()">
-                    🔄 Refresh
-                </button>
-                <button class="btn btn-primary" onclick="openSettings()">
-                    ⚙️ Settings
-                </button>
-            </div>
-        </header>
 
-        <!-- System Health Banner -->
-        <div class="health-banner">
-            <div class="health-status">
-                <div class="health-icon" id="healthIcon">🟢</div>
-                <div class="health-text">
-                    <h2 id="healthTitle">System Status</h2>
-                    <p id="healthSubtitle">Checking system health...</p>
-                </div>
-            </div>
-            <div class="health-metrics">
-                <div class="health-metric">
-                    <div class="metric-label">Proxies</div>
-                    <div class="metric-value">
-                        <span class="status-dot" id="proxyDot"></span>
-                        <span id="proxyStatus">--</span>
-                    </div>
-                </div>
-                <div class="health-metric">
-                    <div class="metric-label">Files</div>
-                    <div class="metric-value">
-                        <span class="status-dot" id="filesDot"></span>
-                        <span id="filesStatus">--</span>
-                    </div>
-                </div>
-                <div class="health-metric">
-                    <div class="metric-label">Heartbeat</div>
-                    <div class="metric-value">
-                        <span class="status-dot" id="heartbeatDot"></span>
-                        <span id="heartbeatStatus">--</span>
-                    </div>
-                </div>
-                <div class="health-metric">
-                    <div class="metric-label">Last Update</div>
-                    <div class="metric-value">
-                        <span id="lastUpdateStatus">Just now</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Dashboard Grid -->
-        <div class="dashboard-grid">
-            <!-- Core Apps -->
-            <div class="section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span class="section-icon">📦</span>
-                        Core Applications
-                    </div>
-                </div>
-                <div class="app-grid" id="coreApps">
-                    <!-- Apps will be inserted here -->
-                </div>
-            </div>
-
-            <!-- AI Suite -->
-            <div class="section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span class="section-icon">🤖</span>
-                        AI Suite
-                    </div>
-                </div>
-                <div class="app-grid" id="aiApps">
-                    <!-- AI apps will be inserted here -->
-                </div>
-            </div>
-
-            <!-- Monitoring Tools -->
-            <div class="section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span class="section-icon">📊</span>
-                        Monitoring & Testing
-                    </div>
-                </div>
-                <div class="app-grid" id="monitoringApps">
-                    <!-- Monitoring apps will be inserted here -->
-                </div>
-            </div>
-
-            <!-- Quick Actions -->
-            <div class="section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span class="section-icon">⚡</span>
-                        Quick Actions
-                    </div>
-                </div>
-                <div class="quick-actions">
-                    <div class="quick-action-btn" onclick="syncAll()">
-                        <div class="quick-action-icon">🔄</div>
-                        <div class="quick-action-label">Sync All</div>
-                    </div>
-                    <div class="quick-action-btn" onclick="runHealthCheck()">
-                        <div class="quick-action-icon">🔍</div>
-                        <div class="quick-action-label">Health Check</div>
-                    </div>
-                    <div class="quick-action-btn" onclick="exportReport()">
-                        <div class="quick-action-icon">📊</div>
-                        <div class="quick-action-label">Export Report</div>
-                    </div>
-                    <div class="quick-action-btn" onclick="testEmail()">
-                        <div class="quick-action-icon">✉️</div>
-                        <div class="quick-action-label">Test Email</div>
-                    </div>
-                    <div class="quick-action-btn" onclick="backupData()">
-                        <div class="quick-action-icon">💾</div>
-                        <div class="quick-action-label">Backup Data</div>
-                    </div>
-                    <div class="quick-action-btn" onclick="viewLogs()">
-                        <div class="quick-action-icon">📋</div>
-                        <div class="quick-action-label">View Logs</div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- File Connections -->
-            <div class="section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span class="section-icon">📁</span>
-                        File Connections
-                    </div>
-                    <button class="btn btn-small btn-launch" onclick="connectAllFiles()">
-                        Connect All
-                    </button>
-                </div>
-                <div class="file-list">
-                    <div class="file-item">
-                        <div class="file-info">
-                            <div class="file-icon">📦</div>
-                            <div class="file-details">
-                                <h4>MASTER.json</h4>
-                                <p>Inventory database (818 items)</p>
-                            </div>
-                        </div>
-                        <div class="file-status">
-                            <span class="status-dot" id="masterDot"></span>
-                            <span id="masterStatus">Not connected</span>
-                        </div>
-                    </div>
-                    <div class="file-item">
-                        <div class="file-info">
-                            <div class="file-icon">⚙️</div>
-                            <div class="file-details">
-                                <h4>CONFIG.json</h4>
-                                <p>System configuration & settings</p>
-                            </div>
-                        </div>
-                        <div class="file-status">
-                            <span class="status-dot" id="configDot"></span>
-                            <span id="configStatus">Not connected</span>
-                        </div>
-                    </div>
-                    <div class="file-item">
-                        <div class="file-info">
-                            <div class="file-icon">🔄</div>
-                            <div class="file-details">
-                                <h4>SYNC.json</h4>
-                                <p>Orders & sync data (27 orders)</p>
-                            </div>
-                        </div>
-                        <div class="file-status">
-                            <span class="status-dot" id="syncDot"></span>
-                            <span id="syncStatus">Not connected</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Activity Feed -->
-            <div class="section">
-                <div class="section-header">
-                    <div class="section-title">
-                        <span class="section-icon">📝</span>
-                        Recent Activity
-                    </div>
-                </div>
-                <div class="activity-feed" id="activityFeed">
-                    <div class="activity-item">
-                        <div class="activity-icon">ℹ️</div>
-                        <div class="activity-content">
-                            <div class="activity-text">Command Center initialized</div>
-                            <div class="activity-time">Just now</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+<!-- ═════════════════════════════════════════
+     TOP BAR
+     ═════════════════════════════════════════ -->
+<div class="topbar">
+    <div class="topbar-left">
+        <div class="brand">
+            <div class="brand-icon">✦</div>
+            Country Charm Decor
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.0</span>
         </div>
     </div>
 
-    <!-- Settings Modal -->
-    <div class="modal" id="settingsModal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 class="modal-title">⚙️ Settings</h2>
-                <button class="modal-close" onclick="closeSettings()">✕</button>
+    <div class="topbar-center">
+        <div class="status-chip" id="statusDb" title="Database">
+            <div class="status-dot" id="dotDb"></div>
+            <span>Database</span>
+        </div>
+        <div class="status-chip" id="statusProxies" title="Proxies">
+            <div class="status-dot" id="dotProxies"></div>
+            <span>Proxies</span>
+        </div>
+        <div class="status-chip" id="statusSync" title="Sync Hub">
+            <div class="status-dot" id="dotSync"></div>
+            <span>Sync</span>
+        </div>
+    </div>
+
+    <div class="topbar-right">
+        <span class="greeting" id="greeting"></span>
+        <span class="datetime" id="datetime"></span>
+        <button class="topbar-btn" onclick="openSettings()" title="Settings">⚙</button>
+    </div>
+</div>
+
+<!-- Alert Banner -->
+<div class="alert-banner" id="alertBanner">
+    <span>⚠</span>
+    <span id="alertText">Critical issues detected</span>
+</div>
+
+<!-- ═════════════════════════════════════════
+     MAIN CONTENT
+     ═════════════════════════════════════════ -->
+<div class="main" id="mainContent">
+
+    <!-- Setup Wizard (shown if no Supabase connection) -->
+    <div class="setup-wizard" id="setupWizard" style="display:none;">
+        <div class="logo-big">✦ Country Charm Decor</div>
+        <div class="subtitle">Command Center — Connect to get started</div>
+        <div class="form-group">
+            <label class="form-label">Supabase URL</label>
+            <input type="text" class="form-input" id="setupUrl" placeholder="https://your-project.supabase.co">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Supabase Anon Key</label>
+            <input type="text" class="form-input" id="setupKey" placeholder="eyJhbGciOi...">
+        </div>
+        <div class="form-group">
+            <label class="form-label">Your Name</label>
+            <input type="text" class="form-input" id="setupName" placeholder="Paul" style="font-family:'Plus Jakarta Sans',sans-serif;">
+        </div>
+        <div class="mt-4">
+            <button class="btn-gold" onclick="saveSetup()">Connect & Launch</button>
+        </div>
+    </div>
+
+    <!-- Dashboard (shown when connected) -->
+    <div id="dashboard" style="display:none;">
+
+        <!-- ZONE 2: HERO KPIs -->
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <span style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--muted);">Live Metrics</span>
+            <span id="kpiLastRefreshed" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted2);"></span>
+        </div>
+        <div class="kpi-row" id="kpiRow">
+            <div class="kpi-card" onclick="openTool('CCD-FINANCIAL-REPORTING.html')">
+                <div class="kpi-label">Today's Revenue</div>
+                <div class="kpi-value" id="kpiRevenue">$—</div>
+                <div class="kpi-sub" id="kpiRevenueOrders">— orders</div>
+                <canvas id="sparkRevenue"></canvas>
             </div>
-            <div class="form-group">
-                <label class="form-label">Auto-Refresh Interval</label>
-                <select class="form-input" id="refreshInterval">
-                    <option value="30">30 seconds</option>
-                    <option value="60" selected>1 minute</option>
-                    <option value="120">2 minutes</option>
-                    <option value="300">5 minutes</option>
-                    <option value="0">Disabled</option>
-                </select>
+            <div class="kpi-card" onclick="openTool('CCD-FINANCIAL-REPORTING.html')">
+                <div class="kpi-label">This Week</div>
+                <div class="kpi-value" id="kpiWeek">$—</div>
+                <div class="kpi-sub" id="kpiWeekOrders">— orders</div>
             </div>
-            <button class="btn btn-primary" onclick="saveSettings()" style="width: 100%; margin-top: 10px;">
-                💾 Save Settings
+            <div class="kpi-card" onclick="openTool('CCD-FINANCIAL-REPORTING.html')">
+                <div class="kpi-label">This Month</div>
+                <div class="kpi-value" id="kpiMonth">$—</div>
+                <div class="kpi-sub" id="kpiMonthOrders">— orders</div>
+            </div>
+            <div class="kpi-card" onclick="openTool('CCD-FINANCIAL-REPORTING.html')">
+                <div class="kpi-label">This Year</div>
+                <div class="kpi-value" id="kpiYear">$—</div>
+                <div class="kpi-sub" id="kpiYearOrders">— orders</div>
+            </div>
+            <div class="kpi-card" onclick="openTool('CCD-FINANCIAL-REPORTING.html')">
+                <div class="kpi-label">Sync Queue</div>
+                <div class="kpi-value" id="kpiQueue">—</div>
+                <div class="kpi-sub">pending pushes</div>
+            </div>
+            <div class="kpi-card" onclick="openTool('CCD-INVENTORY-SYSTEM.html')">
+                <div class="kpi-label">Active SKUs</div>
+                <div class="kpi-value" id="kpiSkus">—</div>
+                <div class="kpi-sub" id="kpiSkusSub">in stock</div>
+            </div>
+            <div class="kpi-card" onclick="openTool('CCD-FINANCIAL-REPORTING.html')">
+                <div class="kpi-label">Inventory Value</div>
+                <div class="kpi-value" id="kpiInvValue">$—</div>
+                <div class="kpi-sub">wholesale cost</div>
+            </div>
+            <div class="kpi-card" id="kpiAlertCard">
+                <div class="kpi-label">Alerts</div>
+                <div class="kpi-value" id="kpiAlerts">—</div>
+                <div class="kpi-sub" id="kpiAlertsSub">issues detected</div>
+            </div>
+        </div>
+
+        <!-- QUICK ACTIONS -->
+        <div class="quick-actions">
+            <a class="qa-btn" href="#" onclick="openTool('CCD-SYNC-HUB.html');return false;">
+                <span class="icon">📥</span> Pull Orders
+            </a>
+            <a class="qa-btn" href="#" onclick="openTool('CCD-INVENTORY-SYSTEM.html');return false;">
+                <span class="icon">📄</span> New Invoice
+            </a>
+            <a class="qa-btn" href="#" onclick="openTool('CCD-FINANCIAL-REPORTING.html#pnl');return false;">
+                <span class="icon">📊</span> View P&L
+            </a>
+            <a class="qa-btn" href="#" onclick="openTool('CCD-FINANCIAL-REPORTING.html#inventory');return false;">
+                <span class="icon">📦</span> Check Inventory
+            </a>
+            <a class="qa-btn" href="#" onclick="openTool('CCD-FINANCIAL-REPORTING.html#scenarios');return false;">
+                <span class="icon">🧪</span> Run Scenarios
+            </a>
+        </div>
+
+        <!-- FAVORITES -->
+        <div class="favorites-section" id="favoritesSection">
+            <div class="section-label">★ Pinned Tools</div>
+            <div class="favorites-grid" id="favoritesGrid"></div>
+        </div>
+
+        <!-- SEARCH & FILTER -->
+        <div class="search-bar">
+            <div class="search-input-wrap">
+                <span class="icon">🔍</span>
+                <input type="text" class="search-input" id="searchInput" placeholder="Search tools..." oninput="filterApps()">
+            </div>
+            <div class="filter-pills" id="filterPills"></div>
+            <button class="toggle-coming-soon" id="toggleComingSoon" onclick="toggleComingSoon()">
+                <span id="csToggleIcon">◻</span> Show Coming Soon
             </button>
         </div>
+
+        <!-- APP GRID (populated by JS) -->
+        <div id="appGridContainer"></div>
+
+        <!-- RECENT ACTIVITY -->
+        <div class="activity-section" id="activitySection">
+            <div class="section-label">Recent Activity</div>
+            <div class="activity-list" id="activityList">
+                <div class="activity-row" style="justify-content:center;color:var(--muted);padding:20px;">
+                    Loading recent activity...
+                </div>
+            </div>
+        </div>
+
     </div>
+</div>
 
-    <script>
-        // ===== APP REGISTRY =====
-        const APPS = {
-            // Core Apps
-            inventory: {
-                name: 'CCD Inventory System',
-                version: 'v26.3',
-                phase: 'Phase 3',
-                file: 'CCD-INVENTORY-SYSTEM.html',
-                icon: '📦',
-                color: '#3b82f6',
-                category: 'core',
-                description: 'Multi-User Sync • Description Tracking • Shipping Settings',
-                features: ['Channel Delegation', 'Order Feedback', 'Bulk Operations']
-            },
-            channelManager: {
-                name: 'CCD Channel Manager',
-                version: 'v3.4.0',
-                file: 'CCD-CHANNEL-MANAGER.html',
-                icon: '🏪',
-                color: '#10b981',
-                category: 'core',
-                description: 'Multi-Channel Publishing & Management',
-                features: ['Etsy', 'Wix', 'Wayfair', 'Feature Flags']
-            },
-            syncHub: {
-                name: 'Sync Hub',
-                version: 'v1.5.1',
-                file: 'CCD-SYNC-HUB.html',
-                icon: '🔄',
-                color: '#06b6d4',
-                category: 'core',
-                description: 'Order synchronization & processing',
-                features: ['Order Sync', 'Queue Processing', 'Email Notifications']
-            },
-            financialDashboard: {
-                name: 'Financial Dashboard',
-                version: 'v1.2.1',
-                file: 'CCD-FINANCIAL-DASHBOARD.html',
-                icon: '💰',
-                color: '#22c55e',
-                category: 'core',
-                description: 'Revenue tracking & financial analytics',
-                features: ['Revenue Reports', 'Profit Analysis', 'Export Excel/PDF']
-            },
-            // AI Suite
-            aiContentStudio: {
-                name: 'AI Content Studio',
-                version: 'v3.6',
-                file: 'AI-Content-Studio.html',
-                icon: '🤖',
-                color: '#8b5cf6',
-                category: 'ai',
-                description: 'AI content with pricing intelligence & SEO',
-                features: ['6 Platforms', '5-Tier Keywords', 'Brand Guidelines', 'Pricing Strategy']
-            },
-            aiPricing: {
-                name: 'AI Pricing Advisor',
-                version: 'v3.0',
-                file: 'AI-Pricing-Advisor.html',
-                icon: '💰',
-                color: '#f59e0b',
-                category: 'ai',
-                description: 'AI-powered pricing with competitor comparison',
-                features: ['Market Positioning', 'Competitor Tracking', 'Margin Optimization'],
-                requiresConfig: false,
-                hasLocalFile: true
-            },
-            // Monitoring
-            proxyMonitor: {
-                name: 'Proxy Monitor',
-                version: 'v1.1.0',
-                file: 'CCD-PROXY-DASHBOARD.html',
-                icon: '📊',
-                color: '#06b6d4',
-                category: 'monitoring',
-                description: 'Real-time proxy health & diagnostics',
-                features: ['Health Checks', 'Performance Metrics', 'Auto-refresh']
-            },
-            testSuite: {
-                name: 'System Test Suite',
-                version: 'v2.0',
-                file: 'CCD-SYSTEM-TEST-SUITE.html',
-                icon: '🧪',
-                color: '#ec4899',
-                category: 'monitoring',
-                description: 'Comprehensive system diagnostics',
-                features: ['28 Tests', 'Data Validation', 'Export Reports']
-            },
-            activityLog: {
-                name: 'Activity Log',
-                version: 'v1.1',
-                file: 'CCD-ACTIVITY-LOG.html',
-                icon: '📝',
-                color: '#f59e0b',
-                category: 'monitoring',
-                description: 'System activity & event tracking',
-                features: ['Event Logging', 'Filtering', 'Search', 'Export']
-            }
-        };
+<!-- ═════════════════════════════════════════
+     HEALTH PANEL TOGGLE
+     ═════════════════════════════════════════ -->
+<div class="health-toggle" id="healthToggle" onclick="toggleHealth()" style="display:none;">
+    <span>▲</span> System Health
+    <div class="status-dot ok" id="healthDotOverall" style="margin-left:4px;"></div>
+</div>
 
-        // ===== STATE =====
-        let state = {
-            settings: {
-                refreshInterval: 60
-            },
-            files: {
-                master: { connected: false, version: null },
-                config: { connected: false, version: null },
-                sync: { connected: false, version: null }
-            },
-            proxies: {
-                healthy: 0,
-                total: 5,
-                status: 'unknown'
-            },
-            heartbeat: {
-                status: 'unknown',
-                age: null
-            },
-            lastUpdate: new Date(),
-            activities: []
-        };
+<!-- HEALTH PANEL -->
+<div class="health-panel" id="healthPanel">
+    <div class="health-header">
+        <h3>🖥 System Health</h3>
+        <div class="health-actions">
+            <button class="health-btn" onclick="runHealthChecks()">↻ Refresh</button>
+            <button class="health-btn close-btn" onclick="toggleHealth()">✕</button>
+        </div>
+    </div>
+    <div class="health-grid">
+        <!-- Database -->
+        <div class="health-box">
+            <h4>Database</h4>
+            <div class="health-row">
+                <span class="label">Connection</span>
+                <span class="value" id="hDb">checking...</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Items</span>
+                <span class="value" id="hItems">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Sales Records</span>
+                <span class="value" id="hSales">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Sync Queue</span>
+                <span class="value" id="hQueue">—</span>
+            </div>
+        </div>
 
-        let refreshTimer = null;
-
-        // ===== ACTIVITY LOG INTEGRATION =====
-        // Shared logging to MASTER.json _activityLog
-        let masterJsonData = null;
-        
-        /**
-         * Log to MASTER.json Activity Log (persistent across all apps)
-         * @param {string} category - order|sync|inventory|payment|system|error
-         * @param {string} action - Specific action
-         * @param {string} summary - Human-readable description
-         * @param {object} details - Additional data
-         */
-        async function logToMasterActivityLog(category, action, summary, details = {}) {
-            try {
-                const masterHandle = await getFileHandle('masterFileHandle');
-                if (!masterHandle) {
-                    console.log('[Activity] No MASTER file connected');
-                    return null;
-                }
-                
-                // Read current MASTER file
-                const file = await masterHandle.getFile();
-                const text = await file.text();
-                masterJsonData = JSON.parse(text);
-                
-                // Initialize _activityLog if needed
-                if (!masterJsonData._activityLog) {
-                    masterJsonData._activityLog = [];
-                }
-                
-                // Create entry
-                const entry = {
-                    id: `act_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
-                    timestamp: new Date().toISOString(),
-                    category: category,
-                    action: action,
-                    channel: 'system',
-                    summary: summary,
-                    details: details,
-                    device: localStorage.getItem('ccd_hostname') || 'CommandCenter',
-                    user: localStorage.getItem('ccdUsername') || 'Unknown'
-                };
-                
-                // Add to beginning of array
-                masterJsonData._activityLog.unshift(entry);
-                
-                // Keep last 5000 entries
-                if (masterJsonData._activityLog.length > 5000) {
-                    masterJsonData._activityLog = masterJsonData._activityLog.slice(0, 5000);
-                }
-                
-                // Save back to file
-                const writable = await masterHandle.createWritable();
-                await writable.write(JSON.stringify(masterJsonData, null, 2));
-                await writable.close();
-                
-                console.log(`📋 [Activity] ${category}/${action}: ${summary}`);
-                return entry;
-                
-            } catch (error) {
-                console.log('[Activity] Failed to log:', error.message);
-                return null;
-            }
-        }
-        
-        // Make globally accessible
-        window.logToMasterActivityLog = logToMasterActivityLog;
-
-        // ===== INITIALIZATION =====
-        function init() {
-            console.log('[Command Center] Initializing v2.0...');
-            
-            // Load settings
-            loadSettings();
-            
-            // Check file connections
-            checkFileConnections();
-            
-            // Render UI
-            renderApps();
-            
-            // Start monitoring
-            startMonitoring();
-            
-            // Log activity
-            logActivity('info', 'Command Center v2.0 initialized');
-            
-            console.log('[Command Center] ✅ Ready');
-        }
-
-        // ===== SETTINGS =====
-        function loadSettings() {
-            const saved = localStorage.getItem('ccd_command_center_settings');
-            if (saved) {
-                state.settings = { ...state.settings, ...JSON.parse(saved) };
-            }
-            
-            // Apply to UI if modal is open
-            if (document.getElementById('settingsModal').classList.contains('active')) {
-                document.getElementById('refreshInterval').value = state.settings.refreshInterval || 60;
-            }
-        }
-
-        function saveSettings() {
-            state.settings.refreshInterval = parseInt(document.getElementById('refreshInterval').value) || 60;
-            
-            localStorage.setItem('ccd_command_center_settings', JSON.stringify(state.settings));
-            
-            logActivity('success', 'Settings saved');
-            closeSettings();
-            
-            // Restart monitoring with new interval
-            startMonitoring();
-            
-            // Re-render apps to update URLs
-            renderApps();
-        }
-
-        function openSettings() {
-            loadSettings(); // Load current values
-            document.getElementById('settingsModal').classList.add('active');
-        }
-
-        function closeSettings() {
-            document.getElementById('settingsModal').classList.remove('active');
-        }
-
-        // ===== RENDER APPS =====
-        function renderApps() {
-            // Core Apps
-            const coreContainer = document.getElementById('coreApps');
-            coreContainer.innerHTML = '';
-            
-            // AI Apps
-            const aiContainer = document.getElementById('aiApps');
-            aiContainer.innerHTML = '';
-            
-            // Monitoring Apps
-            const monitoringContainer = document.getElementById('monitoringApps');
-            monitoringContainer.innerHTML = '';
-            
-            Object.entries(APPS).forEach(([key, app]) => {
-                const card = createAppCard(key, app);
-                
-                if (app.category === 'core') {
-                    coreContainer.appendChild(card);
-                } else if (app.category === 'ai') {
-                    aiContainer.appendChild(card);
-                } else if (app.category === 'monitoring') {
-                    monitoringContainer.appendChild(card);
-                }
-            });
-        }
-
-        function createAppCard(key, app) {
-            const card = document.createElement('div');
-            card.className = 'app-card';
-            card.style.setProperty('--app-color', app.color);
-            
-            // All apps now have files, so they're all ready
-            const isReady = app.file !== null;
-            
-            const statusIcon = isReady ? '🟢' : '⚪';
-            const statusText = isReady ? 'Ready' : 'File not found';
-            
-            card.innerHTML = `
-                <div class="app-icon">${app.icon}</div>
-                <div class="app-name">${app.name}</div>
-                <div class="app-version">${app.version}${app.phase ? ' • ' + app.phase : ''}</div>
-                <div class="app-status">
-                    <span>${statusIcon}</span>
-                    <span>${statusText}</span>
-                </div>
-                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 12px;">
-                    ${app.description}
-                </div>
-                <div class="app-actions">
-                    <button class="btn-small btn-launch" onclick="launchApp('${key}')" ${!isReady ? 'disabled' : ''}>
-                        🚀 Launch
-                    </button>
-                </div>
-            `;
-            
-            return card;
-        }
-
-        function launchApp(key) {
-            const app = APPS[key];
-            
-            if (!app.file) {
-                alert(`${app.name} file not found. Please ensure ${app.name} is in the same folder.`);
-                return;
-            }
-            
-            // Open in new tab
-            window.open(app.file, '_blank');
-            
-            logActivity('info', `Launched ${app.name}`);
-        }
-
-        // ===== MONITORING =====
-        function startMonitoring() {
-            // Clear existing timer
-            if (refreshTimer) {
-                clearInterval(refreshTimer);
-            }
-            
-            // Initial check
-            checkSystemHealth();
-            
-            // Start interval if enabled
-            if (state.settings.refreshInterval > 0) {
-                refreshTimer = setInterval(checkSystemHealth, state.settings.refreshInterval * 1000);
-                console.log(`[Monitor] Auto-refresh enabled (${state.settings.refreshInterval}s)`);
-            }
-        }
-
-        async function checkSystemHealth() {
-            console.log('[Monitor] Checking system health...');
-            
-            // Update last update time
-            state.lastUpdate = new Date();
-            document.getElementById('lastUpdateStatus').textContent = 'Just now';
-            
-            // Check file connections
-            await checkFileConnectionStatus();
-            
-            // Check proxies if CONFIG is connected
-            await checkProxyHealth();
-            
-            // Check heartbeat
-            await checkHeartbeat();
-            
-            // Update banner with real data
-            updateHealthBanner();
-        }
-        
-        /**
-         * Check if files are actually connected in IndexedDB
-         */
-        async function checkFileConnectionStatus() {
-            try {
-                const masterHandle = await getFileHandle('masterFileHandle');
-                const configHandle = await getFileHandle('configFileHandle');
-                const syncHandle = await getFileHandle('syncFileHandle');
-                
-                state.files.master.connected = !!masterHandle;
-                state.files.config.connected = !!configHandle;
-                state.files.sync.connected = !!syncHandle;
-                
-                console.log('[Monitor] Files:', state.files);
-            } catch (error) {
-                console.error('[Monitor] Error checking files:', error);
-                state.files.master.connected = false;
-                state.files.config.connected = false;
-                state.files.sync.connected = false;
-            }
-        }
-        
-        /**
-         * Check proxy health by reading CONFIG and pinging URLs
-         */
-        async function checkProxyHealth() {
-            try {
-                if (!state.files.config.connected) {
-                    state.proxies.status = 'unknown';
-                    state.proxies.healthy = 0;
-                    return;
-                }
-                
-                const configHandle = await getFileHandle('configFileHandle');
-                const file = await configHandle.getFile();
-                const text = await file.text();
-                const config = JSON.parse(text);
-                
-                if (!config.proxies) {
-                    state.proxies.status = 'no_config';
-                    state.proxies.healthy = 0;
-                    return;
-                }
-                
-                // Count proxies
-                const proxyNames = Object.keys(config.proxies);
-                state.proxies.total = proxyNames.length;
-                
-                // Try to ping each proxy (with timeout)
-                let healthy = 0;
-                for (const name of proxyNames) {
-                    const proxy = config.proxies[name];
-                    if (proxy.url) {
-                        try {
-                            const controller = new AbortController();
-                            const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
-                            
-                            const response = await fetch(proxy.url, { 
-                                method: 'GET',
-                                signal: controller.signal
-                            });
-                            
-                            clearTimeout(timeoutId);
-                            
-                            if (response.ok || response.status === 405) { // 405 = Method not allowed but server is alive
-                                healthy++;
-                            }
-                        } catch (e) {
-                            // Proxy not responding or timeout
-                            console.log(`[Monitor] Proxy ${name} not responding`);
-                        }
-                    }
-                }
-                
-                state.proxies.healthy = healthy;
-                state.proxies.status = healthy === state.proxies.total ? 'healthy' :
-                                       healthy > 0 ? 'partial' : 'down';
-                
-                console.log('[Monitor] Proxies:', state.proxies);
-                
-            } catch (error) {
-                console.error('[Monitor] Error checking proxies:', error);
-                state.proxies.status = 'error';
-                state.proxies.healthy = 0;
-            }
-        }
-        
-        /**
-         * Check heartbeat by reading MASTER file timestamp
-         */
-        async function checkHeartbeat() {
-            try {
-                if (!state.files.master.connected) {
-                    state.heartbeat = { status: 'unknown', age: null };
-                    return;
-                }
-                
-                const masterHandle = await getFileHandle('masterFileHandle');
-                const file = await masterHandle.getFile();
-                const lastModified = file.lastModified;
-                const now = Date.now();
-                const ageMinutes = Math.floor((now - lastModified) / (1000 * 60));
-                
-                // Heartbeat is "fresh" if < 60 minutes old
-                const status = ageMinutes < 60 ? 'fresh' :
-                              ageMinutes < 1440 ? 'stale' : 'very_stale'; // 1440 min = 24 hours
-                
-                state.heartbeat = { status, age: ageMinutes };
-                
-                console.log('[Monitor] Heartbeat:', state.heartbeat);
-                
-            } catch (error) {
-                console.error('[Monitor] Error checking heartbeat:', error);
-                state.heartbeat = { status: 'error', age: null };
-            }
-        }
-
-        function updateHealthBanner() {
-            const filesConnected = state.files.master.connected && 
-                                  state.files.config.connected && 
-                                  state.files.sync.connected;
-            
-            const allHealthy = filesConnected && 
-                             state.proxies.status === 'healthy' && 
-                             state.heartbeat?.status === 'fresh';
-            
-            // Overall status
-            document.getElementById('healthIcon').textContent = allHealthy ? '🟢' : 
-                                                               filesConnected ? '🟡' : '⚪';
-            document.getElementById('healthTitle').textContent = allHealthy ? 'All Systems Operational' : 
-                                                                filesConnected ? 'Partial Connectivity' : 
-                                                                'Ready to Connect';
-            document.getElementById('healthSubtitle').textContent = allHealthy ? 'All components running normally' : 
-                                                                   filesConnected ? 'Some services may be unavailable' :
-                                                                   'Connect files to begin monitoring';
-            
-            // Proxies status
-            const proxyDot = document.getElementById('proxyDot');
-            const proxyStatus = document.getElementById('proxyStatus');
-            if (state.proxies.status === 'unknown') {
-                proxyDot.className = 'status-dot warning';
-                proxyStatus.textContent = 'Unknown';
-            } else if (state.proxies.status === 'healthy') {
-                proxyDot.className = 'status-dot healthy';
-                proxyStatus.textContent = `${state.proxies.healthy}/${state.proxies.total} Healthy`;
-            } else if (state.proxies.status === 'partial') {
-                proxyDot.className = 'status-dot warning';
-                proxyStatus.textContent = `${state.proxies.healthy}/${state.proxies.total} Healthy`;
-            } else {
-                proxyDot.className = 'status-dot error';
-                proxyStatus.textContent = 'All Down';
-            }
-            
-            // Files status
-            const filesDot = document.getElementById('filesDot');
-            const filesStatus = document.getElementById('filesStatus');
-            if (filesConnected) {
-                filesDot.className = 'status-dot healthy';
-                filesStatus.textContent = 'Connected';
-            } else {
-                filesDot.className = 'status-dot warning';
-                filesStatus.textContent = 'Not connected';
-            }
-            
-            // Heartbeat status
-            const heartbeatDot = document.getElementById('heartbeatDot');
-            const heartbeatStatus = document.getElementById('heartbeatStatus');
-            if (!state.heartbeat || state.heartbeat.status === 'unknown') {
-                heartbeatDot.className = 'status-dot warning';
-                heartbeatStatus.textContent = 'Unknown';
-            } else if (state.heartbeat.status === 'fresh') {
-                heartbeatDot.className = 'status-dot healthy';
-                heartbeatStatus.textContent = `${state.heartbeat.age}m ago`;
-            } else if (state.heartbeat.status === 'stale') {
-                heartbeatDot.className = 'status-dot warning';
-                const hours = Math.floor(state.heartbeat.age / 60);
-                heartbeatStatus.textContent = `${hours}h ago`;
-            } else {
-                heartbeatDot.className = 'status-dot error';
-                const days = Math.floor(state.heartbeat.age / 1440);
-                heartbeatStatus.textContent = `${days}d ago`;
-            }
-        }
-
-        // ===== QUICK ACTIONS =====
-        
-        /**
-         * Sync All - Open Sync Hub with auto-sync
-         */
-        function syncAll() {
-            logActivity('info', '🔄 Opening Sync Hub for channel sync');
-            
-            // Check if Sync Hub file exists
-            const syncHubApp = APPS.syncHub;
-            if (syncHubApp && syncHubApp.file) {
-                window.open(syncHubApp.file, '_blank');
-                logActivity('success', '✅ Sync Hub opened - proceed with sync there');
-            } else {
-                logActivity('error', '❌ Sync Hub not found');
-                alert('Sync Hub file not found. Please ensure CCD-SYNC-HUB.html is in the same folder.');
-            }
-        }
-
-        /**
-         * Run Health Check - Open Test Suite
-         */
-        function runHealthCheck() {
-            logActivity('info', '🔍 Health check started');
-            launchApp('testSuite');
-        }
-
-        /**
-         * Export Report - Generate and download system report
-         */
-        async function exportReport() {
-            logActivity('info', '📊 Generating system report...');
-            
-            try {
-                // Gather system data
-                const report = {
-                    timestamp: new Date().toISOString(),
-                    version: 'v2.0',
-                    
-                    // System Health
-                    systemHealth: {
-                        overall: state.health.overall,
-                        proxyHealth: state.health.proxyHealth,
-                        filesConnected: state.health.filesConnected,
-                        lastCheck: state.lastUpdate.toISOString()
-                    },
-                    
-                    // Apps Status
-                    apps: Object.keys(APPS).map(key => ({
-                        name: APPS[key].name,
-                        version: APPS[key].version,
-                        file: APPS[key].file,
-                        category: APPS[key].category
-                    })),
-                    
-                    // File Connections
-                    fileConnections: {
-                        master: document.getElementById('masterStatus').textContent,
-                        config: document.getElementById('configStatus').textContent,
-                        sync: document.getElementById('syncStatus').textContent
-                    },
-                    
-                    // Recent Activity
-                    recentActivity: state.activities.slice(0, 20)
-                };
-                
-                // Generate CSV format
-                let csv = 'CCD COMMAND CENTER - SYSTEM REPORT\n';
-                csv += `Generated: ${new Date().toLocaleString()}\n\n`;
-                
-                csv += 'SYSTEM HEALTH\n';
-                csv += `Overall Status,${report.systemHealth.overall}\n`;
-                csv += `Proxy Health,${report.systemHealth.proxyHealth}\n`;
-                csv += `Files Connected,${report.systemHealth.filesConnected}\n`;
-                csv += `Last Check,${new Date(report.systemHealth.lastCheck).toLocaleString()}\n\n`;
-                
-                csv += 'FILE CONNECTIONS\n';
-                csv += `MASTER.json,${report.fileConnections.master}\n`;
-                csv += `CONFIG.json,${report.fileConnections.config}\n`;
-                csv += `SYNC.json,${report.fileConnections.sync}\n\n`;
-                
-                csv += 'INSTALLED APPS\n';
-                csv += 'Name,Version,File,Category\n';
-                report.apps.forEach(app => {
-                    csv += `${app.name},${app.version},${app.file},${app.category}\n`;
-                });
-                
-                csv += '\nRECENT ACTIVITY\n';
-                csv += 'Time,Type,Message\n';
-                report.recentActivity.forEach(activity => {
-                    const time = new Date(activity.timestamp).toLocaleString();
-                    csv += `${time},${activity.type},${activity.message}\n`;
-                });
-                
-                // Download CSV
-                const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = `CCD-System-Report-${new Date().toISOString().split('T')[0]}.csv`;
-                link.click();
-                URL.revokeObjectURL(url);
-                
-                logActivity('success', '✅ System report downloaded');
-                
-            } catch (error) {
-                console.error('Export error:', error);
-                logActivity('error', `❌ Export failed: ${error.message}`);
-                alert('Failed to export report: ' + error.message);
-            }
-        }
-
-        /**
-         * Test Email - Send test notification via Sync Hub
-         */
-        async function testEmail() {
-            logActivity('info', '✉️ Testing email system...');
-            
-            try {
-                // Check if CONFIG is connected
-                const configHandle = await getFileHandle('configFileHandle');
-                if (!configHandle) {
-                    throw new Error('CONFIG.json not connected. Please connect files first.');
-                }
-                
-                // Read CONFIG to get Sync Hub URL
-                const configFile = await configHandle.getFile();
-                const configText = await configFile.text();
-                const config = JSON.parse(configText);
-                
-                const syncHubUrl = config?.proxies?.syncHub?.url;
-                if (!syncHubUrl) {
-                    throw new Error('Sync Hub URL not found in CONFIG.json');
-                }
-                
-                // Send test email via Sync Hub
-                const response = await fetch(syncHubUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'sendTestEmail',
-                        apiKey: config?.proxies?.syncHub?.apiKey || '',
-                        testMessage: 'Test email from CCD Command Center v2.0'
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-                }
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    logActivity('success', '✅ Test email sent successfully');
-                    alert('✅ Test email sent!\n\nCheck your inbox for the test message.');
-                } else {
-                    throw new Error(result.error || 'Unknown error');
-                }
-                
-            } catch (error) {
-                console.error('Email test error:', error);
-                logActivity('error', `❌ Email test failed: ${error.message}`);
-                alert('Email test failed:\n\n' + error.message + '\n\nNote: This requires Sync Hub proxy to be configured with email notifications.');
-            }
-        }
-
-        /**
-         * Backup Data - Download all connected JSON files
-         */
-        async function backupData() {
-            logActivity('info', '💾 Starting data backup...');
-            
-            try {
-                let downloaded = 0;
-                
-                // Backup MASTER.json
-                try {
-                    const masterHandle = await getFileHandle('masterFileHandle');
-                    if (masterHandle) {
-                        const file = await masterHandle.getFile();
-                        const content = await file.text();
-                        downloadFile(content, `MASTER-backup-${getDateStamp()}.json`, 'application/json');
-                        downloaded++;
-                        logActivity('success', '✅ MASTER.json backed up');
-                    }
-                } catch (e) {
-                    console.log('MASTER.json not available:', e);
-                }
-                
-                // Backup CONFIG.json
-                try {
-                    const configHandle = await getFileHandle('configFileHandle');
-                    if (configHandle) {
-                        const file = await configHandle.getFile();
-                        const content = await file.text();
-                        downloadFile(content, `CONFIG-backup-${getDateStamp()}.json`, 'application/json');
-                        downloaded++;
-                        logActivity('success', '✅ CONFIG.json backed up');
-                    }
-                } catch (e) {
-                    console.log('CONFIG.json not available:', e);
-                }
-                
-                // Backup SYNC.json
-                try {
-                    const syncHandle = await getFileHandle('syncFileHandle');
-                    if (syncHandle) {
-                        const file = await syncHandle.getFile();
-                        const content = await file.text();
-                        downloadFile(content, `SYNC-backup-${getDateStamp()}.json`, 'application/json');
-                        downloaded++;
-                        logActivity('success', '✅ SYNC.json backed up');
-                    }
-                } catch (e) {
-                    console.log('SYNC.json not available:', e);
-                }
-                
-                if (downloaded === 0) {
-                    throw new Error('No files connected. Please connect files first using "Connect All" button.');
-                }
-                
-                logActivity('success', `🎉 Backup complete! ${downloaded} file(s) downloaded`);
-                
-                // Log to MASTER Activity Log
-                await logToMasterActivityLog('system', 'backup_complete', 
-                    `Data backup completed (${downloaded} files)`,
-                    { filesDownloaded: downloaded }
-                );
-                
-                alert(`✅ Backup Complete!\n\n${downloaded} file(s) have been downloaded to your Downloads folder.`);
-                
-            } catch (error) {
-                console.error('Backup error:', error);
-                logActivity('error', `❌ Backup failed: ${error.message}`);
-                alert('Backup failed:\n\n' + error.message);
-            }
-        }
-        
-        /**
-         * Helper: Download file
-         */
-        function downloadFile(content, filename, mimeType) {
-            const blob = new Blob([content], { type: mimeType });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = filename;
-            link.click();
-            URL.revokeObjectURL(url);
-        }
-        
-        /**
-         * Helper: Get date stamp for filenames
-         */
-        function getDateStamp() {
-            const now = new Date();
-            return now.toISOString().split('T')[0]; // YYYY-MM-DD
-        }
-
-        /**
-         * View Logs - Open Activity Log app
-         */
-        function viewLogs() {
-            logActivity('info', '📋 Opening Activity Log');
-            
-            // Check if Activity Log app exists
-            const activityLogFile = 'CCD-ACTIVITY-LOG.html';
-            window.open(activityLogFile, '_blank');
-            
-            logActivity('success', '✅ Activity Log opened');
-        }
-
-        // ===== FILE CONNECTIONS =====
-        async function connectAllFiles() {
-            logActivity('info', '📁 Starting file connection process...');
-            
-            try {
-                // 1. Connect MASTER.json
-                logActivity('info', '📄 Select MASTER.json file...');
-                const masterHandle = await window.showOpenFilePicker({
-                    types: [{
-                        description: 'JSON Files',
-                        accept: { 'application/json': ['.json'] }
-                    }],
-                    multiple: false
-                });
-                
-                const masterFile = await masterHandle[0].getFile();
-                if (!masterFile.name.toLowerCase().includes('master')) {
-                    throw new Error('Please select a MASTER.json file');
-                }
-                
-                // Store in IndexedDB
-                await storeFileHandle('masterFileHandle', masterHandle[0]);
-                document.getElementById('masterStatus').textContent = '✅ Connected';
-                document.getElementById('masterStatus').style.color = 'var(--success)';
-                logActivity('success', '✅ MASTER.json connected');
-                
-                // 2. Connect CONFIG.json
-                logActivity('info', '⚙️ Select CONFIG.json file...');
-                const configHandle = await window.showOpenFilePicker({
-                    types: [{
-                        description: 'JSON Files',
-                        accept: { 'application/json': ['.json'] }
-                    }],
-                    multiple: false
-                });
-                
-                const configFile = await configHandle[0].getFile();
-                if (!configFile.name.toLowerCase().includes('config')) {
-                    throw new Error('Please select a CONFIG.json file');
-                }
-                
-                await storeFileHandle('configFileHandle', configHandle[0]);
-                document.getElementById('configStatus').textContent = '✅ Connected';
-                document.getElementById('configStatus').style.color = 'var(--success)';
-                logActivity('success', '✅ CONFIG.json connected');
-                
-                // 3. Connect SYNC.json
-                logActivity('info', '🔄 Select SYNC.json (ccd-sync-data.json)...');
-                const syncHandle = await window.showOpenFilePicker({
-                    types: [{
-                        description: 'JSON Files',
-                        accept: { 'application/json': ['.json'] }
-                    }],
-                    multiple: false
-                });
-                
-                const syncFile = await syncHandle[0].getFile();
-                if (!syncFile.name.toLowerCase().includes('sync')) {
-                    throw new Error('Please select a SYNC/ccd-sync-data.json file');
-                }
-                
-                await storeFileHandle('syncFileHandle', syncHandle[0]);
-                document.getElementById('syncStatus').textContent = '✅ Connected';
-                document.getElementById('syncStatus').style.color = 'var(--success)';
-                logActivity('success', '✅ SYNC.json connected');
-                
-                // Update overall status
-                checkSystemHealth();
-                
-                logActivity('success', '🎉 All files connected successfully!');
-                
-            } catch (error) {
-                if (error.name === 'AbortError') {
-                    logActivity('warning', '⚠️ File selection cancelled');
-                } else {
-                    logActivity('error', `❌ Connection failed: ${error.message}`);
-                    console.error('File connection error:', error);
-                }
-            }
-        }
-        
-        // Store file handle in IndexedDB
-        async function storeFileHandle(key, handle) {
-            const db = await openDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(['fileHandles'], 'readwrite');
-                const store = transaction.objectStore('fileHandles');
-                const request = store.put(handle, key);
-                
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
-            });
-        }
-        
-        // Get file handle from IndexedDB
-        async function getFileHandle(key) {
-            const db = await openDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(['fileHandles'], 'readonly');
-                const store = transaction.objectStore('fileHandles');
-                const request = store.get(key);
-                
-                request.onsuccess = () => resolve(request.result);
-                request.onerror = () => reject(request.error);
-            });
-        }
-        
-        // Open IndexedDB
-        function openDB() {
-            return new Promise((resolve, reject) => {
-                const request = indexedDB.open('CCDCommandCenter', 1);
-                
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve(request.result);
-                
-                request.onupgradeneeded = (event) => {
-                    const db = event.target.result;
-                    if (!db.objectStoreNames.contains('fileHandles')) {
-                        db.createObjectStore('fileHandles');
-                    }
-                };
-            });
-        }
-        
-        // Check if files are connected on load
-        async function checkFileConnections() {
-            try {
-                const masterHandle = await getFileHandle('masterFileHandle');
-                const configHandle = await getFileHandle('configFileHandle');
-                const syncHandle = await getFileHandle('syncFileHandle');
-                
-                if (masterHandle) {
-                    document.getElementById('masterStatus').textContent = '✅ Connected';
-                    document.getElementById('masterStatus').style.color = 'var(--success)';
-                    state.files.master.connected = true;
-                }
-                
-                if (configHandle) {
-                    document.getElementById('configStatus').textContent = '✅ Connected';
-                    document.getElementById('configStatus').style.color = 'var(--success)';
-                    state.files.config.connected = true;
-                }
-                
-                if (syncHandle) {
-                    document.getElementById('syncStatus').textContent = '✅ Connected';
-                    document.getElementById('syncStatus').style.color = 'var(--success)';
-                    state.files.sync.connected = true;
-                }
-                
-                if (masterHandle && configHandle && syncHandle) {
-                    logActivity('success', '📁 All files already connected');
-                }
-                
-                // Trigger health check to update status banner
-                checkSystemHealth();
-            } catch (error) {
-                console.log('No previous file connections found');
-            }
-        }
-
-
-        // ===== ACTIVITY LOG =====
-        function logActivity(type, message) {
-            const activity = {
-                type,
-                message,
-                timestamp: new Date()
-            };
-            
-            state.activities.unshift(activity);
-            
-            // Keep last 50 activities
-            if (state.activities.length > 50) {
-                state.activities = state.activities.slice(0, 50);
-            }
-            
-            renderActivityFeed();
-        }
-
-        function renderActivityFeed() {
-            const feed = document.getElementById('activityFeed');
-            
-            if (state.activities.length === 0) {
-                feed.innerHTML = '<div class="activity-item"><div class="activity-content"><div class="activity-text">No recent activity</div></div></div>';
-                return;
-            }
-            
-            feed.innerHTML = state.activities.slice(0, 10).map(activity => {
-                const icon = activity.type === 'success' ? '✅' : 
-                            activity.type === 'error' ? '❌' : 
-                            activity.type === 'warning' ? '⚠️' : 'ℹ️';
-                
-                const timeAgo = getTimeAgo(activity.timestamp);
-                
-                return `
-                    <div class="activity-item">
-                        <div class="activity-icon">${icon}</div>
-                        <div class="activity-content">
-                            <div class="activity-text">${activity.message}</div>
-                            <div class="activity-time">${timeAgo}</div>
-                        </div>
+        <!-- Proxy Status -->
+        <div class="health-box" style="grid-column: span 2;">
+            <h4>Channel Proxies
+                <span style="float:right;font-size:10px;font-weight:500;color:var(--muted);text-transform:none;letter-spacing:0;">
+                    Auto-refresh: <button id="autoRefreshBtn" onclick="toggleAutoRefresh()" style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);font-size:10px;padding:1px 8px;border-radius:4px;cursor:pointer;font-family:'DM Mono',monospace;">OFF</button>
+                </span>
+            </h4>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+                <!-- Etsy -->
+                <div class="proxy-health-card" style="background:var(--bg3);border-radius:8px;padding:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span style="font-size:12px;font-weight:700;color:var(--etsy);">🛒 Etsy</span>
+                        <span class="value" id="hEtsy" style="font-size:11px;">checking...</span>
                     </div>
-                `;
-            }).join('');
+                    <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
+                        <span>Latency: <strong id="hEtsyMs" style="color:var(--text2)">—</strong></span>
+                        <span>Ver: <strong id="hEtsyVer" style="color:var(--text2)">—</strong></span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted2);margin-top:4px;" id="hEtsyChecked">Last check: never</div>
+                </div>
+                <!-- Wix -->
+                <div class="proxy-health-card" style="background:var(--bg3);border-radius:8px;padding:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span style="font-size:12px;font-weight:700;color:var(--wix);">🌐 Wix</span>
+                        <span class="value" id="hWix" style="font-size:11px;">checking...</span>
+                    </div>
+                    <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
+                        <span>Latency: <strong id="hWixMs" style="color:var(--text2)">—</strong></span>
+                        <span>Ver: <strong id="hWixVer" style="color:var(--text2)">—</strong></span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted2);margin-top:4px;" id="hWixChecked">Last check: never</div>
+                </div>
+                <!-- Wayfair -->
+                <div class="proxy-health-card" style="background:var(--bg3);border-radius:8px;padding:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span style="font-size:12px;font-weight:700;color:var(--wayfair);">🏠 Wayfair</span>
+                        <span class="value" id="hWayfair" style="font-size:11px;">checking...</span>
+                    </div>
+                    <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
+                        <span>Latency: <strong id="hWayfairMs" style="color:var(--text2)">—</strong></span>
+                        <span>Ver: <strong id="hWayfairVer" style="color:var(--text2)">—</strong></span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted2);margin-top:4px;" id="hWayfairChecked">Last check: never</div>
+                </div>
+                <!-- Shippo -->
+                <div class="proxy-health-card" style="background:var(--bg3);border-radius:8px;padding:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span style="font-size:12px;font-weight:700;color:var(--blue);">📦 Shippo</span>
+                        <span class="value" id="hShippo" style="font-size:11px;">checking...</span>
+                    </div>
+                    <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
+                        <span>Latency: <strong id="hShippoMs" style="color:var(--text2)">—</strong></span>
+                        <span>Ver: <strong id="hShippoVer" style="color:var(--text2)">—</strong></span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted2);margin-top:4px;" id="hShippoChecked">Last check: never</div>
+                </div>
+                <!-- Sync Hub Proxy -->
+                <div class="proxy-health-card" style="background:var(--bg3);border-radius:8px;padding:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                        <span style="font-size:12px;font-weight:700;color:var(--purple);">🔄 Sync Hub</span>
+                        <span class="value" id="hSyncProxy" style="font-size:11px;">checking...</span>
+                    </div>
+                    <div style="display:flex;gap:12px;font-size:10px;color:var(--muted);">
+                        <span>Latency: <strong id="hSyncProxyMs" style="color:var(--text2)">—</strong></span>
+                        <span>Ver: <strong id="hSyncProxyVer" style="color:var(--text2)">—</strong></span>
+                    </div>
+                    <div style="font-size:10px;color:var(--muted2);margin-top:4px;" id="hSyncProxyChecked">Last check: never</div>
+                </div>
+            </div>
+            <!-- Response time bar chart -->
+            <div style="margin-top:14px;display:flex;align-items:flex-end;gap:8px;height:50px;">
+                <div style="flex:1;text-align:center;">
+                    <div id="barEtsy" style="background:var(--etsy);border-radius:3px 3px 0 0;height:4px;transition:height 0.4s;margin:0 auto;width:70%;"></div>
+                    <div style="font-size:9px;color:var(--muted);margin-top:2px;">Etsy</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                    <div id="barWix" style="background:var(--wix);border-radius:3px 3px 0 0;height:4px;transition:height 0.4s;margin:0 auto;width:70%;"></div>
+                    <div style="font-size:9px;color:var(--muted);margin-top:2px;">Wix</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                    <div id="barWayfair" style="background:var(--wayfair);border-radius:3px 3px 0 0;height:4px;transition:height 0.4s;margin:0 auto;width:70%;"></div>
+                    <div style="font-size:9px;color:var(--muted);margin-top:2px;">Wayfair</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                    <div id="barShippo" style="background:var(--blue);border-radius:3px 3px 0 0;height:4px;transition:height 0.4s;margin:0 auto;width:70%;"></div>
+                    <div style="font-size:9px;color:var(--muted);margin-top:2px;">Shippo</div>
+                </div>
+                <div style="flex:1;text-align:center;">
+                    <div id="barSyncProxy" style="background:var(--purple);border-radius:3px 3px 0 0;height:4px;transition:height 0.4s;margin:0 auto;width:70%;"></div>
+                    <div style="font-size:9px;color:var(--muted);margin-top:2px;">Sync</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Health -->
+        <div class="health-box">
+            <h4>Data Health</h4>
+            <div class="health-row">
+                <span class="label">Unmatched Sales (no item_id)</span>
+                <span class="value" id="hMissingSku">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Unreconciled WF Payments</span>
+                <span class="value" id="hUnrecon">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Zero-Price Items (in stock)</span>
+                <span class="value" id="hZeroPrice">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Items Missing Wholesale</span>
+                <span class="value" id="hNoWholesale">—</span>
+            </div>
+        </div>
+
+        <!-- Sync Hub Status -->
+        <div class="health-box">
+            <h4>Sync Hub</h4>
+            <div class="health-row">
+                <span class="label">Queue Depth</span>
+                <span class="value" id="hSyncQueue">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Pending Rows</span>
+                <span class="value" id="hSyncPending">—</span>
+            </div>
+            <div class="health-row">
+                <span class="label">Last Processed</span>
+                <span class="value" id="hSyncLast">—</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═════════════════════════════════════════
+     SETTINGS MODAL
+     ═════════════════════════════════════════ -->
+<div class="overlay" id="settingsOverlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h2>Settings</h2>
+            <button class="modal-close" onclick="closeSettings()">✕</button>
+        </div>
+        <div class="modal-body">
+            <div class="form-group">
+                <label class="form-label">Your Name</label>
+                <input type="text" class="form-input" id="settingsName" style="font-family:'Plus Jakarta Sans',sans-serif;">
+            </div>
+
+            <div class="form-section-title">Database</div>
+            <div class="form-group">
+                <label class="form-label">Supabase URL</label>
+                <input type="text" class="form-input" id="settingsUrl">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Supabase Anon Key</label>
+                <input type="text" class="form-input" id="settingsKey">
+            </div>
+
+            <div class="form-section-title">Proxy URLs</div>
+            <div class="form-group">
+                <label class="form-label">Etsy Proxy</label>
+                <input type="text" class="form-input" id="settingsEtsyProxy">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Wix Proxy</label>
+                <input type="text" class="form-input" id="settingsWixProxy">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Wayfair Proxy</label>
+                <input type="text" class="form-input" id="settingsWayfairProxy">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Shippo Proxy</label>
+                <input type="text" class="form-input" id="settingsShippoProxy">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Sync Hub Proxy</label>
+                <input type="text" class="form-input" id="settingsSyncProxy">
+            </div>
+
+            <div class="form-section-title">API Key</div>
+            <div class="form-group">
+                <label class="form-label">CCD API Key</label>
+                <input type="text" class="form-input" id="settingsApiKey">
+                <div class="form-hint">Shared key for all proxy endpoints</div>
+            </div>
+
+            <div class="flex-gap mt-4">
+                <button class="btn-gold" onclick="saveSettings()">Save Settings</button>
+                <button class="btn-ghost" onclick="closeSettings()">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═════════════════════════════════════════
+     JAVASCRIPT
+     ═════════════════════════════════════════ -->
+<script>
+/* ═══════════════════════════════════════════
+   CONFIG & STATE
+   ═══════════════════════════════════════════ */
+const BASE_URL = 'https://ccdmobile.github.io/ccd-command-center/';
+const API_KEY = 'ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF';
+
+let sb = null; // Supabase client
+let healthPanelOpen = false;
+let showComingSoon = false;
+let toolVersions = {}; // loaded from Supabase settings
+
+const LS = {
+    get: k => localStorage.getItem(k),
+    set: (k, v) => localStorage.setItem(k, v),
+    getJSON: k => { try { return JSON.parse(localStorage.getItem(k)) || null; } catch { return null; } },
+    setJSON: (k, v) => localStorage.setItem(k, JSON.stringify(v))
+};
+
+/* Cross-tool localStorage key resolution
+   Other CCD tools use different key naming conventions.
+   Check our camelCase keys first, then fall back to snake_case from other tools. */
+const CROSS_KEYS = {
+    'ccdSupabaseUrl':   ['ccdSupabaseUrl', 'ccd_supabase_url'],
+    'ccdSupabaseKey':   ['ccdSupabaseKey', 'ccd_supabase_key'],
+    'ccdEtsyProxy':     ['ccdEtsyProxy', 'ccd_etsy_proxy_url'],
+    'ccdWixProxy':      ['ccdWixProxy', 'ccd_wix_proxy_url'],
+    'ccdWayfairProxy':  ['ccdWayfairProxy', 'ccd_wayfair_proxy_url'],
+    'ccdShippoProxy':   ['ccdShippoProxy', 'ccd_shippo_proxy_url'],
+    'ccdSyncProxy':     ['ccdSyncProxy', 'ccd_sync_proxy_url'],
+    'ccdApiKey':        ['ccdApiKey', 'ccd_api_key'],
+    'ccdUserName':      ['ccdUserName', 'ccd_user_name'],
+};
+
+/* Resolve a key — check all known aliases, return first found value */
+function resolveKey(key) {
+    const aliases = CROSS_KEYS[key];
+    if (aliases) {
+        for (const alias of aliases) {
+            const v = localStorage.getItem(alias);
+            if (v) return v;
+        }
+        return null;
+    }
+    return localStorage.getItem(key);
+}
+
+/* ═══════════════════════════════════════════
+   TOOL REGISTRY
+   ═══════════════════════════════════════════ */
+const TOOLS = [
+    // CORE OPERATIONS
+    { id: 'desktop', name: 'Desktop Inventory', file: 'CCD-INVENTORY-SYSTEM.html', versionKey: 'desktop', icon: '🖥', desc: 'Pricing engine, item management, source of truth', category: 'core', status: 'ok' },
+    { id: 'synchub', name: 'Sync Hub', file: 'CCD-SYNC-HUB.html', versionKey: 'synchub', icon: '🔄', desc: 'Order processing, channel sync, cascade push', category: 'core', status: 'ok' },
+    { id: 'mobile', name: 'Mobile Warehouse', file: null, url: 'https://ccdmobile.github.io/CCD-Mobile/', versionKey: 'mobile', icon: '📱', desc: 'Warehouse operations, quick sell, barcode scan', category: 'core', status: 'ok' },
+
+    // FINANCIAL & REPORTING
+    { id: 'financial', name: 'Financial Intelligence', file: 'CCD-FINANCIAL-REPORTING.html', versionKey: 'financial', icon: '📊', desc: '19 reports — P&L, products, brands, shipping, scenarios', category: 'financial', status: 'ok' },
+    { id: 'remittance', name: 'Wayfair Remittance', file: 'CCD-WAYFAIR-REMITTANCE.html', versionKey: 'remittance', icon: '💳', desc: 'Remittance import, returns, cancellations & reconciliation', category: 'financial', status: 'ok' },
+
+    // CHANNEL TOOLS
+    { id: 'skuaudit', name: 'Channel SKU Audit', file: 'CCD-CHANNEL-SKU-AUDIT.html', versionKey: 'skuaudit', icon: '🔍', desc: 'SKU matching, variant creation, item entry', category: 'channel', status: 'ok' },
+    { id: 'backfill', name: 'Sales Backfill', file: 'CCD-SALES-BACKFILL.html', versionKey: 'backfill', icon: '📥', desc: 'Historical order import — Etsy, Wix, Wayfair', category: 'channel', status: 'ok' },
+    { id: 'channelmgr', name: 'Channel Manager', file: 'CCD-CHANNEL-MANAGER.html', versionKey: 'channelmgr', icon: '📡', desc: 'Listing content management (deferred)', category: 'channel', status: 'offline' },
+
+    // AI TOOLS
+    { id: 'aicontent', name: 'AI Content Studio', file: 'AI-Content-Studio.html', versionKey: 'aicontent', icon: '✨', desc: 'AI-powered listing content generation', category: 'ai', status: 'ok' },
+    { id: 'aipricing', name: 'AI Pricing Advisor', file: 'AI-Pricing-Advisor.html', versionKey: 'aipricing', icon: '🧠', desc: 'AI-powered pricing recommendations', category: 'ai', status: 'ok' },
+
+    // COMING SOON
+    { id: 'activitylog', name: 'Activity Log', file: 'CCD-ACTIVITY-LOG.html', versionKey: null, icon: '📋', desc: 'System activity history & audit trail', category: 'coming', status: 'offline', badge: 'rebuild' },
+    { id: 'quickbooks', name: 'QuickBooks Bridge', file: null, versionKey: null, icon: '📒', desc: 'Chart of accounts mapping & export', category: 'coming', status: 'offline', badge: 'future' },
+];
+
+const CATEGORIES = [
+    { id: 'core', label: 'Core Operations', color: 'var(--gold)' },
+    { id: 'financial', label: 'Financial & Reporting', color: 'var(--green)' },
+    { id: 'channel', label: 'Channel Tools', color: 'var(--etsy)' },
+    { id: 'ai', label: 'AI Tools', color: 'var(--purple)' },
+    { id: 'coming', label: 'Coming Soon', color: 'var(--muted)' },
+];
+
+const DEFAULT_VERSIONS = {
+    desktop: '~137K', synchub: 'v4.2.3', mobile: 'v4.1',
+    financial: 'v1.5.0', remittance: 'v1.1',
+    skuaudit: 'v1.0', backfill: 'v1.6', channelmgr: '—',
+    aicontent: 'v1.0', aipricing: 'v1.0'
+};
+
+/* ═══════════════════════════════════════════
+   INITIALIZATION
+   ═══════════════════════════════════════════ */
+document.addEventListener('DOMContentLoaded', async () => {
+    updateDateTime();
+    setInterval(updateDateTime, 30000);
+
+    // Resolve Supabase creds from any CCD tool that set them
+    const url = resolveKey('ccdSupabaseUrl');
+    const key = resolveKey('ccdSupabaseKey');
+
+    // Also resolve user name from any tool
+    const name = resolveKey('ccdUserName');
+    if (name && !LS.get('ccdUserName')) LS.set('ccdUserName', name);
+
+    if (!url || !key) {
+        showSetupWizard();
+        return;
+    }
+
+    // Normalize — store under our canonical camelCase keys
+    if (!LS.get('ccdSupabaseUrl')) LS.set('ccdSupabaseUrl', url);
+    if (!LS.get('ccdSupabaseKey')) LS.set('ccdSupabaseKey', key);
+    LS.set('ccdUseSupabase', 'true');
+
+    await initSupabase(url, key);
+});
+
+async function initSupabase(url, key) {
+    try {
+        sb = supabase.createClient(url, key);
+        // Test connection
+        const { count, error } = await sb.from('items').select('*', { count: 'exact', head: true });
+        if (error) throw error;
+
+        document.getElementById('setupWizard').style.display = 'none';
+        document.getElementById('dashboard').style.display = 'block';
+        document.getElementById('healthToggle').style.display = 'flex';
+
+        updateGreeting();
+        buildFilterPills();
+        buildAppGrid();
+        renderFavorites();
+
+        // Load live data
+        await Promise.all([
+            loadToolVersions(),
+            loadProxyConfig(),
+            loadKPIs(),
+            loadActivity(),
+        ]);
+
+        // Auto health check
+        runHealthChecks();
+
+        // Auto-refresh: KPIs + activity every 60 seconds
+        setInterval(async () => {
+            try {
+                await loadKPIs();
+                await loadActivity();
+            } catch (e) { console.warn('Auto-refresh error:', e); }
+        }, 60000);
+
+    } catch (e) {
+        console.error('Supabase init failed:', e);
+        showSetupWizard();
+    }
+}
+
+function showSetupWizard() {
+    document.getElementById('setupWizard').style.display = 'block';
+    document.getElementById('dashboard').style.display = 'none';
+    document.getElementById('healthToggle').style.display = 'none';
+
+    // Pre-fill from localStorage (check both key formats)
+    document.getElementById('setupUrl').value = resolveKey('ccdSupabaseUrl') || '';
+    document.getElementById('setupKey').value = resolveKey('ccdSupabaseKey') || '';
+    document.getElementById('setupName').value = resolveKey('ccdUserName') || '';
+}
+
+async function saveSetup() {
+    const url = document.getElementById('setupUrl').value.trim();
+    const key = document.getElementById('setupKey').value.trim();
+    const name = document.getElementById('setupName').value.trim();
+
+    if (!url || !key) { alert('Please enter Supabase URL and Key'); return; }
+
+    LS.set('ccdSupabaseUrl', url);
+    LS.set('ccdSupabaseKey', key);
+    if (name) LS.set('ccdUserName', name);
+    LS.set('ccdUseSupabase', 'true');
+
+    await initSupabase(url, key);
+}
+
+/* ═══════════════════════════════════════════
+   DYNAMIC VERSIONS FROM SUPABASE
+   ═══════════════════════════════════════════ */
+async function loadToolVersions() {
+    if (!sb) return;
+    try {
+        const { data, error } = await sb.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+        if (!error && data && data.length > 0 && data[0].value) {
+            toolVersions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+        }
+    } catch (e) {
+        // Settings table may not exist or have this row yet — use defaults
+        console.log('No tool_versions in settings, using defaults');
+    }
+    // Refresh version badges
+    document.querySelectorAll('.card-version[data-vkey]').forEach(el => {
+        const key = el.dataset.vkey;
+        el.textContent = toolVersions[key] || DEFAULT_VERSIONS[key] || '—';
+    });
+}
+
+/* ═══════════════════════════════════════════
+   PROXY CONFIG FROM SUPABASE (single source of truth)
+   ═══════════════════════════════════════════ */
+async function loadProxyConfig() {
+    if (!sb) return;
+    try {
+        // Load proxy URLs
+        const { data, error } = await sb.from('settings').select('value').eq('key', 'proxy_urls').limit(1);
+        if (!error && data && data.length > 0 && data[0].value) {
+            const urls = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+            if (urls.etsy)    LS.set('ccdEtsyProxy', urls.etsy);
+            if (urls.wix)     LS.set('ccdWixProxy', urls.wix);
+            if (urls.wayfair) LS.set('ccdWayfairProxy', urls.wayfair);
+            if (urls.shippo)  LS.set('ccdShippoProxy', urls.shippo);
+            if (urls.syncHub || urls.synchub) LS.set('ccdSyncProxy', urls.syncHub || urls.synchub);
+            if (urls.api_key) LS.set('ccdApiKey', urls.api_key);
+            console.log('Proxy config loaded from Supabase settings');
         }
 
-        function getTimeAgo(date) {
-            const seconds = Math.floor((new Date() - date) / 1000);
-            
-            if (seconds < 10) return 'Just now';
-            if (seconds < 60) return `${seconds}s ago`;
-            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-            return `${Math.floor(seconds / 86400)}d ago`;
+        // Load API key from dedicated api_keys row
+        const { data: apiData } = await sb.from('settings').select('value').eq('key', 'api_keys').limit(1);
+        if (apiData && apiData.length > 0 && apiData[0].value) {
+            const keys = typeof apiData[0].value === 'string' ? JSON.parse(apiData[0].value) : apiData[0].value;
+            if (keys.ccdApiKey) LS.set('ccdApiKey', keys.ccdApiKey);
+        }
+    } catch (e) {
+        console.log('No proxy_urls in settings, using localStorage');
+    }
+}
+
+/* Save proxy config to Supabase (called from Settings save) */
+async function saveProxyConfigToSupabase() {
+    if (!sb) return;
+    const who = resolveKey('ccdUserName') || 'Command Center';
+    const urls = {
+        etsy:    LS.get('ccdEtsyProxy') || '',
+        wix:     LS.get('ccdWixProxy') || '',
+        wayfair: LS.get('ccdWayfairProxy') || '',
+        shippo:  LS.get('ccdShippoProxy') || '',
+        syncHub: LS.get('ccdSyncProxy') || '',
+        api_key: LS.get('ccdApiKey') || API_KEY,
+    };
+    try {
+        const { data: existing } = await sb.from('settings').select('key').eq('key', 'proxy_urls').limit(1);
+        if (existing && existing.length > 0) {
+            await sb.from('settings').update({ value: urls, updated_at: new Date().toISOString(), updated_by: who }).eq('key', 'proxy_urls');
+        } else {
+            await sb.from('settings').insert({ key: 'proxy_urls', value: urls, updated_by: who });
+        }
+        console.log('Proxy config saved to Supabase');
+    } catch (e) {
+        console.warn('Could not save proxy config to Supabase:', e);
+    }
+}
+
+/* ═══════════════════════════════════════════
+   UI: GREETING & DATE
+   ═══════════════════════════════════════════ */
+function updateGreeting() {
+    const name = resolveKey('ccdUserName');
+    const h = new Date().getHours();
+    let g = h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+    document.getElementById('greeting').innerHTML = name ? `${g}, <strong>${name}</strong>` : g;
+}
+
+function updateDateTime() {
+    const now = new Date();
+    const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+    const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    document.getElementById('datetime').textContent = `${now.toLocaleDateString('en-US', opts)} · ${time}`;
+}
+
+/* ═══════════════════════════════════════════
+   KPIs
+   ═══════════════════════════════════════════ */
+async function loadKPIs() {
+    if (!sb) return;
+    const today = new Date().toISOString().substring(0, 10);
+
+    // Week start (Monday)
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const mondayOffset = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+    const weekStart = new Date(now);
+    weekStart.setDate(now.getDate() - mondayOffset);
+    const weekStartStr = weekStart.toISOString().substring(0, 10);
+
+    // Month start
+    const monthStartStr = today.substring(0, 8) + '01';
+
+    // Year start
+    const yearStartStr = today.substring(0, 5) + '01-01';
+
+    try {
+        // Today's sales
+        const { data: todaySales } = await sb.from('sales_history')
+            .select('sale_price')
+            .gte('sale_date', today)
+            .lte('sale_date', today + 'T23:59:59');
+
+        const todayRev = (todaySales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
+        animateValue('kpiRevenue', todayRev, true);
+        document.getElementById('kpiRevenueOrders').textContent = `${(todaySales || []).length} orders`;
+
+        // This week sales
+        const { data: weekSales } = await sb.from('sales_history')
+            .select('sale_price')
+            .gte('sale_date', weekStartStr)
+            .lte('sale_date', today + 'T23:59:59')
+            .limit(5000);
+
+        const weekRev = (weekSales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
+        animateValue('kpiWeek', weekRev, true);
+        document.getElementById('kpiWeekOrders').textContent = `${(weekSales || []).length} orders`;
+
+        // This month sales
+        const { data: monthSales } = await sb.from('sales_history')
+            .select('sale_price')
+            .gte('sale_date', monthStartStr)
+            .lte('sale_date', today + 'T23:59:59')
+            .limit(5000);
+
+        const monthRev = (monthSales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
+        animateValue('kpiMonth', monthRev, true);
+        document.getElementById('kpiMonthOrders').textContent = `${(monthSales || []).length} orders`;
+
+        // This year sales — use count for orders, paginate for revenue if needed
+        const { data: yearSales, count: yearCount } = await sb.from('sales_history')
+            .select('sale_price', { count: 'exact' })
+            .gte('sale_date', yearStartStr)
+            .lte('sale_date', today + 'T23:59:59')
+            .limit(10000);
+
+        const yearRev = (yearSales || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0);
+        animateValue('kpiYear', yearRev, true);
+        document.getElementById('kpiYearOrders').textContent = `${yearCount || (yearSales || []).length} orders`;
+
+        // Sync queue
+        const { count: queueCount } = await sb.from('sync_queue')
+            .select('*', { count: 'exact', head: true });
+        animateValue('kpiQueue', queueCount || 0);
+
+        // Active SKUs
+        const { count: skuCount } = await sb.from('items')
+            .select('*', { count: 'exact', head: true })
+            .gt('qty', 0);
+        animateValue('kpiSkus', skuCount || 0);
+
+        // Inventory value (wholesale_price * qty)
+        const { data: invItems } = await sb.from('items')
+            .select('qty, wholesale_price')
+            .gt('qty', 0)
+            .limit(5000);
+
+        const invValue = (invItems || []).reduce((s, r) => s + ((parseFloat(r.qty) || 0) * (parseFloat(r.wholesale_price) || 0)), 0);
+        animateValue('kpiInvValue', invValue, true);
+
+        // Alerts — count unmatched sales (item_id IS NULL)
+        let alertCount = 0;
+        const { count: missSku } = await sb.from('sales_history')
+            .select('*', { count: 'exact', head: true })
+            .is('item_id', null);
+        alertCount += (missSku || 0);
+
+        animateValue('kpiAlerts', alertCount);
+        document.getElementById('kpiAlertsSub').textContent = alertCount === 0 ? 'all clear' : 'unmatched sales';
+
+        if (alertCount > 0) {
+            document.getElementById('kpiAlertCard').style.borderColor = 'rgba(240,92,92,0.3)';
         }
 
-        // ===== REFRESH =====
-        function refreshAll() {
-            logActivity('info', '🔄 Refreshing all data');
-            checkSystemHealth();
-            renderApps();
+        // 7-day revenue sparkline
+        await buildSparkline();
+
+        // Update last-refreshed timestamp
+        const refreshEl = document.getElementById('kpiLastRefreshed');
+        if (refreshEl) refreshEl.textContent = 'Updated ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+    } catch (e) {
+        console.error('KPI load error:', e);
+    }
+}
+
+function animateValue(elId, target, isCurrency = false) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const duration = 800;
+    const start = performance.now();
+    const fmt = v => isCurrency ? '$' + v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 }) : v.toLocaleString();
+
+    function tick(now) {
+        const p = Math.min((now - start) / duration, 1);
+        const ease = 1 - Math.pow(1 - p, 3); // ease-out cubic
+        const current = Math.round(target * ease);
+        el.textContent = fmt(current);
+        if (p < 1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+}
+
+let sparkChartInstance = null;
+
+async function buildSparkline() {
+    if (!sb) return;
+    const canvas = document.getElementById('sparkRevenue');
+    if (!canvas) return;
+
+    // Destroy previous chart instance if it exists
+    if (sparkChartInstance) {
+        sparkChartInstance.destroy();
+        sparkChartInstance = null;
+    }
+
+    // Last 7 days revenue
+    const days = [];
+    const values = [];
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const ds = d.toISOString().substring(0, 10);
+        days.push(ds);
+    }
+
+    for (const ds of days) {
+        const { data } = await sb.from('sales_history')
+            .select('sale_price')
+            .gte('sale_date', ds)
+            .lte('sale_date', ds + 'T23:59:59');
+        values.push((data || []).reduce((s, r) => s + (parseFloat(r.sale_price) || 0), 0));
+    }
+
+    sparkChartInstance = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels: days,
+            datasets: [{
+                data: values,
+                borderColor: 'rgba(212,168,83,0.6)',
+                backgroundColor: 'rgba(212,168,83,0.08)',
+                fill: true, tension: 0.4,
+                borderWidth: 1.5, pointRadius: 0,
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: { x: { display: false }, y: { display: false } },
+            elements: { line: { capBezierPoints: true } },
+            animation: { duration: 1000 }
+        }
+    });
+}
+
+/* ═══════════════════════════════════════════
+   RECENT ACTIVITY
+   ═══════════════════════════════════════════ */
+async function loadActivity() {
+    if (!sb) return;
+    try {
+        const { data } = await sb.from('sales_history')
+            .select('sku, sale_channel, sale_price, sale_date, order_id')
+            .order('id', { ascending: false })
+            .limit(12);
+
+        const list = document.getElementById('activityList');
+        if (!data || data.length === 0) {
+            list.innerHTML = '<div class="activity-row" style="justify-content:center;color:var(--muted);padding:20px;">No recent activity</div>';
+            return;
         }
 
-        // ===== UPDATE TIMER =====
-        setInterval(() => {
-            const lastUpdate = document.getElementById('lastUpdateStatus');
-            if (lastUpdate) {
-                lastUpdate.textContent = getTimeAgo(state.lastUpdate);
+        list.innerHTML = data.map(r => {
+            const ch = (r.sale_channel || 'manual').toLowerCase();
+            const chClass = ch.includes('etsy') ? 'etsy' : ch.includes('wix') ? 'wix' : ch.includes('wayfair') ? 'wayfair' : ch.includes('treasure') ? 'tm' : 'manual';
+            const chLabel = ch.includes('etsy') ? 'Etsy' : ch.includes('wix') ? 'Wix' : ch.includes('wayfair') ? 'Wayfair' : ch.includes('treasure') ? 'TM' : 'Manual';
+            const amt = parseFloat(r.sale_price) || 0;
+            const dateStr = (r.sale_date || '').substring(0, 10);
+            const timeAgo = getTimeAgo(r.sale_date);
+
+            return `<div class="activity-row">
+                <span class="activity-channel ${chClass}">${chLabel}</span>
+                <span class="activity-sku">${r.sku || 'UNKNOWN'}</span>
+                <span class="activity-desc">${r.order_id || ''}</span>
+                <span class="activity-amount">$${amt.toFixed(2)}</span>
+                <span class="activity-time">${timeAgo}</span>
+            </div>`;
+        }).join('');
+
+    } catch (e) {
+        console.error('Activity load error:', e);
+    }
+}
+
+function getTimeAgo(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - d;
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7) return `${days}d ago`;
+    return dateStr.substring(0, 10);
+}
+
+/* ═══════════════════════════════════════════
+   APP GRID RENDERING
+   ═══════════════════════════════════════════ */
+function buildAppGrid() {
+    const container = document.getElementById('appGridContainer');
+    let html = '';
+
+    const catsToShow = CATEGORIES.filter(c => c.id !== 'coming' || showComingSoon);
+
+    catsToShow.forEach((cat, catIdx) => {
+        const catTools = TOOLS.filter(t => t.category === cat.id);
+        if (catTools.length === 0) return;
+
+        html += `<div class="category-section" data-cat="${cat.id}" style="animation-delay:${0.1 + catIdx * 0.08}s">
+            <div class="category-header">
+                <span class="cat-dot" style="background:${cat.color}"></span>
+                ${cat.label}
+            </div>
+            <div class="app-grid">`;
+
+        catTools.forEach(tool => {
+            const isComing = tool.category === 'coming';
+            const version = toolVersions[tool.versionKey] || DEFAULT_VERSIONS[tool.versionKey] || '';
+            const pinned = isFavorite(tool.id);
+
+            html += `<div class="app-card ${isComing ? 'coming-soon' : ''}" 
+                        data-id="${tool.id}" data-name="${tool.name}" data-desc="${tool.desc}" data-cat="${tool.category}"
+                        style="--card-accent:${cat.color}"
+                        ${(tool.file || tool.url) && !isComing ? `onclick="openTool('${tool.url || tool.file}')"` : ''}>
+                <div class="card-icon">${tool.icon}</div>
+                <div class="card-info">
+                    <div class="card-title">
+                        ${tool.name}
+                        ${version ? `<span class="card-version" data-vkey="${tool.versionKey || ''}">${version}</span>` : ''}
+                        ${tool.badge ? `<span class="badge ${tool.badge}">${tool.badge}</span>` : ''}
+                    </div>
+                    <div class="card-desc">${tool.desc}</div>
+                </div>
+                ${!isComing ? `<div class="card-status ${tool.status}"></div>` : ''}
+                ${!isComing ? `<button class="card-pin ${pinned ? 'pinned' : ''}" onclick="event.stopPropagation();toggleFavorite('${tool.id}')" title="${pinned ? 'Unpin' : 'Pin to favorites'}">★</button>` : ''}
+            </div>`;
+        });
+
+        html += `</div></div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+function buildFilterPills() {
+    const pills = document.getElementById('filterPills');
+    pills.innerHTML = `<button class="filter-pill active" data-cat="all" onclick="setFilter('all')">All</button>` +
+        CATEGORIES.filter(c => c.id !== 'coming').map(c =>
+            `<button class="filter-pill" data-cat="${c.id}" onclick="setFilter('${c.id}')">${c.label}</button>`
+        ).join('');
+}
+
+function setFilter(cat) {
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.toggle('active', p.dataset.cat === cat));
+
+    document.querySelectorAll('.category-section').forEach(sec => {
+        if (cat === 'all') {
+            sec.style.display = '';
+        } else {
+            sec.style.display = sec.dataset.cat === cat ? '' : 'none';
+        }
+    });
+}
+
+function filterApps() {
+    const q = document.getElementById('searchInput').value.toLowerCase().trim();
+    document.querySelectorAll('.app-card').forEach(card => {
+        const name = (card.dataset.name || '').toLowerCase();
+        const desc = (card.dataset.desc || '').toLowerCase();
+        card.style.display = (!q || name.includes(q) || desc.includes(q)) ? '' : 'none';
+    });
+
+    // Hide empty categories
+    document.querySelectorAll('.category-section').forEach(sec => {
+        const visibleCards = sec.querySelectorAll('.app-card:not([style*="display: none"])');
+        sec.style.display = visibleCards.length > 0 ? '' : 'none';
+    });
+}
+
+function toggleComingSoon() {
+    showComingSoon = !showComingSoon;
+    document.getElementById('csToggleIcon').textContent = showComingSoon ? '◼' : '◻';
+    buildAppGrid();
+}
+
+/* ═══════════════════════════════════════════
+   FAVORITES
+   ═══════════════════════════════════════════ */
+function getFavorites() {
+    return LS.getJSON('ccdFavorites') || [];
+}
+
+function isFavorite(id) {
+    return getFavorites().includes(id);
+}
+
+function toggleFavorite(id) {
+    let favs = getFavorites();
+    if (favs.includes(id)) {
+        favs = favs.filter(f => f !== id);
+    } else {
+        favs.push(id);
+    }
+    LS.setJSON('ccdFavorites', favs);
+    renderFavorites();
+    buildAppGrid(); // refresh pin states
+}
+
+function renderFavorites() {
+    const favs = getFavorites();
+    const section = document.getElementById('favoritesSection');
+    const grid = document.getElementById('favoritesGrid');
+
+    if (favs.length === 0) {
+        section.classList.remove('has-items');
+        return;
+    }
+
+    section.classList.add('has-items');
+    grid.innerHTML = favs.map(id => {
+        const tool = TOOLS.find(t => t.id === id);
+        if (!tool || (!tool.file && !tool.url)) return '';
+        return `<div class="app-card" style="--card-accent:var(--gold);min-width:240px;flex-shrink:0;" onclick="openTool('${tool.url || tool.file}')">
+            <div class="card-icon">${tool.icon}</div>
+            <div class="card-info">
+                <div class="card-title">${tool.name}</div>
+                <div class="card-desc">${tool.desc}</div>
+            </div>
+            <div class="card-status ${tool.status}"></div>
+        </div>`;
+    }).join('');
+}
+
+/* ═══════════════════════════════════════════
+   HEALTH CHECKS
+   ═══════════════════════════════════════════ */
+async function runHealthChecks() {
+    // Set all to checking state
+    ['dotDb', 'dotProxies', 'dotSync'].forEach(id => {
+        document.getElementById(id).className = 'status-dot checking';
+    });
+
+    await checkDatabase();
+    await checkProxies();
+    await checkDataHealth();
+    await checkSyncHub();
+
+    updateOverallHealth();
+}
+
+async function checkDatabase() {
+    const el = document.getElementById('hDb');
+    const dot = document.getElementById('dotDb');
+    const chip = document.getElementById('statusDb');
+
+    if (!sb) {
+        el.textContent = 'Not connected'; el.className = 'value err';
+        dot.className = 'status-dot err'; chip.className = 'status-chip err';
+        return;
+    }
+
+    try {
+        const { count: itemCount } = await sb.from('items').select('*', { count: 'exact', head: true });
+        const { count: salesCount } = await sb.from('sales_history').select('*', { count: 'exact', head: true });
+        const { count: queueCount } = await sb.from('sync_queue').select('*', { count: 'exact', head: true });
+
+        el.textContent = 'Connected'; el.className = 'value ok';
+        dot.className = 'status-dot ok'; chip.className = 'status-chip ok';
+
+        document.getElementById('hItems').textContent = (itemCount || 0).toLocaleString();
+        document.getElementById('hSales').textContent = (salesCount || 0).toLocaleString();
+        document.getElementById('hQueue').textContent = (queueCount || 0).toLocaleString();
+        document.getElementById('hQueue').className = 'value' + (queueCount > 10 ? ' warn' : '');
+
+    } catch (e) {
+        el.textContent = 'Error'; el.className = 'value err';
+        dot.className = 'status-dot err'; chip.className = 'status-chip err';
+    }
+}
+
+async function checkProxies() {
+    const proxyConfigs = [
+        { key: 'EtsyProxy', el: 'hEtsy', msEl: 'hEtsyMs', verEl: 'hEtsyVer', checkedEl: 'hEtsyChecked', barEl: 'barEtsy', label: 'Etsy' },
+        { key: 'WixProxy', el: 'hWix', msEl: 'hWixMs', verEl: 'hWixVer', checkedEl: 'hWixChecked', barEl: 'barWix', label: 'Wix' },
+        { key: 'WayfairProxy', el: 'hWayfair', msEl: 'hWayfairMs', verEl: 'hWayfairVer', checkedEl: 'hWayfairChecked', barEl: 'barWayfair', label: 'Wayfair' },
+        { key: 'ShippoProxy', el: 'hShippo', msEl: 'hShippoMs', verEl: 'hShippoVer', checkedEl: 'hShippoChecked', barEl: 'barShippo', label: 'Shippo' },
+        { key: 'SyncProxy', el: 'hSyncProxy', msEl: 'hSyncProxyMs', verEl: 'hSyncProxyVer', checkedEl: 'hSyncProxyChecked', barEl: 'barSyncProxy', label: 'Sync Hub' },
+    ];
+
+    let allOk = true;
+    let anyChecked = false;
+    const responseTimes = [];
+
+    for (const proxy of proxyConfigs) {
+        const url = resolveKey('ccd' + proxy.key);
+        const el = document.getElementById(proxy.el);
+        const msEl = document.getElementById(proxy.msEl);
+        const verEl = document.getElementById(proxy.verEl);
+        const checkedEl = document.getElementById(proxy.checkedEl);
+
+        if (!url) {
+            el.textContent = 'Not configured'; el.className = 'value warn';
+            msEl.textContent = '—'; verEl.textContent = '—';
+            allOk = false;
+            responseTimes.push({ key: proxy.key, ms: 0 });
+            continue;
+        }
+
+        anyChecked = true;
+        el.textContent = 'Checking...'; el.className = 'value';
+
+        const apiKey = resolveKey('ccdApiKey') || API_KEY;
+        const startTime = Date.now();
+        let proxyOk = false;
+        let latency = 0;
+
+        // Try action=health first (gets version, uptime, error rate)
+        try {
+            const healthUrl = `${url}?action=health&key=${encodeURIComponent(apiKey)}&cb=${Date.now()}`;
+            const resp = await fetchWithTimeout(healthUrl, 10000);
+            latency = Date.now() - startTime;
+
+            if (resp.ok || resp.type === 'opaque') {
+                try {
+                    const data = await resp.json();
+                    // Extract version from health response
+                    if (data?.proxy?.version) {
+                        verEl.textContent = data.proxy.version;
+                    }
+                    proxyOk = true;
+                } catch {
+                    proxyOk = true; // Got a response even if not JSON
+                }
             }
-            
-            // Re-render activity feed to update times
-            renderActivityFeed();
-        }, 5000);
+        } catch {
+            // Fall back to ping via JSONP
+            try {
+                const pingStart = Date.now();
+                await jsonpPing(url, apiKey);
+                latency = Date.now() - pingStart;
+                proxyOk = true;
+            } catch {
+                latency = Date.now() - startTime;
+                proxyOk = false;
+            }
+        }
 
-        // ===== INITIALIZE ON LOAD =====
-        window.addEventListener('DOMContentLoaded', init);
-    </script>
+        if (proxyOk) {
+            const status = latency > 5000 ? 'degraded' : 'ok';
+            el.textContent = latency > 5000 ? 'Degraded' : 'Online';
+            el.className = 'value ' + (latency > 5000 ? 'warn' : 'ok');
+            msEl.textContent = latency + 'ms';
+            msEl.style.color = latency > 5000 ? 'var(--yellow)' : latency > 2000 ? 'var(--text2)' : 'var(--green)';
+            if (!allOk) {} // keep allOk false if already false
+            if (latency > 5000) allOk = false;
+        } else {
+            el.textContent = 'Unreachable'; el.className = 'value err';
+            msEl.textContent = 'timeout';
+            allOk = false;
+        }
+
+        checkedEl.textContent = 'Last check: ' + new Date().toLocaleTimeString();
+        responseTimes.push({ key: proxy.key, ms: latency, barEl: proxy.barEl });
+    }
+
+    // Update response time bars
+    const maxMs = Math.max(...responseTimes.map(r => r.ms), 1);
+    responseTimes.forEach(r => {
+        const bar = document.getElementById(r.barEl);
+        if (bar && r.ms > 0) {
+            bar.style.height = Math.max(4, (r.ms / maxMs) * 40) + 'px';
+        }
+    });
+
+    const dot = document.getElementById('dotProxies');
+    const chip = document.getElementById('statusProxies');
+
+    if (!anyChecked) {
+        dot.className = 'status-dot warn'; chip.className = 'status-chip warn';
+    } else if (allOk) {
+        dot.className = 'status-dot ok'; chip.className = 'status-chip ok';
+    } else {
+        dot.className = 'status-dot err'; chip.className = 'status-chip err';
+    }
+}
+
+/* Auto-refresh for health checks */
+let autoRefreshTimer = null;
+function toggleAutoRefresh() {
+    const btn = document.getElementById('autoRefreshBtn');
+    if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+        btn.textContent = 'OFF';
+        btn.style.color = 'var(--muted)';
+    } else {
+        autoRefreshTimer = setInterval(runHealthChecks, 60000); // every 60s
+        btn.textContent = '60s';
+        btn.style.color = 'var(--green)';
+    }
+}
+
+function fetchWithTimeout(url, ms) {
+    return Promise.race([
+        fetch(url).catch(() => fetch(url, { mode: 'no-cors' })),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), ms))
+    ]);
+}
+
+function jsonpPing(baseUrl, apiKey) {
+    return new Promise((resolve, reject) => {
+        const cb = 'ccdPing_' + Date.now();
+        window[cb] = (data) => { resolve(data); delete window[cb]; };
+        const s = document.createElement('script');
+        s.src = `${baseUrl}?action=ping&key=${encodeURIComponent(apiKey)}&callback=${cb}&cb=${Date.now()}`;
+        s.onerror = () => { reject(new Error('JSONP failed')); delete window[cb]; };
+        document.head.appendChild(s);
+        setTimeout(() => { reject(new Error('Timeout')); delete window[cb]; }, 8000);
+    });
+}
+
+async function checkDataHealth() {
+    if (!sb) return;
+    try {
+        // Unmatched sales (item_id IS NULL)
+        const { count: missSku } = await sb.from('sales_history')
+            .select('*', { count: 'exact', head: true })
+            .is('item_id', null);
+        const missEl = document.getElementById('hMissingSku');
+        missEl.textContent = (missSku || 0).toLocaleString();
+        missEl.className = 'value' + (missSku === 0 ? ' ok' : ' warn');
+
+        // Unreconciled WF payments
+        try {
+            const { count: unrecon } = await sb.from('wayfair_remittance_lines')
+                .select('*', { count: 'exact', head: true })
+                .eq('reconciled', false);
+            const unreconEl = document.getElementById('hUnrecon');
+            unreconEl.textContent = (unrecon || 0).toLocaleString();
+            unreconEl.className = 'value' + (unrecon === 0 ? ' ok' : ' warn');
+        } catch {
+            document.getElementById('hUnrecon').textContent = 'N/A';
+        }
+
+        // Zero retail price items that are in stock
+        const { count: zeroPrice } = await sb.from('items')
+            .select('*', { count: 'exact', head: true })
+            .gt('qty', 0)
+            .or('retail_price.is.null,retail_price.eq.0');
+        const zeroPriceEl = document.getElementById('hZeroPrice');
+        zeroPriceEl.textContent = (zeroPrice || 0).toLocaleString();
+        zeroPriceEl.className = 'value' + (zeroPrice === 0 ? ' ok' : ' warn');
+
+        // Items missing wholesale cost (in stock)
+        const { count: noWholesale } = await sb.from('items')
+            .select('*', { count: 'exact', head: true })
+            .gt('qty', 0)
+            .or('wholesale_price.is.null,wholesale_price.eq.0');
+        const noWsEl = document.getElementById('hNoWholesale');
+        noWsEl.textContent = (noWholesale || 0).toLocaleString();
+        noWsEl.className = 'value' + (noWholesale === 0 ? ' ok' : ' warn');
+
+    } catch (e) {
+        console.error('Data health check error:', e);
+    }
+}
+
+async function checkSyncHub() {
+    if (!sb) return;
+    const dot = document.getElementById('dotSync');
+    const chip = document.getElementById('statusSync');
+
+    try {
+        // Queue depth — this always works
+        const { count: queueDepth } = await sb.from('sync_queue')
+            .select('*', { count: 'exact', head: true });
+
+        document.getElementById('hSyncQueue').textContent = (queueDepth || 0).toLocaleString();
+        document.getElementById('hSyncQueue').className = 'value' + ((queueDepth || 0) > 20 ? ' warn' : '');
+
+        // Try pending count (status column may not exist)
+        try {
+            const { data: pending } = await sb.from('sync_queue')
+                .select('id')
+                .eq('status', 'pending');
+            document.getElementById('hSyncPending').textContent = (pending || []).length.toLocaleString();
+        } catch {
+            document.getElementById('hSyncPending').textContent = (queueDepth || 0).toLocaleString();
+        }
+
+        // Try last processed (processed_at column may not exist)
+        try {
+            const { data: lastProc } = await sb.from('sync_queue')
+                .select('processed_at')
+                .not('processed_at', 'is', null)
+                .order('processed_at', { ascending: false })
+                .limit(1);
+
+            if (lastProc && lastProc.length > 0) {
+                document.getElementById('hSyncLast').textContent = getTimeAgo(lastProc[0].processed_at);
+            } else {
+                document.getElementById('hSyncLast').textContent = '—';
+            }
+        } catch {
+            document.getElementById('hSyncLast').textContent = '—';
+        }
+
+        dot.className = 'status-dot ok'; chip.className = 'status-chip ok';
+
+    } catch (e) {
+        dot.className = 'status-dot warn'; chip.className = 'status-chip warn';
+    }
+}
+
+function updateOverallHealth() {
+    const dots = ['dotDb', 'dotProxies', 'dotSync'];
+    const hasError = dots.some(id => document.getElementById(id).classList.contains('err'));
+    const hasWarn = dots.some(id => document.getElementById(id).classList.contains('warn'));
+
+    const overall = document.getElementById('healthDotOverall');
+    overall.className = 'status-dot ' + (hasError ? 'err' : hasWarn ? 'warn' : 'ok');
+
+    // Alert banner
+    if (hasError) {
+        document.getElementById('alertText').textContent = 'System issues detected — check health panel';
+        document.getElementById('alertBanner').classList.add('visible');
+    } else {
+        document.getElementById('alertBanner').classList.remove('visible');
+    }
+}
+
+/* ═══════════════════════════════════════════
+   HEALTH PANEL TOGGLE
+   ═══════════════════════════════════════════ */
+function toggleHealth() {
+    healthPanelOpen = !healthPanelOpen;
+    document.getElementById('healthPanel').classList.toggle('open', healthPanelOpen);
+    document.getElementById('healthToggle').style.display = healthPanelOpen ? 'none' : 'flex';
+}
+
+/* ═══════════════════════════════════════════
+   TOOL LAUNCH
+   ═══════════════════════════════════════════ */
+function openTool(fileOrUrl) {
+    if (!fileOrUrl) return;
+    // If it's already a full URL, open directly
+    if (fileOrUrl.startsWith('http')) {
+        window.open(fileOrUrl, '_blank');
+    } else {
+        window.open(BASE_URL + fileOrUrl, '_blank');
+    }
+}
+
+/* ═══════════════════════════════════════════
+   SETTINGS
+   ═══════════════════════════════════════════ */
+function openSettings() {
+    document.getElementById('settingsName').value = resolveKey('ccdUserName') || '';
+    document.getElementById('settingsUrl').value = resolveKey('ccdSupabaseUrl') || '';
+    document.getElementById('settingsKey').value = resolveKey('ccdSupabaseKey') || '';
+    document.getElementById('settingsEtsyProxy').value = resolveKey('ccdEtsyProxy') || '';
+    document.getElementById('settingsWixProxy').value = resolveKey('ccdWixProxy') || '';
+    document.getElementById('settingsWayfairProxy').value = resolveKey('ccdWayfairProxy') || '';
+    document.getElementById('settingsShippoProxy').value = resolveKey('ccdShippoProxy') || '';
+    document.getElementById('settingsSyncProxy').value = resolveKey('ccdSyncProxy') || '';
+    document.getElementById('settingsApiKey').value = resolveKey('ccdApiKey') || API_KEY;
+    document.getElementById('settingsOverlay').classList.add('visible');
+}
+
+function closeSettings() {
+    document.getElementById('settingsOverlay').classList.remove('visible');
+}
+
+function saveSettings() {
+    LS.set('ccdUserName', document.getElementById('settingsName').value.trim());
+    LS.set('ccdSupabaseUrl', document.getElementById('settingsUrl').value.trim());
+    LS.set('ccdSupabaseKey', document.getElementById('settingsKey').value.trim());
+    LS.set('ccdEtsyProxy', document.getElementById('settingsEtsyProxy').value.trim());
+    LS.set('ccdWixProxy', document.getElementById('settingsWixProxy').value.trim());
+    LS.set('ccdWayfairProxy', document.getElementById('settingsWayfairProxy').value.trim());
+    LS.set('ccdShippoProxy', document.getElementById('settingsShippoProxy').value.trim());
+    LS.set('ccdSyncProxy', document.getElementById('settingsSyncProxy').value.trim());
+    LS.set('ccdApiKey', document.getElementById('settingsApiKey').value.trim());
+    LS.set('ccdUseSupabase', 'true');
+
+    // Cross-write to snake_case keys so other CCD tools (Backfill, SKU Audit) find them
+    LS.set('ccd_etsy_proxy_url', document.getElementById('settingsEtsyProxy').value.trim());
+    LS.set('ccd_wix_proxy_url', document.getElementById('settingsWixProxy').value.trim());
+    LS.set('ccd_wayfair_proxy_url', document.getElementById('settingsWayfairProxy').value.trim());
+
+    // Push proxy config to Supabase (single source of truth)
+    saveProxyConfigToSupabase();
+
+    closeSettings();
+    updateGreeting();
+    location.reload();
+}
+
+/* Click outside modal to close */
+document.getElementById('settingsOverlay').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('settingsOverlay')) closeSettings();
+});
+
+</script>
 </body>
 </html>
