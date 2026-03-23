@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.2.2</title>
+    <title>CCD Sync Hub v4.2.3</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.2.1 — Clean Build Styles
+           CCD SYNC HUB v4.2.3 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.2.1 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.2.3 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -707,7 +707,7 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.2.1 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.2.3 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
@@ -1433,7 +1433,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.2.1-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.2.3-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1583,7 +1583,7 @@
         return pending;
     }
     
-    // v4.2.1: Clear completed or failed rows from sync_queue
+    // v4.2.3: Clear completed or failed rows from sync_queue
     async function clearSyncQueueRows(status) {
         if (!sbClient || !sbConnected) {
             toast('Connect to Supabase first', 'warning');
@@ -1605,7 +1605,7 @@
         }
     }
     
-    // v4.2.1: Clear ALL sync_queue rows (with confirmation)
+    // v4.2.3: Clear ALL sync_queue rows (with confirmation)
     async function clearAllSyncQueueRows() {
         if (!sbClient || !sbConnected) {
             toast('Connect to Supabase first', 'warning');
@@ -1647,7 +1647,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.2.1',
+                processedBy: 'Sync Hub v4.2.3',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2038,7 +2038,7 @@
             }
         }
         
-        // Add to channel-specific array (v4.2.1: dedup against existing channel orders)
+        // Add to channel-specific array (v4.2.3: dedup against existing channel orders)
         const existingChannelIds = new Set((state.orders[channel] || []).map(o => o.id));
         const newChannelOrders = formatted.filter(o => !existingChannelIds.has(o.id));
         state.orders[channel] = [...(state.orders[channel] || []), ...newChannelOrders];
@@ -2074,7 +2074,7 @@
             return;
         }
         
-        // v4.2.1: Prevent duplicate pulls — disable button + show loading state
+        // v4.2.3: Prevent duplicate pulls — disable button + show loading state
         const pullBtn = document.querySelector('[onclick="pullOrdersFromChannels()"]');
         if (pullBtn) {
             if (pullBtn.disabled) return; // Already pulling
@@ -2151,7 +2151,7 @@
             }
         }
         
-        // Totals (v4.2.1: orders may be an array or 0)
+        // Totals (v4.2.3: orders may be an array or 0)
         const _oLen = o => Array.isArray(o) ? o.length : (o || 0);
         const totalOrders = _oLen(results.etsy.orders) + _oLen(results.wix.orders) + _oLen(results.wayfair.orders);
         const totalItems = (results.etsy.items || 0) + (results.wix.items || 0) + (results.wayfair.items || 0);
@@ -2203,7 +2203,7 @@
             );
         }
         } finally {
-            // v4.2.1: Re-enable pull button
+            // v4.2.3: Re-enable pull button
             if (pullBtn) {
                 pullBtn.disabled = false;
                 pullBtn.textContent = pullBtn._originalText || '🔄 Pull All Orders';
@@ -2605,6 +2605,86 @@
         
         // No match found
         console.log(`[SKU Match] No match found for: ${wayfairSku}`);
+        return null;
+    }
+
+
+    // === findProductByEtsySku ===
+    /**
+     * Multi-stage SKU matching for Etsy orders (v4.2.3)
+     * Handles suffixes (90969 SSVD), slashes (90969/RP92375), vendor codes (530147 CTW)
+     * Returns: { product, confidence, method, matchedSku } or null
+     * 
+     * VARIANT SAFETY: Slash SKUs checked as exact items FIRST before stripping.
+     * 90969/RP92375 IS its own item — only fall back to base if no exact match.
+     */
+    function findProductByEtsySku(etsySku, masterData) {
+        if (!etsySku || !masterData) return null;
+        
+        let products = Array.isArray(masterData) ? masterData : 
+                      (masterData.products || masterData.inventory || masterData.items || []);
+        
+        const getSku = p => p.sku || p.SKU;
+        
+        // Stage 0: Exact match (100%)
+        let product = products.find(p => getSku(p) === etsySku);
+        if (product) {
+            console.log(`[Etsy SKU] Stage 0 - Exact: ${etsySku} (100%)`);
+            return { product, confidence: 100, method: 'exact', matchedSku: etsySku };
+        }
+        
+        // Stage 1: Strip space + suffix — "90969 SSVD" → "90969"
+        if (etsySku.includes(' ')) {
+            const base = etsySku.split(' ')[0];
+            product = products.find(p => getSku(p) === base);
+            if (product) {
+                console.log(`[Etsy SKU] Stage 1 - Space strip: ${etsySku} → ${base} (95%)`);
+                return { product, confidence: 95, method: 'space_strip', matchedSku: base };
+            }
+        }
+        
+        // Stage 2: Slash SKU — "90969/RP92375"
+        // VARIANT SAFETY: Exact slash match already tried in Stage 0.
+        // Only strip to base if the full slash SKU didn't match.
+        if (etsySku.includes('/')) {
+            const base = etsySku.split('/')[0];
+            product = products.find(p => getSku(p) === base);
+            if (product) {
+                console.log(`[Etsy SKU] Stage 2 - Slash base: ${etsySku} → ${base} (90%)`);
+                return { product, confidence: 90, method: 'slash_base', matchedSku: base };
+            }
+        }
+        
+        // Stage 3: Strip vendor suffix — "530147 CTW", "54716A KK", "15358A KK"
+        // (space + 2-4 letter vendor code at end)
+        const vendorSuffixMatch = etsySku.match(/^(.+?)\s+([A-Z]{2,4})$/);
+        if (vendorSuffixMatch) {
+            const base = vendorSuffixMatch[1];
+            product = products.find(p => getSku(p) === base);
+            if (product) {
+                console.log(`[Etsy SKU] Stage 3 - Vendor suffix: ${etsySku} → ${base} (85%)`);
+                return { product, confidence: 85, method: 'vendor_suffix', matchedSku: base };
+            }
+        }
+        
+        // Stage 4: EndsWith — extract numeric core and find items ending with it
+        // "103763 PBK" → already handled by Stage 3, but this catches other patterns
+        // Also handles prefix variations like "G60352" matching "60352" or vice versa
+        const numericMatch = etsySku.match(/(\d{4,})/);
+        if (numericMatch) {
+            const numCore = numericMatch[1];
+            product = products.find(p => {
+                const s = getSku(p);
+                return s && s !== etsySku && (s.endsWith(numCore) || numCore.endsWith(s.replace(/^[A-Za-z]+/, '')));
+            });
+            if (product) {
+                const matchedSku = getSku(product);
+                console.log(`[Etsy SKU] Stage 4 - Numeric core: ${etsySku} → ${matchedSku} (80%)`);
+                return { product, confidence: 80, method: 'numeric_core', matchedSku };
+            }
+        }
+        
+        console.log(`[Etsy SKU] No match for: ${etsySku}`);
         return null;
     }
 
@@ -3244,8 +3324,17 @@
                             return; // HOLD ORDER COMPLETELY - do not process
                         }
                     }
+                } else if (order.channel === 'etsy') {
+                    // v4.2.3: Multi-stage Etsy SKU matching (mirrors Wayfair approach)
+                    const etsyMatch = findProductByEtsySku(sku, window.masterJsonData);
+                    if (etsyMatch) {
+                        product = etsyMatch.product;
+                        if (etsyMatch.method !== 'exact') {
+                            addLog(`🔗 Etsy SKU matched: ${sku} → ${etsyMatch.matchedSku} (${etsyMatch.confidence}% via ${etsyMatch.method})`, 'info');
+                        }
+                    }
                 } else {
-                    // For Etsy/Wix, use exact match (existing behavior)
+                    // For Wix, use exact match
                     product = products.find(p => (p.sku || p.SKU) === sku);
                 }
                 
@@ -5595,7 +5684,7 @@
 
     // === sendEventNotification ===
     async function sendEventNotification(eventType, message, data) {
-        // v4.2.1: Check master email toggle before anything else
+        // v4.2.3: Check master email toggle before anything else
         if (!state.settings.emailEnabled) {
             console.log(`[Email] Skipping ${eventType} — email notifications disabled`);
             return false;
@@ -5995,7 +6084,7 @@
     // UI: RENDER ORDERS
     // ============================================================
     
-    // v4.2.1: Clear processed orders from UI (keeps them in processed_orders DB table)
+    // v4.2.3: Clear processed orders from UI (keeps them in processed_orders DB table)
     function clearProcessedOrders() {
         const processedCount = state.orders.all.filter(o => o.processed).length;
         if (processedCount === 0) {
@@ -6015,7 +6104,7 @@
         addLog(`🗑️ Cleared ${processedCount} processed orders from display`, 'info');
     }
     
-    // v4.2.1: Order filter state for click-to-filter stats
+    // v4.2.3: Order filter state for click-to-filter stats
     let _orderFilter = null; // null = show all, 'pending', 'processed', 'etsy', 'wix', 'wayfair'
     
     function filterOrders(filter) {
@@ -6044,7 +6133,7 @@
         
         let orders = state.orders.all;
         
-        // v4.2.1: Apply filter
+        // v4.2.3: Apply filter
         if (_orderFilter === 'pending') orders = orders.filter(o => !o.processed);
         else if (_orderFilter === 'processed') orders = orders.filter(o => o.processed);
         else if (_orderFilter === 'etsy') orders = orders.filter(o => o.channel === 'etsy');
@@ -6228,7 +6317,7 @@
         updateAutoProcessIndicator(false);
     }
     
-    // v4.2.1: Header indicator for auto-process state
+    // v4.2.3: Header indicator for auto-process state
     function updateAutoProcessIndicator(isOn) {
         const el = document.getElementById('autoProcessIndicator');
         if (!el) return;
@@ -7054,7 +7143,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.2.2 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.2.3 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -7125,11 +7214,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.2.2 initialized successfully');
-            addLog('CCD Sync Hub v4.2.2 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.2.3 initialized successfully');
+            addLog('CCD Sync Hub v4.2.3 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.2.1 started (Supabase-Native Push)',
+                'Sync Hub v4.2.3 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
