@@ -1163,7 +1163,10 @@ body {
             <div class="page-title">Vendor Spend</div>
             <div class="page-subtitle" id="vendor-period-label">Purchase history &amp; cost analysis</div>
           </div>
-          <div class="export-btns">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <select id="vendorMonthFilter" onchange="loadVendorSpend()" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:inherit;">
+              <option value="all">All Time</option>
+            </select>
             <button class="btn-export" onclick="exportVendorExcel()">↓ Excel</button>
           </div>
         </div>
@@ -4220,36 +4223,87 @@ async function runInventoryScenario() {
 }
 
 // ── VENDOR SPEND ─────────────────────────────────────────────────────────
+let vendorRawInvoices = null; // cached for filtering
+let vendorItemBrands = {};   // item_id → brand_name lookup
+
 async function loadVendorSpend() {
-  document.getElementById('vendor-period-label').textContent = 'Purchase history & cost analysis';
+  // Load raw data once, then filter
+  if (!vendorRawInvoices) {
+    const { data: invoices } = await sbClient.from('invoices')
+      .select('id,vendor,invoice_number,order_date')
+      .order('order_date', { ascending:false }).limit(2000);
 
-  const { data: invoices } = await sbClient.from('invoices')
-    .select('id,vendor_name,invoice_number,invoice_date,total_amount')
-    .order('invoice_date', { ascending:false }).limit(2000);
+    const { data: lineItems } = await sbClient.from('invoice_items')
+      .select('invoice_id,item_id,sku,product_name,qty_ordered,unit_wholesale_price')
+      .limit(5000);
 
-  const { data: items } = await sbClient.from('invoice_items')
-    .select('invoice_id,sku,product_name,qty,unit_cost,total_cost')
-    .limit(5000);
+    // Build item_id → brand_name lookup for vendor resolution
+    const itemIds = [...new Set((lineItems||[]).map(li => li.item_id).filter(Boolean))];
+    if (itemIds.length > 0) {
+      const { data: itemRows } = await sbClient.from('items')
+        .select('id,brand_name,vendor')
+        .in('id', itemIds);
+      (itemRows||[]).forEach(r => {
+        vendorItemBrands[r.id] = r.vendor || r.brand_name || null;
+      });
+    }
 
-  // Build invoice→items map
-  const invoiceItems = {};
-  (items||[]).forEach(i => {
-    if (!invoiceItems[i.invoice_id]) invoiceItems[i.invoice_id] = [];
-    invoiceItems[i.invoice_id].push(i);
-  });
+    // Attach line items to invoices and resolve vendor
+    const invoiceItems = {};
+    (lineItems||[]).forEach(li => {
+      if (!invoiceItems[li.invoice_id]) invoiceItems[li.invoice_id] = [];
+      invoiceItems[li.invoice_id].push(li);
+    });
+
+    vendorRawInvoices = (invoices||[]).map(inv => {
+      const items = invoiceItems[inv.id] || [];
+      // Compute spend from line items (header total_invoice_amount is usually NULL)
+      const lineSpend = items.reduce((s, li) => s + ((parseFloat(li.qty_ordered)||0) * (parseFloat(li.unit_wholesale_price)||0)), 0);
+      // Resolve vendor: invoice header → first line item's brand → 'Unknown'
+      let vendor = inv.vendor;
+      if (!vendor && items.length > 0) {
+        for (const li of items) {
+          if (li.item_id && vendorItemBrands[li.item_id]) {
+            vendor = vendorItemBrands[li.item_id];
+            break;
+          }
+        }
+      }
+      return { ...inv, vendor: vendor || 'Unknown', items, lineSpend };
+    });
+
+    // Build month filter dropdown
+    buildVendorMonthFilter();
+  }
+
+  // Apply date filter
+  const filterVal = document.getElementById('vendorMonthFilter')?.value || 'all';
+  let filtered = vendorRawInvoices;
+  let periodLabel = 'All Time';
+
+  if (filterVal !== 'all') {
+    const [fy, fm] = filterVal.split('-');
+    filtered = vendorRawInvoices.filter(inv => {
+      const d = inv.order_date?.substring(0,7);
+      return d === filterVal;
+    });
+    const monthNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    periodLabel = `${monthNames[parseInt(fm)]} ${fy}`;
+  }
+
+  document.getElementById('vendor-period-label').textContent = periodLabel + ' — Purchase history & cost analysis';
 
   // Group by vendor
   const byVendor = {};
-  (invoices||[]).forEach(inv => {
-    const v = inv.vendor_name || 'Unknown';
+  filtered.forEach(inv => {
+    const v = inv.vendor;
     if (!byVendor[v]) byVendor[v] = { vendor:v, invoiceCount:0, totalSpend:0, itemCount:0, unitCount:0, invoices:[], lastOrder:null };
     byVendor[v].invoiceCount++;
-    byVendor[v].totalSpend += parseFloat(inv.total_amount)||0;
-    const lineItems = invoiceItems[inv.id] || [];
-    byVendor[v].itemCount += lineItems.length;
-    byVendor[v].unitCount += lineItems.reduce((s,i) => s + (parseInt(i.qty)||0), 0);
-    byVendor[v].invoices.push({ ...inv, items: lineItems });
-    const d = inv.invoice_date?.substring(0,10);
+    byVendor[v].totalSpend += inv.lineSpend;
+    byVendor[v].itemCount += inv.items.length;
+    byVendor[v].unitCount += inv.items.reduce((s,i) => s + (parseInt(i.qty_ordered)||0), 0);
+    byVendor[v].invoices.push(inv);
+    const d = inv.order_date?.substring(0,10);
     if (d && (!byVendor[v].lastOrder || d > byVendor[v].lastOrder)) byVendor[v].lastOrder = d;
   });
 
@@ -4291,6 +4345,23 @@ async function loadVendorSpend() {
   renderVendorTable();
 }
 
+function buildVendorMonthFilter() {
+  const sel = document.getElementById('vendorMonthFilter');
+  if (!sel || !vendorRawInvoices) return;
+  const months = new Set();
+  vendorRawInvoices.forEach(inv => {
+    const d = inv.order_date?.substring(0,7);
+    if (d) months.add(d);
+  });
+  const sorted = [...months].sort().reverse();
+  const monthNames = ['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  sel.innerHTML = '<option value="all">All Time</option>' +
+    sorted.map(m => {
+      const [y, mo] = m.split('-');
+      return `<option value="${m}">${monthNames[parseInt(mo)]} ${y}</option>`;
+    }).join('');
+}
+
 function renderVendorTable() {
   const wrap = document.getElementById('vendorTableWrap');
   if (!vendorData.length) { wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◪</div><div class="empty-msg">No invoice data — import vendor invoices via Desktop</div></div>'; return; }
@@ -4327,7 +4398,7 @@ function drillVendor(vendorName) {
   const vendor = vendorData.find(v => v.vendor === vendorName);
   if (!vendor) return;
   const wrap = document.getElementById('vendorTableWrap');
-  const invs = vendor.invoices.sort((a,b) => (b.invoice_date||'').localeCompare(a.invoice_date||''));
+  const invs = vendor.invoices.sort((a,b) => (b.order_date||'').localeCompare(a.order_date||''));
 
   wrap.innerHTML = `
     <div style="font-size:11px;color:var(--gold);margin-bottom:8px;">${vendor.vendor} — ${invs.length} invoices, ${$$(vendor.totalSpend)} total
@@ -4337,8 +4408,8 @@ function drillVendor(vendorName) {
       const items = inv.items || [];
       return `<div class="card" style="margin-bottom:12px;">
         <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
-          <div class="card-title" style="font-size:12px;">${inv.invoice_number||'—'} — ${inv.invoice_date?.substring(0,10)||'—'}</div>
-          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);">${$$(inv.total_amount)}</div>
+          <div class="card-title" style="font-size:12px;">${inv.invoice_number||'—'} — ${inv.order_date?.substring(0,10)||'—'}</div>
+          <div style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);">${$$(inv.lineSpend)}</div>
         </div>
         ${items.length ? `<div class="card-body" style="padding:0;">
           <table class="data-table" style="margin:0;">
@@ -4346,9 +4417,9 @@ function drillVendor(vendorName) {
             <tbody>${items.map(i => `<tr>
               <td class="val-gold" style="font-size:11px;">${i.sku||'—'}</td>
               <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:11px;">${i.product_name||'—'}</td>
-              <td class="text-right">${i.qty||0}</td>
-              <td class="text-right val-dim">${$$(i.unit_cost)}</td>
-              <td class="text-right">${$$(i.total_cost)}</td>
+              <td class="text-right">${i.qty_ordered||0}</td>
+              <td class="text-right val-dim">${$$(i.unit_wholesale_price)}</td>
+              <td class="text-right">${$$((i.qty_ordered||0) * (i.unit_wholesale_price||0))}</td>
             </tr>`).join('')}</tbody>
           </table>
         </div>` : '<div class="card-body" style="font-size:11px;color:var(--muted);">No line items</div>'}
@@ -4600,7 +4671,7 @@ function exportVendorExcel() {
   // Detail sheet with all invoice items
   const allItems = [];
   vendorData.forEach(v => v.invoices.forEach(inv => (inv.items||[]).forEach(i => {
-    allItems.push([v.vendor, inv.invoice_number, inv.invoice_date?.substring(0,10), i.sku, i.product_name, i.qty, i.unit_cost, i.total_cost]);
+    allItems.push([v.vendor, inv.invoice_number, inv.order_date?.substring(0,10), i.sku, i.product_name, i.qty_ordered, i.unit_wholesale_price, (i.qty_ordered||0)*(i.unit_wholesale_price||0)]);
   })));
   if (allItems.length) {
     const detWs = XLSX.utils.aoa_to_sheet([['Vendor','Invoice #','Date','SKU','Product','Qty','Unit Cost','Total'], ...allItems]);
