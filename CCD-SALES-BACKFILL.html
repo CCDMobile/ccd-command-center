@@ -337,6 +337,33 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 // ═══════════════════════════════════════
+// VERSION REGISTRATION
+// ═══════════════════════════════════════
+const BF_VERSION = 'v1.6';
+const BF_VERSION_KEY = 'backfill';
+
+async function registerToolVersion(client, toolKey, toolVersion) {
+    if (!client) return;
+    try {
+        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+        let versions = {};
+        const exists = data && data.length > 0;
+        if (exists && data[0].value) {
+            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+        }
+        if (versions[toolKey] === toolVersion) return;
+        versions[toolKey] = toolVersion;
+        const now = new Date().toISOString();
+        if (exists) {
+            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+        } else {
+            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+        }
+        console.log(`Registered ${toolKey} ${toolVersion}`);
+    } catch(e) { console.log('Version register skipped:', e.message); }
+}
+
+// ═══════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════
 let sbClient = null;
@@ -411,6 +438,7 @@ async function connectSupabase() {
         document.getElementById('sbStatus').textContent = 'Connected';
         document.getElementById('btnImport').disabled = false;
         document.getElementById('btnImportUnmatched').disabled = false;
+        registerToolVersion(sbClient, BF_VERSION_KEY, BF_VERSION);
         
         // Build set of order_id for quick existence check
         existingOrderIds = new Set(allOrderIds.map(r => r.order_id));

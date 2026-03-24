@@ -880,13 +880,18 @@ body {
           <button class="dr-pill" data-sview="variance" onclick="setShippingView('variance')">Variance Report</button>
           <button class="dr-pill" data-sview="geo" onclick="setShippingView('geo')">By State</button>
           <button class="dr-pill" data-sview="unreconciled" onclick="setShippingView('unreconciled')">Unreconciled</button>
+          <span style="border-left:1px solid var(--border);margin:0 4px;"></span>
+          <button class="dr-pill" data-sview="transit" onclick="setShippingView('transit')">Transit Time</button>
+          <button class="dr-pill" data-sview="fulfillment" onclick="setShippingView('fulfillment')">Fulfillment</button>
+          <button class="dr-pill" data-sview="transit-state" onclick="setShippingView('transit-state')">Transit by State</button>
+          <button class="dr-pill" id="btnSyncTransit" onclick="syncTransitData()" style="margin-left:auto;background:var(--bg2);border:1px solid var(--border);font-size:10px;" title="Fetch delivery tracking from Shippo API">⟳ Sync Transit Data</button>
         </div>
 
         <div class="card">
           <div class="card-body" id="shippingTableWrap"><div class="loading"><div class="spinner"></div></div></div>
         </div>
 
-        <div style="font-size:10px;color:var(--muted);margin-top:4px;">ℹ Shippo data available from Nov 2025 forward. 44 unmatched Shippo records excluded.</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:4px;">ℹ Shippo data available from Nov 2025 forward. Transit time data requires Shippo proxy v1.8.0+ and "Sync Transit Data" to populate.</div>
       </section>
 
       <!-- ─── INVENTORY VALUATION (Phase 3) ─── -->
@@ -1268,9 +1273,33 @@ body {
 <script>
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
-// v1.6.0 — March 2026
+// v1.7.0 — March 2026
 // ALL financial values read from sales_history columns — zero recalculation.
 // ============================================================================
+
+const FR_VERSION = 'v1.7.0';
+const FR_VERSION_KEY = 'financial';
+
+async function registerToolVersion(client, toolKey, toolVersion) {
+    if (!client) return;
+    try {
+        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+        let versions = {};
+        const exists = data && data.length > 0;
+        if (exists && data[0].value) {
+            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+        }
+        if (versions[toolKey] === toolVersion) return;
+        versions[toolKey] = toolVersion;
+        const now = new Date().toISOString();
+        if (exists) {
+            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+        } else {
+            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+        }
+        console.log(`Registered ${toolKey} ${toolVersion}`);
+    } catch(e) { console.log('Version register skipped:', e.message); }
+}
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 let sbClient = null;
@@ -1298,6 +1327,7 @@ let productView = 'top-profit';
 let shippingView = 'carrier';
 let inventoryView = 'all';
 let productData = [], brandData = [], shippingData = {}, inventoryData = [];
+let transitData = { synced: [], unsynced: 0, byCarrier: [], byState: [], fulfillment: [], syncInProgress: false };
 let wayfairReconView = 'summary', wayfairReconData = {};
 let customResultData = [];
 let customerView = 'top', customerData = [], geoData = [];
@@ -1343,6 +1373,7 @@ async function initConnect() {
     sbClient = window.supabase.createClient(url, key);
     const { error } = await sbClient.from('sales_history').select('id', { count:'exact', head:true });
     if (error) throw error;
+    registerToolVersion(sbClient, FR_VERSION_KEY, FR_VERSION);
     localStorage.setItem('ccdSupabaseUrl', url);
     localStorage.setItem('ccdSupabaseKey', key);
     localStorage.setItem('ccdUseSupabase', 'true');
@@ -2589,14 +2620,28 @@ async function loadShippingReport() {
   if (chDb) q = q.eq('sale_channel', chDb);
   const { data: sales } = await q;
 
-  // Shippo geographic data (matched records only)
+  // Shippo geographic data (matched records only) — include transit columns
   const { data: shippo } = await sbClient.from('shippo_transactions')
-    .select('linked_sale_id,label_cost,carrier,recipient_state')
+    .select('id,linked_sale_id,label_cost,carrier,recipient_state,tracking_number,first_scan_date,delivery_date,label_date,transit_days')
     .not('linked_sale_id', 'is', null)
     .limit(2000);
 
   const shippoMap = {};
   (shippo||[]).forEach(s => { shippoMap[s.linked_sale_id] = s; });
+
+  // Also count unsynced (have tracking but no delivery date) — include unlinked too
+  const { count: unsyncedCount } = await sbClient.from('shippo_transactions')
+    .select('*', { count: 'exact', head: true })
+    .not('tracking_number', 'is', null)
+    .is('delivery_date', null);
+
+  // Build sales lookup for transit fulfillment analysis
+  const salesMap = {};
+  (sales||[]).forEach(r => { salesMap[r.id] = r; });
+
+  // Build transit analysis data
+  buildTransitData(shippo, salesMap);
+  transitData.unsynced = unsyncedCount || 0;
 
   // KPI summary
   let totalEstimated = 0, totalActual = 0, reconciledCount = 0, unreconciledCount = 0;
@@ -2674,6 +2719,13 @@ async function loadShippingReport() {
 
 function renderShippingTable() {
   const wrap = document.getElementById('shippingTableWrap');
+
+  // Delegate transit views
+  if (['transit','fulfillment','transit-state'].includes(shippingView)) {
+    renderTransitView();
+    return;
+  }
+
   const d = shippingData;
 
   if (shippingView === 'carrier') {
@@ -2777,6 +2829,289 @@ function renderShippingTable() {
 function drillShippingCarrier(carrier) {
   shippingData._carrierFilter = carrier;
   setShippingView('variance');
+}
+
+// ── TRANSIT TIME ANALYSIS ──────────────────────────────────────────────────
+
+function jsonpCall(url) {
+  return new Promise((resolve, reject) => {
+    const cb = 'cb_' + Math.random().toString(36).substr(2,9);
+    const s = document.createElement('script');
+    const timer = setTimeout(() => { reject(new Error('Timeout')); delete window[cb]; s.remove(); }, 30000);
+    window[cb] = (data) => { clearTimeout(timer); resolve(data); delete window[cb]; s.remove(); };
+    s.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
+    s.onerror = () => { clearTimeout(timer); reject(new Error('JSONP failed')); delete window[cb]; s.remove(); };
+    document.head.appendChild(s);
+  });
+}
+
+async function syncTransitData() {
+  if (transitData.syncInProgress) return;
+  const proxyUrl = localStorage.getItem('ccdShippoProxy');
+  const apiKey = localStorage.getItem('ccdApiKey');
+  if (!proxyUrl) { alert('Shippo proxy URL not configured. Open Command Center → Settings first.'); return; }
+  if (!apiKey) { alert('API key not configured. Open Command Center → Settings first.'); return; }
+
+  const btn = document.getElementById('btnSyncTransit');
+  transitData.syncInProgress = true;
+  btn.disabled = true;
+  btn.textContent = '⟳ Fetching...';
+
+  try {
+    // Pull tracking numbers that need sync (have tracking_number but no delivery_date)
+    const { data: unsyncedRows, error } = await sbClient.from('shippo_transactions')
+      .select('id,tracking_number,carrier')
+      .not('tracking_number', 'is', null)
+      .is('delivery_date', null)
+      .limit(1000);
+
+    if (error) throw error;
+    if (!unsyncedRows?.length) {
+      btn.textContent = '✓ All synced';
+      setTimeout(() => { btn.textContent = '⟳ Sync Transit Data'; btn.disabled = false; }, 2000);
+      transitData.syncInProgress = false;
+      return;
+    }
+
+    let synced = 0, failed = 0;
+    const total = unsyncedRows.length;
+    btn.textContent = `⟳ 0 / ${total}`;
+
+    // Process in batches of 10 via JSONP
+    const batchSize = 10;
+    for (let i = 0; i < unsyncedRows.length; i += batchSize) {
+      const batch = unsyncedRows.slice(i, i + batchSize);
+      const items = batch.map(r => ({ carrier: (r.carrier || 'usps').toLowerCase(), tracking: r.tracking_number }));
+      
+      try {
+        const itemsParam = encodeURIComponent(JSON.stringify(items));
+        const url = `${proxyUrl}?action=getBatchTrackingStatus&key=${apiKey}&items=${itemsParam}`;
+        const resp = await jsonpCall(url);
+
+        if (resp.success && resp.results) {
+          for (let j = 0; j < resp.results.length; j++) {
+            const tr = resp.results[j];
+            const row = batch[j];
+            if (tr.success) {
+              const updates = {
+                first_scan_date: tr.first_scan_date || null,
+                delivery_date: tr.delivery_date || null,
+                label_date: tr.label_date || null
+              };
+              // Compute transit days
+              if (tr.first_scan_date && tr.delivery_date) {
+                const ms = new Date(tr.delivery_date) - new Date(tr.first_scan_date);
+                updates.transit_days = Math.max(0, Math.round((ms / 86400000) * 10) / 10);
+              }
+              await sbClient.from('shippo_transactions').update(updates).eq('id', row.id);
+              synced++;
+            } else { failed++; }
+          }
+        } else { failed += batch.length; }
+      } catch (e) {
+        console.warn('Batch tracking error:', e.message);
+        failed += batch.length;
+      }
+
+      btn.textContent = `⟳ ${synced + failed} / ${total}`;
+      // Small delay between batches to avoid rate limiting
+      if (i + batchSize < unsyncedRows.length) await new Promise(r => setTimeout(r, 300));
+    }
+
+    btn.textContent = `✓ ${synced} synced` + (failed ? `, ${failed} failed` : '');
+    setTimeout(() => { btn.textContent = '⟳ Sync Transit Data'; btn.disabled = false; }, 3000);
+
+    // Reload the shipping report to pick up new data
+    if (synced > 0) loadShippingReport();
+
+  } catch (e) {
+    console.error('Transit sync error:', e);
+    btn.textContent = '✕ Error';
+    setTimeout(() => { btn.textContent = '⟳ Sync Transit Data'; btn.disabled = false; }, 3000);
+  }
+  transitData.syncInProgress = false;
+}
+
+function buildTransitData(shippoRows, salesMap) {
+  const byCarrier = {}, byState = {}, fulfillRows = [];
+  let totalTransit = 0, transitCount = 0, deliveredCount = 0;
+
+  (shippoRows || []).forEach(s => {
+    if (!s.delivery_date || !s.first_scan_date) return;
+    deliveredCount++;
+    const days = s.transit_days != null ? parseFloat(s.transit_days) : null;
+    if (days == null) return;
+    totalTransit += days;
+    transitCount++;
+
+    const carrier = s.carrier || 'Unknown';
+    if (!byCarrier[carrier]) byCarrier[carrier] = { carrier, totalDays: 0, count: 0, min: 999, max: 0, items: [] };
+    byCarrier[carrier].totalDays += days;
+    byCarrier[carrier].count++;
+    byCarrier[carrier].min = Math.min(byCarrier[carrier].min, days);
+    byCarrier[carrier].max = Math.max(byCarrier[carrier].max, days);
+
+    const state = s.recipient_state || 'Unknown';
+    if (!byState[state]) byState[state] = { state, totalDays: 0, count: 0, min: 999, max: 0 };
+    byState[state].totalDays += days;
+    byState[state].count++;
+    byState[state].min = Math.min(byState[state].min, days);
+    byState[state].max = Math.max(byState[state].max, days);
+
+    // Fulfillment: sale_date → first_scan_date
+    const sale = salesMap[s.linked_sale_id];
+    if (sale && s.first_scan_date) {
+      const saleDate = new Date(sale.sale_date?.substring(0,10) + 'T12:00:00');
+      const scanDate = new Date(s.first_scan_date);
+      const fulfillDays = Math.max(0, Math.round(((scanDate - saleDate) / 86400000) * 10) / 10);
+      fulfillRows.push({
+        sku: sale.sku, product: sale.product_name, channel: sale.sale_channel,
+        saleDate: sale.sale_date?.substring(0,10), scanDate: s.first_scan_date?.substring(0,10),
+        deliveryDate: s.delivery_date?.substring(0,10),
+        fulfillDays, transitDays: days, totalDays: fulfillDays + days,
+        carrier, state
+      });
+    }
+  });
+
+  const carrierArr = Object.values(byCarrier).map(c => ({
+    ...c, avg: c.count > 0 ? Math.round((c.totalDays / c.count) * 10) / 10 : 0
+  })).sort((a,b) => b.count - a.count);
+
+  const stateArr = Object.values(byState).map(s => ({
+    ...s, avg: s.count > 0 ? Math.round((s.totalDays / s.count) * 10) / 10 : 0
+  })).sort((a,b) => b.count - a.count);
+
+  const avgFulfill = fulfillRows.length > 0
+    ? Math.round((fulfillRows.reduce((s,r) => s + r.fulfillDays, 0) / fulfillRows.length) * 10) / 10 : 0;
+
+  transitData = {
+    ...transitData,
+    synced: shippoRows?.filter(r => r.delivery_date) || [],
+    unsynced: shippoRows?.filter(r => r.tracking_number && !r.delivery_date).length || 0,
+    byCarrier: carrierArr,
+    byState: stateArr,
+    fulfillment: fulfillRows.sort((a,b) => b.totalDays - a.totalDays),
+    avgTransit: transitCount > 0 ? Math.round((totalTransit / transitCount) * 10) / 10 : 0,
+    medianTransit: (() => {
+      const sorted = (shippoRows||[]).filter(r => r.transit_days != null).map(r => parseFloat(r.transit_days)).sort((a,b)=>a-b);
+      if (!sorted.length) return 0;
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : Math.round(((sorted[mid-1]+sorted[mid])/2)*10)/10;
+    })(),
+    deliveredCount,
+    transitCount,
+    avgFulfill,
+    totalFulfill: fulfillRows.length
+  };
+}
+
+function renderTransitView() {
+  const wrap = document.getElementById('shippingTableWrap');
+  const d = transitData;
+
+  if (shippingView === 'transit') {
+    if (!d.byCarrier?.length) {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">📦</div><div class="empty-msg">No transit data yet. Click "Sync Transit Data" to fetch delivery tracking from Shippo.</div></div>`;
+      return;
+    }
+    const unsyncNote = d.unsynced > 0 ? `<div style="font-size:10px;color:var(--gold);margin-bottom:8px;">ℹ ${d.unsynced} shipments still need transit data — click Sync Transit Data above.</div>` : '';
+    wrap.innerHTML = `${unsyncNote}
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px;">
+        <div class="kpi-card"><div class="kpi-label">Avg Transit</div><div class="kpi-value">${d.avgTransit} days</div></div>
+        <div class="kpi-card"><div class="kpi-label">Median Transit</div><div class="kpi-value">${d.medianTransit} days</div></div>
+        <div class="kpi-card"><div class="kpi-label">Delivered</div><div class="kpi-value">${num(d.deliveredCount)}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Pending Sync</div><div class="kpi-value">${num(d.unsynced)}</div></div>
+      </div>
+      <div class="data-table-wrap"><table class="data-table">
+        <thead><tr>
+          <th style="cursor:pointer;" onclick="sortTable('trCarrier','carrier',transitData.byCarrier,()=>renderTransitView())">Carrier ${sArr('trCarrier','carrier')}</th>
+          <th class="text-right" style="cursor:pointer;" onclick="sortTable('trCarrier','count',transitData.byCarrier,()=>renderTransitView())">Shipments ${sArr('trCarrier','count')}</th>
+          <th class="text-right" style="cursor:pointer;" onclick="sortTable('trCarrier','avg',transitData.byCarrier,()=>renderTransitView())">Avg Days ${sArr('trCarrier','avg')}</th>
+          <th class="text-right">Min</th>
+          <th class="text-right">Max</th>
+          <th class="text-right">Range</th>
+        </tr></thead>
+        <tbody>${d.byCarrier.map(c => {
+          const range = c.max - c.min;
+          const avgCls = c.avg <= 3 ? 'val-pos' : c.avg <= 5 ? 'val-gold' : 'val-neg';
+          return `<tr>
+            <td style="color:var(--text);font-weight:500;">${c.carrier}</td>
+            <td class="text-right">${num(c.count)}</td>
+            <td class="text-right ${avgCls}">${c.avg}</td>
+            <td class="text-right val-dim">${c.min === 999 ? '—' : c.min}</td>
+            <td class="text-right val-dim">${c.max}</td>
+            <td class="text-right val-dim">${range.toFixed(1)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`;
+  }
+  else if (shippingView === 'fulfillment') {
+    if (!d.fulfillment?.length) {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">⏱</div><div class="empty-msg">No fulfillment data yet. Sync transit data and ensure Shippo records are linked to sales.</div></div>`;
+      return;
+    }
+    const avgFulfillCls = d.avgFulfill <= 1 ? 'val-pos' : d.avgFulfill <= 2 ? 'val-gold' : 'val-neg';
+    const avgTotalDays = d.fulfillment.length > 0
+      ? Math.round((d.fulfillment.reduce((s,r) => s + r.totalDays, 0) / d.fulfillment.length) * 10) / 10 : 0;
+    wrap.innerHTML = `
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px;">
+        <div class="kpi-card"><div class="kpi-label">Avg Fulfillment</div><div class="kpi-value ${avgFulfillCls}">${d.avgFulfill} days</div></div>
+        <div class="kpi-card"><div class="kpi-label">Avg Transit</div><div class="kpi-value">${d.avgTransit} days</div></div>
+        <div class="kpi-card"><div class="kpi-label">Avg Order→Delivery</div><div class="kpi-value">${avgTotalDays} days</div></div>
+        <div class="kpi-card"><div class="kpi-label">Tracked Orders</div><div class="kpi-value">${num(d.fulfillment.length)}</div></div>
+      </div>
+      <div class="data-table-wrap"><table class="data-table">
+        <thead><tr>
+          <th>Sale Date</th><th>SKU</th><th>Channel</th><th>Carrier</th>
+          <th class="text-right" style="cursor:pointer;" onclick="sortTable('trFulfill','fulfillDays',transitData.fulfillment,()=>renderTransitView())">Fulfillment ${sArr('trFulfill','fulfillDays')}</th>
+          <th class="text-right" style="cursor:pointer;" onclick="sortTable('trFulfill','transitDays',transitData.fulfillment,()=>renderTransitView())">Transit ${sArr('trFulfill','transitDays')}</th>
+          <th class="text-right" style="cursor:pointer;" onclick="sortTable('trFulfill','totalDays',transitData.fulfillment,()=>renderTransitView())">Total ${sArr('trFulfill','totalDays')}</th>
+        </tr></thead>
+        <tbody>${d.fulfillment.slice(0,150).map(r => {
+          const fCls = r.fulfillDays <= 1 ? 'val-pos' : r.fulfillDays <= 2 ? 'val-gold' : 'val-neg';
+          const tCls = r.transitDays <= 3 ? 'val-pos' : r.transitDays <= 5 ? 'val-gold' : 'val-neg';
+          return `<tr onclick="drillProductSku('${(r.sku||'').replace(/'/g,"\\'")}')" style="cursor:pointer;">
+            <td>${r.saleDate||'—'}</td>
+            <td class="val-gold">${r.sku||'—'}</td>
+            <td>${chBadge(r.channel)}</td>
+            <td>${r.carrier||'—'}</td>
+            <td class="text-right ${fCls}">${r.fulfillDays}</td>
+            <td class="text-right ${tCls}">${r.transitDays}</td>
+            <td class="text-right">${r.totalDays}</td>
+          </tr>`;
+        }).join('')}</tbody>
+        ${d.fulfillment.length>150?`<tfoot><tr><td colspan="7" style="padding:10px;font-size:11px;color:var(--muted);">Showing 150 of ${d.fulfillment.length}</td></tr></tfoot>`:''}
+      </table></div>`;
+  }
+  else if (shippingView === 'transit-state') {
+    if (!d.byState?.length) {
+      wrap.innerHTML = `<div class="empty-state"><div class="empty-icon">🗺</div><div class="empty-msg">No transit-by-state data yet. Sync transit data above.</div></div>`;
+      return;
+    }
+    wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table">
+      <thead><tr>
+        <th style="cursor:pointer;" onclick="sortTable('trState','state',transitData.byState,()=>renderTransitView())">State ${sArr('trState','state')}</th>
+        <th class="text-right" style="cursor:pointer;" onclick="sortTable('trState','count',transitData.byState,()=>renderTransitView())">Shipments ${sArr('trState','count')}</th>
+        <th class="text-right" style="cursor:pointer;" onclick="sortTable('trState','avg',transitData.byState,()=>renderTransitView())">Avg Days ${sArr('trState','avg')}</th>
+        <th class="text-right">Min</th>
+        <th class="text-right">Max</th>
+        <th class="text-right">Variance</th>
+      </tr></thead>
+      <tbody>${d.byState.map(s => {
+        const variance = s.max - s.min;
+        const avgCls = s.avg <= 3 ? 'val-pos' : s.avg <= 5 ? 'val-gold' : 'val-neg';
+        return `<tr>
+          <td style="color:var(--text);font-weight:500;">${s.state}</td>
+          <td class="text-right">${num(s.count)}</td>
+          <td class="text-right ${avgCls}">${s.avg}</td>
+          <td class="text-right val-dim">${s.min === 999 ? '—' : s.min}</td>
+          <td class="text-right val-dim">${s.max}</td>
+          <td class="text-right val-dim">${variance.toFixed(1)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  }
 }
 
 function drillRemittance(remId) {
@@ -5093,6 +5428,30 @@ function exportShippingExcel() {
       ...d.allReconciledRows.map(r => [r.date, r.sku, r.product, r.carrier, r.channel, r.estimated, r.actual, r.variance.toFixed(2), r.isOverpay?'YES':''])
     ]);
     XLSX.utils.book_append_sheet(wb, ws, 'All Reconciled');
+  }
+  // Transit by Carrier
+  if (transitData.byCarrier?.length) {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Carrier','Shipments','Avg Transit Days','Min','Max','Range'],
+      ...transitData.byCarrier.map(c => [c.carrier, c.count, c.avg, c.min===999?'':c.min, c.max, parseFloat((c.max-c.min).toFixed(1))])
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Transit by Carrier');
+  }
+  // Transit by State
+  if (transitData.byState?.length) {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['State','Shipments','Avg Transit Days','Min','Max','Variance'],
+      ...transitData.byState.map(s => [s.state, s.count, s.avg, s.min===999?'':s.min, s.max, parseFloat((s.max-s.min).toFixed(1))])
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Transit by State');
+  }
+  // Fulfillment Detail
+  if (transitData.fulfillment?.length) {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Sale Date','SKU','Channel','Carrier','State','First Scan','Delivery','Fulfillment Days','Transit Days','Total Days'],
+      ...transitData.fulfillment.map(r => [r.saleDate, r.sku, r.channel, r.carrier, r.state, r.scanDate, r.deliveryDate, r.fulfillDays, r.transitDays, r.totalDays])
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws, 'Fulfillment Detail');
   }
   XLSX.writeFile(wb, `CCD_Shipping_${getRange().from}_${getRange().to}.xlsx`);
 }

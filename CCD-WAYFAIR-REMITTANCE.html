@@ -585,6 +585,33 @@
 
 <script>
 // ═══════════════════════════════════════════════════════════
+// VERSION REGISTRATION
+// ═══════════════════════════════════════════════════════════
+const REM_VERSION = 'v1.2';
+const REM_VERSION_KEY = 'remittance';
+
+async function registerToolVersion(client, toolKey, toolVersion) {
+    if (!client) return;
+    try {
+        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+        let versions = {};
+        const exists = data && data.length > 0;
+        if (exists && data[0].value) {
+            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+        }
+        if (versions[toolKey] === toolVersion) return;
+        versions[toolKey] = toolVersion;
+        const now = new Date().toISOString();
+        if (exists) {
+            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+        } else {
+            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+        }
+        console.log(`Registered ${toolKey} ${toolVersion}`);
+    } catch(e) { console.log('Version register skipped:', e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════
 let sbClient = null;
@@ -612,6 +639,7 @@ function connectSupabase() {
             document.getElementById('sbDot').classList.add('connected');
             document.getElementById('sbStatus').textContent = 'Connected';
             document.getElementById('btnImport').disabled = false;
+            registerToolVersion(sbClient, REM_VERSION_KEY, REM_VERSION);
             
             // Cache existing remittance numbers for duplicate detection
             loadExistingRemittances();

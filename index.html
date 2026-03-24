@@ -1370,9 +1370,12 @@ const CATEGORIES = [
     { id: 'coming', label: 'Coming Soon', color: 'var(--muted)' },
 ];
 
+const CC_VERSION = 'v3.1';
+const CC_VERSION_KEY = 'commandcenter';
+
 const DEFAULT_VERSIONS = {
-    desktop: '~137K', synchub: 'v4.2.3', mobile: 'v4.1',
-    financial: 'v1.5.0', remittance: 'v1.1',
+    desktop: 'v23.4.0', synchub: 'v4.2.3', mobile: 'v4.1',
+    commandcenter: 'v3.1', financial: 'v1.5.0', remittance: 'v1.1',
     skuaudit: 'v1.0', backfill: 'v1.6', channelmgr: '—',
     aicontent: 'v1.0', aipricing: 'v1.0'
 };
@@ -1420,6 +1423,9 @@ async function initSupabase(url, key) {
         buildFilterPills();
         buildAppGrid();
         renderFavorites();
+
+        // Register this tool's version before loading all versions
+        await registerToolVersion(sb, CC_VERSION_KEY, CC_VERSION);
 
         // Load live data
         await Promise.all([
@@ -1470,6 +1476,30 @@ async function saveSetup() {
     LS.set('ccdUseSupabase', 'true');
 
     await initSupabase(url, key);
+}
+
+/* ═══════════════════════════════════════════
+   AUTO-REGISTER TOOL VERSION TO SUPABASE
+   ═══════════════════════════════════════════ */
+async function registerToolVersion(client, toolKey, toolVersion) {
+    if (!client) return;
+    try {
+        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+        let versions = {};
+        const exists = data && data.length > 0;
+        if (exists && data[0].value) {
+            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+        }
+        if (versions[toolKey] === toolVersion) return;
+        versions[toolKey] = toolVersion;
+        const now = new Date().toISOString();
+        if (exists) {
+            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+        } else {
+            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+        }
+        console.log(`Registered ${toolKey} ${toolVersion}`);
+    } catch(e) { console.log('Version register skipped:', e.message); }
 }
 
 /* ═══════════════════════════════════════════

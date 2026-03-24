@@ -711,6 +711,30 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
+    const SH_VERSION = 'v4.2.4';
+    const SH_VERSION_KEY = 'synchub';
+
+    async function registerToolVersion(client, toolKey, toolVersion) {
+        if (!client) return;
+        try {
+            const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+            let versions = {};
+            const exists = data && data.length > 0;
+            if (exists && data[0].value) {
+                versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+            }
+            if (versions[toolKey] === toolVersion) return;
+            versions[toolKey] = toolVersion;
+            const now = new Date().toISOString();
+            if (exists) {
+                await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+            } else {
+                await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+            }
+            console.log(`Registered ${toolKey} ${toolVersion}`);
+        } catch(e) { console.log('Version register skipped:', e.message); }
+    }
+    
     // === GLOBAL STATE ===
     const state = {
         orders: {
@@ -819,6 +843,9 @@
             // Test connection
             const { count, error } = await sbClient.from('items').select('*', { count: 'exact', head: true });
             if (error) throw error;
+            
+            // Register version
+            registerToolVersion(sbClient, SH_VERSION_KEY, SH_VERSION);
             
             // Load inventory
             await loadFromSupabase();
