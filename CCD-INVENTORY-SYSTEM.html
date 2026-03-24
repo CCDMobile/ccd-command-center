@@ -10765,6 +10765,19 @@ console.log('✅ CCDSharedFiles helper loaded (v23.4.0)');
             
             console.log(`📋 [Activity] ${category}/${action}: ${summary} (entry count: ${window.masterData._activityLog.length})`);
             
+            // Write-through to Supabase activity_log (fire-and-forget)
+            if (typeof sbClient !== 'undefined' && sbClient) {
+                sbClient.from('activity_log').insert({
+                    category, action, channel, summary,
+                    details: typeof details === 'object' ? details : {},
+                    device: localStorage.getItem('ccd_hostname') || 'Desktop',
+                    user_name: localStorage.getItem('ccdUsername') || 'Unknown',
+                    sku: details?.sku || details?.SKU || null
+                }).then(({ error }) => {
+                    if (error) console.warn('[Activity] Supabase write failed:', error.message);
+                });
+            }
+            
             return entry;
         }
         
@@ -128282,6 +128295,23 @@ async function configureMasterFile() {
         sbConnected = true;
         backupConfig.enabled = true;
         backupConfig.permissionGranted = true;
+        
+        // Auto-register tool version
+        (async () => {
+            try {
+                const { data } = await sbClient.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+                let versions = {};
+                const exists = data && data.length > 0;
+                if (exists && data[0].value) versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+                if (versions['desktop'] !== 'v23.4.0') {
+                    versions['desktop'] = 'v23.4.0';
+                    const now = new Date().toISOString();
+                    if (exists) await sbClient.from('settings').update({ value: versions, updated_at: now, updated_by: 'desktop' }).eq('key', 'tool_versions');
+                    else await sbClient.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: 'desktop' });
+                    console.log('Registered desktop v23.4.0');
+                }
+            } catch(e) { console.log('Version register skipped:', e.message); }
+        })();
         
         // Flag as configured for auto-reconnect
         localStorage.setItem('ccdMasterFileConfigured', 'true');
