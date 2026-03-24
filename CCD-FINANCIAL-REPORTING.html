@@ -3227,23 +3227,25 @@ function renderPnlTable(months, priorByMonth) {
   const fmtMo = mo => { const [y,m] = mo.split('-'); return new Date(+y,+m-1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}); };
   const colSpan = months.length + 2 + (hasPrior ? 2 : 0);
 
-  function varCell(curr, prior, cls) {
+  function varCell(curr, prior, cls, fmtFn) {
     if (!hasPrior) return '';
+    const f = fmtFn || $$;
     const variance = prior > 0 ? ((curr - prior)/prior*100) : (curr > 0 ? 100 : null);
     const varCls = variance != null ? (variance >= 0 ? 'val-pos' : 'val-neg') : '';
-    return `<td class="text-right ${cls||'val-dim'}" style="border-left:1px solid var(--border);">${$$(prior)}</td>
+    return `<td class="text-right ${cls||'val-dim'}" style="border-left:1px solid var(--border);">${f(prior)}</td>
       <td class="text-right ${varCls}" style="font-size:11px;">${variance!=null?(variance>=0?'+':'')+variance.toFixed(1)+'%':'—'}</td>`;
   }
 
-  function pnlRow(label, key, cls, indent) {
+  function pnlRow(label, key, cls, indent, fmtFn) {
     const style = indent ? 'padding-left:24px;color:var(--dim);font-size:11px;' : 'font-weight:500;';
     const currTotal = total[key]||0;
     const priorVal = priorTotal[key]||0;
+    const fmt = fmtFn || $$;
     return `<tr>
       <td style="${style}">${label}</td>
-      ${months.map(m => `<td class="text-right ${cls||''}">${$$((m[key]||0))}</td>`).join('')}
-      <td class="text-right ${cls||''}" style="font-weight:600;border-left:2px solid var(--border2);">${$$(currTotal)}</td>
-      ${varCell(currTotal, priorVal, cls)}
+      ${months.map(m => `<td class="text-right ${cls||''}">${fmt((m[key]||0))}</td>`).join('')}
+      <td class="text-right ${cls||''}" style="font-weight:600;border-left:2px solid var(--border2);">${fmt(currTotal)}</td>
+      ${varCell(currTotal, priorVal, cls, fmtFn)}
     </tr>`;
   }
 
@@ -3257,8 +3259,8 @@ function renderPnlTable(months, priorByMonth) {
     <tbody>
       <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Revenue</td></tr>
       ${pnlRow('Gross Revenue', 'revenue', 'val-gold')}
-      ${pnlRow('Orders', 'orders', '')}
-      ${pnlRow('Units Sold', 'units', '')}
+      ${pnlRow('Orders', 'orders', '', false, num)}
+      ${pnlRow('Units Sold', 'units', '', false, num)}
 
       <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--red);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Cost of Goods Sold</td></tr>
       ${pnlRow('Total COGS', 'cogs', 'val-neg')}
@@ -3508,17 +3510,23 @@ async function loadGeoReport() {
     }
   });
 
-  // Table
+  renderGeoTable();
+}
+
+function renderGeoTable() {
   const wrap = document.getElementById('geoTableWrap');
   if (!geoData.length) { wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◉</div><div class="empty-msg">No geographic data (requires Shippo match)</div></div>'; return; }
+  const totalOrders = geoData.reduce((s,g)=>s+g.orders,0);
+  const totalRev = geoData.reduce((s,g)=>s+g.revenue,0);
+  const totalShip = geoData.reduce((s,g)=>s+g.shipCost,0);
   wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table">
     <thead><tr>
-      <th style="cursor:pointer;" onclick="sortTable('geo','state',geoData,()=>renderGeoTable())">State ${sArr('geo','state')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','orders',geoData,()=>renderGeoTable())">Orders ${sArr('geo','orders')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','revenue',geoData,()=>renderGeoTable())">Revenue ${sArr('geo','revenue')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','profit',geoData,()=>renderGeoTable())">Profit ${sArr('geo','profit')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','shipCost',geoData,()=>renderGeoTable())">Ship Cost ${sArr('geo','shipCost')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','avgShip',geoData,()=>renderGeoTable())">Avg Ship ${sArr('geo','avgShip')}</th>
+      <th style="cursor:pointer;" onclick="sortTable('geo','state',geoData,renderGeoTable)">State ${sArr('geo','state')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','orders',geoData,renderGeoTable)">Orders ${sArr('geo','orders')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','revenue',geoData,renderGeoTable)">Revenue ${sArr('geo','revenue')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','profit',geoData,renderGeoTable)">Profit ${sArr('geo','profit')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','shipCost',geoData,renderGeoTable)">Ship Cost ${sArr('geo','shipCost')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('geo','avgShip',geoData,renderGeoTable)">Avg Ship ${sArr('geo','avgShip')}</th>
       <th>Top Carrier</th>
     </tr></thead>
     <tbody>${geoData.map(g => `<tr>
@@ -3540,7 +3548,6 @@ async function loadGeoReport() {
     </tr></tfoot>
   </table></div>`;
 }
-function renderGeoTable() { loadGeoReport(); }
 
 // ── CUSTOMER INSIGHTS (Phase 5) ──────────────────────────────────────────
 function setCustomerView(v) {
@@ -3604,7 +3611,7 @@ function renderCustomerTable() {
   if (customerView === 'repeat') rows = rows.filter(c => c.orders > 1);
   else if (customerView === 'single') rows = rows.filter(c => c.orders === 1);
 
-  if (!rows.length) { wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-msg">No customer data</div></div>'; return; }
+  if (!rows.length) { wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-msg">No customer data for this period</div><div style="font-size:11px;color:var(--muted);margin-top:8px;">Customer insights require buyer_email on sales records.<br>Sync Hub must write buyer_email when processing Etsy/Wix orders.<br>Backfilled sales do not have this field.</div></div>'; return; }
 
   wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table">
     <thead><tr>
@@ -3775,11 +3782,12 @@ async function loadTrendsReport() {
 async function loadDataHealth() {
   // Channel breakdown: total, has_fees, null_fees, fixable, unknown
   const { data } = await sbClient.from('sales_history')
-    .select('sale_channel,oh_fee,wholesale_price,sale_price')
+    .select('id,sale_channel,oh_fee,wholesale_price,sale_price,sku,product_name,sale_date,item_id,order_id')
     .limit(5000);
 
   const byCh = {};
   let totalRows = 0, totalWithFees = 0, totalNull = 0, totalFixable = 0, totalUnknown = 0;
+  const nullFeeRows = []; // collect for drilldown
 
   (data||[]).forEach(r => {
     const ch = r.sale_channel || 'other';
@@ -3790,10 +3798,25 @@ async function loadDataHealth() {
     if (r.oh_fee != null) { c.hasFees++; totalWithFees++; }
     else {
       c.nullFees++; totalNull++;
-      if (parseFloat(r.wholesale_price)>0 && parseFloat(r.sale_price)>0) { c.fixable++; totalFixable++; }
-      else { c.unknown++; totalUnknown++; }
+      const hasWholesale = parseFloat(r.wholesale_price) > 0;
+      const hasSalePrice = parseFloat(r.sale_price) > 0;
+      const hasItem = r.item_id != null;
+      let reason = 'Unknown';
+      if (!r.sku || r.sku === 'UNKNOWN') reason = 'No SKU on order';
+      else if (!hasItem) reason = 'SKU not matched to item';
+      else if (!hasWholesale) reason = 'Item missing wholesale price';
+      else if (hasSalePrice && hasWholesale) { reason = 'Fixable — has cost data'; c.fixable++; totalFixable++; }
+      if (reason !== 'Fixable — has cost data') { c.unknown++; totalUnknown++; }
+      nullFeeRows.push({
+        id: r.id, channel: ch, sku: r.sku || '—', product: r.product_name || '—',
+        date: r.sale_date?.substring(0,10) || '—', salePrice: parseFloat(r.sale_price)||0,
+        wholesale: parseFloat(r.wholesale_price)||0, hasItem, orderId: r.order_id || '—', reason
+      });
     }
   });
+
+  // Store for drilldown
+  window._healthNullRows = nullFeeRows;
 
   const channels = Object.values(byCh).sort((a,b) => b.total - a.total);
   const coverage = totalRows > 0 ? (totalWithFees/totalRows*100) : 0;
@@ -3814,11 +3837,12 @@ async function loadDataHealth() {
     <tbody>${channels.map(c => {
       const cov = c.total > 0 ? (c.hasFees/c.total*100) : 0;
       const covCls = cov > 95 ? 'val-pos' : cov > 70 ? '' : 'val-neg';
-      return `<tr>
+      const clickable = c.nullFees > 0 ? `onclick="drillHealthChannel('${c.channel}')" style="cursor:pointer;"` : '';
+      return `<tr ${clickable}>
         <td>${chBadge(c.channel)}</td>
         <td class="text-right">${num(c.total)}</td>
         <td class="text-right val-pos">${num(c.hasFees)}</td>
-        <td class="text-right ${c.nullFees>0?'val-neg':''}">${num(c.nullFees)}</td>
+        <td class="text-right ${c.nullFees>0?'val-neg':''}">${c.nullFees > 0 ? '<span style="text-decoration:underline;cursor:pointer;">'+num(c.nullFees)+'</span>' : num(c.nullFees)}</td>
         <td class="text-right ${c.fixable>0?'val-neg':''}">${num(c.fixable)}</td>
         <td class="text-right val-dim">${num(c.unknown)}</td>
         <td class="text-right ${covCls}">${pct(cov)}</td>
@@ -3835,9 +3859,66 @@ async function loadDataHealth() {
     </tr></tfoot>
   </table></div>
   <div style="font-size:11px;color:var(--muted);margin-top:8px;">
-    <strong>Fixable:</strong> Has wholesale + sale price but fees are NULL — run Block 3 of CCD-NULL-Fee-Reconciliation.sql<br>
+    Click a channel's NULL Fees count to drill into individual records and see the cause.<br>
+    <strong>Fixable:</strong> Has wholesale + sale price but fees are NULL — can be recalculated<br>
     <strong>Unknown SKU:</strong> wholesale=0 or sale_price=0 — needs item entry in Desktop first
   </div>`;
+}
+
+function drillHealthChannel(channel) {
+  const rows = (window._healthNullRows || []).filter(r => r.channel === channel);
+  if (!rows.length) return;
+
+  // Group by reason for summary
+  const byReason = {};
+  rows.forEach(r => {
+    if (!byReason[r.reason]) byReason[r.reason] = { reason: r.reason, count: 0, revenue: 0 };
+    byReason[r.reason].count++;
+    byReason[r.reason].revenue += r.salePrice;
+  });
+  const reasons = Object.values(byReason).sort((a,b) => b.count - a.count);
+
+  const wrap = document.getElementById('healthTableWrap');
+  wrap.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <span style="font-size:13px;font-weight:600;color:var(--text);">${CH_LABEL[channel]||channel} — ${rows.length} NULL fee records</span>
+      <button onclick="loadDataHealth()" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px;">✕ Back</button>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      ${reasons.map(r => `<div class="card" style="flex:1;min-width:160px;max-width:280px;">
+        <div class="card-body" style="padding:10px 14px;">
+          <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">${r.reason}</div>
+          <div style="font-size:18px;font-weight:700;color:${r.reason.startsWith('Fixable')?'var(--gold)':'var(--red)'};">${num(r.count)}</div>
+          <div style="font-size:10px;color:var(--dim);">Revenue: ${$$(r.revenue)}</div>
+        </div>
+      </div>`).join('')}
+    </div>
+
+    <div class="data-table-wrap"><table class="data-table">
+      <thead><tr>
+        <th>Date</th><th>SKU</th><th>Product</th><th>Order ID</th>
+        <th class="text-right">Sale Price</th><th class="text-right">Wholesale</th><th>Reason</th>
+      </tr></thead>
+      <tbody>${rows.sort((a,b) => b.date.localeCompare(a.date)).slice(0,200).map(r => {
+        const reasonCls = r.reason.startsWith('Fixable') ? 'val-gold' : 'val-neg';
+        return `<tr>
+          <td style="font-size:11px;">${r.date}</td>
+          <td style="font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);">${r.sku}</td>
+          <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;font-size:11px;">${r.product}</td>
+          <td style="font-size:10px;color:var(--dim);max-width:120px;overflow:hidden;text-overflow:ellipsis;">${r.orderId}</td>
+          <td class="text-right">${$$(r.salePrice)}</td>
+          <td class="text-right val-dim">${r.wholesale > 0 ? $$(r.wholesale) : '<span class="val-neg">—</span>'}</td>
+          <td style="font-size:10px;" class="${reasonCls}">${r.reason}</td>
+        </tr>`;
+      }).join('')}</tbody>
+      <tfoot><tr style="background:var(--bg3);">
+        <td colspan="4" style="font-size:11px;color:var(--muted);padding:10px 14px;">${rows.length} records${rows.length>200?' (showing 200)':''}</td>
+        <td class="text-right">${$$(rows.reduce((s,r)=>s+r.salePrice,0))}</td>
+        <td class="text-right val-dim">${$$(rows.reduce((s,r)=>s+r.wholesale,0))}</td>
+        <td></td>
+      </tr></tfoot>
+    </table></div>`;
 }
 
 // ── SCENARIO PLANNER ─────────────────────────────────────────────────────
@@ -3867,10 +3948,11 @@ function scenSkuAutocomplete(query) {
 
   dd.innerHTML = matches.slice(0, 15).map(m =>
     `<div onclick="addScenarioSku('${m.sku.replace(/'/g, "\\'")}')" 
-      style="padding:6px 10px;cursor:pointer;font-size:11px;border-bottom:1px solid var(--border);color:var(--text);"
-      onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'">
+      style="padding:8px 12px;cursor:pointer;font-size:11px;border-bottom:1px solid var(--border);color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+      onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'"
+      title="${m.sku} — ${m.name}">
       <span style="color:var(--gold);font-family:'DM Mono',monospace;">${m.sku}</span>
-      <span style="color:var(--muted);margin-left:8px;">${m.name.substring(0,40)}</span>
+      <span style="color:var(--muted);margin-left:8px;">${m.name.substring(0,50)}</span>
     </div>`
   ).join('');
   dd.style.display = 'block';
@@ -3945,13 +4027,13 @@ async function loadScenarioPlanner() {
 }
 
 function _scenInput(id, label, val, min, max, step, suffix) {
-  return `<div style="flex:1;min-width:180px;">
+  return `<div style="flex:1;min-width:140px;max-width:220px;">
     <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">${label}</label>
-    <div style="display:flex;align-items:center;gap:8px;">
+    <div style="display:flex;align-items:center;gap:4px;">
       <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${val}"
         style="flex:1;accent-color:var(--gold);"
         oninput="document.getElementById('${id}_val').textContent=this.value+'${suffix}'">
-      <span id="${id}_val" style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);min-width:50px;text-align:right;">${val}${suffix}</span>
+      <span id="${id}_val" style="font-family:'DM Mono',monospace;font-size:12px;color:var(--gold);min-width:40px;text-align:right;">${val}${suffix}</span>
     </div>
   </div>`;
 }
@@ -3963,10 +4045,10 @@ function renderScenarioControls() {
     ctrl.innerHTML = `
       <div style="font-size:12px;color:var(--text);margin-bottom:12px;font-weight:500;">What if I change prices?</div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:end;">
-        ${_scenInput('sc_etsy_pct','Etsy Price Change',0,-30,30,1,'%')}
-        ${_scenInput('sc_wix_pct','Wix Price Change',0,-30,30,1,'%')}
-        ${_scenInput('sc_wayfair_pct','Wayfair Price Change',0,-30,30,1,'%')}
-        ${_scenInput('sc_tm_pct','TM Price Change',0,-30,30,1,'%')}
+        ${_scenInput('sc_etsy_pct','Etsy Price Change',0,-100,100,1,'%')}
+        ${_scenInput('sc_wix_pct','Wix Price Change',0,-100,100,1,'%')}
+        ${_scenInput('sc_wayfair_pct','Wayfair Price Change',0,-100,100,1,'%')}
+        ${_scenInput('sc_tm_pct','TM Price Change',0,-100,100,1,'%')}
         <button class="btn-export" style="background:var(--gold);color:#070c18;border:none;padding:10px 20px;font-weight:700;" onclick="runPricingScenario()">Run Scenario</button>
       </div>
       <div style="font-size:10px;color:var(--muted);margin-top:8px;">Applies % change to sale prices. Fees that scale with price (transaction, CC, Wayfair) adjust automatically.</div>`;
@@ -4351,14 +4433,19 @@ async function loadVendorSpend() {
       .select('invoice_id,item_id,sku,product_name,qty_ordered,unit_wholesale_price')
       .limit(5000);
 
-    // Build item_id → brand_name lookup for vendor resolution
+    // Build item_id → brand_name + cost data lookup for vendor resolution
     const itemIds = [...new Set((lineItems||[]).map(li => li.item_id).filter(Boolean))];
     if (itemIds.length > 0) {
       const { data: itemRows } = await sbClient.from('items')
-        .select('id,brand_name,vendor')
+        .select('id,brand_name,vendor,ib_shipping,tariff,wholesale_price')
         .in('id', itemIds);
       (itemRows||[]).forEach(r => {
-        vendorItemBrands[r.id] = r.vendor || r.brand_name || null;
+        vendorItemBrands[r.id] = {
+          name: r.vendor || r.brand_name || null,
+          ibPct: parseFloat(r.ib_shipping)||0,
+          tariff: parseFloat(r.tariff)||0,
+          wholesale: parseFloat(r.wholesale_price)||0
+        };
       });
     }
 
@@ -4373,17 +4460,28 @@ async function loadVendorSpend() {
       const items = invoiceItems[inv.id] || [];
       // Compute spend from line items (header total_invoice_amount is usually NULL)
       const lineSpend = items.reduce((s, li) => s + ((parseFloat(li.qty_ordered)||0) * (parseFloat(li.unit_wholesale_price)||0)), 0);
+      // Compute IB shipping and tariff costs from item data
+      let ibTotal = 0, tariffTotal = 0;
+      items.forEach(li => {
+        const qty = parseFloat(li.qty_ordered)||0;
+        const unitWs = parseFloat(li.unit_wholesale_price)||0;
+        const itemInfo = li.item_id ? vendorItemBrands[li.item_id] : null;
+        if (itemInfo) {
+          ibTotal += unitWs * (itemInfo.ibPct / 100) * qty;
+          tariffTotal += itemInfo.tariff * qty;
+        }
+      });
       // Resolve vendor: invoice header → first line item's brand → 'Unknown'
       let vendor = inv.vendor;
       if (!vendor && items.length > 0) {
         for (const li of items) {
           if (li.item_id && vendorItemBrands[li.item_id]) {
-            vendor = vendorItemBrands[li.item_id];
+            vendor = vendorItemBrands[li.item_id].name;
             break;
           }
         }
       }
-      return { ...inv, vendor: vendor || 'Unknown', items, lineSpend };
+      return { ...inv, vendor: vendor || 'Unknown', items, lineSpend, ibTotal, tariffTotal };
     });
 
     // Build month filter dropdown
@@ -4411,9 +4509,11 @@ async function loadVendorSpend() {
   const byVendor = {};
   filtered.forEach(inv => {
     const v = inv.vendor;
-    if (!byVendor[v]) byVendor[v] = { vendor:v, invoiceCount:0, totalSpend:0, itemCount:0, unitCount:0, invoices:[], lastOrder:null };
+    if (!byVendor[v]) byVendor[v] = { vendor:v, invoiceCount:0, totalSpend:0, ibTotal:0, tariffTotal:0, itemCount:0, unitCount:0, invoices:[], lastOrder:null };
     byVendor[v].invoiceCount++;
     byVendor[v].totalSpend += inv.lineSpend;
+    byVendor[v].ibTotal += inv.ibTotal || 0;
+    byVendor[v].tariffTotal += inv.tariffTotal || 0;
     byVendor[v].itemCount += inv.items.length;
     byVendor[v].unitCount += inv.items.reduce((s,i) => s + (parseInt(i.qty_ordered)||0), 0);
     byVendor[v].invoices.push(inv);
@@ -4427,10 +4527,15 @@ async function loadVendorSpend() {
   const totalSpend = vendorData.reduce((s,v)=>s+v.totalSpend,0);
   const totalInvoices = vendorData.reduce((s,v)=>s+v.invoiceCount,0);
   const totalUnits = vendorData.reduce((s,v)=>s+v.unitCount,0);
+  const totalIB = vendorData.reduce((s,v)=>s+v.ibTotal,0);
+  const totalTariff = vendorData.reduce((s,v)=>s+v.tariffTotal,0);
+  const totalLanded = totalSpend + totalIB + totalTariff;
   document.getElementById('vendorKpis').innerHTML = `
     <div class="kpi-card"><div class="kpi-label">Vendors</div><div class="kpi-value">${vendorData.length}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Total Invoices</div><div class="kpi-value">${num(totalInvoices)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Total Spend</div><div class="kpi-value">${$$(totalSpend)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Wholesale Spend</div><div class="kpi-value">${$$(totalSpend)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">IB Shipping</div><div class="kpi-value">${$$(totalIB)}</div><div style="font-size:10px;color:var(--muted);">${totalSpend>0?(totalIB/totalSpend*100).toFixed(1):'0'}% of wholesale</div></div>
+    <div class="kpi-card"><div class="kpi-label">Tariff</div><div class="kpi-value">${$$(totalTariff)}</div><div style="font-size:10px;color:var(--muted);">${totalSpend>0?(totalTariff/totalSpend*100).toFixed(1):'0'}% of wholesale</div></div>
+    <div class="kpi-card"><div class="kpi-label">Landed Cost</div><div class="kpi-value val-gold">${$$(totalLanded)}</div><div style="font-size:10px;color:var(--muted);">Wholesale + IB + Tariff</div></div>
     <div class="kpi-card"><div class="kpi-label">Total Units</div><div class="kpi-value">${num(totalUnits)}</div></div>
   `;
 
@@ -4484,25 +4589,35 @@ function renderVendorTable() {
     <thead><tr>
       <th style="cursor:pointer;" onclick="sortTable('vendor','vendor',vendorData,renderVendorTable)">Vendor ${sArr('vendor','vendor')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','invoiceCount',vendorData,renderVendorTable)">Invoices ${sArr('vendor','invoiceCount')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','totalSpend',vendorData,renderVendorTable)">Total Spend ${sArr('vendor','totalSpend')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','totalSpend',vendorData,renderVendorTable)">Wholesale ${sArr('vendor','totalSpend')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','ibTotal',vendorData,renderVendorTable)">IB Ship ${sArr('vendor','ibTotal')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','tariffTotal',vendorData,renderVendorTable)">Tariff ${sArr('vendor','tariffTotal')}</th>
+      <th class="text-right" style="cursor:pointer;color:var(--gold);">Landed</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','unitCount',vendorData,renderVendorTable)">Units ${sArr('vendor','unitCount')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('vendor','itemCount',vendorData,renderVendorTable)">Line Items ${sArr('vendor','itemCount')}</th>
       <th>Last Order</th>
     </tr></thead>
-    <tbody>${vendorData.map(v => `<tr onclick="drillVendor('${v.vendor.replace(/'/g,"\\'")}')" style="cursor:pointer;">
+    <tbody>${vendorData.map(v => {
+      const landed = v.totalSpend + v.ibTotal + v.tariffTotal;
+      const ibPct = v.totalSpend > 0 ? (v.ibTotal/v.totalSpend*100).toFixed(1) : '0.0';
+      const tariffPct = v.totalSpend > 0 ? (v.tariffTotal/v.totalSpend*100).toFixed(1) : '0.0';
+      return `<tr onclick="drillVendor('${v.vendor.replace(/'/g,"\\'")}')" style="cursor:pointer;">
       <td style="color:var(--text);font-weight:500;">${v.vendor}</td>
       <td class="text-right">${v.invoiceCount}</td>
-      <td class="text-right val-gold">${$$(v.totalSpend)}</td>
+      <td class="text-right">${$$(v.totalSpend)}</td>
+      <td class="text-right val-dim">${$$(v.ibTotal)}<span style="font-size:9px;color:var(--muted);margin-left:3px;">${ibPct}%</span></td>
+      <td class="text-right val-dim">${$$(v.tariffTotal)}<span style="font-size:9px;color:var(--muted);margin-left:3px;">${tariffPct}%</span></td>
+      <td class="text-right val-gold">${$$(landed)}</td>
       <td class="text-right">${num(v.unitCount)}</td>
-      <td class="text-right val-dim">${num(v.itemCount)}</td>
       <td style="font-size:11px;">${v.lastOrder||'—'}</td>
-    </tr>`).join('')}</tbody>
+    </tr>`;}).join('')}</tbody>
     <tfoot><tr style="background:var(--bg3);">
       <td style="padding:10px 14px;font-size:11px;color:var(--muted);">${vendorData.length} vendors</td>
       <td class="text-right">${num(vendorData.reduce((s,v)=>s+v.invoiceCount,0))}</td>
-      <td class="text-right val-gold">${$$(vendorData.reduce((s,v)=>s+v.totalSpend,0))}</td>
+      <td class="text-right">${$$(vendorData.reduce((s,v)=>s+v.totalSpend,0))}</td>
+      <td class="text-right val-dim">${$$(vendorData.reduce((s,v)=>s+v.ibTotal,0))}</td>
+      <td class="text-right val-dim">${$$(vendorData.reduce((s,v)=>s+v.tariffTotal,0))}</td>
+      <td class="text-right val-gold">${$$(vendorData.reduce((s,v)=>s+v.totalSpend+v.ibTotal+v.tariffTotal,0))}</td>
       <td class="text-right">${num(vendorData.reduce((s,v)=>s+v.unitCount,0))}</td>
-      <td class="text-right val-dim">${num(vendorData.reduce((s,v)=>s+v.itemCount,0))}</td>
       <td></td>
     </tr></tfoot>
   </table></div>`;
