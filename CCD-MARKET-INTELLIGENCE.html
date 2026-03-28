@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Market Intelligence v1.0.0</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
+:root{--bg:#070c18;--bg1:#0c1322;--bg2:#111827;--bg3:#172035;--bg4:#1c2740;--gold:#d4a853;--gold2:#f0c97a;--green:#2dd4a0;--red:#f05c5c;--blue:#4d9fff;--purple:#a78bfa;--yellow:#fbbf24;--etsy:#f97316;--wix:#3b82f6;--wayfair:#a855f7;--text:#e2e8f8;--text2:#c9d1e5;--muted:#5a6e94;--muted2:#3d5178;--border:#1e2d4a;--border2:#283a5e;--radius:8px;--radius-lg:12px;--font:'Plus Jakarta Sans',system-ui,sans-serif;--mono:'DM Mono',monospace;--transition:0.2s ease;}
+*{margin:0;padding:0;box-sizing:border-box;}body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;-webkit-font-smoothing:antialiased;}input,select,textarea,button{font-family:var(--font);}::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-track{background:var(--bg1);}::-webkit-scrollbar-thumb{background:var(--muted2);border-radius:3px;}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 120% 60% at 50% 0%,rgba(212,168,83,0.04) 0%,transparent 60%);}
+.login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px;}.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:40px;width:100%;max-width:420px;text-align:center;}.login-logo{font-size:28px;font-weight:800;color:var(--gold);margin-bottom:4px;}.login-sub{color:var(--muted);font-size:13px;margin-bottom:28px;}.login-field{margin-bottom:14px;text-align:left;}.login-field label{display:block;font-size:12px;font-weight:600;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:0.5px;}.login-field input{width:100%;padding:10px 14px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;}.login-field input:focus{border-color:var(--gold);}.login-btn{width:100%;padding:12px;background:var(--gold);color:#000;font-weight:700;font-size:14px;border:none;border-radius:var(--radius);cursor:pointer;margin-top:8px;}.login-btn:hover{background:var(--gold2);}.login-status{margin-top:12px;font-size:12px;min-height:18px;}.login-status.error{color:var(--red);}.login-status.ok{color:var(--green);}.login-version{color:var(--muted2);font-size:11px;margin-top:20px;}
+.app{display:none;min-height:100vh;flex-direction:column;}.app.visible{display:flex;}.topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;background:var(--bg1);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;}.topbar-left{display:flex;align-items:center;gap:14px;}.topbar-brand{font-size:18px;font-weight:800;color:var(--gold);}.topbar-version{font-size:11px;color:var(--muted);background:var(--bg3);padding:3px 8px;border-radius:4px;font-family:var(--mono);}.topbar-right{display:flex;align-items:center;gap:14px;}.topbar-disconnect{background:none;border:1px solid var(--border);color:var(--muted);font-size:11px;padding:5px 12px;border-radius:var(--radius);cursor:pointer;}.topbar-disconnect:hover{border-color:var(--red);color:var(--red);}
+.tab-bar{display:flex;gap:0;background:var(--bg1);border-bottom:1px solid var(--border);padding:0 24px;overflow-x:auto;}.tab-btn{padding:12px 20px;font-size:13px;font-weight:600;color:var(--muted);background:none;border:none;border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;}.tab-btn:hover{color:var(--text2);}.tab-btn.active{color:var(--gold);border-bottom-color:var(--gold);}.main{flex:1;padding:20px 24px 40px;position:relative;z-index:1;}.tab-content{display:none;}.tab-content.visible{display:block;}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden;}.card-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}.card-title{font-size:13px;font-weight:700;}.card-body{padding:18px;}
+.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;}.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;}.kpi-label{font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;}.kpi-val{font-size:22px;font-weight:800;font-family:var(--mono);}.kpi-sub{font-size:10px;color:var(--muted);margin-top:2px;}
+.badge-m{display:inline-block;padding:2px 6px;border-radius:3px;font-size:9px;font-weight:700;letter-spacing:0.3px;}.badge-measured{background:rgba(45,212,160,0.12);color:var(--green);}.badge-inferred{background:rgba(251,191,36,0.12);color:var(--yellow);}.badge-speculative{background:rgba(240,92,92,0.12);color:var(--red);}
+.lc-growing{color:var(--green);}.lc-stable{color:var(--blue);}.lc-declining{color:var(--yellow);}.lc-stale{color:var(--etsy);}.lc-dead{color:var(--red);}.lc-retired{color:var(--muted);}
+.lc-badge{display:inline-block;padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;text-transform:uppercase;}.lc-badge.growing{background:rgba(45,212,160,0.12);color:var(--green);}.lc-badge.stable{background:rgba(77,159,255,0.12);color:var(--blue);}.lc-badge.declining{background:rgba(251,191,36,0.12);color:var(--yellow);}.lc-badge.stale{background:rgba(249,115,22,0.12);color:var(--etsy);}.lc-badge.dead{background:rgba(240,92,92,0.12);color:var(--red);}.lc-badge.retired{background:rgba(90,110,148,0.15);color:var(--muted);}
+table{width:100%;border-collapse:collapse;font-size:13px;}thead th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2);cursor:pointer;}tbody tr{border-bottom:1px solid rgba(30,45,74,0.4);}tbody tr:hover{background:rgba(212,168,83,0.03);}tbody td{padding:9px 14px;white-space:nowrap;}.mono{font-family:var(--mono);font-size:12px;}
+.scan-btn{padding:8px 18px;background:linear-gradient(135deg,var(--gold),var(--gold2));color:#000;border:none;border-radius:var(--radius);font-size:12px;font-weight:700;cursor:pointer;}.scan-btn:hover{box-shadow:0 4px 12px rgba(212,168,83,0.3);}.scan-btn:disabled{opacity:0.4;cursor:not-allowed;}
+.ai-result{background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-top:12px;font-size:12px;line-height:1.7;color:var(--text2);white-space:pre-wrap;}.ai-result .src{color:var(--blue);font-size:10px;}.ai-loading{text-align:center;padding:30px;color:var(--muted);}
+.field{margin-bottom:12px;}.field label{display:block;font-size:11px;font-weight:600;color:var(--muted);margin-bottom:4px;}.field input,.field select{width:100%;padding:8px 12px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;}.field input:focus,.field select:focus{border-color:var(--gold);}
+.inline-status{font-size:12px;padding:6px 10px;border-radius:var(--radius);display:none;margin-top:8px;}.inline-status.show{display:block;}.inline-status.info{background:rgba(77,159,255,0.1);color:var(--blue);}.inline-status.ok{background:rgba(45,212,160,0.1);color:var(--green);}.inline-status.error{background:rgba(240,92,92,0.1);color:var(--red);}
+.empty{text-align:center;padding:40px;color:var(--muted);font-size:13px;}
+.export-btn{padding:6px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);color:var(--text2);font-size:11px;font-weight:600;cursor:pointer;}.export-btn:hover{border-color:var(--gold);color:var(--gold);}
+</style>
+</head>
+<body>
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="login-logo">📊 Market Intelligence</div>
+    <div class="login-sub">Country Charm Decor — Market Analysis Dashboard</div>
+    <div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://xxx.supabase.co"></div>
+    <div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJ..."></div>
+    <div class="login-field"><label>Anthropic API Key</label><input type="password" id="loginApiKey" placeholder="sk-ant-..."></div>
+    <button class="login-btn" onclick="doConnect()">Connect</button>
+    <div class="login-status" id="loginStatus"></div>
+    <div class="login-version">v1.0.0</div>
+  </div>
+</div>
+<div class="app" id="appShell">
+  <div class="topbar">
+    <div class="topbar-left"><span class="topbar-brand">📊 Market Intelligence</span><span class="topbar-version">v1.0.0</span></div>
+    <div class="topbar-right"><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div>
+  </div>
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('lifecycle',this)">🔄 Lifecycle</button>
+    <button class="tab-btn" onclick="switchTab('competitors',this)">🏪 Competitors</button>
+    <button class="tab-btn" onclick="switchTab('trends',this)">📈 Trends</button>
+    <button class="tab-btn" onclick="switchTab('purchases',this)">🛒 Purchases</button>
+  </div>
+  <div class="main">
+    <!-- TAB 1: LIFECYCLE -->
+    <div id="tabLifecycle" class="tab-content visible">
+      <div class="kpi-grid" id="lcKpis"></div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Product Lifecycle Analysis</div><div style="display:flex;gap:6px;"><select id="lcFilter" onchange="renderLifecycle()" style="padding:5px 8px;background:var(--bg1);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:11px;"><option value="all">All Stages</option><option value="growing">Growing</option><option value="stable">Stable</option><option value="declining">Declining</option><option value="stale">Stale</option><option value="dead">Dead</option><option value="retired">Retired</option></select><button class="export-btn" onclick="exportLifecycleCSV()">↓ CSV</button></div></div>
+        <div class="card-body" id="lcTable"><div class="empty">Loading...</div></div>
+      </div>
+    </div>
+    <!-- TAB 2: COMPETITORS -->
+    <div id="tabCompetitors" class="tab-content">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Product Price Comparison</div></div>
+        <div class="card-body">
+          <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="field" style="flex:1;min-width:200px;margin-bottom:0;"><label>Search Product</label><input type="text" id="compProduct" placeholder="SKU or product name..."></div>
+            <button class="scan-btn" onclick="runCompetitorScan()" id="compScanBtn">🔍 Scan Competitors</button>
+          </div>
+          <div class="inline-status" id="compStatus"></div>
+          <div id="compResults"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Competitor Bestseller Scan</div></div>
+        <div class="card-body">
+          <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="field" style="flex:1;min-width:150px;margin-bottom:0;"><label>Competitor</label><select id="compBestSite"><option value="">Select...</option></select></div>
+            <div class="field" style="min-width:150px;margin-bottom:0;"><label>Category</label><input type="text" id="compBestCat" placeholder="e.g. wall hooks" value="home decor"></div>
+            <button class="scan-btn" onclick="runBestsellerScan()" id="compBestBtn">🏆 Scan Bestsellers</button>
+          </div>
+          <div class="inline-status" id="compBestStatus"></div>
+          <div id="compBestResults"></div>
+        </div>
+      </div>
+    </div>
+    <!-- TAB 3: TRENDS -->
+    <div id="tabTrends" class="tab-content">
+      <div class="card">
+        <div class="card-header"><div class="card-title">Market Trend Search</div></div>
+        <div class="card-body">
+          <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;">
+            <div class="field" style="flex:1;min-width:200px;margin-bottom:0;"><label>Category or Product Type</label><input type="text" id="trendQuery" placeholder="e.g. farmhouse wall decor"></div>
+            <button class="scan-btn" onclick="runTrendScan()" id="trendScanBtn">📈 Scan Trends</button>
+          </div>
+          <div class="inline-status" id="trendStatus"></div>
+          <div id="trendResults"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">CCD Category Overlay</div><button class="export-btn" onclick="exportTrendCSV()">↓ CSV</button></div>
+        <div class="card-body" id="trendOverlay"><div class="empty">Run a trend scan to see CCD's position in trending categories.</div></div>
+      </div>
+    </div>
+    <!-- TAB 4: PURCHASES -->
+    <div id="tabPurchases" class="tab-content">
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);" id="purKpis"></div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Reorder Intelligence</div><button class="scan-btn" onclick="runReorderAnalysis()" id="purReorderBtn" style="font-size:11px;padding:6px 14px;">🔄 Analyze Reorders</button></div>
+        <div class="card-body" id="purReorder"><div class="empty">Click Analyze to generate vendor-grouped reorder recommendations.</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Category Opportunities</div><button class="scan-btn" onclick="runCategoryAnalysis()" id="purCatBtn" style="font-size:11px;padding:6px 14px;">🔍 Scan Categories</button></div>
+        <div class="card-body" id="purCategories"><div class="empty">Click Scan to find trending categories CCD is underrepresented in.</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const MI_VERSION='1.0.0',MI_VERSION_KEY='marketintelligence';
+const WORKER_URL='https://cold-field-4bb6.psmith-925.workers.dev/';
+let sbClient=null,apiKey='',allItems=[],salesByItem={},competitorSites=[],lifecycleData=[];
+
+/* ── CONNECT ── */
+function doConnect(){const u=document.getElementById('loginUrl').value.trim(),k=document.getElementById('loginKey').value.trim(),ak=document.getElementById('loginApiKey').value.trim(),s=document.getElementById('loginStatus');
+if(!u||!k){s.textContent='Enter Supabase URL and Key';s.className='login-status error';return;}
+s.textContent='Connecting...';s.className='login-status';
+try{sbClient=supabase.createClient(u,k);sbClient.from('items').select('id',{count:'exact',head:true}).limit(1).then(({count,error})=>{if(error)throw error;
+localStorage.setItem('ccdSupabaseUrl',u);localStorage.setItem('ccdSupabaseKey',k);localStorage.setItem('ccdUseSupabase','true');
+if(ak&&ak.startsWith('sk-ant-')){apiKey=ak;localStorage.setItem('anthropic_api_key',ak);}
+s.textContent='Connected — '+count+' items';s.className='login-status ok';
+setTimeout(()=>{document.getElementById('loginScreen').style.display='none';document.getElementById('appShell').classList.add('visible');initApp();},500);
+}).catch(e=>{s.textContent='Failed: '+e.message;s.className='login-status error';});}catch(e){s.textContent='Error: '+e.message;s.className='login-status error';}}
+function doDisconnect(){sbClient=null;allItems=[];salesByItem={};document.getElementById('appShell').classList.remove('visible');document.getElementById('loginScreen').style.display='';}
+(function(){const u=localStorage.getItem('ccdSupabaseUrl'),k=localStorage.getItem('ccdSupabaseKey'),ak=localStorage.getItem('anthropic_api_key');if(u)document.getElementById('loginUrl').value=u;if(k)document.getElementById('loginKey').value=k;if(ak)document.getElementById('loginApiKey').value=ak;if(u&&k)doConnect();})();
+
+/* ── INIT ── */
+async function initApp(){await registerVersion();await loadAllData();computeLifecycle();renderLifecycle();populateCompetitorDropdown();}
+async function registerVersion(){try{const{data}=await sbClient.from('settings').select('value').eq('key','tool_versions').limit(1);let v={};if(data&&data[0])v=typeof data[0].value==='string'?JSON.parse(data[0].value):data[0].value;if(v[MI_VERSION_KEY]===MI_VERSION)return;v[MI_VERSION_KEY]=MI_VERSION;await sbClient.from('settings').upsert({key:'tool_versions',value:v,updated_at:new Date().toISOString(),updated_by:'marketintelligence'},{onConflict:'key'});}catch(e){}}
+
+/* ── DATA ── */
+async function loadAllData(){
+const{data:items}=await sbClient.from('items').select('id,sku,product_name,brand_name,category,vendor,qty,is_active,wholesale_price,retail_price,ob_shipping,ib_shipping,tariff,etsy_listing_id,wix_product_id,wayfair_sku,etsy_qty,wix_qty,wayfair_qty,etsy_price,wix_price,wayfair_price').order('sku').limit(5000);
+allItems=items||[];
+const now=new Date(),d90=new Date(now-90*86400000).toISOString().split('T')[0],d30=new Date(now-30*86400000).toISOString().split('T')[0],d60=new Date(now-60*86400000).toISOString().split('T')[0];
+const{data:sales}=await sbClient.from('sales_history').select('sku,qty_sold,sale_price,sale_date,sale_channel,total_revenue').gte('sale_date',d90).order('sale_date',{ascending:false}).limit(10000);
+salesByItem={};(sales||[]).forEach(s=>{if(!salesByItem[s.sku])salesByItem[s.sku]={units30:0,units60:0,units90:0,rev90:0,lastSale:null,channels:{}};const d=salesByItem[s.sku];d.units90+=s.qty_sold||0;d.rev90+=(s.total_revenue||s.sale_price*(s.qty_sold||1));
+if(s.sale_date>=d30)d.units30+=s.qty_sold||0;if(s.sale_date>=d60)d.units60+=s.qty_sold||0;
+if(!d.lastSale||s.sale_date>d.lastSale)d.lastSale=s.sale_date;
+if(s.sale_channel){if(!d.channels[s.sale_channel])d.channels[s.sale_channel]=0;d.channels[s.sale_channel]+=s.qty_sold||0;}});
+try{const{data:cs}=await sbClient.from('competitor_sites').select('*').eq('is_active',true).order('name');competitorSites=cs||[];}catch(e){competitorSites=[];}}
+
+function switchTab(id,btn){document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('visible'));document.getElementById('tab'+id.charAt(0).toUpperCase()+id.slice(1)).classList.add('visible');document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');}
+function esc(s){if(s==null)return'';const d=document.createElement('div');d.textContent=String(s);return d.innerHTML;}
+
+/* ── LIFECYCLE ── */
+function computeLifecycle(){
+lifecycleData=allItems.map(item=>{const s=salesByItem[item.sku]||{units30:0,units60:0,units90:0,rev90:0,lastSale:null,channels:{}};
+const vel30=s.units30/30,vel60_90=(s.units90-s.units60)/30;
+const lc=parseFloat(item.wholesale_price||0)*(1+(parseFloat(item.ib_shipping||0))/100+(parseFloat(item.tariff||0))/100)+parseFloat(item.ob_shipping||0);
+const margin=item.retail_price>0?(item.retail_price-lc)/item.retail_price*100:0;
+const daysSince=s.lastSale?Math.floor((Date.now()-new Date(s.lastSale))/86400000):9999;
+const capitalTied=(item.qty||0)*parseFloat(item.wholesale_price||0);
+let stage,action;
+if(!item.is_active){stage='retired';action='Write off remaining or sell at cost.';}
+else if(s.units90===0&&(item.qty||0)>10){stage='dead';action='Clearance or write-off. Do NOT reorder.';}
+else if(daysSince>60&&daysSince<=90&&s.units90>0){stage='stale';action='Clearance pricing. Consider TM-only.';}
+else if(s.units90>0&&vel60_90>0&&vel30<vel60_90*0.7){stage='declining';action='Reduce reorder qty. Content refresh.';}
+else if(s.units30>0&&(vel60_90===0||vel30>=vel60_90*1.3)){stage='growing';action='Maintain stock. Consider price test.';}
+else if(s.units30>0){stage='stable';action='Standard reorder.';}
+else if(s.units90>0){stage='declining';action='Monitor. Reduce allocation.';}
+else if(daysSince>90||(s.units90===0&&(item.qty||0)<=10)){stage='stale';action='Review — low stock, no recent sales.';}
+else{stage='stable';action='Insufficient data.';}
+return{...item,_sales:s,_stage:stage,_action:action,_vel30:vel30,_margin:margin,_daysSince:daysSince,_capital:capitalTied};});}
+
+function renderLifecycle(){
+const filter=document.getElementById('lcFilter').value;
+const data=filter==='all'?lifecycleData:lifecycleData.filter(d=>d._stage===filter);
+// KPIs
+const counts={growing:0,stable:0,declining:0,stale:0,dead:0,retired:0};lifecycleData.forEach(d=>counts[d._stage]=(counts[d._stage]||0)+1);
+const deadCapital=lifecycleData.filter(d=>d._stage==='dead').reduce((a,d)=>a+d._capital,0);
+document.getElementById('lcKpis').innerHTML='<div class="kpi"><div class="kpi-label">Growing</div><div class="kpi-val lc-growing">'+counts.growing+'</div></div><div class="kpi"><div class="kpi-label">Stable</div><div class="kpi-val lc-stable">'+counts.stable+'</div></div><div class="kpi"><div class="kpi-label">Declining</div><div class="kpi-val lc-declining">'+counts.declining+'</div></div><div class="kpi"><div class="kpi-label">Stale / Dead</div><div class="kpi-val lc-dead">'+(counts.stale+counts.dead)+'</div><div class="kpi-sub">$'+deadCapital.toFixed(0)+' tied up</div></div><div class="kpi"><div class="kpi-label">Retired</div><div class="kpi-val lc-retired">'+counts.retired+'</div></div>';
+if(!data.length){document.getElementById('lcTable').innerHTML='<div class="empty">No products in this stage.</div>';return;}
+const sorted=[...data].sort((a,b)=>{const o={dead:0,stale:1,declining:2,growing:3,stable:4,retired:5};return(o[a._stage]||5)-(o[b._stage]||5)||b._capital-a._capital;});
+document.getElementById('lcTable').innerHTML='<table><thead><tr><th>SKU</th><th>Product</th><th>Stage</th><th>30d Units</th><th>90d Units</th><th>Last Sale</th><th>Stock</th><th>Capital</th><th>Margin</th><th>Action</th></tr></thead><tbody>'+sorted.map(d=>'<tr><td class="mono" style="color:var(--gold);">'+esc(d.sku)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;">'+esc(d.product_name)+'</td><td><span class="lc-badge '+d._stage+'">'+d._stage+'</span></td><td class="mono">'+d._sales.units30+'</td><td class="mono">'+d._sales.units90+'</td><td class="mono">'+(d._sales.lastSale?d._sales.lastSale.substring(0,10):'<span style="color:var(--muted);">never</span>')+'</td><td class="mono">'+(d.qty||0)+'</td><td class="mono">$'+d._capital.toFixed(0)+'</td><td class="mono" style="color:'+(d._margin>=30?'var(--green)':d._margin>=15?'var(--yellow)':'var(--red)')+'">'+d._margin.toFixed(0)+'%</td><td style="font-size:11px;color:var(--text2);max-width:180px;white-space:normal;">'+esc(d._action)+'</td></tr>').join('')+'</tbody></table>';}
+
+function exportLifecycleCSV(){let csv='SKU,Product,Brand,Stage,30d Units,90d Units,Last Sale,Stock,Capital Tied,Margin %,Action\n';lifecycleData.forEach(d=>{csv+='"'+d.sku+'","'+(d.product_name||'').replace(/"/g,'""')+'","'+(d.brand_name||'')+'","'+d._stage+'",'+d._sales.units30+','+d._sales.units90+',"'+(d._sales.lastSale||'never')+'",'+(d.qty||0)+','+d._capital.toFixed(2)+','+d._margin.toFixed(1)+',"'+d._action+'"\n';});
+const blob=new Blob([csv],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='lifecycle-'+Date.now()+'.csv';a.click();}
+
+/* ── COMPETITORS ── */
+function populateCompetitorDropdown(){const sel=document.getElementById('compBestSite');sel.innerHTML='<option value="">Select...</option>'+competitorSites.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('');}
+
+async function runCompetitorScan(){if(!apiKey){alert('API key required');return;}const q=document.getElementById('compProduct').value.trim();if(!q){alert('Enter a product to search');return;}
+const item=allItems.find(i=>i.sku.toLowerCase()===q.toLowerCase()||i.product_name.toLowerCase().includes(q.toLowerCase()));
+const s=document.getElementById('compStatus');s.className='inline-status show info';s.textContent='Scanning competitors...';document.getElementById('compScanBtn').disabled=true;
+const sysPrompt='You are a market researcher for Country Charm Decor (CCD), a rustic/farmhouse home décor retailer. Search competitor sites for the requested product. Return ONLY valid JSON. Label all data as MEASURED (from web search) or INFERRED (your analysis).';
+let prompt='Find competitor prices for: '+(item?item.product_name+' (SKU: '+item.sku+', CCD price: $'+parseFloat(item.retail_price||0).toFixed(2)+')':q);
+if(competitorSites.length){prompt+='\n\nSearch these competitor sites:';competitorSites.forEach(c=>{prompt+='\n- '+c.name+(c.base_url?' ('+c.base_url+')':'')+' — shipping included: '+(c.shipping_included?'YES':'NO');});}
+prompt+='\nAlso search the general market.\n\nReturn JSON:\n{"product":"name","ccdPrice":number,"competitors":[{"name":"string","price":number,"url":"string","matchType":"exact/similar","shippingIncluded":true,"reviewCount":0}],"marketRange":{"low":0,"high":0,"avg":0},"marketPosition":"below/at/above","analysis":"2-3 sentences (label INFERRED)"}';
+try{const r=await callAI(sysPrompt,prompt,true);s.className='inline-status show ok';s.textContent='✓ Scan complete';
+// Cache prices
+if(r.competitors?.length&&item){const rows=r.competitors.filter(c=>c.price).map(c=>{const site=competitorSites.find(cs=>cs.name.toLowerCase()===c.name?.toLowerCase());return{item_id:item.id,sku:item.sku,competitor_site_id:site?.id||null,competitor_price:c.price,product_url:c.url||null,match_type:c.matchType||'unknown',shipping_included:c.shippingIncluded??false};});
+if(rows.length)sbClient.from('competitor_prices').insert(rows).then(()=>{});}
+renderCompetitorResults(r,item);}catch(e){s.className='inline-status show error';s.textContent='✗ '+e.message;}
+document.getElementById('compScanBtn').disabled=false;}
+
+function renderCompetitorResults(r,item){
+let h='<div class="ai-result"><strong>'+esc(r.product||'Product')+'</strong>';
+if(r.marketPosition)h+=' — Market position: <span style="font-weight:700;color:'+(r.marketPosition==='below'?'var(--green)':r.marketPosition==='above'?'var(--red)':'var(--yellow)')+'">'+esc(r.marketPosition)+' market</span>';
+if(r.marketRange)h+=' (Range: $'+r.marketRange.low+'–$'+r.marketRange.high+', avg $'+r.marketRange.avg+')';
+h+=' <span class="badge-m badge-measured">MEASURED</span>';
+if(r.competitors?.length){h+='<table style="margin-top:10px;"><thead><tr><th>Competitor</th><th>Price</th><th>Ship Inc?</th><th>Match</th><th>Reviews</th><th>Link</th></tr></thead><tbody>';
+r.competitors.forEach(c=>{h+='<tr><td>'+esc(c.name)+'</td><td class="mono">$'+parseFloat(c.price||0).toFixed(2)+'</td><td>'+(c.shippingIncluded?'<span style="color:var(--green)">Yes</span>':'<span style="color:var(--red)">No</span>')+'</td><td>'+esc(c.matchType||'')+'</td><td class="mono">'+(c.reviewCount||'—')+'</td><td>'+(c.url?'<a href="'+esc(c.url)+'" target="_blank" style="color:var(--blue);">🔗</a>':'—')+'</td></tr>';});
+h+='</tbody></table>';}
+if(r.analysis)h+='<div style="margin-top:10px;padding:8px;background:var(--bg4);border-radius:4px;"><span class="badge-m badge-inferred">INFERRED</span> '+esc(r.analysis)+'</div>';
+h+='<div style="margin-top:6px;font-size:10px;color:var(--muted);">Scanned: '+new Date().toLocaleString()+'</div></div>';
+document.getElementById('compResults').innerHTML=h;}
+
+async function runBestsellerScan(){if(!apiKey){alert('API key required');return;}const siteId=document.getElementById('compBestSite').value;const cat=document.getElementById('compBestCat').value.trim();
+if(!siteId){alert('Select a competitor');return;}const site=competitorSites.find(c=>c.id==siteId);if(!site)return;
+const s=document.getElementById('compBestStatus');s.className='inline-status show info';s.textContent='Scanning '+site.name+' bestsellers...';document.getElementById('compBestBtn').disabled=true;
+const prompt='Search '+site.name+(site.base_url?' ('+site.base_url+')':'')+' for their bestselling '+(cat||'home decor')+' products. Find their top 10-15 most popular items with prices, review counts if visible, and URLs.\n\nAlso check: does CCD carry similar products? CCD categories include: wall hooks, candle holders, signs, table decor, seasonal items, farmhouse decor.\n\nReturn JSON:\n{"competitor":"'+site.name+'","category":"'+cat+'","products":[{"name":"string","price":number,"url":"string","reviewCount":0,"isBestseller":true,"ccdHasSimilar":false,"ccdGap":"brief note if CCD doesn\'t carry this type"}],"summary":"2-3 sentences about competitor strengths and CCD opportunities (label INFERRED)"}';
+try{const r=await callAI('You are a market researcher for Country Charm Decor (CCD). Return ONLY valid JSON.',prompt,true);s.className='inline-status show ok';s.textContent='✓ Found '+(r.products?.length||0)+' products';
+// Cache to competitor_products
+if(r.products?.length){const rows=r.products.map(p=>({competitor_site_id:parseInt(siteId),product_name:p.name,price:p.price||null,url:p.url||null,category:cat,review_count:p.reviewCount||null,is_bestseller:p.isBestseller||false}));
+sbClient.from('competitor_products').insert(rows).then(()=>{});}
+let h='<div class="ai-result"><strong>'+esc(site.name)+' — '+esc(cat)+' Bestsellers</strong> <span class="badge-m badge-measured">MEASURED</span>';
+if(r.products?.length){h+='<table style="margin-top:10px;"><thead><tr><th>Product</th><th>Price</th><th>Reviews</th><th>CCD Similar?</th><th>Gap</th><th>Link</th></tr></thead><tbody>';
+r.products.forEach(p=>{h+='<tr><td style="max-width:200px;white-space:normal;">'+esc(p.name)+'</td><td class="mono">$'+parseFloat(p.price||0).toFixed(2)+'</td><td class="mono">'+(p.reviewCount||'—')+'</td><td>'+(p.ccdHasSimilar?'<span style="color:var(--green)">Yes</span>':'<span style="color:var(--red)">No</span>')+'</td><td style="font-size:11px;max-width:150px;white-space:normal;">'+esc(p.ccdGap||'')+'</td><td>'+(p.url?'<a href="'+esc(p.url)+'" target="_blank" style="color:var(--blue);">🔗</a>':'—')+'</td></tr>';});h+='</tbody></table>';}
+if(r.summary)h+='<div style="margin-top:10px;padding:8px;background:var(--bg4);border-radius:4px;"><span class="badge-m badge-inferred">INFERRED</span> '+esc(r.summary)+'</div>';
+h+='<div style="margin-top:6px;font-size:10px;color:var(--muted);">Scanned: '+new Date().toLocaleString()+'</div></div>';
+document.getElementById('compBestResults').innerHTML=h;}catch(e){s.className='inline-status show error';s.textContent='✗ '+e.message;}
+document.getElementById('compBestBtn').disabled=false;}
+
+/* ── TRENDS ── */
+async function runTrendScan(){if(!apiKey){alert('API key required');return;}const q=document.getElementById('trendQuery').value.trim();if(!q){alert('Enter a category');return;}
+const s=document.getElementById('trendStatus');s.className='inline-status show info';s.textContent='Scanning trends for "'+q+'"...';document.getElementById('trendScanBtn').disabled=true;
+const prompt='Research current market trends for "'+q+'" in home décor. Search Etsy trend reports, Google Trends, and Pinterest trends.\n\nFor each trend found, provide the source and whether it\'s rising, falling, or stable. Include specific data points (percentages, search volume changes) when available.\n\nReturn JSON:\n{"category":"'+q+'","trends":[{"source":"Etsy/Google/Pinterest/Other","keyword":"specific term","direction":"rising/falling/stable","value":"specific data point","url":"source URL if available","confidence":"measured/inferred"}],"seasonalNotes":"any seasonal patterns relevant now","summary":"3-4 sentences synthesizing findings (label each claim as MEASURED or INFERRED)"}';
+try{const r=await callAI('You are a market trend researcher for Country Charm Decor (CCD), a rustic/farmhouse home décor retailer. Search for real, verifiable trend data. Clearly distinguish MEASURED data (from published sources) from INFERRED analysis. Return ONLY valid JSON.',prompt,true);
+s.className='inline-status show ok';s.textContent='✓ Found '+(r.trends?.length||0)+' trends';
+// Cache trends
+if(r.trends?.length){const rows=r.trends.filter(t=>t.keyword).map(t=>({category:q,trend_source:t.source||'unknown',trend_direction:t.direction||'stable',trend_value:t.value||'',source_url:t.url||null}));
+sbClient.from('market_trends').insert(rows).then(()=>{});}
+let h='<div class="ai-result"><strong>Trends: '+esc(q)+'</strong>';
+if(r.trends?.length){h+='<table style="margin-top:10px;"><thead><tr><th>Source</th><th>Keyword</th><th>Direction</th><th>Data</th><th>Confidence</th></tr></thead><tbody>';
+r.trends.forEach(t=>{const dcol=t.direction==='rising'?'var(--green)':t.direction==='falling'?'var(--red)':'var(--muted)';
+h+='<tr><td>'+esc(t.source)+'</td><td style="font-weight:600;">'+esc(t.keyword)+'</td><td style="color:'+dcol+';font-weight:700;">'+(t.direction==='rising'?'↑':t.direction==='falling'?'↓':'→')+' '+esc(t.direction)+'</td><td class="mono">'+esc(t.value||'—')+'</td><td><span class="badge-m badge-'+(t.confidence==='measured'?'measured':'inferred')+'">'+(t.confidence||'inferred').toUpperCase()+'</span></td></tr>';});h+='</tbody></table>';}
+if(r.seasonalNotes)h+='<div style="margin-top:10px;padding:8px;background:var(--bg4);border-radius:4px;">🗓️ <strong>Seasonal:</strong> '+esc(r.seasonalNotes)+'</div>';
+if(r.summary)h+='<div style="margin-top:10px;padding:8px;background:var(--bg4);border-radius:4px;">'+esc(r.summary)+'</div>';
+h+='<div style="margin-top:6px;font-size:10px;color:var(--muted);">Scanned: '+new Date().toLocaleString()+'</div></div>';
+document.getElementById('trendResults').innerHTML=h;
+// CCD overlay
+buildTrendOverlay(r,q);}catch(e){s.className='inline-status show error';s.textContent='✗ '+e.message;}
+document.getElementById('trendScanBtn').disabled=false;}
+
+function buildTrendOverlay(r,category){
+const catItems=allItems.filter(i=>i.is_active&&(i.category||'').toLowerCase().includes(category.toLowerCase())||(i.product_name||'').toLowerCase().includes(category.toLowerCase()));
+if(!catItems.length){document.getElementById('trendOverlay').innerHTML='<div class="empty">No CCD items match "'+esc(category)+'". This may be a gap opportunity.</div>';return;}
+const totalUnits=catItems.reduce((a,i)=>(a+(salesByItem[i.sku]?.units90||0)),0);
+const totalRev=catItems.reduce((a,i)=>(a+(salesByItem[i.sku]?.rev90||0)),0);
+const risingTrends=(r.trends||[]).filter(t=>t.direction==='rising').length;
+let alignment='NEUTRAL';if(risingTrends>2&&totalUnits>10)alignment='ALIGNED — riding a growing trend';else if(risingTrends>2&&totalUnits<=2)alignment='OPPORTUNITY — trend growing but CCD underperforming';else if(risingTrends===0)alignment='CAUTION — no rising trend signals detected';
+let h='<div style="font-size:12px;line-height:1.7;"><strong>CCD in "'+esc(category)+'":</strong> '+catItems.length+' items, '+totalUnits+' units sold (90d), $'+totalRev.toFixed(0)+' revenue<br>';
+h+='<strong>Market alignment:</strong> <span style="font-weight:700;color:'+(alignment.startsWith('ALIGNED')?'var(--green)':alignment.startsWith('OPPORTUNITY')?'var(--yellow)':'var(--muted)')+'">'+alignment+'</span> <span class="badge-m badge-inferred">INFERRED</span>';
+h+='<table style="margin-top:10px;"><thead><tr><th>SKU</th><th>Product</th><th>90d Units</th><th>Revenue</th><th>Stage</th></tr></thead><tbody>';
+catItems.sort((a,b)=>(salesByItem[b.sku]?.units90||0)-(salesByItem[a.sku]?.units90||0)).slice(0,15).forEach(i=>{const sd=salesByItem[i.sku]||{};const lc=lifecycleData.find(l=>l.sku===i.sku);
+h+='<tr><td class="mono" style="color:var(--gold);">'+esc(i.sku)+'</td><td>'+esc(i.product_name)+'</td><td class="mono">'+(sd.units90||0)+'</td><td class="mono">$'+(sd.rev90||0).toFixed(0)+'</td><td>'+(lc?'<span class="lc-badge '+lc._stage+'">'+lc._stage+'</span>':'—')+'</td></tr>';});
+h+='</tbody></table></div>';document.getElementById('trendOverlay').innerHTML=h;}
+
+function exportTrendCSV(){/* placeholder */alert('Export available after trend scan');}
+
+/* ── PURCHASES ── */
+async function runReorderAnalysis(){if(!apiKey){alert('API key required');return;}
+const s=document.getElementById('purReorder');s.innerHTML='<div class="ai-loading">⏳ Analyzing reorder needs...</div>';document.getElementById('purReorderBtn').disabled=true;
+// Build reorder data from lifecycle
+const needsReorder=lifecycleData.filter(d=>d.is_active&&d._stage!=='dead'&&d._stage!=='retired'&&d._sales.units30>0&&d.qty<d._sales.units30*4);
+const deadStock=lifecycleData.filter(d=>d._stage==='dead'||d._stage==='stale');
+const vendorGroups={};needsReorder.forEach(d=>{const v=d.vendor||d.brand_name||'Unknown';if(!vendorGroups[v])vendorGroups[v]=[];vendorGroups[v].push(d);});
+// KPIs
+const reorderCount=needsReorder.length;const deadCount=deadStock.length;const deadCap=deadStock.reduce((a,d)=>a+d._capital,0);
+const topVendor=Object.entries(vendorGroups).sort((a,b)=>b[1].length-a[1].length)[0];
+document.getElementById('purKpis').innerHTML='<div class="kpi"><div class="kpi-label">Need Reorder</div><div class="kpi-val" style="color:var(--yellow);">'+reorderCount+'</div></div><div class="kpi"><div class="kpi-label">Dead/Stale Stock</div><div class="kpi-val" style="color:var(--red);">'+deadCount+'</div><div class="kpi-sub">$'+deadCap.toFixed(0)+' tied up</div></div><div class="kpi"><div class="kpi-label">Top Vendor</div><div class="kpi-val" style="font-size:16px;">'+esc(topVendor?topVendor[0]:'—')+'</div><div class="kpi-sub">'+(topVendor?topVendor[1].length+' items to reorder':'')+'</div></div><div class="kpi"><div class="kpi-label">Active Items</div><div class="kpi-val">'+allItems.filter(i=>i.is_active).length+'</div></div>';
+// AI enrichment
+const summaryData=Object.entries(vendorGroups).map(([v,items])=>v+': '+items.map(i=>i.sku+' ('+i._sales.units30+'u/30d, '+i.qty+' in stock)').join(', ')).join('\n');
+const prompt='CCD reorder analysis. Items running low based on sales velocity:\n\n'+summaryData+'\n\nDead stock (0 sales 90+ days): '+deadStock.length+' items worth $'+deadCap.toFixed(0)+' wholesale.\n\nPrioritize by urgency. Group by vendor for efficient ordering. For each vendor, suggest quantities based on 60-day supply at current velocity. Note if any items should NOT be reordered (seasonal, declining trend).\n\nReturn JSON:\n{"vendors":[{"name":"string","items":[{"sku":"string","product":"string","currentStock":0,"velocity30d":0,"suggestedQty":0,"urgency":"high/medium","note":"brief"}],"totalEstCost":0}],"deadStockAction":"brief recommendation","summary":"3-4 sentences"}';
+try{const r=await callAI('You are an inventory analyst for Country Charm Decor (CCD). Return ONLY valid JSON.',prompt,false);
+let h='';if(r.vendors?.length){r.vendors.forEach(v=>{h+='<div style="margin-bottom:16px;"><div style="font-weight:700;font-size:13px;color:var(--gold);margin-bottom:6px;">📦 '+esc(v.name)+'</div>';
+h+='<table><thead><tr><th>SKU</th><th>Product</th><th>Stock</th><th>Vel (30d)</th><th>Order Qty</th><th>Urgency</th><th>Note</th></tr></thead><tbody>';
+(v.items||[]).forEach(i=>{h+='<tr><td class="mono" style="color:var(--gold);">'+esc(i.sku)+'</td><td>'+esc(i.product)+'</td><td class="mono">'+i.currentStock+'</td><td class="mono">'+i.velocity30d+'</td><td class="mono" style="font-weight:700;color:var(--green);">'+i.suggestedQty+'</td><td><span class="lc-badge '+(i.urgency==='high'?'dead':'declining')+'">'+esc(i.urgency)+'</span></td><td style="font-size:11px;max-width:150px;white-space:normal;">'+esc(i.note||'')+'</td></tr>';});
+h+='</tbody></table>';if(v.totalEstCost)h+='<div style="font-size:11px;color:var(--muted);margin-top:4px;">Est. cost: $'+parseFloat(v.totalEstCost).toFixed(0)+'</div>';h+='</div>';});}
+if(r.deadStockAction)h+='<div style="padding:10px;background:rgba(240,92,92,0.06);border:1px solid rgba(240,92,92,0.15);border-radius:var(--radius);margin-bottom:10px;font-size:12px;"><strong style="color:var(--red);">Dead Stock:</strong> '+esc(r.deadStockAction)+'</div>';
+if(r.summary)h+='<div style="padding:10px;background:var(--bg4);border-radius:var(--radius);font-size:12px;line-height:1.6;">'+esc(r.summary)+'</div>';
+s.innerHTML=h||'<div class="empty">No reorder needs detected.</div>';}catch(e){s.innerHTML='<div class="empty" style="color:var(--red);">Error: '+esc(e.message)+'</div>';}
+document.getElementById('purReorderBtn').disabled=false;}
+
+async function runCategoryAnalysis(){if(!apiKey){alert('API key required');return;}
+const s=document.getElementById('purCategories');s.innerHTML='<div class="ai-loading">⏳ Scanning category opportunities...</div>';document.getElementById('purCatBtn').disabled=true;
+const cats={};allItems.filter(i=>i.is_active).forEach(i=>{const c=i.category||'Uncategorized';if(!cats[c])cats[c]={count:0,units90:0,rev90:0};cats[c].count++;const sd=salesByItem[i.sku]||{};cats[c].units90+=sd.units90||0;cats[c].rev90+=sd.rev90||0;});
+const catSummary=Object.entries(cats).map(([c,d])=>c+': '+d.count+' items, '+d.units90+' units/90d, $'+d.rev90.toFixed(0)+' revenue').join('\n');
+const prompt='CCD sells rustic/farmhouse home décor. Current categories:\n\n'+catSummary+'\n\nSearch current market trends (Etsy, Google Trends, Pinterest) for farmhouse and rustic home décor. Identify 3-5 trending product categories that CCD is underrepresented in or missing entirely. For each, provide the trend evidence and a confidence level.\n\nReturn JSON:\n{"opportunities":[{"category":"string","trendEvidence":"specific data point with source","ccdCurrentItems":0,"marketDemand":"high/medium","confidence":"measured/inferred","recommendation":"brief actionable"}],"summary":"3-4 sentences"}';
+try{const r=await callAI('You are a market analyst for Country Charm Decor. Search for real trend data. Label confidence. Return ONLY valid JSON.',prompt,true);
+let h='';if(r.opportunities?.length){h+='<table><thead><tr><th>Category</th><th>Trend Evidence</th><th>CCD Items</th><th>Demand</th><th>Confidence</th><th>Recommendation</th></tr></thead><tbody>';
+r.opportunities.forEach(o=>{h+='<tr><td style="font-weight:700;color:var(--gold);">'+esc(o.category)+'</td><td style="max-width:200px;white-space:normal;font-size:11px;">'+esc(o.trendEvidence)+'</td><td class="mono">'+o.ccdCurrentItems+'</td><td><span class="lc-badge '+(o.marketDemand==='high'?'growing':'stable')+'">'+esc(o.marketDemand)+'</span></td><td><span class="badge-m badge-'+(o.confidence==='measured'?'measured':'inferred')+'">'+esc(o.confidence||'inferred').toUpperCase()+'</span></td><td style="max-width:180px;white-space:normal;font-size:11px;">'+esc(o.recommendation)+'</td></tr>';});
+h+='</tbody></table>';}
+if(r.summary)h+='<div style="padding:10px;background:var(--bg4);border-radius:var(--radius);font-size:12px;line-height:1.6;margin-top:10px;"><span class="badge-m badge-inferred">INFERRED</span> '+esc(r.summary)+'</div>';
+s.innerHTML=h||'<div class="empty">No category gaps found.</div>';}catch(e){s.innerHTML='<div class="empty" style="color:var(--red);">Error: '+esc(e.message)+'</div>';}
+document.getElementById('purCatBtn').disabled=false;}
+
+/* ── AI HELPER ── */
+async function callAI(systemPrompt,userPrompt,useWebSearch){
+const body={model:'claude-sonnet-4-20250514',max_tokens:2000,system:systemPrompt,messages:[{role:'user',content:userPrompt}]};
+if(useWebSearch)body.tools=[{type:'web_search_20250305',name:'web_search',max_uses:8}];
+const resp=await fetch(WORKER_URL,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01'},body:JSON.stringify(body)});
+if(!resp.ok)throw new Error('API '+resp.status);const data=await resp.json();
+const allText=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+const m=allText.match(/\{[\s\S]*\}/);if(!m)throw new Error('No JSON in response');return JSON.parse(m[0]);}
+</script>
+</body>
+</html>

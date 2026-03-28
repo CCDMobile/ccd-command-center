@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.2.6</title>
+    <title>CCD Sync Hub v4.3.0</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.2.6 — Clean Build Styles
+           CCD SYNC HUB v4.2.7 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.2.6 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.0 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -707,11 +707,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.2.6 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.2.7 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.2.6';
+    const SH_VERSION = 'v4.3.0';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1083,7 +1083,9 @@
             // Customer walks out the door with the item. OB shipping only applies to online channels.
             const effectiveObShipping = (channel === 'treasuremarts') ? 0 : obShipping;
             
-            const totalCost = (wholesalePrice * (1 + ibShipping / 100) + tariff + effectiveObShipping) * qty;
+            // v4.2.7: Tariff is a PERCENTAGE (aligned with V2 formula)
+            // Formula: wholesale * (1 + ib%/100 + tariff%/100) + ob_shipping
+            const totalCost = (wholesalePrice * (1 + ibShipping / 100 + tariff / 100) + effectiveObShipping) * qty;
             const totalRevenue = salePrice * qty;
             let netProfit = totalRevenue - totalCost;
             let profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
@@ -1466,7 +1468,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.2.6-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.2.7-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1680,7 +1682,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.2.6',
+                processedBy: 'Sync Hub v4.2.7',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -1762,6 +1764,7 @@
     // === updateMasterJsonProduct ===
     /**
      * Update a product in the Master JSON by SKU
+     * v4.3.0: Also writes through to Supabase
      */
     function updateMasterJsonProduct(sku, updates) {
         if (!window.masterJsonData) return false;
@@ -1780,6 +1783,25 @@
         const product = products.find(p => (p.sku || p.SKU) === sku);
         if (product) {
             Object.assign(product, updates);
+            // v4.3.0: Write through to Supabase
+            if (sbClient && sbConnected) {
+                const dbUpdates = {};
+                Object.keys(updates).forEach(k => {
+                    // Convert camelCase to snake_case for known fields
+                    const snakeMap = {wholesalePrice:'wholesale_price',retailPrice:'retail_price',ibShipping:'ib_shipping',
+                        obShipping:'ob_shipping',etsyListingId:'etsy_listing_id',wixProductId:'wix_product_id',
+                        wixVariantId:'wix_variant_id',wayfairSku:'wayfair_sku',productName:'product_name',
+                        brandName:'brand_name',etsyQty:'etsy_qty',wixQty:'wix_qty',wayfairQty:'wayfair_qty',
+                        treasuremartsQty:'treasuremarts_qty',etsyPrice:'etsy_price',wixPrice:'wix_price',
+                        wayfairPrice:'wayfair_price',treasuremartsPrice:'treasuremarts_price'};
+                    const dbKey = snakeMap[k] || k;
+                    dbUpdates[dbKey] = updates[k];
+                });
+                dbUpdates.updated_at = new Date().toISOString();
+                sbClient.from('items').update(dbUpdates).eq('sku', sku).then(({error}) => {
+                    if (error) console.warn('[updateMasterJsonProduct] Supabase write-through failed:', error.message);
+                });
+            }
             return true;
         }
         return false;
@@ -6759,27 +6781,39 @@
     // === updateProductWithListingId (line 5158) ===
     /**
      * Update product with new listing/product ID
-     * Saves back to localStorage for persistence
+     * v4.3.0: Writes to Supabase + in-memory cache (was localStorage only — data loss bug)
      */
     function updateProductWithListingId(sku, channel, id) {
+        if (!id) return;
         try {
-            const inventoryData = localStorage.getItem('ccdInventory') || localStorage.getItem('ccdInventoryData');
-            if (!inventoryData) return;
+            // Write to Supabase (persistent)
+            const updateObj = {};
+            if (channel === 'etsy') updateObj.etsy_listing_id = String(id);
+            else if (channel === 'wix') updateObj.wix_product_id = String(id);
+            else return;
+            updateObj.updated_at = new Date().toISOString();
             
-            const inventory = JSON.parse(inventoryData);
-            const product = inventory.find(p => p.sku === sku);
+            if (sbClient && sbConnected) {
+                sbClient.from('items').update(updateObj).eq('sku', sku).then(({error}) => {
+                    if (error) console.error('[ListingID] Supabase write failed:', error.message);
+                    else addLog(`✅ ${sku} ${channel} ID saved to Supabase: ${id}`, 'info');
+                });
+            }
             
+            // Update in-memory cache
+            const products = getProductsArray();
+            const product = products.find(p => (p.sku || p.SKU) === sku);
             if (product) {
                 if (channel === 'etsy') {
-                    product.etsyListingId = id;
+                    product.etsyListingId = String(id);
+                    product.etsy_listing_id = String(id);
                 } else if (channel === 'wix') {
-                    product.wixProductId = id;
+                    product.wixProductId = String(id);
+                    product.wix_product_id = String(id);
                 }
-                
-                // Save back
-                localStorage.setItem('ccdInventoryData', JSON.stringify(inventory));
-                addLog(`Updated ${sku} with ${channel} ID: ${id}`, 'info');
             }
+            
+            addLog(`Updated ${sku} with ${channel} ID: ${id}`, 'info');
         } catch (e) {
             console.error('Error updating product ID:', e);
         }
@@ -7203,7 +7237,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.2.6 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.2.7 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -7274,11 +7308,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.2.6 initialized successfully');
-            addLog('CCD Sync Hub v4.2.6 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.2.7 initialized successfully');
+            addLog('CCD Sync Hub v4.2.7 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.2.6 started (Supabase-Native Push)',
+                'Sync Hub v4.2.7 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
