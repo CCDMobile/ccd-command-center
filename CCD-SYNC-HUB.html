@@ -1118,7 +1118,7 @@
             // Find item_id from database
             const { data: itemRow } = await sbClient.from('items').select('id').eq('sku', item.sku).single();
 
-            await sbClient.from('sales_history').insert({
+            const { error: insertError } = await sbClient.from('sales_history').insert({
                 item_id: itemRow?.id || null,
                 sku: item.sku,
                 product_name: item.productName || '',
@@ -1158,10 +1158,14 @@
                 rent:                  feeBreakdown ? feeBreakdown.rent                  : null,
                 marketplace_deduction: feeBreakdown ? feeBreakdown.marketplace_deduction : null,
                 gross_revenue:         feeBreakdown ? feeBreakdown.gross_revenue         : null,
-                total_fees:            feeBreakdown ? feeBreakdown.total_fees            : null,
-                accounting_category:   feeBreakdown ? feeBreakdown.accounting_category   : null
+                total_fees:            feeBreakdown ? feeBreakdown.total_fees            : null
             });
-            console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
+            if (insertError) {
+                console.error(`[Sales] ❌ INSERT FAILED for ${item.sku}: ${insertError.message} | Code: ${insertError.code} | Details: ${insertError.details}`);
+                addLog(`❌ Sale NOT recorded for ${item.sku} (${orderId}): ${insertError.message}`, 'error');
+                return;
+            }
+            console.log(`[Sales] ✅ Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
         } catch (e) {
             console.warn('[Supabase] Sales record error:', e.message);
         }
