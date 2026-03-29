@@ -941,16 +941,19 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
       </div>
       <!-- Channel Performance Cards -->
       <div class="channel-cards" id="channelCards"></div>
-      <!-- Top Sellers Table -->
+      <!-- Sales Log Table -->
       <div class="section">
         <div class="flex-between mb-8">
-          <div class="section-title" style="margin-bottom:0;">Top Sellers</div>
+          <div class="section-title" style="margin-bottom:0;">Sales Log</div>
           <span style="font-size:12px;color:var(--muted);" id="topSellersRange"></span>
         </div>
         <div class="table-wrapper">
           <table>
-            <thead><tr><th>SKU</th><th>Product</th><th>Brand</th><th>Units</th><th>Revenue</th><th>Profit</th><th>Margin</th></tr></thead>
-            <tbody id="topSellersBody"><tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
+            <thead><tr>
+              <th style="cursor:pointer;" onclick="toggleAnalyticsSort()">Date <span id="analyticsSortArrow">▼</span></th>
+              <th>SKU</th><th>Product</th><th>Channel</th><th>Units</th><th>Revenue</th><th>Profit</th><th>Margin</th>
+            </tr></thead>
+            <tbody id="topSellersBody"><tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1964,6 +1967,7 @@ function renderOverview(item) {
             <input class="form-input" id="f_box_h" style="width:100%;text-align:center;" value="${pf(item.box_height) || ''}">
           </div>
         </div>
+        <button class="btn-card btn-push" style="margin-top:10px;padding:6px 16px;font-size:12px;" onclick="captureEdits();switchSub('shipping');setTimeout(()=>getOBBenchmarkRates(),100)">📦 Get OB Quotes</button>
       </div>
     </div>
   </div>
@@ -2214,7 +2218,7 @@ async function renderSales(item) {
         <td class="mono">$${pf(r.sale_price).toFixed(2)}</td>
         <td class="mono" style="color:${profitColor};">$${profit.toFixed(2)}</td>
         <td style="color:${profitColor};">${margin.toFixed(1)}%</td>
-        <td><button class="btn-packing" onclick="openPackingSlip(${idx})">🖨 Slip</button></td>
+        <td><button class="btn-packing" onclick="openPackingSlip(${idx})">🖨 Slip</button><button class="btn-packing" onclick="shipFromSale(${idx})">📦 Ship</button></td>
         <td><button class="expand-btn" onclick="toggleFeeDetail(this,${idx})">▶</button></td>
       </tr>`;
     }).join('');
@@ -2277,6 +2281,56 @@ function toggleFeeDetail(btn, idx) {
   </td>`;
   row.after(detailRow);
   btn.textContent = '▼';
+}
+
+function shipFromSale(idx) {
+  const sale = state.salesRows && state.salesRows[idx];
+  if (!sale) return;
+  const item = state.currentItem;
+  if (!item) return;
+
+  // Parse ship_to_address — typically "123 Main St, City, ST, 12345" or "123 Main St, City, ST 12345"
+  const name = sale.ship_to_name || '';
+  const addrRaw = sale.ship_to_address || '';
+  let street = '', city = '', st = '', zip = '';
+
+  if (addrRaw) {
+    const parts = addrRaw.split(',').map(s => s.trim());
+    if (parts.length >= 3) {
+      street = parts[0];
+      city = parts[1];
+      // Last part may be "OR, 97214" or "OR 97214"
+      const stateZip = parts.slice(2).join(' ').trim();
+      const szMatch = stateZip.match(/([A-Z]{2})\s*(\d{5})/i);
+      if (szMatch) {
+        st = szMatch[1].toUpperCase();
+        zip = szMatch[2];
+      } else {
+        st = parts[2] || '';
+        zip = parts[3] || '';
+      }
+    } else if (parts.length === 2) {
+      street = parts[0];
+      const szMatch = parts[1].match(/(.+?)\s+([A-Z]{2})\s*(\d{5})/i);
+      if (szMatch) {
+        city = szMatch[1];
+        st = szMatch[2].toUpperCase();
+        zip = szMatch[3];
+      } else {
+        city = parts[1];
+      }
+    } else {
+      street = addrRaw;
+    }
+  }
+
+  // Set ship-to state for the Shipping tab
+  state.lastShipTo = { name, street, city, st, zip };
+
+  // Switch to shipping tab — renderShipping will read state.lastShipTo
+  captureEdits();
+  switchSub('shipping');
+  showCardStatus(`Ship-to pre-filled from order ${sale.order_id || '—'}`, 'ok');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2388,6 +2442,20 @@ function renderShipping(item) {
     <div class="section-title">Label Purchased</div>
     <div id="buyLabelResult"></div>
   </div>
+  <!-- OB Benchmark Quote -->
+  <div class="section">
+    <div class="flex-between mb-8">
+      <div class="section-title" style="margin-bottom:0;">OB Shipping Benchmark</div>
+      <span style="font-size:12px;color:var(--muted2);">Current OB: <strong class="mono" style="color:var(--gold);">$${pf(item.ob_shipping).toFixed(2)}</strong></span>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Fixed destination: Portland, OR 97214 — click a rate to set as OB Shipping cost</div>
+    ${!shippoUrl ? '<div class="note-banner" style="color:var(--red);">Shippo proxy not configured.</div>' :
+    !hasDims ? '<div class="note-banner" style="color:var(--red);">Dimensions required first.</div>' : `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+      <button class="btn-card btn-push" onclick="getOBBenchmarkRates()" style="padding:6px 16px;">📦 Get OB Benchmark</button>
+    </div>
+    <div id="obBenchmarkResults" style="color:var(--muted);font-size:13px;">Click to fetch benchmark rates.</div>`}
+  </div>
   <!-- Shipping History -->
   <div class="section">
     <div class="section-title">Shipping History</div>
@@ -2406,6 +2474,19 @@ function captureShipTo() {
     st: ($('shipToState') || {}).value || '',
     zip: ($('shipToZip') || {}).value || ''
   };
+}
+
+// Rate filter lists — only show relevant services
+const OB_BENCHMARK_SERVICES = ['ground', 'ground advantage'];
+const SHIPTO_SERVICES = ['ground', 'ground advantage', 'priority mail', 'priority'];
+
+function filterRates(rates, allowedServices) {
+  return rates.filter(r => {
+    const svc = (r.service || '').toLowerCase();
+    const provider = (r.provider || '').toLowerCase();
+    return allowedServices.some(s => svc.includes(s)) && 
+           ['ups', 'usps', 'fedex'].some(c => provider.includes(c));
+  });
 }
 
 async function getShippingRates() {
@@ -2448,8 +2529,8 @@ async function getShippingRates() {
       return;
     }
 
-    // Store rates for buy action
-    state.lastRates = result.rates || [];
+    // Filter and store rates for display + buy action
+    state.lastRates = filterRates(result.rates || [], SHIPTO_SERVICES);
     state.lastShipmentId = result.shipmentId || '';
 
     const rates = state.lastRates;
@@ -2563,9 +2644,78 @@ async function buyLabel(rateIndex) {
   }
 }
 
+async function getOBBenchmarkRates() {
+  const item = state.currentItem;
+  if (!item) return;
+  const container = $('obBenchmarkResults');
+  if (!container) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { container.innerHTML = '<span style="color:var(--red);">Shippo proxy not configured.</span>'; return; }
+
+  container.innerHTML = '<span style="color:var(--muted);">⏳ Fetching benchmark rates...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'getRates',
+      key: apiKey,
+      weight: String(pf(item.shipping_weight) || 1),
+      length: String(pf(item.box_length) || 12),
+      width: String(pf(item.box_width) || 9),
+      height: String(pf(item.box_height) || 4),
+      toName: 'OB Benchmark',
+      toStreet: '1234 Main St',
+      toCity: 'Portland',
+      toState: 'OR',
+      toZip: '97214'
+    });
+
+    if (!result.success) {
+      container.innerHTML = `<span style="color:var(--red);">Error: ${escHtml(result.error || 'Unknown')}</span>`;
+      return;
+    }
+
+    const rates = filterRates(result.rates || [], OB_BENCHMARK_SERVICES);
+    if (rates.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted);">No rates returned.</span>';
+      return;
+    }
+
+    const currentOB = pf(item.ob_shipping);
+    container.innerHTML = `<div class="table-wrapper"><table>
+      <thead><tr><th>Carrier</th><th>Service</th><th>Est. Days</th><th>Cost</th><th>vs Current OB</th><th></th></tr></thead>
+      <tbody>${rates.map(r => {
+        const diff = pf(r.amount) - currentOB;
+        const diffColor = diff > 0 ? 'var(--red)' : 'var(--green)';
+        return `<tr>
+        <td>${escHtml(r.provider || '—')}</td>
+        <td>${escHtml(r.service || '—')}</td>
+        <td class="mono">${r.estimatedDays || '—'}</td>
+        <td class="mono" style="font-weight:700;color:var(--gold);">$${pf(r.amount).toFixed(2)}</td>
+        <td class="mono" style="color:${diffColor};font-weight:600;">${diff >= 0 ? '+' : ''}$${diff.toFixed(2)}</td>
+        <td><button class="markup-btn" style="background:var(--gold);color:#000;border-color:var(--gold);padding:4px 10px;font-size:11px;" onclick="selectOBRate(${pf(r.amount).toFixed(2)},'${escAttr(r.provider)}','${escAttr(r.service)}')">Set OB</button></td>
+      </tr>`;
+      }).join('')}</tbody></table></div>`;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--red);">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+function selectOBRate(amount, provider, service) {
+  const item = state.currentItem;
+  if (!item) return;
+  item.ob_shipping = amount;
+  if ($('f_ob')) $('f_ob').value = amount.toFixed(2);
+  showCardStatus(`OB Shipping set to $${amount.toFixed(2)} (${provider} ${service}) — Save to keep`, 'ok');
+  renderShipping(item);
+}
+
 async function loadShippingHistory(sku) {
   const container = $('shippingHistoryContent');
   if (!container) return;
+  const item = state.currentItem;
+  const currentOB = item ? pf(item.ob_shipping) : 0;
   try {
     const { data } = await sb.from('shippo_transactions').select('*').eq('sku', sku).order('shippo_created_at', { ascending: false }).limit(20);
     const rows = data || [];
@@ -2573,24 +2723,63 @@ async function loadShippingHistory(sku) {
       container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);">No shipping history for this item.</div>';
       return;
     }
-    container.innerHTML = `<div class="table-wrapper"><table>
-      <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Tracking</th><th>Status</th><th>Cost</th></tr></thead>
-      <tbody>${rows.map(r => {
+
+    const costs = rows.filter(r => pf(r.label_cost) > 0).map(r => pf(r.label_cost));
+    const avgCost = costs.length > 0 ? costs.reduce((a,b) => a+b, 0) / costs.length : 0;
+    const avgDiff = avgCost - currentOB;
+
+    let html = `<div class="table-wrapper"><table>
+      <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Tracking</th><th>Cost</th><th>vs OB</th></tr></thead>
+      <tbody>${rows.map((r, idx) => {
         const date = (r.shippo_created_at || r.synced_at || r.created_at || '').substring(0,10);
-        const status = r.label_status || r.status || '—';
         const cost = pf(r.label_cost || r.rate_amount);
-        return `<tr>
+        const diff = cost > 0 ? cost - currentOB : 0;
+        const diffColor = diff > 0 ? 'var(--red)' : 'var(--green)';
+        return `<tr style="cursor:pointer;" onclick="toggleShipDetail(${idx})" title="Click for details">
         <td class="mono">${date}</td>
         <td>${escHtml(r.carrier || '—')}</td>
         <td style="font-size:12px;">${escHtml(r.service_name || '—')}</td>
         <td><span class="tracking-num">${escHtml(r.tracking_number || '—')}</span></td>
-        <td><span class="par-status ${status === 'DELIVERED' || status === 'SUCCESS' ? 'par-ok' : 'par-warn'}">${escHtml(status)}</span></td>
-        <td class="mono">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
+        <td class="mono" style="font-weight:600;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
+        <td class="mono" style="color:${cost > 0 ? diffColor : 'var(--muted)'};">${cost > 0 ? (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2) : '—'}</td>
+      </tr>
+      <tr id="shipDetail_${idx}" style="display:none;">
+        <td colspan="6" style="padding:0;">
+          <div style="padding:12px 16px;background:var(--bg3);border-left:3px solid var(--gold);">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 20px;font-size:12px;">
+              <div><span style="color:var(--muted2);">Recipient:</span> ${escHtml(r.recipient_name || '—')}</div>
+              <div><span style="color:var(--muted2);">Location:</span> ${escHtml([r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ') || '—')}</div>
+              <div><span style="color:var(--muted2);">Status:</span> <span class="par-status ${(r.label_status || r.status || '') === 'DELIVERED' || (r.label_status || r.status || '') === 'SUCCESS' ? 'par-ok' : 'par-warn'}">${escHtml(r.label_status || r.status || '—')}</span></div>
+              <div><span style="color:var(--muted2);">Weight:</span> ${r.parcel_weight ? pf(r.parcel_weight) + ' lb' : '—'}</div>
+              <div><span style="color:var(--muted2);">Dims:</span> ${r.parcel_length ? pf(r.parcel_length) + '×' + pf(r.parcel_width) + '×' + pf(r.parcel_height) + '"' : '—'}</div>
+              <div><span style="color:var(--muted2);">Order:</span> ${escHtml(r.order_id || r.order_number_raw || '—')}</div>
+              ${r.tracking_number ? `<div style="grid-column:1/-1;margin-top:4px;"><a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);font-size:12px;">🔗 Track Package →</a></div>` : ''}
+            </div>
+          </div>
+        </td>
       </tr>`;
       }).join('')}</tbody></table></div>`;
+
+    if (costs.length > 0) {
+      const avgColor = avgDiff > 0 ? 'var(--red)' : 'var(--green)';
+      html += `<div style="margin-top:10px;padding:10px 14px;background:var(--bg3);border-radius:var(--radius);font-size:12px;display:flex;justify-content:space-between;align-items:center;">
+        <span>📊 <strong>${costs.length}</strong> shipments · Avg cost: <strong class="mono">$${avgCost.toFixed(2)}</strong>
+          <span style="color:${avgColor};margin-left:6px;">(${avgDiff >= 0 ? '+' : ''}$${avgDiff.toFixed(2)} vs OB)</span>
+        </span>
+        ${avgDiff > 0.50 ? `<span style="color:var(--yellow);font-size:11px;">💡 Consider raising OB to $${avgCost.toFixed(2)}</span>` : ''}
+      </div>`;
+    }
+
+    container.innerHTML = html;
   } catch(e) {
     container.innerHTML = `<div style="color:var(--red);">Error: ${escHtml(e.message)}</div>`;
   }
+}
+
+function toggleShipDetail(idx) {
+  const row = $('shipDetail_' + idx);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? '' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4899,44 +5088,57 @@ async function loadAnalytics() {
       </div>`;
     }).join('');
 
-    // Top sellers — aggregate by SKU
-    const bySku = {};
-    rows.forEach(r => {
-      const sku = r.sku || 'UNKNOWN';
-      if (!bySku[sku]) bySku[sku] = { sku, product: r.product_name || '', brand: r.brand_name || '', revenue:0, profit:0, units:0, marginSum:0, count:0 };
-      const s = bySku[sku];
-      s.revenue += pf(r.total_revenue) || pf(r.sale_price);
-      s.profit += pf(r.net_profit);
-      s.units += pi(r.qty_sold) || 1;
-      s.marginSum += pf(r.profit_margin) || 0;
-      s.count++;
-      if (!s.brand && r.brand_name) s.brand = r.brand_name;
-    });
-
-    const topSellers = Object.values(bySku).sort((a,b) => b.revenue - a.revenue).slice(0, 20);
-    $('topSellersRange').textContent = `${range.from} to ${range.to}`;
-
-    if (topSellers.length === 0) {
-      $('topSellersBody').innerHTML = '<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--muted);">No sales in this period.</td></tr>';
-    } else {
-      $('topSellersBody').innerHTML = topSellers.map(s => {
-        const avgM = s.count > 0 ? (s.marginSum / s.count * 100).toFixed(1) : '0.0';
-        return `<tr>
-          <td><span class="sku-cell">${escHtml(s.sku)}</span></td>
-          <td class="product-cell">${escHtml(s.product)}</td>
-          <td class="brand-cell">${escHtml(s.brand)}</td>
-          <td class="mono">${s.units}</td>
-          <td class="mono" style="color:var(--gold);">$${s.revenue.toFixed(2)}</td>
-          <td class="mono" style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'};">$${s.profit.toFixed(2)}</td>
-          <td style="color:${parseFloat(avgM) >= 0 ? 'var(--green)' : 'var(--red)'};">${avgM}%</td>
-        </tr>`;
-      }).join('');
-    }
+    // Sales log — individual sales sorted by date (newest first by default)
+    state.analyticsSales = rows.map(r => ({
+      date: (r.sale_date || '').substring(0, 10),
+      sku: r.sku || 'UNKNOWN',
+      product: r.product_name || '',
+      channel: r.sale_channel || '',
+      units: pi(r.qty_sold) || 1,
+      revenue: pf(r.total_revenue) || pf(r.sale_price),
+      profit: pf(r.net_profit),
+      margin: pf(r.profit_margin) * 100
+    }));
+    state.analyticsSortAsc = false; // default newest first
+    renderAnalyticsSalesLog();
 
   } catch(e) {
     $('akRevenue').textContent = 'Error';
     console.error('Analytics error:', e);
   }
+}
+
+function renderAnalyticsSalesLog() {
+    const sales = state.analyticsSales || [];
+    const sorted = [...sales].sort((a, b) => state.analyticsSortAsc ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
+    const arrow = $('analyticsSortArrow');
+    if (arrow) arrow.textContent = state.analyticsSortAsc ? '▲' : '▼';
+
+    const range = getAnalyticsDateRange();
+    $('topSellersRange').textContent = `${range.from} to ${range.to}`;
+
+    if (sorted.length === 0) {
+      $('topSellersBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">No sales in this period.</td></tr>';
+    } else {
+      $('topSellersBody').innerHTML = sorted.map(s => {
+        const chColor = { etsy:'var(--etsy)', wix:'var(--wix)', wayfair:'var(--wayfair)', treasuremarts:'var(--tm)' }[s.channel] || 'var(--muted)';
+        return `<tr>
+          <td class="mono">${s.date}</td>
+          <td><span class="sku-cell">${escHtml(s.sku)}</span></td>
+          <td class="product-cell">${escHtml(s.product)}</td>
+          <td style="color:${chColor};font-weight:600;font-size:12px;">${escHtml(s.channel || '—')}</td>
+          <td class="mono">${s.units}</td>
+          <td class="mono" style="color:var(--gold);">$${s.revenue.toFixed(2)}</td>
+          <td class="mono" style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'};">$${s.profit.toFixed(2)}</td>
+          <td style="color:${s.margin >= 0 ? 'var(--green)' : 'var(--red)'};">${s.margin.toFixed(1)}%</td>
+        </tr>`;
+      }).join('');
+    }
+}
+
+function toggleAnalyticsSort() {
+    state.analyticsSortAsc = !state.analyticsSortAsc;
+    renderAnalyticsSalesLog();
 }
 
 // ═══════════════════════════════════════════════════════════
