@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.4.0</title>
+<title>CCD Inventory System v2.4.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -405,11 +405,12 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 .pricing-kpi{padding:14px;background:var(--bg-card-alt);border:1px solid var(--border);border-radius:var(--radius);text-align:center;}
 .pricing-kpi .pk-label{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin-bottom:6px;}
 .pricing-kpi .pk-value{font-size:22px;font-weight:700;font-family:var(--mono);}
-.markup-slider-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.markup-slider-row{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
 .markup-slider-row .ml{font-size:13px;color:var(--muted);font-weight:500;}
-.slider-track{flex:1;height:6px;background:var(--bg-input);border-radius:3px;position:relative;cursor:pointer;}
-.slider-fill{height:100%;background:linear-gradient(90deg,var(--gold-dim),var(--gold));border-radius:3px;position:relative;}
-.slider-fill::after{content:'';position:absolute;right:-7px;top:-5px;width:16px;height:16px;border-radius:50%;background:var(--gold);border:2px solid var(--bg);}
+.markup-range{flex:1;min-width:120px;height:6px;-webkit-appearance:none;appearance:none;background:var(--bg-input);border-radius:3px;outline:none;cursor:pointer;}
+.markup-range::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:var(--gold);border:2px solid var(--bg);cursor:pointer;margin-top:-6px;}
+.markup-range::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--gold);border:2px solid var(--bg);cursor:pointer;}
+.markup-range::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(90deg,var(--gold-dim),var(--gold));}
 .markup-pct{font-size:14px;font-weight:700;color:var(--gold);font-family:var(--mono);min-width:50px;text-align:right;}
 .price-adj-row{display:flex;align-items:center;gap:10px;margin-bottom:16px;}
 .price-adj-row .ml{font-size:13px;color:var(--muted);font-weight:500;}
@@ -586,7 +587,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.4.0 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.4.1 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -598,7 +599,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.4.0</div>
+      <div class="topbar-version">v2.4.1</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -740,6 +741,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
           </label>
         </div>
       </div>
+      <div class="inline-status" id="cardStatus" style="margin:0 24px;"></div>
 
       <!-- KPI Row -->
       <div class="kpi-row" id="cardKpiRow">
@@ -777,7 +779,6 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
       <div class="sub-content" id="sub-writeoff"></div>
       <div class="sub-content" id="sub-activity"></div>
 
-      <div class="inline-status" id="cardStatus"></div>
     </div><!-- end card-view -->
 
     <!-- ═══════════════════════════════════════ CHANNEL VIEWS ═══════════════════════════════════════ -->
@@ -928,6 +929,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
         <input type="date" class="date-input" id="analyticsFrom" onchange="setAnalyticsCustom()">
         <span style="color:var(--muted);font-size:12px;">to</span>
         <input type="date" class="date-input" id="analyticsTo" onchange="setAnalyticsCustom()">
+        <button class="date-preset" onclick="setAnalyticsCustom()" style="background:var(--gold);color:#000;border-color:var(--gold);">▶ Run</button>
       </div>
       <!-- KPI Cards -->
       <div class="analytics-kpis" id="analyticsKpis">
@@ -1201,7 +1203,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.4.0';
+const TOOL_VERSION = '2.4.1';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1906,7 +1908,7 @@ function renderOverview(item) {
         </label>
         <div style="text-align:right;">
           <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">📝 Description Last Updated</label>
-          <input class="form-input" type="date" id="f_desc_date" value="${item.description_last_updated || ''}" style="width:160px;text-align:center;">
+          <input class="form-input" type="date" id="f_desc_date" value="${(item.description_last_updated || '').substring(0,10)}" style="width:160px;text-align:center;">
         </div>
       </div>
     </div>
@@ -2083,14 +2085,16 @@ function renderPricing(item) {
       <button class="markup-btn" style="background:var(--green-bg);color:var(--green);border-color:rgba(45,212,160,0.3);" onclick="applyMarkup('${activeCh.key}',100)">100%</button>
       <button class="markup-btn" style="background:var(--blue-bg);color:var(--blue);border-color:rgba(59,130,246,0.3);" onclick="applyMarkup('${activeCh.key}',75)">75%</button>
       <button class="markup-btn" style="background:var(--orange-bg);color:var(--orange);border-color:rgba(245,158,11,0.3);" onclick="applyMarkup('${activeCh.key}',42)">42%</button>
-      <div class="slider-track"><div class="slider-fill" style="width:${sliderPct}%;"></div></div>
-      <span class="markup-pct">${markup.toFixed(0)}%</span>
-      <button class="markup-btn" style="background:var(--gold);color:#000;border-color:var(--gold);font-weight:700;" onclick="applyCustomMarkup('${activeCh.key}')">Apply Custom</button>
+      <input type="range" min="0" max="200" step="1" value="${Math.round(markup)}" class="markup-range" id="markupSlider" oninput="onMarkupSlide('${activeCh.key}', this.value)">
+      <span class="markup-pct" id="markupPctLabel">${markup.toFixed(0)}%</span>
     </div>
     <div class="price-adj-row">
-      <span class="ml">Price Adj:</span>
-      <input class="form-input" id="f_${activeCh.key}_price" value="${retailPrice.toFixed(2)}" style="width:100px;">
-      <span class="hint">Direct price edit — overrides markup calculation</span>
+      <span class="ml">Custom %:</span>
+      <input class="form-input" id="customMarkupInput" value="${markup.toFixed(0)}" style="width:70px;text-align:center;" onchange="applyMarkup('${activeCh.key}', parseFloat(this.value)||0)">
+      <span class="hint" style="margin-right:16px;">Enter markup % and press Enter</span>
+      <span class="ml">Price:</span>
+      <input class="form-input" id="f_${activeCh.key}_price" value="${retailPrice.toFixed(2)}" style="width:100px;" onchange="onPriceAdjust('${activeCh.key}', this.value)">
+      <span class="hint">Direct price — tab out to apply</span>
     </div>
     <div class="section-title" style="font-size:11px;letter-spacing:1px;">FEE BREAKDOWN (estimated)</div>
     <div class="fee-grid">
@@ -2126,6 +2130,33 @@ function applyMarkup(chKey, pct) {
 function applyCustomMarkup(chKey) {
   captureEdits();
   renderPricing(state.currentItem);
+}
+
+function onMarkupSlide(chKey, pctVal) {
+  const pct = parseFloat(pctVal) || 0;
+  const label = $('markupPctLabel');
+  if (label) label.textContent = pct + '%';
+  const item = state.currentItem;
+  const wholesale = pf(item.wholesale_price);
+  const ibPct = pf(item.ib_shipping);
+  const tariffPct = pf(item.tariff);
+  const ob = pf(item.ob_shipping);
+  const landed = wholesale * (1 + ibPct/100 + tariffPct/100) + ob;
+  const newPrice = Math.round(landed * (1 + pct/100) * 100) / 100;
+  const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
+  item[priceMap[chKey]] = newPrice;
+  // Debounce full re-render — update KPIs inline for snappy slider feel
+  clearTimeout(state._sliderTimer);
+  state._sliderTimer = setTimeout(() => renderPricing(item), 150);
+}
+
+function onPriceAdjust(chKey, val) {
+  const newPrice = parseFloat(val);
+  if (isNaN(newPrice) || newPrice < 0) return;
+  const item = state.currentItem;
+  const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
+  item[priceMap[chKey]] = newPrice;
+  renderPricing(item);
 }
 
 function pushSingleChannel(chKey) {
@@ -2276,7 +2307,6 @@ async function renderPurchases(item) {
         <td class="mono">$${lineTotal}</td>
         <td><input class="form-input" value="${pf(r.ib_shipping_pct)}%" style="width:55px;font-size:12px;" disabled></td>
         <td><input class="form-input" value="${pf(r.line_tariff)}%" style="width:55px;font-size:12px;" disabled></td>
-        <td><button class="expand-btn">✏️</button></td>
       </tr>`;
     }).join('');
 
@@ -2291,7 +2321,7 @@ async function renderPurchases(item) {
       </div>
       <div class="table-wrapper">
         <table>
-          <thead><tr><th>Invoice Date</th><th>Invoice #</th><th>Vendor</th><th>Qty</th><th>Unit Cost</th><th>Line Total</th><th>IB Ship %</th><th>Tariff %</th><th></th></tr></thead>
+          <thead><tr><th>Invoice Date</th><th>Invoice #</th><th>Vendor</th><th>Qty</th><th>Unit Cost</th><th>Line Total</th><th>IB Ship %</th><th>Tariff %</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       </div>
@@ -2306,14 +2336,57 @@ async function renderPurchases(item) {
 // TAB: SHIPPING (matches prototype exactly)
 // ═══════════════════════════════════════════════════════════
 function renderShipping(item) {
+  const w = pf(item.shipping_weight); const l = pf(item.box_length); const wd = pf(item.box_width); const h = pf(item.box_height);
+  const hasDims = w > 0 && l > 0 && wd > 0 && h > 0;
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const dimLabel = hasDims ? `${w} lb · ${l}×${wd}×${h} in` : 'Missing — set on Overview tab';
+
+  // Restore last-used address if available
+  const sa = state.lastShipTo || { name:'', street:'', city:'', st:'', zip:'' };
+
   $('sub-shipping').innerHTML = `
-  <!-- Live Rate Quotes -->
+  <!-- Ship-To Address + Rate Quotes -->
   <div class="section">
     <div class="flex-between mb-8">
-      <div class="section-title" style="margin-bottom:0;">Live Rate Quotes</div>
-      <span style="font-size:12px;color:var(--muted2);">${pf(item.shipping_weight) || '—'} lb · ${pf(item.box_length)||'—'}×${pf(item.box_width)||'—'}×${pf(item.box_height)||'—'} in</span>
+      <div class="section-title" style="margin-bottom:0;">Ship-To Address &amp; Rate Quotes</div>
+      <span style="font-size:12px;color:${hasDims ? 'var(--muted2)' : 'var(--red)'};">${dimLabel}</span>
     </div>
-    <div class="note-banner">📦 Rate quotes will be available when Shippo proxy getRates action is configured.</div>
+    ${!shippoUrl ? '<div class="note-banner" style="color:var(--red);">⚠ Shippo proxy URL not configured. Go to Settings → Proxy URLs.</div>' :
+    !hasDims ? '<div class="note-banner" style="color:var(--red);">⚠ Shipping dimensions required. Set weight, length, width, height on the Overview tab first.</div>' : `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-bottom:14px;">
+      <div>
+        <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Recipient Name</div>
+        <input class="form-input" id="shipToName" value="${escAttr(sa.name)}" style="width:100%;text-align:left;" placeholder="Customer name">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Street Address</div>
+        <input class="form-input" id="shipToStreet" value="${escAttr(sa.street)}" style="width:100%;text-align:left;" placeholder="123 Main St">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">City</div>
+        <input class="form-input" id="shipToCity" value="${escAttr(sa.city)}" style="width:100%;text-align:left;" placeholder="City">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div>
+          <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">State</div>
+          <input class="form-input" id="shipToState" value="${escAttr(sa.st)}" style="width:100%;text-align:center;" placeholder="FL" maxlength="2">
+        </div>
+        <div>
+          <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">ZIP</div>
+          <input class="form-input" id="shipToZip" value="${escAttr(sa.zip)}" style="width:100%;text-align:center;" placeholder="12345">
+        </div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <button class="btn-card btn-push" onclick="getShippingRates()" style="padding:8px 20px;">📦 Get Quotes</button>
+      <span style="font-size:12px;color:var(--muted2);">Rates based on item dimensions above</span>
+    </div>
+    <div id="rateQuoteResults" style="color:var(--muted);font-size:13px;">Enter ship-to address and click Get Quotes.</div>`}
+  </div>
+  <!-- Buy Label Result -->
+  <div class="section" id="buyLabelResultSection" style="display:none;">
+    <div class="section-title">Label Purchased</div>
+    <div id="buyLabelResult"></div>
   </div>
   <!-- Shipping History -->
   <div class="section">
@@ -2325,25 +2398,196 @@ function renderShipping(item) {
   loadShippingHistory(item.sku);
 }
 
+function captureShipTo() {
+  return {
+    name: ($('shipToName') || {}).value || '',
+    street: ($('shipToStreet') || {}).value || '',
+    city: ($('shipToCity') || {}).value || '',
+    st: ($('shipToState') || {}).value || '',
+    zip: ($('shipToZip') || {}).value || ''
+  };
+}
+
+async function getShippingRates() {
+  const item = state.currentItem;
+  if (!item) return;
+  const container = $('rateQuoteResults');
+  if (!container) return;
+
+  const addr = captureShipTo();
+  state.lastShipTo = addr;
+
+  if (!addr.zip || addr.zip.trim().length < 5) {
+    container.innerHTML = '<span style="color:var(--red);">Please enter at least a valid ZIP code.</span>';
+    return;
+  }
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { container.innerHTML = '<span style="color:var(--red);">Shippo proxy URL not configured.</span>'; return; }
+
+  container.innerHTML = '<span style="color:var(--muted);">⏳ Fetching rates...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'getRates',
+      key: apiKey,
+      weight: String(pf(item.shipping_weight) || 1),
+      length: String(pf(item.box_length) || 10),
+      width: String(pf(item.box_width) || 10),
+      height: String(pf(item.box_height) || 5),
+      toName: addr.name || 'Customer',
+      toStreet: addr.street || '1234 Main St',
+      toCity: addr.city || 'Portland',
+      toState: addr.st || 'OR',
+      toZip: addr.zip.trim()
+    });
+
+    if (!result.success) {
+      container.innerHTML = `<span style="color:var(--red);">Error: ${escHtml(result.error || 'Unknown error')}</span>`;
+      return;
+    }
+
+    // Store rates for buy action
+    state.lastRates = result.rates || [];
+    state.lastShipmentId = result.shipmentId || '';
+
+    const rates = state.lastRates;
+    if (rates.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted);">No rates returned for these dimensions.</span>';
+      return;
+    }
+
+    container.innerHTML = `<div class="table-wrapper"><table>
+      <thead><tr><th>Carrier</th><th>Service</th><th>Est. Days</th><th>Cost</th><th></th></tr></thead>
+      <tbody>${rates.map((r, i) => `<tr>
+        <td>${escHtml(r.provider || '—')}</td>
+        <td>${escHtml(r.service || '—')}</td>
+        <td class="mono">${r.estimatedDays || '—'}</td>
+        <td class="mono" style="font-weight:700;color:var(--gold);">$${pf(r.amount).toFixed(2)}</td>
+        <td><button class="markup-btn" style="background:var(--green-bg);color:var(--green);border-color:rgba(45,212,160,0.3);padding:4px 12px;font-size:11px;" onclick="buyLabel(${i})">🏷 Buy</button></td>
+      </tr>`).join('')}</tbody></table></div>
+      <div style="font-size:11px;color:var(--muted2);margin-top:6px;">${rates.length} rate${rates.length !== 1 ? 's' : ''} · Shipment ID: ${escHtml(result.shipmentId || '—')}</div>`;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--red);">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+async function buyLabel(rateIndex) {
+  const item = state.currentItem;
+  if (!item) return;
+  const rates = state.lastRates || [];
+  const rate = rates[rateIndex];
+  if (!rate || !rate.objectId) { showCardStatus('No rate selected or missing objectId.', 'error'); return; }
+
+  if (!confirm(`Buy shipping label?\n\n${rate.provider} — ${rate.service}\nCost: $${pf(rate.amount).toFixed(2)}\nItem: ${item.sku}\n\nThis will charge your Shippo account.`)) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { showCardStatus('Shippo proxy not configured.', 'error'); return; }
+
+  showCardStatus('Purchasing label...', '');
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'purchaseLabel',
+      key: apiKey,
+      rateId: rate.objectId,
+      labelType: 'PDF',
+      metadata: item.sku
+    });
+
+    if (!result.success) {
+      showCardStatus(`Label failed: ${result.error || 'Unknown error'}`, 'error');
+      return;
+    }
+
+    // Show result
+    const sec = $('buyLabelResultSection');
+    const res = $('buyLabelResult');
+    if (sec) sec.style.display = '';
+    if (res) {
+      res.innerHTML = `
+        <div style="padding:16px;background:rgba(45,212,160,0.06);border:1px solid rgba(45,212,160,0.2);border-radius:var(--radius);">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 20px;">
+            <div><span style="font-size:11px;color:var(--muted2);">TRACKING #</span><div class="mono" style="font-size:14px;font-weight:700;color:var(--green);">${escHtml(result.trackingNumber || '—')}</div></div>
+            <div><span style="font-size:11px;color:var(--muted2);">CARRIER / SERVICE</span><div style="font-size:13px;">${escHtml(result.carrier || rate.provider)} — ${escHtml(result.service || rate.service)}</div></div>
+            <div><span style="font-size:11px;color:var(--muted2);">COST</span><div class="mono" style="font-size:14px;font-weight:700;color:var(--gold);">$${pf(result.amount || rate.amount).toFixed(2)}</div></div>
+            <div><span style="font-size:11px;color:var(--muted2);">STATUS</span><div style="font-size:13px;">${escHtml(result.status || 'PURCHASED')}</div></div>
+          </div>
+          ${result.labelUrl ? `<div style="margin-top:12px;"><a href="${escAttr(result.labelUrl)}" target="_blank" style="color:var(--gold);font-weight:600;text-decoration:underline;">📄 Download Label (PDF)</a></div>` : ''}
+          ${result.trackingUrlProvider ? `<div style="margin-top:6px;"><a href="${escAttr(result.trackingUrlProvider)}" target="_blank" style="color:var(--blue);font-size:12px;">🔗 Track on carrier site</a></div>` : ''}
+        </div>`;
+    }
+
+    showCardStatus(`Label purchased — tracking: ${result.trackingNumber || 'pending'}`, 'ok');
+
+    // Save to shippo_transactions
+    try {
+      const addr = state.lastShipTo || {};
+      await sb.from('shippo_transactions').insert({
+        sku: item.sku,
+        transaction_id: result.transactionId || null,
+        order_id: null,
+        carrier: result.carrier || rate.provider,
+        service_name: result.service || rate.service,
+        tracking_number: result.trackingNumber || null,
+        label_status: result.status || 'SUCCESS',
+        status: result.status || 'SUCCESS',
+        label_cost: pf(result.amount || rate.amount),
+        recipient_name: addr.name || null,
+        recipient_city: addr.city || null,
+        recipient_state: addr.st || null,
+        recipient_zip: addr.zip || null,
+        parcel_weight: pf(item.shipping_weight) || null,
+        parcel_length: pf(item.box_length) || null,
+        parcel_width: pf(item.box_width) || null,
+        parcel_height: pf(item.box_height) || null,
+        shippo_created_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+        raw_metadata: item.sku,
+        matched_to_sale: false
+      });
+    } catch(dbErr) {
+      console.warn('Failed to save label to shippo_transactions:', dbErr.message);
+    }
+
+    // Log activity
+    logActivity('SHIPPING','LABEL_PURCHASED',null,`Label: ${item.sku} via ${rate.provider} ${rate.service} $${pf(rate.amount).toFixed(2)} → ${result.trackingNumber || 'pending'}`,{},item.sku);
+
+    // Refresh shipping history
+    loadShippingHistory(item.sku);
+
+  } catch(e) {
+    showCardStatus(`Label purchase failed: ${e.message}`, 'error');
+  }
+}
+
 async function loadShippingHistory(sku) {
   const container = $('shippingHistoryContent');
   if (!container) return;
   try {
-    const { data } = await sb.from('shippo_transactions').select('*').eq('sku', sku).order('created_at', { ascending: false }).limit(20);
+    const { data } = await sb.from('shippo_transactions').select('*').eq('sku', sku).order('shippo_created_at', { ascending: false }).limit(20);
     const rows = data || [];
     if (rows.length === 0) {
       container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);">No shipping history for this item.</div>';
       return;
     }
     container.innerHTML = `<div class="table-wrapper"><table>
-      <thead><tr><th>Date</th><th>Carrier</th><th>Tracking</th><th>Status</th><th>Cost</th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td class="mono">${(r.created_at || '').substring(0,10)}</td>
+      <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Tracking</th><th>Status</th><th>Cost</th></tr></thead>
+      <tbody>${rows.map(r => {
+        const date = (r.shippo_created_at || r.synced_at || r.created_at || '').substring(0,10);
+        const status = r.label_status || r.status || '—';
+        const cost = pf(r.label_cost || r.rate_amount);
+        return `<tr>
+        <td class="mono">${date}</td>
         <td>${escHtml(r.carrier || '—')}</td>
+        <td style="font-size:12px;">${escHtml(r.service_name || '—')}</td>
         <td><span class="tracking-num">${escHtml(r.tracking_number || '—')}</span></td>
-        <td><span class="par-status ${r.tracking_status === 'DELIVERED' ? 'par-ok' : 'par-warn'}">${escHtml(r.tracking_status || '—')}</span></td>
-        <td class="mono">${r.rate_amount ? '$' + pf(r.rate_amount).toFixed(2) : '—'}</td>
-      </tr>`).join('')}</tbody></table></div>`;
+        <td><span class="par-status ${status === 'DELIVERED' || status === 'SUCCESS' ? 'par-ok' : 'par-warn'}">${escHtml(status)}</span></td>
+        <td class="mono">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
+      </tr>`;
+      }).join('')}</tbody></table></div>`;
   } catch(e) {
     container.innerHTML = `<div style="color:var(--red);">Error: ${escHtml(e.message)}</div>`;
   }
@@ -2381,7 +2625,7 @@ async function renderVariants(item) {
     <div class="section">
       <div class="flex-between mb-8">
         <div class="section-title" style="margin-bottom:0;">Variant Family — ${escHtml(parentSku)}</div>
-        <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;">+ Add Variant</button>
+        <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="addVariantFromItem()">+ Add Variant</button>
       </div>
       <div class="table-wrapper">
         <table>
@@ -2394,6 +2638,50 @@ async function renderVariants(item) {
   } catch(e) {
     $('sub-variants').innerHTML = `<div class="section" style="color:var(--red);">Error: ${escHtml(e.message)}</div>`;
   }
+}
+
+function addVariantFromItem() {
+  const item = state.currentItem;
+  if (!item) return;
+  const parentSku = item.parent_sku || item.sku;
+  const newSku = prompt(`Create new variant of ${parentSku}\n\nEnter the new variant SKU:`);
+  if (!newSku || !newSku.trim()) return;
+  const sku = newSku.trim().toUpperCase();
+  const label = prompt('Variant label (e.g., "Red", "Large", "Set of 2"):') || '';
+
+  (async () => {
+    try {
+      // Check SKU doesn't already exist
+      const { data: existing } = await sb.from('items').select('id').eq('sku', sku).limit(1);
+      if (existing && existing.length > 0) { showCardStatus(`SKU ${sku} already exists`, 'error'); return; }
+
+      const { data: newItem, error } = await sb.from('items').insert({
+        sku: sku,
+        product_name: item.product_name || '',
+        brand_name: item.brand_name || '',
+        category: item.category || '',
+        vendor: item.vendor || '',
+        parent_sku: parentSku,
+        variant_label: label,
+        wholesale_price: item.wholesale_price || 0,
+        ib_shipping: item.ib_shipping || 0,
+        tariff: item.tariff || 0,
+        ob_shipping: item.ob_shipping || 0,
+        qty: 0,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }).select().single();
+
+      if (error) throw error;
+      showCardStatus(`Variant ${sku} created — opening...`, 'ok');
+      logActivity('INVENTORY','VARIANT_CREATED',null,`Created variant ${sku} of ${parentSku}`,{},sku);
+      // Navigate to new variant
+      setTimeout(() => onRowClick(newItem.id), 500);
+    } catch(e) {
+      showCardStatus(`Failed to create variant: ${e.message}`, 'error');
+    }
+  })();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2560,7 +2848,7 @@ async function renderWriteoff(item) {
       <div>
         <div class="form-row">
           <div class="form-label">Quantity</div>
-          <div class="form-value"><input class="form-input" id="wo_qty" value="1" style="width:70px;"></div>
+          <div class="form-value"><input class="form-input" id="wo_qty" value="1" style="width:70px;" oninput="updateWoTotalLoss(${landed})"></div>
         </div>
         <div class="form-row">
           <div class="form-label">Reason</div>
@@ -2583,7 +2871,7 @@ async function renderWriteoff(item) {
         </div>
         <div class="form-row">
           <div class="form-label">Cost Per Unit</div>
-          <div class="form-value"><span class="mono" style="font-size:14px;font-weight:600;">$${landed.toFixed(2)}</span> <span class="cost-computed">(auto)</span></div>
+          <div class="form-value"><span class="mono" style="font-size:14px;font-weight:600;" id="wo_unit_cost">$${landed.toFixed(2)}</span> <span class="cost-computed">(auto)</span></div>
         </div>
         <div class="form-row">
           <div class="form-label">Total Loss</div>
@@ -2633,7 +2921,7 @@ async function renderWriteoff(item) {
     </div>
     <div style="margin-top:16px;display:flex;gap:10px;">
       <button class="btn-card" style="background:var(--red);color:#fff;" onclick="recordWriteoff()">Record Write-Off</button>
-      <button class="btn-card btn-push">Cancel</button>
+      <button class="btn-card btn-push" onclick="switchSub('overview')">Cancel</button>
     </div>
   </div>
   <!-- Write-Off History -->
@@ -3058,6 +3346,13 @@ async function confirmSell() {
 // ═══════════════════════════════════════════════════════════
 // WRITE-OFF RECORDING
 // ═══════════════════════════════════════════════════════════
+function updateWoTotalLoss(landedPerUnit) {
+  const qty = pi($('wo_qty') ? $('wo_qty').value : 1);
+  const total = landedPerUnit * Math.max(qty, 0);
+  if ($('wo_total_loss')) $('wo_total_loss').textContent = '$' + total.toFixed(2);
+  if ($('wo_claim_amount')) $('wo_claim_amount').value = '$' + total.toFixed(2);
+}
+
 async function recordWriteoff() {
   const item = state.currentItem;
   if (!item || state.saving) return;
@@ -3338,6 +3633,34 @@ function escHtml(str) {
 function escAttr(str) { return escHtml(str); }
 function pf(v) { return parseFloat(v) || 0; }
 function pi(v) { return parseInt(v) || 0; }
+
+// ═══════════════════════════════════════════════════════════
+// PROXY CALL UTILITIES (fetchOrJsonp — same pattern as Sync Hub)
+// ═══════════════════════════════════════════════════════════
+async function fetchOrJsonp(url, params = {}) {
+  try {
+    const qs = Object.entries(params).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const fetchUrl = url + (url.includes('?') ? '&' : '?') + qs;
+    const resp = await fetch(fetchUrl);
+    return await resp.json();
+  } catch(e) {
+    console.log('Fetch failed, trying JSONP:', e.message);
+    return await jsonpRequest(url, params);
+  }
+}
+function jsonpRequest(url, params = {}) {
+  return new Promise((resolve, reject) => {
+    const cbName = '_jsonp_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
+    params.callback = cbName;
+    const qs = Object.entries(params).map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const script = document.createElement('script');
+    script.src = url + (url.includes('?') ? '&' : '?') + qs;
+    window[cbName] = (data) => { resolve(data); delete window[cbName]; script.remove(); };
+    script.onerror = () => { reject(new Error('JSONP request failed')); delete window[cbName]; script.remove(); };
+    setTimeout(() => { if (window[cbName]) { reject(new Error('JSONP timeout')); delete window[cbName]; script.remove(); } }, 15000);
+    document.head.appendChild(script);
+  });
+}
 
 // ═══════════════════════════════════════════════════════════
 // INVOICE IMPORT
@@ -4504,10 +4827,16 @@ function setAnalyticsCustom() {
 
 function getAnalyticsDateRange() {
   if (analyticsRange.from && analyticsRange.to) {
-    return { from: analyticsRange.from, to: analyticsRange.to };
+    // Add one day to 'to' date so .lte() includes all sales on that day
+    const toNext = new Date(analyticsRange.to);
+    toNext.setDate(toNext.getDate() + 1);
+    return { from: analyticsRange.from, to: toNext.toISOString().split('T')[0] };
   }
   const now = new Date();
-  const to = now.toISOString().split('T')[0];
+  // Tomorrow so .lte() includes all of today
+  const toDate = new Date(now);
+  toDate.setDate(toDate.getDate() + 1);
+  const to = toDate.toISOString().split('T')[0];
   const fromDate = new Date(now);
   fromDate.setDate(fromDate.getDate() - (analyticsRange.days || 30));
   const from = fromDate.toISOString().split('T')[0];
