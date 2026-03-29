@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.4.7</title>
+<title>CCD Inventory System v2.4.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -589,7 +589,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.4.7 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.4.8 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -601,7 +601,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.4.7</div>
+      <div class="topbar-version">v2.4.8</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1251,6 +1251,7 @@ let state = {
 };
 
 let searchTimer = null;
+let itemSubscription = null; // Supabase realtime subscription for current item
 
 // ═══════════════════════════════════════════════════════════
 // DOM HELPERS
@@ -1778,6 +1779,9 @@ async function onRowClick(itemId) {
   switchSub('overview');
 
   logActivity('INVENTORY','ITEM_VIEW',null,`Viewed ${item.sku}`,{},item.sku);
+
+  // Subscribe to realtime changes on this item (catches Sync Hub updates)
+  subscribeToItem(item.id);
 }
 
 async function populateKpiRow(item) {
@@ -1818,6 +1822,7 @@ async function populateKpiRow(item) {
 }
 
 function closeCard() {
+  unsubscribeFromItem();
   $('cardView').classList.remove('visible');
   // Return to whichever top-level tab was active
   const activeView = state.activeTopTab || 'inventory';
@@ -1840,6 +1845,69 @@ function cancelCard() {
     state.cardDirty = false; // Don't refresh list — nothing was saved
     closeCard();
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+// REALTIME — live item updates from Sync Hub / other tools
+// ═══════════════════════════════════════════════════════════
+function subscribeToItem(itemId) {
+  unsubscribeFromItem(); // Clean up any prior subscription
+  if (!sb) return;
+  try {
+    itemSubscription = sb.channel(`item-${itemId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'items',
+        filter: `id=eq.${itemId}`
+      }, (payload) => {
+        handleRealtimeUpdate(payload.new);
+      })
+      .subscribe();
+  } catch(e) { console.log('Realtime subscription skipped:', e.message); }
+}
+
+function unsubscribeFromItem() {
+  if (itemSubscription) {
+    try { sb.removeChannel(itemSubscription); } catch(e) {}
+    itemSubscription = null;
+  }
+}
+
+function handleRealtimeUpdate(newRow) {
+  const item = state.currentItem;
+  if (!item || !newRow || newRow.id !== item.id) return;
+
+  // Detect what changed
+  const changes = [];
+  const qtyFields = ['qty','etsy_qty','wix_qty','wayfair_qty','treasuremarts_qty'];
+  const priceFields = ['etsy_price','wix_price','wayfair_price','treasuremarts_price'];
+  const allFields = [...qtyFields, ...priceFields, 'ob_shipping','wholesale_price','ib_shipping','tariff','is_active'];
+
+  for (const f of allFields) {
+    if (newRow[f] !== undefined && newRow[f] !== item[f]) {
+      changes.push(f);
+    }
+  }
+
+  if (changes.length === 0) return; // Nothing relevant changed
+
+  // Merge updates into state
+  for (const f of changes) {
+    item[f] = newRow[f];
+  }
+
+  // Re-render current tab with fresh data (skip captureEdits — incoming data is authoritative)
+  const activeTab = $q('.sub-tab.active');
+  if (activeTab) switchSub(activeTab.dataset.tab || 'overview', true);
+
+  // Re-populate KPI row
+  populateKpiRow(item);
+
+  // Notify user
+  const changeDesc = changes.filter(f => qtyFields.includes(f)).length > 0 ? 'quantities updated' :
+                     changes.filter(f => priceFields.includes(f)).length > 0 ? 'prices updated' : 'data updated';
+  showCardStatus(`⚡ Live update: ${changeDesc} by another tool`, 'ok');
 }
 
 function switchSub(tab, skipCapture) {
@@ -3436,6 +3504,17 @@ async function saveItem() {
     // Etsy ↔ Wix always mirror: ensure save writes matching values
     updates.wix_price = updates.etsy_price;
     updates.wix_qty = updates.etsy_qty;
+
+    // Allocation validation: total channel qty cannot exceed warehouse qty
+    const totalAlloc = (updates.etsy_qty || 0) + (updates.wayfair_qty || 0) + (updates.treasuremarts_qty || 0);
+    const warehouseQty = updates.qty || 0;
+    if (totalAlloc > warehouseQty) {
+      state.saving = false;
+      statusEl.className = 'inline-status show error';
+      statusEl.textContent = `Allocation error: channels total ${totalAlloc} but warehouse only has ${warehouseQty}. Reduce allocations or increase warehouse qty.`;
+      statusEl.style.display = 'block';
+      return;
+    }
 
     const { error } = await sb.from('items').update(updates).eq('id', item.id);
     if (error) throw error;
