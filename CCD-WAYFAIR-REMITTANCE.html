@@ -403,7 +403,7 @@
         <span class="logo">W</span>
         Wayfair Remittance Import
     </h1>
-    <span class="version">CCD-WAYFAIR-REMITTANCE v1.2</span>
+    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.1</span>
 </div>
 
 <!-- Supabase Connection Bar -->
@@ -469,6 +469,9 @@
         <div class="section-header">
             <h2>Payment Reconciliation</h2>
             <div>
+                <select id="reconRemFilter" onchange="renderReconResults()" style="padding:6px 10px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;font-family:'JetBrains Mono',monospace;margin-right:8px;">
+                    <option value="all">All Remittances</option>
+                </select>
                 <button class="btn btn-accent btn-sm" onclick="runReconciliation()">🔗 Run Reconciliation</button>
                 <button class="btn btn-ghost btn-sm" onclick="exportReconCSV()">📥 Export CSV</button>
             </div>
@@ -587,7 +590,7 @@
 // ═══════════════════════════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════════════════════════
-const REM_VERSION = 'v1.2';
+const REM_VERSION = 'v1.3.1';
 const REM_VERSION_KEY = 'remittance';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -991,9 +994,11 @@ function renderParsedResults() {
     if (newFiles > 0) {
         btn.textContent = `⬆️ Import ${newFiles} New Remittance${newFiles > 1 ? 's' : ''} to Supabase`;
         btn.disabled = !sbConnected;
+        btn.onclick = importToSupabase;
     } else {
-        btn.textContent = '⬆️ All files already imported (duplicates)';
-        btn.disabled = true;
+        btn.textContent = '✅ Already imported — go to Reconciliation tab';
+        btn.disabled = false;
+        btn.onclick = () => { switchTab('reconcile'); runReconciliation(); };
     }
     
     // File list
@@ -1168,6 +1173,15 @@ async function importToSupabase() {
     
     toast(`Imported ${imported} remittance(s)${errors ? `, ${errors} error(s)` : ''}`, imported > 0 ? 'success' : 'error');
     renderParsedResults();
+    
+    // Auto-switch to Reconciliation tab and run it
+    if (imported > 0) {
+        setTimeout(() => {
+            switchTab('reconcile');
+            runReconciliation();
+            toast('Auto-running reconciliation on imported data...', 'info');
+        }, 500);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1289,7 +1303,8 @@ async function runReconciliation() {
     const { data: lines, error: lErr } = await sbClient
         .from('wayfair_remittance_lines')
         .select('*, wayfair_remittances(remittance_number, remittance_date)')
-        .order('invoice_date', { ascending: false });
+        .order('invoice_date', { ascending: false })
+        .limit(5000);
     
     if (lErr) { toast('Error: ' + lErr.message, 'error'); return; }
     
@@ -1297,7 +1312,8 @@ async function runReconciliation() {
     const { data: sales, error: sErr } = await sbClient
         .from('sales_history')
         .select('*')
-        .like('order_id', 'WF-%');
+        .like('order_id', 'WF-%')
+        .limit(5000);
     
     if (sErr) { toast('Error loading sales: ' + sErr.message, 'error'); return; }
     
@@ -1311,16 +1327,63 @@ async function runReconciliation() {
     // Match lines to sales
     const matched = [];
     const unmatchedRemittance = [];
-    let totalProductAmt = 0;
-    let totalDamages = 0;
-    let totalEarlyPay = 0;
-    let totalShipping = 0;
-    let totalOther = 0;
-    let totalTax = 0;
-    let totalPayment = 0;
-    let totalVendorCharges = 0;
     
     for (const line of (lines || [])) {
+        const remNum = line.wayfair_remittances?.remittance_number || '';
+        const remDate = line.wayfair_remittances?.remittance_date || '';
+        line._remNum = remNum;
+        line._remDate = remDate;
+        
+        const saleKey = 'WF-' + line.po_number;
+        const sale = salesMap[saleKey];
+        
+        if (sale) {
+            matched.push({ line, sale });
+            if (!line.reconciled) {
+                sbClient.from('wayfair_remittance_lines')
+                    .update({ reconciled: true, reconciled_at: new Date().toISOString(), sale_id: sale.id })
+                    .eq('id', line.id)
+                    .then(() => {});
+            }
+            delete salesMap[saleKey];
+        } else {
+            unmatchedRemittance.push(line);
+        }
+    }
+    
+    const unmatchedSales = Object.values(salesMap);
+    
+    // Store globally for filter/sort/export
+    window._reconData = { matched, unmatchedRemittance, unmatchedSales, charges: charges || [], allLines: lines || [] };
+    window._reconSort = { col: null, asc: true };
+    
+    // Build remittance filter dropdown
+    const remNums = [...new Set((lines || []).map(l => l._remNum).filter(Boolean))].sort();
+    const dd = document.getElementById('reconRemFilter');
+    dd.innerHTML = '<option value="all">All Remittances (' + (lines||[]).length + ' lines)</option>' +
+        remNums.map(r => {
+            const d = (lines||[]).find(l => l._remNum === r)?._remDate || '';
+            const cnt = (lines||[]).filter(l => l._remNum === r).length;
+            return `<option value="${esc(r)}">${r} (${d}) — ${cnt} lines</option>`;
+        }).join('');
+    
+    renderReconResults();
+}
+
+function renderReconResults() {
+    const data = window._reconData;
+    if (!data) return;
+    const filter = document.getElementById('reconRemFilter')?.value || 'all';
+    
+    // Apply filter
+    const fMatched = filter === 'all' ? data.matched : data.matched.filter(m => m.line._remNum === filter);
+    const fUnmatched = filter === 'all' ? data.unmatchedRemittance : data.unmatchedRemittance.filter(l => l._remNum === filter);
+    const fUnmatchedSales = filter === 'all' ? data.unmatchedSales : data.unmatchedSales; // sales don't have remittance
+    
+    // Calculate totals from filtered data
+    const allFilteredLines = [...fMatched.map(m => m.line), ...fUnmatched];
+    let totalProductAmt = 0, totalDamages = 0, totalEarlyPay = 0, totalShipping = 0, totalOther = 0, totalTax = 0, totalPayment = 0, totalVendorCharges = 0;
+    allFilteredLines.forEach(line => {
         totalProductAmt += line.product_amount || 0;
         totalDamages += Math.abs(line.damages_defects_amt || 0);
         totalEarlyPay += Math.abs(line.early_pay_discount || 0);
@@ -1328,80 +1391,90 @@ async function runReconciliation() {
         totalOther += line.other || 0;
         totalTax += line.tax_vat || 0;
         totalPayment += line.payment_amount || 0;
-        
-        const saleKey = 'WF-' + line.po_number;
-        const sale = salesMap[saleKey];
-        
-        if (sale) {
-            matched.push({ line, sale });
-            // Update reconciliation status if not already done
-            if (!line.reconciled) {
-                sbClient.from('wayfair_remittance_lines')
-                    .update({ reconciled: true, reconciled_at: new Date().toISOString(), sale_id: sale.id })
-                    .eq('id', line.id)
-                    .then(() => {});
-            }
-            // Remove from map to find unmatched sales
-            delete salesMap[saleKey];
-        } else {
-            unmatchedRemittance.push(line);
-        }
-    }
-    
-    // Remaining in salesMap = sales with no matching payment
-    const unmatchedSales = Object.values(salesMap);
-    
-    // Sum vendor charges
-    (charges || []).forEach(c => { totalVendorCharges += Math.abs(c.amount || 0); });
-    
+    });
+    (data.charges || []).forEach(c => { totalVendorCharges += Math.abs(c.amount || 0); });
+    if (filter !== 'all') totalVendorCharges = 0; // vendor charges are global, not per-remittance
     const netReceived = totalPayment - totalVendorCharges;
     
-    // Render
+    // Sort helper
+    const sort = window._reconSort || { col: null, asc: true };
+    const sortIcon = (col) => sort.col === col ? (sort.asc ? ' ▲' : ' ▼') : '';
+    
+    function sortRows(rows, col, asc) {
+        if (!col) return rows;
+        return [...rows].sort((a, b) => {
+            let va = a[col], vb = b[col];
+            if (typeof va === 'string') { va = va.toLowerCase(); vb = (vb||'').toLowerCase(); }
+            if (va < vb) return asc ? -1 : 1;
+            if (va > vb) return asc ? 1 : -1;
+            return 0;
+        });
+    }
+    
+    // Build sorted matched rows
+    let sortedMatched = fMatched.map(m => ({
+        po: m.line.po_number, sku: m.sale.sku || '', date: m.line.invoice_date || '',
+        remNum: m.line._remNum, productAmt: m.line.product_amount || 0,
+        fees: Math.abs(m.line.damages_defects_amt||0) + Math.abs(m.line.early_pay_discount||0),
+        netPayment: m.line.payment_amount || 0,
+        salePrice: m.sale.sale_price || m.sale.channel_price || 0,
+        diff: (m.line.product_amount || 0) - (m.sale.sale_price || m.sale.channel_price || 0),
+        _line: m.line, _sale: m.sale
+    }));
+    sortedMatched = sortRows(sortedMatched, sort.col, sort.asc);
+    
+    let sortedUnmatched = fUnmatched.map(ln => ({
+        po: ln.po_number, remNum: ln._remNum, date: ln.invoice_date || '',
+        productAmt: ln.product_amount || 0, payment: ln.payment_amount || 0
+    }));
+    sortedUnmatched = sortRows(sortedUnmatched, sort.col, sort.asc);
+    
+    const th = (col, label, cls) => `<th class="${cls||''}" style="cursor:pointer;" onclick="reconSort('${col}')">${label}${sortIcon(col)}</th>`;
+    
     document.getElementById('reconContent').innerHTML = `
         <div class="recon-summary">
             <div class="recon-box">
-                <h3>💰 Payment Summary</h3>
+                <h3>💰 Payment Summary${filter !== 'all' ? ' — ' + filter : ''}</h3>
                 <div class="recon-row"><span>Gross Product Amount</span><span class="val">$${totalProductAmt.toFixed(2)}</span></div>
                 <div class="recon-row"><span>Damages/Defects (4%)</span><span class="val amt-negative">-$${totalDamages.toFixed(2)}</span></div>
                 <div class="recon-row"><span>Early Pay Discount</span><span class="val amt-negative">-$${totalEarlyPay.toFixed(2)}</span></div>
                 <div class="recon-row"><span>Shipping</span><span class="val">$${totalShipping.toFixed(2)}</span></div>
                 <div class="recon-row"><span>Other</span><span class="val">$${totalOther.toFixed(2)}</span></div>
                 <div class="recon-row"><span>Tax/VAT</span><span class="val">$${totalTax.toFixed(2)}</span></div>
-                <div class="recon-row"><span>Vendor Charges</span><span class="val amt-negative">-$${totalVendorCharges.toFixed(2)}</span></div>
+                ${filter === 'all' ? `<div class="recon-row"><span>Vendor Charges</span><span class="val amt-negative">-$${totalVendorCharges.toFixed(2)}</span></div>` : ''}
                 <div class="recon-row"><span>Net Received</span><span class="val" style="color:var(--green);font-size:16px;">$${netReceived.toFixed(2)}</span></div>
             </div>
             <div class="recon-box">
                 <h3>🔗 Match Status</h3>
-                <div class="recon-row"><span>Matched (payment ↔ sale)</span><span class="val" style="color:var(--green);">${matched.length}</span></div>
-                <div class="recon-row"><span>Paid but no sale recorded</span><span class="val" style="color:var(--yellow);">${unmatchedRemittance.length}</span></div>
-                <div class="recon-row"><span>Sale recorded but no payment</span><span class="val" style="color:var(--red);">${unmatchedSales.length}</span></div>
-                <div class="recon-row"><span>Total remittance lines</span><span class="val">${(lines||[]).length}</span></div>
-                <div class="recon-row"><span>Total Wayfair sales</span><span class="val">${(sales||[]).length}</span></div>
-                <div class="recon-row"><span>Match Rate</span><span class="val">${(lines||[]).length ? ((matched.length / (lines||[]).length) * 100).toFixed(1) : 0}%</span></div>
+                <div class="recon-row"><span>Matched (payment ↔ sale)</span><span class="val" style="color:var(--green);">${fMatched.length}</span></div>
+                <div class="recon-row"><span>Paid but no sale recorded</span><span class="val" style="color:var(--yellow);">${fUnmatched.length}</span></div>
+                ${filter === 'all' ? `<div class="recon-row"><span>Sale recorded but no payment</span><span class="val" style="color:var(--red);">${fUnmatchedSales.length}</span></div>` : ''}
+                <div class="recon-row"><span>Total lines (filtered)</span><span class="val">${allFilteredLines.length}</span></div>
+                <div class="recon-row"><span>Match Rate</span><span class="val">${allFilteredLines.length ? ((fMatched.length / allFilteredLines.length) * 100).toFixed(1) : 0}%</span></div>
             </div>
         </div>
         
-        ${unmatchedRemittance.length > 0 ? `
+        ${fUnmatched.length > 0 ? `
         <div class="table-wrap">
-            <div class="table-title"><span style="color:var(--yellow);">⚠️ Paid but No Sale Recorded (${unmatchedRemittance.length})</span></div>
+            <div class="table-title"><span style="color:var(--yellow);">⚠️ Paid but No Sale Recorded (${fUnmatched.length})</span></div>
             <div class="table-scroll"><table>
-                <thead><tr><th>PO #</th><th>Remittance</th><th>Date</th><th class="text-right">Product Amt</th><th class="text-right">Payment</th></tr></thead>
-                <tbody>${unmatchedRemittance.map(ln => `<tr>
-                    <td>${esc(ln.po_number)}</td>
-                    <td>${esc(ln.wayfair_remittances?.remittance_number || '')}</td>
-                    <td>${displayDate(ln.invoice_date)}</td>
-                    <td class="text-right">$${(ln.product_amount||0).toFixed(2)}</td>
-                    <td class="text-right">$${(ln.payment_amount||0).toFixed(2)}</td>
+                <thead><tr>${th('po','PO #')}${th('remNum','Remittance')}${th('date','Date')}${th('productAmt','Product Amt','text-right')}${th('payment','Payment','text-right')}</tr></thead>
+                <tbody>${sortedUnmatched.map(ln => `<tr>
+                    <td>${esc(ln.po)}</td>
+                    <td style="font-size:11px;">${esc(ln.remNum)}</td>
+                    <td>${displayDate(ln.date)}</td>
+                    <td class="text-right">$${ln.productAmt.toFixed(2)}</td>
+                    <td class="text-right">$${ln.payment.toFixed(2)}</td>
                 </tr>`).join('')}</tbody>
             </table></div>
         </div>` : ''}
         
-        ${unmatchedSales.length > 0 ? `
+        ${filter === 'all' && fUnmatchedSales.length > 0 ? `
         <div class="table-wrap">
-            <div class="table-title"><span style="color:var(--red);">❌ Sale Recorded but No Payment (${unmatchedSales.length})</span></div>
+            <div class="table-title"><span style="color:var(--red);">❌ Sale Recorded but No Payment (${fUnmatchedSales.length})</span></div>
             <div class="table-scroll"><table>
-                <thead><tr><th>Order ID</th><th>SKU</th><th>Date</th><th class="text-right">Sale Price</th></tr></thead>
-                <tbody>${unmatchedSales.map(s => `<tr>
+                <thead><tr>${th('order_id','Order ID')}${th('sku','SKU')}${th('sale_date','Date')}${th('sale_price','Sale Price','text-right')}</tr></thead>
+                <tbody>${fUnmatchedSales.map(s => `<tr>
                     <td>${esc(s.order_id)}</td>
                     <td>${esc(s.sku || '')}</td>
                     <td>${displayDate(s.sale_date || s.created_at)}</td>
@@ -1410,33 +1483,68 @@ async function runReconciliation() {
             </table></div>
         </div>` : ''}
         
-        ${matched.length > 0 ? `
+        ${sortedMatched.length > 0 ? `
         <div class="table-wrap">
-            <div class="table-title"><span style="color:var(--green);">✅ Matched Records (${matched.length})</span></div>
+            <div class="table-title"><span style="color:var(--green);">✅ Matched Records (${sortedMatched.length})</span></div>
             <div class="table-scroll"><table>
-                <thead><tr><th>PO #</th><th>SKU</th><th>Date</th><th class="text-right">Product Amt</th><th class="text-right">Fees Deducted</th><th class="text-right">Net Payment</th><th class="text-right">Sale Price</th><th>Diff</th></tr></thead>
-                <tbody>${matched.map(m => {
-                    const fees = Math.abs(m.line.damages_defects_amt||0) + Math.abs(m.line.early_pay_discount||0);
-                    const salePrice = m.sale.sale_price || m.sale.channel_price || 0;
-                    const diff = (m.line.product_amount || 0) - salePrice;
-                    return `<tr>
-                        <td>${esc(m.line.po_number)}</td>
-                        <td>${esc(m.sale.sku || '')}</td>
-                        <td>${displayDate(m.line.invoice_date)}</td>
-                        <td class="text-right">$${(m.line.product_amount||0).toFixed(2)}</td>
-                        <td class="text-right amt-negative">-$${fees.toFixed(2)}</td>
-                        <td class="text-right amt-positive">$${(m.line.payment_amount||0).toFixed(2)}</td>
-                        <td class="text-right">$${salePrice.toFixed(2)}</td>
-                        <td class="text-right ${Math.abs(diff) < 0.01 ? 'amt-zero' : diff > 0 ? 'amt-positive' : 'amt-negative'}">${diff >= 0 ? '+' : ''}$${diff.toFixed(2)}</td>
-                    </tr>`;
-                }).join('')}</tbody>
+                <thead><tr>${th('po','PO #')}${th('sku','SKU')}${th('remNum','Remittance')}${th('date','Date')}${th('productAmt','Product Amt','text-right')}${th('fees','Fees','text-right')}${th('netPayment','Net Payment','text-right')}${th('salePrice','Sale Price','text-right')}${th('diff','Diff','text-right')}</tr></thead>
+                <tbody>${sortedMatched.map(m => `<tr>
+                    <td>${esc(m.po)}</td>
+                    <td>${esc(m.sku)}</td>
+                    <td style="font-size:11px;">${esc(m.remNum)}</td>
+                    <td>${displayDate(m.date)}</td>
+                    <td class="text-right">$${m.productAmt.toFixed(2)}</td>
+                    <td class="text-right amt-negative">-$${m.fees.toFixed(2)}</td>
+                    <td class="text-right amt-positive">$${m.netPayment.toFixed(2)}</td>
+                    <td class="text-right">$${m.salePrice.toFixed(2)}</td>
+                    <td class="text-right ${Math.abs(m.diff) < 0.01 ? 'amt-zero' : m.diff > 0 ? 'amt-positive' : 'amt-negative'}">${m.diff >= 0 ? '+' : ''}$${m.diff.toFixed(2)}</td>
+                </tr>`).join('')}</tbody>
             </table></div>
         </div>` : ''}
     `;
 }
 
+function reconSort(col) {
+    const s = window._reconSort;
+    if (s.col === col) { s.asc = !s.asc; } else { s.col = col; s.asc = true; }
+    renderReconResults();
+}
+
 function exportReconCSV() {
-    toast('Export coming soon', 'info');
+    const data = window._reconData;
+    if (!data) { toast('Run reconciliation first', 'warning'); return; }
+    const filter = document.getElementById('reconRemFilter')?.value || 'all';
+    
+    const rows = [['Type','PO #','SKU','Remittance','Date','Product Amt','Fees','Net Payment','Sale Price','Diff']];
+    
+    const fMatched = filter === 'all' ? data.matched : data.matched.filter(m => m.line._remNum === filter);
+    const fUnmatched = filter === 'all' ? data.unmatchedRemittance : data.unmatchedRemittance.filter(l => l._remNum === filter);
+    
+    fMatched.forEach(m => {
+        const fees = Math.abs(m.line.damages_defects_amt||0) + Math.abs(m.line.early_pay_discount||0);
+        const sp = m.sale.sale_price || m.sale.channel_price || 0;
+        rows.push(['Matched', m.line.po_number, m.sale.sku||'', m.line._remNum, m.line.invoice_date||'',
+            (m.line.product_amount||0).toFixed(2), fees.toFixed(2), (m.line.payment_amount||0).toFixed(2),
+            sp.toFixed(2), ((m.line.product_amount||0) - sp).toFixed(2)]);
+    });
+    fUnmatched.forEach(ln => {
+        rows.push(['No Sale', ln.po_number, '', ln._remNum, ln.invoice_date||'',
+            (ln.product_amount||0).toFixed(2), '', (ln.payment_amount||0).toFixed(2), '', '']);
+    });
+    if (filter === 'all') {
+        data.unmatchedSales.forEach(s => {
+            rows.push(['No Payment', s.order_id, s.sku||'', '', s.sale_date||'',
+                '', '', '', (s.sale_price||0).toFixed(2), '']);
+        });
+    }
+    
+    const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `wayfair-reconciliation${filter !== 'all' ? '-' + filter : ''}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    toast('CSV exported', 'success');
 }
 
 // ═══════════════════════════════════════════════════════════
