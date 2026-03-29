@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Sales Backfill v1.6</title>
+<title>CCD Sales Backfill v1.7</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     :root {
@@ -144,7 +144,7 @@
 
 <div class="header">
     <h1><span class="logo">📦</span> CCD Sales Backfill</h1>
-    <span class="version">v1.6 — Duplicate Prevention</span>
+    <span class="version">v1.7 — Auto Proxy URLs</span>
 </div>
 
 <div class="sb-bar">
@@ -339,7 +339,7 @@
 // ═══════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════
-const BF_VERSION = 'v1.6';
+const BF_VERSION = 'v1.7';
 const BF_VERSION_KEY = 'backfill';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -439,6 +439,22 @@ async function connectSupabase() {
         document.getElementById('btnImport').disabled = false;
         document.getElementById('btnImportUnmatched').disabled = false;
         registerToolVersion(sbClient, BF_VERSION_KEY, BF_VERSION);
+        
+        // Load proxy URLs from Supabase settings (single source of truth)
+        try {
+            const { data: settingsRows } = await sbClient.from('settings').select('key,value').in('key', ['proxy_urls']);
+            if (settingsRows) {
+                settingsRows.forEach(row => {
+                    if (row.key === 'proxy_urls' && row.value) {
+                        const urls = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+                        if (urls.etsy) { document.getElementById('etsy-proxyUrl').value = urls.etsy; localStorage.setItem('ccd_etsy_proxy_url', urls.etsy); }
+                        if (urls.wix) { document.getElementById('wix-proxyUrl').value = urls.wix; localStorage.setItem('ccd_wix_proxy_url', urls.wix); }
+                        if (urls.wayfair) { document.getElementById('wf-proxyUrl').value = urls.wayfair; localStorage.setItem('ccd_wayfair_proxy_url', urls.wayfair); }
+                        log('Proxy URLs loaded from Supabase settings', 'ok');
+                    }
+                });
+            }
+        } catch (e) { console.warn('[Backfill] Could not load proxy URLs from settings:', e.message); }
         
         // Build set of order_id for quick existence check
         existingOrderIds = new Set(allOrderIds.map(r => r.order_id));
