@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.4.4</title>
+<title>CCD Inventory System v2.4.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -589,7 +589,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.4.4 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.4.7 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -601,7 +601,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.4.4</div>
+      <div class="topbar-version">v2.4.7</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1842,9 +1842,9 @@ function cancelCard() {
   }
 }
 
-function switchSub(tab) {
+function switchSub(tab, skipCapture) {
   // Capture any unsaved edits from current tab before switching
-  captureEdits();
+  if (!skipCapture) captureEdits();
   // Toggle active sub-tab button
   $qa('.sub-tab').forEach(b => b.classList.remove('active'));
   $q(`.sub-tab[data-tab="${tab}"]`).classList.add('active');
@@ -1928,6 +1928,22 @@ function captureEdits() {
   // Checkbox fields
   if (ge('f_photographed')) item.photographed = $('f_photographed').checked;
   if ($('cardActive')) item.is_active = $('cardActive').checked;
+  // Etsy ↔ Wix always mirror each other
+  syncEtsyWix(item);
+}
+
+// Business rule: Etsy and Wix always share the same price and qty.
+// If one was just changed, the other follows.
+function syncEtsyWix(item, sourceChannel) {
+  if (!item) return;
+  if (sourceChannel === 'wix') {
+    item.etsy_price = item.wix_price;
+    item.etsy_qty = item.wix_qty;
+  } else {
+    // Default: Etsy is primary → Wix follows
+    item.wix_price = item.etsy_price;
+    item.wix_qty = item.etsy_qty;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2006,11 +2022,11 @@ function renderOverview(item) {
       <div class="section-title">Cost Basis</div>
       <div class="form-row">
         <div class="form-label">Wholesale</div>
-        <div class="form-value"><input class="form-input" id="f_wholesale" value="${wholesale.toFixed(2)}"></div>
+        <div class="form-value"><input class="form-input" id="f_wholesale" value="${wholesale.toFixed(2)}" onchange="onCostBasisChange()"></div>
       </div>
       <div class="form-row">
         <div class="form-label">IB Shipping (%)</div>
-        <div class="form-value"><input class="form-input" id="f_ib" value="${ibPct}"></div>
+        <div class="form-value"><input class="form-input" id="f_ib" value="${ibPct}" onchange="onCostBasisChange()"></div>
       </div>
       <div class="form-row">
         <div class="form-label">IB Shipping ($)</div>
@@ -2018,7 +2034,7 @@ function renderOverview(item) {
       </div>
       <div class="form-row">
         <div class="form-label">Tariff (%)</div>
-        <div class="form-value"><input class="form-input" id="f_tariff" value="${tariffPct}"></div>
+        <div class="form-value"><input class="form-input" id="f_tariff" value="${tariffPct}" onchange="onCostBasisChange()"></div>
       </div>
       <div class="form-row">
         <div class="form-label">Tariff ($)</div>
@@ -2026,7 +2042,7 @@ function renderOverview(item) {
       </div>
       <div class="form-row">
         <div class="form-label">OB Shipping</div>
-        <div class="form-value"><input class="form-input" id="f_ob" value="${ob.toFixed(2)}"></div>
+        <div class="form-value"><input class="form-input" id="f_ob" value="${ob.toFixed(2)}" onchange="onOBFieldChange()"></div>
       </div>
       <div class="form-row" style="border-top:2px solid var(--border);margin-top:8px;padding-top:12px;">
         <div class="form-label" style="font-weight:700;color:var(--text);">Landed Cost</div>
@@ -2061,7 +2077,7 @@ function renderOverview(item) {
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
             <span style="font-size:12px;color:var(--muted);">Manual:</span>
             <span style="font-size:13px;color:var(--muted);">$</span>
-            <input class="form-input" id="f_ob_inline" value="${ob.toFixed(2)}" style="width:80px;text-align:center;font-size:13px;font-weight:600;">
+            <input class="form-input" id="f_ob_inline" value="${ob.toFixed(2)}" style="width:80px;text-align:center;font-size:13px;font-weight:600;" onchange="applyManualOB()">
             <button class="btn-card btn-push" onclick="applyManualOB()" style="padding:4px 12px;font-size:11px;">Set OB</button>
             <span style="font-size:11px;color:var(--muted2);margin-left:4px;">Type a price and click Set OB</span>
           </div>
@@ -2235,6 +2251,7 @@ function applyMarkup(chKey, pct) {
   const newPrice = Math.round(landed * (1 + pct/100) * 100) / 100;
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
+  syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
   renderPricing(item);
 }
 
@@ -2256,6 +2273,7 @@ function onMarkupSlide(chKey, pctVal) {
   const newPrice = Math.round(landed * (1 + pct/100) * 100) / 100;
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
+  syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
   // Debounce full re-render — update KPIs inline for snappy slider feel
   clearTimeout(state._sliderTimer);
   state._sliderTimer = setTimeout(() => renderPricing(item), 150);
@@ -2267,6 +2285,7 @@ function onPriceAdjust(chKey, val) {
   const item = state.currentItem;
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
+  syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
   renderPricing(item);
 }
 
@@ -2847,6 +2866,29 @@ function applyManualOB() {
   renderOverview(item);
 }
 
+function onOBFieldChange() {
+  const item = state.currentItem;
+  if (!item) return;
+  const el = $('f_ob');
+  if (!el) return;
+  const amount = parseFloat(el.value);
+  if (isNaN(amount) || amount < 0) return;
+  item.ob_shipping = amount;
+  showCardStatus(`OB Shipping set to $${amount.toFixed(2)} — Save to keep`, 'ok');
+  renderOverview(item);
+}
+
+function onCostBasisChange() {
+  const item = state.currentItem;
+  if (!item) return;
+  // Read all cost basis fields into state
+  if ($('f_wholesale')) item.wholesale_price = parseFloat($('f_wholesale').value) || 0;
+  if ($('f_ib')) item.ib_shipping = parseFloat($('f_ib').value) || 0;
+  if ($('f_tariff')) item.tariff = parseFloat($('f_tariff').value) || 0;
+  if ($('f_ob')) item.ob_shipping = parseFloat($('f_ob').value) || 0;
+  renderOverview(item);
+}
+
 async function loadShippingHistory(sku) {
   const container = $('shippingHistoryContent');
   if (!container) return;
@@ -3391,6 +3433,10 @@ async function saveItem() {
       updated_at: new Date().toISOString(),
     };
 
+    // Etsy ↔ Wix always mirror: ensure save writes matching values
+    updates.wix_price = updates.etsy_price;
+    updates.wix_qty = updates.etsy_qty;
+
     const { error } = await sb.from('items').update(updates).eq('id', item.id);
     if (error) throw error;
 
@@ -3667,9 +3713,9 @@ async function confirmSell() {
     state.saving = false;
     showCardStatus(`Sale recorded: ${item.sku} x${qty} on ${channel} · Profit: $${netProfit.toFixed(2)}${syncRows.length > 0 ? ` · ${syncRows.length} channel sync(s) queued` : ''}`, 'ok');
 
-    // Refresh the current sub-tab to show updated data
+    // Refresh the current sub-tab to show updated data (skip captureEdits — state is already fresh)
     const activeTab = $q('.sub-tab.active');
-    if (activeTab) switchSub(activeTab.dataset.tab || 'overview');
+    if (activeTab) switchSub(activeTab.dataset.tab || 'overview', true);
 
   } catch(e) {
     state.saving = false;
