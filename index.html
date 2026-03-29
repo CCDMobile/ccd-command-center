@@ -1341,7 +1341,6 @@ function resolveKey(key) {
 const TOOLS = [
     // CORE OPERATIONS
     { id: 'desktop', name: 'Desktop Inventory', file: 'CCD-INVENTORY-SYSTEM.html', versionKey: 'desktop', icon: '🖥', desc: 'Pricing engine, item management, source of truth', category: 'core', status: 'ok' },
-    { id: 'inventoryv2', name: 'Inventory V2', file: 'CCD-INVENTORY-V2.html', versionKey: 'inventory_v2', icon: '📦', desc: 'Supabase-native rebuild — full item card, analytics, channels', category: 'core', status: 'ok' },
     { id: 'synchub', name: 'Sync Hub', file: 'CCD-SYNC-HUB.html', versionKey: 'synchub', icon: '🔄', desc: 'Order processing, channel sync, cascade push', category: 'core', status: 'ok' },
     { id: 'mobile', name: 'Mobile Warehouse', file: null, url: 'https://ccdmobile.github.io/CCD-Mobile/', versionKey: 'mobile', icon: '📱', desc: 'Warehouse operations, quick sell, barcode scan', category: 'core', status: 'ok' },
 
@@ -1352,11 +1351,8 @@ const TOOLS = [
     // CHANNEL TOOLS
     { id: 'skuaudit', name: 'Channel SKU Audit', file: 'CCD-CHANNEL-SKU-AUDIT.html', versionKey: 'skuaudit', icon: '🔍', desc: 'SKU matching, variant creation, item entry', category: 'channel', status: 'ok' },
     { id: 'backfill', name: 'Sales Backfill', file: 'CCD-SALES-BACKFILL.html', versionKey: 'backfill', icon: '📥', desc: 'Historical order import — Etsy, Wix, Wayfair', category: 'channel', status: 'ok' },
-    { id: 'channelmgr', name: 'Channel Manager', file: 'CCD-CHANNEL-MANAGER.html', versionKey: 'channelmgr', icon: '📡', desc: 'Listing content management (deferred)', category: 'channel', status: 'offline' },
-
-    // AI TOOLS
-    { id: 'aicontent', name: 'AI Content Studio', file: 'AI-Content-Studio.html', versionKey: 'aicontent', icon: '✨', desc: 'AI-powered listing content generation', category: 'ai', status: 'ok' },
-    { id: 'aipricing', name: 'AI Pricing Advisor', file: 'AI-Pricing-Advisor.html', versionKey: 'aipricing', icon: '🧠', desc: 'AI-powered pricing recommendations', category: 'ai', status: 'ok' },
+    { id: 'channelmgr', name: 'Channel Manager', file: 'CCD-CHANNEL-MANAGER-V2.html', versionKey: 'channelmanager', icon: '📡', desc: 'Content editor, AI pricing, competitor intel, bulk ops', category: 'channel', status: 'ok' },
+    { id: 'marketintel', name: 'Market Intelligence', file: 'CCD-MARKET-INTELLIGENCE.html', versionKey: 'marketintelligence', icon: '📊', desc: 'Lifecycle analysis, vendor performance, trends, reorder intel', category: 'channel', status: 'ok' },
 
     // COMING SOON
     { id: 'activitylog', name: 'Activity Log', file: 'CCD-ACTIVITY-LOG.html', versionKey: null, icon: '📋', desc: 'System activity history & audit trail', category: 'coming', status: 'offline', badge: 'rebuild' },
@@ -1367,18 +1363,14 @@ const CATEGORIES = [
     { id: 'core', label: 'Core Operations', color: 'var(--gold)' },
     { id: 'financial', label: 'Financial & Reporting', color: 'var(--green)' },
     { id: 'channel', label: 'Channel Tools', color: 'var(--etsy)' },
-    { id: 'ai', label: 'AI Tools', color: 'var(--purple)' },
     { id: 'coming', label: 'Coming Soon', color: 'var(--muted)' },
 ];
 
-const CC_VERSION = 'v3.1';
-const CC_VERSION_KEY = 'commandcenter';
-
 const DEFAULT_VERSIONS = {
-    desktop: 'v23.4.0', synchub: 'v4.2.3', mobile: 'v4.1',
-    commandcenter: 'v3.1', financial: 'v1.5.0', remittance: 'v1.1',
-    skuaudit: 'v1.0', backfill: 'v1.6', channelmgr: '—',
-    aicontent: 'v1.0', aipricing: 'v1.0'
+    desktop: '~137K', synchub: 'v5.0.0', mobile: 'v4.1',
+    financial: 'v1.7.0', remittance: 'v1.2',
+    skuaudit: 'v1.0', backfill: 'v1.6', channelmanager: 'v2.4.0',
+    marketintelligence: 'v2.0.0'
 };
 
 /* ═══════════════════════════════════════════
@@ -1424,9 +1416,6 @@ async function initSupabase(url, key) {
         buildFilterPills();
         buildAppGrid();
         renderFavorites();
-
-        // Register this tool's version before loading all versions
-        await registerToolVersion(sb, CC_VERSION_KEY, CC_VERSION);
 
         // Load live data
         await Promise.all([
@@ -1477,30 +1466,6 @@ async function saveSetup() {
     LS.set('ccdUseSupabase', 'true');
 
     await initSupabase(url, key);
-}
-
-/* ═══════════════════════════════════════════
-   AUTO-REGISTER TOOL VERSION TO SUPABASE
-   ═══════════════════════════════════════════ */
-async function registerToolVersion(client, toolKey, toolVersion) {
-    if (!client) return;
-    try {
-        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
-        let versions = {};
-        const exists = data && data.length > 0;
-        if (exists && data[0].value) {
-            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
-        }
-        if (versions[toolKey] === toolVersion) return;
-        versions[toolKey] = toolVersion;
-        const now = new Date().toISOString();
-        if (exists) {
-            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
-        } else {
-            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
-        }
-        console.log(`Registered ${toolKey} ${toolVersion}`);
-    } catch(e) { console.log('Version register skipped:', e.message); }
 }
 
 /* ═══════════════════════════════════════════
