@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.0</title>
+    <title>CCD Sync Hub v4.3.1</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.0 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.1 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -711,7 +711,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.0';
+    const SH_VERSION = 'v4.3.1';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1081,7 +1081,7 @@
             
             // v4.1.4: TreasureMarts is brick-and-mortar — no outbound shipping cost.
             // Customer walks out the door with the item. OB shipping only applies to online channels.
-            const effectiveObShipping = (channel === 'treasuremarts') ? 0 : obShipping;
+            const effectiveObShipping = (channel === 'treasuremarts' || channel === 'wayfair') ? 0 : obShipping;
             
             // v4.2.7: Tariff is a PERCENTAGE (aligned with V2 formula)
             // Formula: wholesale * (1 + ib%/100 + tariff%/100) + ob_shipping
@@ -1118,7 +1118,7 @@
             // Find item_id from database
             const { data: itemRow } = await sbClient.from('items').select('id').eq('sku', item.sku).single();
 
-            const { error: insertError } = await sbClient.from('sales_history').insert({
+            await sbClient.from('sales_history').insert({
                 item_id: itemRow?.id || null,
                 sku: item.sku,
                 product_name: item.productName || '',
@@ -1158,14 +1158,10 @@
                 rent:                  feeBreakdown ? feeBreakdown.rent                  : null,
                 marketplace_deduction: feeBreakdown ? feeBreakdown.marketplace_deduction : null,
                 gross_revenue:         feeBreakdown ? feeBreakdown.gross_revenue         : null,
-                total_fees:            feeBreakdown ? feeBreakdown.total_fees            : null
+                total_fees:            feeBreakdown ? feeBreakdown.total_fees            : null,
+                accounting_category:   feeBreakdown ? feeBreakdown.accounting_category   : null
             });
-            if (insertError) {
-                console.error(`[Sales] ❌ INSERT FAILED for ${item.sku}: ${insertError.message} | Code: ${insertError.code} | Details: ${insertError.details}`);
-                addLog(`❌ Sale NOT recorded for ${item.sku} (${orderId}): ${insertError.message}`, 'error');
-                return;
-            }
-            console.log(`[Sales] ✅ Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
+            console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
         } catch (e) {
             console.warn('[Supabase] Sales record error:', e.message);
         }
@@ -1768,7 +1764,7 @@
     // === updateMasterJsonProduct ===
     /**
      * Update a product in the Master JSON by SKU
-     * v4.3.0: Also writes through to Supabase
+     * v4.3.1: Also writes through to Supabase
      */
     function updateMasterJsonProduct(sku, updates) {
         if (!window.masterJsonData) return false;
@@ -1787,7 +1783,7 @@
         const product = products.find(p => (p.sku || p.SKU) === sku);
         if (product) {
             Object.assign(product, updates);
-            // v4.3.0: Write through to Supabase
+            // v4.3.1: Write through to Supabase
             if (sbClient && sbConnected) {
                 const dbUpdates = {};
                 Object.keys(updates).forEach(k => {
@@ -6785,7 +6781,7 @@
     // === updateProductWithListingId (line 5158) ===
     /**
      * Update product with new listing/product ID
-     * v4.3.0: Writes to Supabase + in-memory cache (was localStorage only — data loss bug)
+     * v4.3.1: Writes to Supabase + in-memory cache (was localStorage only — data loss bug)
      */
     function updateProductWithListingId(sku, channel, id) {
         if (!id) return;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.4.9</title>
+<title>CCD Inventory System v2.5.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -355,6 +355,8 @@ tbody td{padding:10px 14px;white-space:nowrap;}
 .form-value{flex:1;text-align:right;}
 .form-input{background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text);font-size:13px;font-family:var(--mono);text-align:right;width:auto;min-width:160px;outline:none;transition:var(--transition);}
 .form-input:focus{border-color:var(--gold);}
+input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7);cursor:pointer;}
+input[type="date"]{color-scheme:dark;}
 .form-input-wide{width:100%;text-align:left;}
 .form-static{font-size:13px;color:var(--muted2);font-family:var(--mono);}
 textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;font-family:var(--font);}
@@ -589,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.4.9 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.5.2 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -601,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.4.9</div>
+      <div class="topbar-version">v2.5.2</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1244,6 +1246,7 @@ let state = {
     brand: 'all'
   },
   brands: [],             // Unique brand list for filter dropdown
+  categories: [],         // Unique category list for dropdown
   saleCounts: {},         // SKU → 90-day sale count
   stats: {},               // Computed stats
   activeTopTab: 'inventory', // Currently active top-level tab
@@ -1356,6 +1359,7 @@ async function showApp() {
 
   // Load brand list for filter dropdown
   await loadBrands();
+  await loadCategories();
 
   // Load sale counts for badges
   await loadSaleCounts();
@@ -1422,6 +1426,15 @@ async function loadBrands() {
     });
     sel.innerHTML = optionsHtml;
   } catch(e) { console.log('Brand load error:', e.message); }
+}
+
+async function loadCategories() {
+  try {
+    const { data } = await sb.from('items').select('category').not('category', 'is', null).limit(5000);
+    const set = new Set();
+    (data || []).forEach(r => { if (r.category && r.category.trim()) set.add(r.category.trim()); });
+    state.categories = [...set].sort((a,b) => a.localeCompare(b));
+  } catch(e) { console.log('Category load error:', e.message); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2046,11 +2059,17 @@ function renderOverview(item) {
       </div>
       <div class="form-row">
         <div class="form-label">Brand</div>
-        <div class="form-value"><input class="form-input" id="f_brand_name" value="${escAttr(item.brand_name || '')}"></div>
+        <div class="form-value">
+          <input class="form-input" id="f_brand_name" list="brandList" value="${escAttr(item.brand_name || '')}" autocomplete="off">
+          <datalist id="brandList">${state.brands.map(b => `<option value="${escAttr(b)}">`).join('')}</datalist>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-label">Category</div>
-        <div class="form-value"><input class="form-input" id="f_category" value="${escAttr(item.category || '')}"></div>
+        <div class="form-value">
+          <input class="form-input" id="f_category" list="categoryList" value="${escAttr(item.category || '')}" autocomplete="off">
+          <datalist id="categoryList">${state.categories.map(c => `<option value="${escAttr(c)}">`).join('')}</datalist>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-label">Shelf</div>
@@ -2241,19 +2260,51 @@ function renderPricing(item) {
   const ibPct = pf(item.ib_shipping);
   const tariffPct = pf(item.tariff);
   const ob = pf(item.ob_shipping);
-  const landed = wholesale * (1 + ibPct/100 + tariffPct/100) + ob;
-  const retailPrice = pf(item[activeCh.priceCol]);
-  const markup = landed > 0 ? ((retailPrice / landed - 1) * 100) : 0;
-  const sliderPct = Math.min(Math.max(markup / 200 * 100, 5), 100);
+  const ibDollar = wholesale * ibPct / 100;
+  const tariffDollar = wholesale * tariffPct / 100;
 
-  // Fee estimates (simplified — real fees come from RPC on sale)
-  const overhead = retailPrice * 0.10;
-  const surcharge = retailPrice * 0.07;
-  const transaction = activeCh.key === 'etsy' ? retailPrice * 0.065 : (activeCh.key === 'wix' ? retailPrice * 0.026 : retailPrice * 0.05);
-  const cc = retailPrice * 0.03 + 0.25;
-  const listing = activeCh.key === 'etsy' ? 0.20 : 0;
-  const totalFees = overhead + surcharge + transaction + cc + listing;
-  const netProfit = retailPrice - landed - totalFees + overhead + surcharge; // overhead/surcharge are internal
+  // Channel-specific — Wayfair and TM have NO outbound shipping
+  const chHasOB = (activeCh.key === 'etsy' || activeCh.key === 'wix');
+  const effectiveOB = chHasOB ? ob : 0;
+  const fixedCosts = ibDollar + tariffDollar + effectiveOB;
+  const landed = wholesale + fixedCosts;
+  const retailPrice = pf(item[activeCh.priceCol]);
+  // Markup is on wholesale only — fixed costs are pass-through
+  const markup = wholesale > 0 ? ((retailPrice - fixedCosts) / wholesale - 1) * 100 : 0;
+
+  // Fee calculations — match calculate_sale_profit() RPC exactly
+  let transaction = 0, cc = 0, ohFee = 0, surcharge = 0, listing = 0;
+  let wayfairFee = 0, commission = 0;
+  let feeLabel1 = '', feeLabel2 = '', feeVal1 = 0, feeVal2 = 0;
+
+  if (activeCh.key === 'etsy') {
+    transaction = retailPrice * 0.065;      // 6.5% Etsy transaction
+    cc = retailPrice * 0.03 + 0.25;        // 3% + $0.25 per txn
+    ohFee = retailPrice * 0.10;             // 10% OH (tracking only)
+    surcharge = retailPrice * 0.07;          // 7% surcharge (tracking only)
+    listing = 0.20;
+    feeLabel1 = 'Transaction Fee (6.5%)'; feeVal1 = transaction;
+    feeLabel2 = 'CC Processing (3%+$0.25)'; feeVal2 = cc;
+  } else if (activeCh.key === 'wix') {
+    transaction = retailPrice * 0.026;      // 2.6% Wix transaction
+    cc = retailPrice * 0.029 + 0.30;       // 2.9% + $0.30 Stripe
+    ohFee = retailPrice * 0.10;
+    surcharge = retailPrice * 0.07;
+    feeLabel1 = 'Transaction Fee (2.6%)'; feeVal1 = transaction;
+    feeLabel2 = 'CC / Stripe (2.9%+$0.30)'; feeVal2 = cc;
+  } else if (activeCh.key === 'wayfair') {
+    wayfairFee = retailPrice * 0.20;        // ~20% Wayfair commission
+    feeLabel1 = 'Wayfair Commission (20%)'; feeVal1 = wayfairFee;
+    feeLabel2 = ''; feeVal2 = 0;
+  } else if (activeCh.key === 'tm') {
+    commission = retailPrice * 0.10;         // 10% TM commission
+    feeLabel1 = 'TM Commission (10%)'; feeVal1 = commission;
+    feeLabel2 = ''; feeVal2 = 0;
+  }
+
+  // Total channel fees (OH and surcharge are tracking only — NOT deducted from profit per RPC)
+  const totalChannelFees = transaction + cc + wayfairFee + commission + listing;
+  const netProfit = retailPrice - landed - totalChannelFees;
   const margin = retailPrice > 0 ? (netProfit / retailPrice * 100) : 0;
 
   const tabsHtml = channels.map(c => {
@@ -2291,15 +2342,16 @@ function renderPricing(item) {
       <input class="form-input" id="f_${activeCh.key}_price" value="${retailPrice.toFixed(2)}" style="width:100px;" onchange="onPriceAdjust('${activeCh.key}', this.value)">
       <span class="hint">Direct price — tab out to apply</span>
     </div>
-    <div class="section-title" style="font-size:11px;letter-spacing:1px;">FEE BREAKDOWN (estimated)</div>
+    <div class="section-title" style="font-size:11px;letter-spacing:1px;">FEE BREAKDOWN (matches RPC)</div>
     <div class="fee-grid">
-      <div class="fee-item"><div class="fee-label">Transaction Fee</div><div class="fee-val">-$${transaction.toFixed(2)}</div></div>
-      <div class="fee-item"><div class="fee-label">CC Processing</div><div class="fee-val">-$${cc.toFixed(2)}</div></div>
-      <div class="fee-item"><div class="fee-label">Listing Fee</div><div class="fee-val">-$${listing.toFixed(2)}</div></div>
-      <div class="fee-item"><div class="fee-label">Landed Cost</div><div class="fee-val" style="color:var(--text);">$${landed.toFixed(2)}</div></div>
-      <div class="fee-item"><div class="fee-label">OB Shipping</div><div class="fee-val">-$${ob.toFixed(2)}</div></div>
+      <div class="fee-item"><div class="fee-label">${feeLabel1}</div><div class="fee-val">-$${feeVal1.toFixed(2)}</div></div>
+      ${feeLabel2 ? `<div class="fee-item"><div class="fee-label">${feeLabel2}</div><div class="fee-val">-$${feeVal2.toFixed(2)}</div></div>` : ''}
+      ${listing > 0 ? `<div class="fee-item"><div class="fee-label">Listing Fee</div><div class="fee-val">-$${listing.toFixed(2)}</div></div>` : ''}
+      <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val" style="color:var(--text);">$${landed.toFixed(2)}</div></div>
+      ${chHasOB ? `<div class="fee-item"><div class="fee-label">OB Shipping (in landed)</div><div class="fee-val">$${effectiveOB.toFixed(2)}</div></div>` : ''}
       <div class="fee-item"><div class="fee-label">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
     </div>
+    ${(ohFee > 0 || surcharge > 0) ? `<div style="margin-top:8px;font-size:11px;color:var(--muted2);">Internal tracking: OH $${ohFee.toFixed(2)} · Surcharge $${surcharge.toFixed(2)} (not deducted from profit)</div>` : ''}
   </div>`;
 }
 
@@ -2314,9 +2366,11 @@ function applyMarkup(chKey, pct) {
   const wholesale = pf(item.wholesale_price);
   const ibPct = pf(item.ib_shipping);
   const tariffPct = pf(item.tariff);
-  const ob = pf(item.ob_shipping);
-  const landed = wholesale * (1 + ibPct/100 + tariffPct/100) + ob;
-  const newPrice = Math.round(landed * (1 + pct/100) * 100) / 100;
+  const ibDollar = wholesale * ibPct / 100;
+  const tariffDollar = wholesale * tariffPct / 100;
+  const ob = (chKey === 'etsy' || chKey === 'wix') ? pf(item.ob_shipping) : 0;
+  // Markup on wholesale only — fixed costs are pass-through
+  const newPrice = Math.round((wholesale * (1 + pct/100) + ibDollar + tariffDollar + ob) * 100) / 100;
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
   syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
@@ -2336,9 +2390,11 @@ function onMarkupSlide(chKey, pctVal) {
   const wholesale = pf(item.wholesale_price);
   const ibPct = pf(item.ib_shipping);
   const tariffPct = pf(item.tariff);
-  const ob = pf(item.ob_shipping);
-  const landed = wholesale * (1 + ibPct/100 + tariffPct/100) + ob;
-  const newPrice = Math.round(landed * (1 + pct/100) * 100) / 100;
+  const ibDollar = wholesale * ibPct / 100;
+  const tariffDollar = wholesale * tariffPct / 100;
+  const ob = (chKey === 'etsy' || chKey === 'wix') ? pf(item.ob_shipping) : 0;
+  // Markup on wholesale only — fixed costs are pass-through
+  const newPrice = Math.round((wholesale * (1 + pct/100) + ibDollar + tariffDollar + ob) * 100) / 100;
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
   syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
@@ -3675,7 +3731,7 @@ async function confirmSell() {
     const wholesale = pf(item.wholesale_price);
     const ibPct = pf(item.ib_shipping);
     const tariffPct = pf(item.tariff);
-    const obShip = (channel === 'treasuremarts') ? 0 : pf(item.ob_shipping);  // TM = no OB shipping
+    const obShip = (channel === 'treasuremarts' || channel === 'wayfair') ? 0 : pf(item.ob_shipping);  // TM & Wayfair = no OB shipping
     const baseCost = (wholesale * (1 + ibPct/100 + tariffPct/100) + obShip) * qty;
     const totalRevenue = salePrice * qty;
     let netProfit = totalRevenue - baseCost;
