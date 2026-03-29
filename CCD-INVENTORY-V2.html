@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.4.1</title>
+<title>CCD Inventory System v2.4.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -91,9 +91,11 @@ input,select,textarea,button{font-family:var(--font);}
    ═══════════════════════════════════════════ */
 .filter-bar{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
 .search-box{flex:1;min-width:220px;position:relative;}
-.search-box input{width:100%;padding:9px 14px 9px 36px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;transition:var(--transition);}
+.search-box input{width:100%;padding:9px 32px 9px 36px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;transition:var(--transition);}
 .search-box input:focus{border-color:var(--gold);}
 .search-box::before{content:'⌕';position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:15px;pointer-events:none;}
+.search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:var(--bg3);border:1px solid var(--border);color:var(--muted);font-size:13px;cursor:pointer;padding:2px 7px;border-radius:4px;display:none;line-height:1;}
+.search-clear:hover{color:var(--text);background:var(--border);}
 .filter-select{padding:9px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:13px;outline:none;cursor:pointer;min-width:130px;}
 .filter-select:focus{border-color:var(--gold);}
 .filter-count{font-size:12px;color:var(--muted);margin-left:auto;white-space:nowrap;}
@@ -587,7 +589,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.4.1 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.4.4 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -599,7 +601,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.4.1</div>
+      <div class="topbar-version">v2.4.4</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -653,6 +655,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     <div class="filter-bar">
       <div class="search-box">
         <input type="text" id="searchInput" placeholder="Search SKU, product name, brand..." oninput="onSearchDebounced()">
+        <button class="search-clear" id="searchClear" onclick="clearSearch()" title="Clear search">✕</button>
       </div>
       <select class="filter-select" id="filterStatus" onchange="onFilterChange()">
         <option value="all">All Status</option>
@@ -736,6 +739,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
           <button class="btn-card btn-sell" onclick="quickSell()">🛒 Sell</button>
           <button class="btn-card btn-push" onclick="pushToChannels()">↻ Push to Channels</button>
           <button class="btn-card btn-save" onclick="saveItem()">💾 Save</button>
+          <button class="btn-card" onclick="cancelCard()" style="background:transparent;border:1px solid var(--border);color:var(--muted);">✕ Cancel</button>
           <label class="active-toggle">
             Active <input type="checkbox" id="cardActive" checked>
           </label>
@@ -1007,6 +1011,19 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
               <div class="setting-value"><input class="setting-input" id="setShippoProxy" placeholder="https://script.google.com/..."></div>
             </div>
           </div>
+          <!-- Shipping Rate Filters -->
+          <div class="settings-section">
+            <div class="settings-section-title">📦 Shipping Rate Filters</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Select which services appear in rate quotes</div>
+            <div style="margin-bottom:14px;">
+              <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">OB Benchmark</div>
+              <div id="obFilterChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;"></div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">Ship-To Quotes</div>
+              <div id="shiptoFilterChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;"></div>
+            </div>
+          </div>
         </div>
         <!-- RIGHT COLUMN -->
         <div>
@@ -1229,7 +1246,8 @@ let state = {
   brands: [],             // Unique brand list for filter dropdown
   saleCounts: {},         // SKU → 90-day sale count
   stats: {},               // Computed stats
-  activeTopTab: 'inventory' // Currently active top-level tab
+  activeTopTab: 'inventory', // Currently active top-level tab
+  shippingFilters: null     // Loaded from settings; null = use defaults
 };
 
 let searchTimer = null;
@@ -1312,6 +1330,28 @@ async function showApp() {
 
   // Log connection
   logActivity('SYSTEM', 'CONNECT', null, `Desktop v2 connected`);
+
+  // Hydrate localStorage with proxy URLs, API keys, and shipping filters from Supabase settings
+  try {
+    const { data } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters']);
+    if (data) {
+      for (const row of data) {
+        const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
+        if (row.key === 'proxy_urls') {
+          if (val.etsy) localStorage.setItem('ccdEtsyProxy', val.etsy);
+          if (val.wix) localStorage.setItem('ccdWixProxy', val.wix);
+          if (val.wayfair) localStorage.setItem('ccdWayfairProxy', val.wayfair);
+          if (val.shippo) localStorage.setItem('ccdShippoProxy', val.shippo);
+        }
+        if (row.key === 'api_keys') {
+          if (val.ccdApiKey) localStorage.setItem('ccdApiKey', val.ccdApiKey);
+        }
+        if (row.key === 'shipping_filters') {
+          state.shippingFilters = val;
+        }
+      }
+    }
+  } catch(e) { console.log('Settings hydration skipped:', e.message); }
 
   // Load brand list for filter dropdown
   await loadBrands();
@@ -1614,12 +1654,25 @@ function renderFilterCount() {
 
 // Search (debounced)
 function onSearchDebounced() {
+  const val = $('searchInput').value;
+  const clearBtn = $('searchClear');
+  if (clearBtn) clearBtn.style.display = val.length > 0 ? 'block' : 'none';
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
-    state.filters.search = $('searchInput').value.trim();
+    state.filters.search = val.trim();
     state.page = 1;
     loadInventory();
   }, SEARCH_DELAY);
+}
+
+function clearSearch() {
+  const inp = $('searchInput');
+  if (inp) { inp.value = ''; inp.focus(); }
+  const clearBtn = $('searchClear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  state.filters.search = '';
+  state.page = 1;
+  loadInventory();
 }
 
 // Filter dropdowns
@@ -1671,6 +1724,8 @@ async function onRowClick(itemId) {
   // Clone item so edits don't mutate state.items (prevents stale list data on cancel)
   state.currentItem = JSON.parse(JSON.stringify(item));
   state.cardDirty = false;
+  state.cardRendered = false;
+  clearUnsavedMark();
 
   // Show card, hide active top-view
   $qa('.top-view').forEach(v => v.classList.remove('active'));
@@ -1780,16 +1835,23 @@ function closeCard() {
   }
 }
 
+function cancelCard() {
+  if (confirm('Discard unsaved changes and return to inventory?')) {
+    state.cardDirty = false; // Don't refresh list — nothing was saved
+    closeCard();
+  }
+}
+
 function switchSub(tab) {
   // Capture any unsaved edits from current tab before switching
   captureEdits();
   // Toggle active sub-tab button
   $qa('.sub-tab').forEach(b => b.classList.remove('active'));
   $q(`.sub-tab[data-tab="${tab}"]`).classList.add('active');
-  // Toggle content
-  $qa('.sub-content').forEach(c => c.classList.remove('active'));
+  // Clear ALL sub-content DOM to prevent stale elements / duplicate IDs
+  $qa('.sub-content').forEach(c => { c.classList.remove('active'); c.innerHTML = ''; });
   $(`sub-${tab}`).classList.add('active');
-  // Render tab content
+  // Render tab content (fresh from state.currentItem)
   const item = state.currentItem;
   if (!item) return;
   const renderers = {
@@ -1805,6 +1867,28 @@ function switchSub(tab) {
     activity: renderActivityTab
   };
   if (renderers[tab]) renderers[tab](item);
+  // Mark unsaved only if this isn't the initial card load
+  if (state.cardRendered) markUnsaved();
+  state.cardRendered = true;
+}
+
+function markUnsaved() {
+  const saveBtn = $q('.btn-save[onclick="saveItem()"]');
+  if (saveBtn && !saveBtn.dataset.originalText) {
+    saveBtn.dataset.originalText = saveBtn.textContent;
+  }
+  if (saveBtn && state.currentItem) {
+    saveBtn.innerHTML = '💾 Save *';
+    saveBtn.style.boxShadow = '0 0 0 2px var(--gold)';
+  }
+}
+
+function clearUnsavedMark() {
+  const saveBtn = $q('.btn-save[onclick="saveItem()"]');
+  if (saveBtn) {
+    saveBtn.innerHTML = '💾 Save';
+    saveBtn.style.boxShadow = '';
+  }
 }
 
 // Capture visible field edits back into state.currentItem so they survive tab switches
@@ -1857,6 +1941,7 @@ function renderOverview(item) {
   const ibDollar = wholesale * ibPct / 100;
   const tariffDollar = wholesale * tariffPct / 100;
   const landed = wholesale * (1 + ibPct/100 + tariffPct/100) + ob;
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
 
   const dateAdded = item.date_added ? item.date_added.substring(0,10) : (item.created_at ? item.created_at.substring(0,10) : '—');
   const lastSold = item.last_sold_date ? item.last_sold_date.substring(0,10) : '—';
@@ -1967,7 +2052,29 @@ function renderOverview(item) {
             <input class="form-input" id="f_box_h" style="width:100%;text-align:center;" value="${pf(item.box_height) || ''}">
           </div>
         </div>
-        <button class="btn-card btn-push" style="margin-top:10px;padding:6px 16px;font-size:12px;" onclick="captureEdits();switchSub('shipping');setTimeout(()=>getOBBenchmarkRates(),100)">📦 Get OB Quotes</button>
+        <!-- OB Shipping Benchmark (inline on Overview) -->
+        <div style="margin-top:16px;padding:14px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);">
+          <div class="flex-between mb-8">
+            <div style="font-size:12px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;">OB Shipping</div>
+            <span style="font-size:12px;color:var(--muted2);">Current OB: <strong class="mono" style="color:var(--gold);">$${pf(item.ob_shipping).toFixed(2)}</strong></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+            <span style="font-size:12px;color:var(--muted);">Manual:</span>
+            <span style="font-size:13px;color:var(--muted);">$</span>
+            <input class="form-input" id="f_ob_inline" value="${ob.toFixed(2)}" style="width:80px;text-align:center;font-size:13px;font-weight:600;">
+            <button class="btn-card btn-push" onclick="applyManualOB()" style="padding:4px 12px;font-size:11px;">Set OB</button>
+            <span style="font-size:11px;color:var(--muted2);margin-left:4px;">Type a price and click Set OB</span>
+          </div>
+          <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">Or get benchmark quotes — Portland, OR 97214 — services filtered per Settings</div>
+            ${!shippoUrl ? '<div class="note-banner" style="color:var(--red);">Shippo proxy not configured.</div>' :
+            !(pf(item.shipping_weight) && pf(item.box_length)) ? '<div style="font-size:12px;color:var(--red);">Enter weight & dimensions above first.</div>' : `
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+              <button class="btn-card btn-push" onclick="captureEdits();getOBBenchmarkRates()" style="padding:5px 14px;font-size:12px;">📦 Get OB Benchmark</button>
+            </div>
+            <div id="obBenchmarkResults" style="color:var(--muted);font-size:13px;">Click to fetch benchmark rates.</div>`}
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -2442,20 +2549,6 @@ function renderShipping(item) {
     <div class="section-title">Label Purchased</div>
     <div id="buyLabelResult"></div>
   </div>
-  <!-- OB Benchmark Quote -->
-  <div class="section">
-    <div class="flex-between mb-8">
-      <div class="section-title" style="margin-bottom:0;">OB Shipping Benchmark</div>
-      <span style="font-size:12px;color:var(--muted2);">Current OB: <strong class="mono" style="color:var(--gold);">$${pf(item.ob_shipping).toFixed(2)}</strong></span>
-    </div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Fixed destination: Portland, OR 97214 — click a rate to set as OB Shipping cost</div>
-    ${!shippoUrl ? '<div class="note-banner" style="color:var(--red);">Shippo proxy not configured.</div>' :
-    !hasDims ? '<div class="note-banner" style="color:var(--red);">Dimensions required first.</div>' : `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-      <button class="btn-card btn-push" onclick="getOBBenchmarkRates()" style="padding:6px 16px;">📦 Get OB Benchmark</button>
-    </div>
-    <div id="obBenchmarkResults" style="color:var(--muted);font-size:13px;">Click to fetch benchmark rates.</div>`}
-  </div>
   <!-- Shipping History -->
   <div class="section">
     <div class="section-title">Shipping History</div>
@@ -2477,16 +2570,39 @@ function captureShipTo() {
 }
 
 // Rate filter lists — only show relevant services
-const OB_BENCHMARK_SERVICES = ['ground', 'ground advantage'];
-const SHIPTO_SERVICES = ['ground', 'ground advantage', 'priority mail', 'priority'];
+// Shipping service definitions — id, carrier, service match, label
+const SHIPPING_SERVICES = [
+  { id:'ups_ground', carrier:'ups', match:'ground', exclude:'saver', label:'UPS Ground' },
+  { id:'ups_ground_saver', carrier:'ups', match:'ground saver', label:'UPS Ground Saver' },
+  { id:'usps_ground_advantage', carrier:'usps', match:'ground advantage', label:'USPS Ground Advantage' },
+  { id:'usps_priority', carrier:'usps', match:'priority', label:'USPS Priority Mail' },
+  { id:'fedex_ground', carrier:'fedex', match:'ground', exclude:'economy', label:'FedEx Ground' },
+  { id:'fedex_home', carrier:'fedex', match:'home delivery', label:'FedEx Home Delivery' },
+];
 
-function filterRates(rates, allowedServices) {
+// Defaults (used until settings loaded)
+const DEFAULT_OB_SERVICES = ['ups_ground','usps_ground_advantage'];
+const DEFAULT_SHIPTO_SERVICES = ['ups_ground','usps_ground_advantage','usps_priority','fedex_ground'];
+
+function filterRates(rates, serviceIds) {
+  const defs = SHIPPING_SERVICES.filter(s => serviceIds.includes(s.id));
   return rates.filter(r => {
     const svc = (r.service || '').toLowerCase();
-    const provider = (r.provider || '').toLowerCase();
-    return allowedServices.some(s => svc.includes(s)) && 
-           ['ups', 'usps', 'fedex'].some(c => provider.includes(c));
+    const prov = (r.provider || '').toLowerCase();
+    return defs.some(d => {
+      if (!prov.includes(d.carrier)) return false;
+      if (!svc.includes(d.match)) return false;
+      if (d.exclude && svc.includes(d.exclude)) return false;
+      return true;
+    });
   });
+}
+
+function getOBFilterIds() {
+  return (state.shippingFilters && state.shippingFilters.ob) || DEFAULT_OB_SERVICES;
+}
+function getShipToFilterIds() {
+  return (state.shippingFilters && state.shippingFilters.shipto) || DEFAULT_SHIPTO_SERVICES;
 }
 
 async function getShippingRates() {
@@ -2530,7 +2646,7 @@ async function getShippingRates() {
     }
 
     // Filter and store rates for display + buy action
-    state.lastRates = filterRates(result.rates || [], SHIPTO_SERVICES);
+    state.lastRates = filterRates(result.rates || [], getShipToFilterIds());
     state.lastShipmentId = result.shipmentId || '';
 
     const rates = state.lastRates;
@@ -2636,6 +2752,13 @@ async function buyLabel(rateIndex) {
     // Log activity
     logActivity('SHIPPING','LABEL_PURCHASED',null,`Label: ${item.sku} via ${rate.provider} ${rate.service} $${pf(rate.amount).toFixed(2)} → ${result.trackingNumber || 'pending'}`,{},item.sku);
 
+    // Clear ship-to form to prevent accidental re-use
+    ['shipToName','shipToStreet','shipToCity','shipToState','shipToZip'].forEach(id => { if ($(id)) $(id).value = ''; });
+    state.lastShipTo = null;
+    state.lastRates = null;
+    const rateContainer = $('rateQuoteResults');
+    if (rateContainer) rateContainer.innerHTML = '<span style="color:var(--muted);">Address cleared. Enter new ship-to for next label.</span>';
+
     // Refresh shipping history
     loadShippingHistory(item.sku);
 
@@ -2676,7 +2799,7 @@ async function getOBBenchmarkRates() {
       return;
     }
 
-    const rates = filterRates(result.rates || [], OB_BENCHMARK_SERVICES);
+    const rates = filterRates(result.rates || [], getOBFilterIds());
     if (rates.length === 0) {
       container.innerHTML = '<span style="color:var(--muted);">No rates returned.</span>';
       return;
@@ -2708,7 +2831,20 @@ function selectOBRate(amount, provider, service) {
   item.ob_shipping = amount;
   if ($('f_ob')) $('f_ob').value = amount.toFixed(2);
   showCardStatus(`OB Shipping set to $${amount.toFixed(2)} (${provider} ${service}) — Save to keep`, 'ok');
-  renderShipping(item);
+  renderOverview(item);
+}
+
+function applyManualOB() {
+  const item = state.currentItem;
+  if (!item) return;
+  const el = $('f_ob_inline');
+  if (!el) return;
+  const amount = parseFloat(el.value);
+  if (isNaN(amount) || amount < 0) { showCardStatus('Enter a valid OB amount.', 'error'); return; }
+  item.ob_shipping = amount;
+  if ($('f_ob')) $('f_ob').value = amount.toFixed(2);
+  showCardStatus(`OB Shipping manually set to $${amount.toFixed(2)} — Save to keep`, 'ok');
+  renderOverview(item);
 }
 
 async function loadShippingHistory(sku) {
@@ -2728,28 +2864,31 @@ async function loadShippingHistory(sku) {
     const avgCost = costs.length > 0 ? costs.reduce((a,b) => a+b, 0) / costs.length : 0;
     const avgDiff = avgCost - currentOB;
 
-    let html = `<div class="table-wrapper"><table>
-      <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Tracking</th><th>Cost</th><th>vs OB</th></tr></thead>
+    let html = `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
+      <colgroup><col style="width:100px"><col style="width:80px"><col style="width:90px"><col style="width:70px"><col style="width:auto"><col style="width:80px"><col style="width:80px"></colgroup>
+      <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Status</th><th>Tracking</th><th>Cost</th><th>vs OB</th></tr></thead>
       <tbody>${rows.map((r, idx) => {
         const date = (r.shippo_created_at || r.synced_at || r.created_at || '').substring(0,10);
         const cost = pf(r.label_cost || r.rate_amount);
         const diff = cost > 0 ? cost - currentOB : 0;
         const diffColor = diff > 0 ? 'var(--red)' : 'var(--green)';
+        const status = r.label_status || r.status || '—';
+        const statusColor = status === 'DELIVERED' ? 'var(--green)' : status === 'SUCCESS' ? 'var(--blue)' : status === 'TRANSIT' ? 'var(--yellow)' : 'var(--muted)';
         return `<tr style="cursor:pointer;" onclick="toggleShipDetail(${idx})" title="Click for details">
         <td class="mono">${date}</td>
         <td>${escHtml(r.carrier || '—')}</td>
         <td style="font-size:12px;">${escHtml(r.service_name || '—')}</td>
-        <td><span class="tracking-num">${escHtml(r.tracking_number || '—')}</span></td>
-        <td class="mono" style="font-weight:600;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
-        <td class="mono" style="color:${cost > 0 ? diffColor : 'var(--muted)'};">${cost > 0 ? (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2) : '—'}</td>
+        <td style="font-size:11px;font-weight:600;color:${statusColor};">${escHtml(status)}</td>
+        <td style="overflow:hidden;text-overflow:ellipsis;"><span class="tracking-num">${escHtml(r.tracking_number || '—')}</span></td>
+        <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
+        <td class="mono" style="color:${cost > 0 ? diffColor : 'var(--muted)'};text-align:right;">${cost > 0 ? (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2) : '—'}</td>
       </tr>
       <tr id="shipDetail_${idx}" style="display:none;">
-        <td colspan="6" style="padding:0;">
+        <td colspan="7" style="padding:0;">
           <div style="padding:12px 16px;background:var(--bg3);border-left:3px solid var(--gold);">
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 20px;font-size:12px;">
               <div><span style="color:var(--muted2);">Recipient:</span> ${escHtml(r.recipient_name || '—')}</div>
               <div><span style="color:var(--muted2);">Location:</span> ${escHtml([r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ') || '—')}</div>
-              <div><span style="color:var(--muted2);">Status:</span> <span class="par-status ${(r.label_status || r.status || '') === 'DELIVERED' || (r.label_status || r.status || '') === 'SUCCESS' ? 'par-ok' : 'par-warn'}">${escHtml(r.label_status || r.status || '—')}</span></div>
               <div><span style="color:var(--muted2);">Weight:</span> ${r.parcel_weight ? pf(r.parcel_weight) + ' lb' : '—'}</div>
               <div><span style="color:var(--muted2);">Dims:</span> ${r.parcel_length ? pf(r.parcel_length) + '×' + pf(r.parcel_width) + '×' + pf(r.parcel_height) + '"' : '—'}</div>
               <div><span style="color:var(--muted2);">Order:</span> ${escHtml(r.order_id || r.order_number_raw || '—')}</div>
@@ -2793,7 +2932,13 @@ async function renderVariants(item) {
     const siblings = data || [];
 
     if (siblings.length <= 1 && !item.parent_sku) {
-      $('sub-variants').innerHTML = '<div class="section"><div class="section-title">Variants</div><div style="text-align:center;padding:30px;color:var(--muted);">This item has no variants.</div></div>';
+      $('sub-variants').innerHTML = `<div class="section">
+        <div class="flex-between mb-8">
+          <div class="section-title" style="margin-bottom:0;">Variants</div>
+          <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="addVariantFromItem()">+ Add Variant</button>
+        </div>
+        <div style="text-align:center;padding:30px;color:var(--muted);">This item has no variants. Click + Add Variant to create one.</div>
+      </div>`;
       return;
     }
 
@@ -3256,6 +3401,7 @@ async function saveItem() {
     statusEl.className = 'inline-status show ok';
     statusEl.textContent = `Saved ${item.sku} successfully`;
     logActivity('INVENTORY','ITEM_SAVED',null,`Saved ${item.sku}`,{},item.sku);
+    clearUnsavedMark();
 
     state.saving = false;
     setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
@@ -5207,6 +5353,22 @@ async function loadSettings() {
       $('settingsRls').className = 'setting-badge ' + (sec.rls_enforced ? 'ok' : 'off');
     }
   } catch(e) { console.log('Security config load error:', e.message); }
+
+  // Render shipping rate filter checkboxes
+  const obIds = getOBFilterIds();
+  const shiptoIds = getShipToFilterIds();
+  const obEl = $('obFilterChecks');
+  const stEl = $('shiptoFilterChecks');
+  if (obEl) obEl.innerHTML = SHIPPING_SERVICES.map(s =>
+    `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+      <input type="checkbox" class="obFilterCb" value="${s.id}" ${obIds.includes(s.id) ? 'checked' : ''}> ${escHtml(s.label)}
+    </label>`
+  ).join('');
+  if (stEl) stEl.innerHTML = SHIPPING_SERVICES.map(s =>
+    `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+      <input type="checkbox" class="shiptoFilterCb" value="${s.id}" ${shiptoIds.includes(s.id) ? 'checked' : ''}> ${escHtml(s.label)}
+    </label>`
+  ).join('');
 }
 
 async function saveSettingsToDb() {
@@ -5247,6 +5409,18 @@ async function saveSettingsToDb() {
     if (urls.wayfair) localStorage.setItem('ccdWayfairProxy', urls.wayfair);
     if (urls.shippo) localStorage.setItem('ccdShippoProxy', urls.shippo);
     if (apiKey) localStorage.setItem('ccdApiKey', apiKey);
+
+    // Save shipping rate filters
+    const obChecked = [...document.querySelectorAll('.obFilterCb:checked')].map(cb => cb.value);
+    const shiptoChecked = [...document.querySelectorAll('.shiptoFilterCb:checked')].map(cb => cb.value);
+    const filters = { ob: obChecked, shipto: shiptoChecked };
+    const { data: existingFilters } = await sb.from('settings').select('key').eq('key', 'shipping_filters').limit(1);
+    if (existingFilters && existingFilters.length > 0) {
+      await sb.from('settings').update({ value: filters, updated_at: now, updated_by: who }).eq('key', 'shipping_filters');
+    } else {
+      await sb.from('settings').insert({ key: 'shipping_filters', value: filters, updated_at: now, updated_by: who });
+    }
+    state.shippingFilters = filters;
 
     logActivity('SYSTEM','SETTINGS_SAVED',null,'Settings saved from Inventory v2',{});
     alert('Settings saved successfully');
