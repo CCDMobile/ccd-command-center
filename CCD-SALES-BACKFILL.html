@@ -1297,12 +1297,14 @@ async function importToSalesHistory() {
         const batch = fresh.slice(i, i + batchSize);
         
         const rows = batch.map(l => {
-            const rev = l.price * l.quantity;
-            const ws = l.wholesale || 0;
-            const ib = l.ibShipping || 0;
-            const tar = l.tariff || 0;
-            const ob = l.obShipping || 0;
-            const cost = (ws * (1 + ib / 100) + tar + ob) * l.quantity;
+            const qty = parseInt(l.quantity) || 1;
+            const price = parseFloat(l.price) || 0;
+            const rev = price * qty;
+            const ws = parseFloat(l.wholesale) || 0;
+            const ib = parseFloat(l.ibShipping) || 0;
+            const tar = parseFloat(l.tariff) || 0;
+            const ob = parseFloat(l.obShipping) || 0;
+            const cost = (ws * (1 + ib / 100) + tar + ob) * qty;
             const profit = rev - cost;
             const margin = rev > 0 ? profit / rev : 0;
             
@@ -1310,18 +1312,18 @@ async function importToSalesHistory() {
                 item_id: l.itemId,
                 sku: l.matchedSku,
                 product_name: l.productName || '',
-                qty_sold: l.quantity,
+                qty_sold: qty,
                 sale_channel: l.channel || activeChannel,
                 sale_date: l.orderDate || null,
-                sale_price: l.price,
-                total_revenue: parseFloat(rev.toFixed(2)),
-                total_cost: parseFloat(cost.toFixed(2)),
-                net_profit: parseFloat(profit.toFixed(2)),
-                profit_margin: parseFloat(margin.toFixed(4)),
-                wholesale_price: ws,
-                ib_shipping: ib,
-                tariff: tar,
-                ob_shipping: ob,
+                sale_price: safeNum(price),
+                total_revenue: safeNum(rev),
+                total_cost: safeNum(cost),
+                net_profit: safeNum(profit),
+                profit_margin: safeNum(margin),
+                wholesale_price: safeNum(ws),
+                ib_shipping: safeNum(ib),
+                tariff: safeNum(tar),
+                ob_shipping: safeNum(ob),
                 order_id: l.orderId,
                 notes: `Backfill from ${ch} API`
             };
@@ -1469,6 +1471,7 @@ function exportCSV() {
 // ═══════════════════════════════════════
 // UTILITIES
 // ═══════════════════════════════════════
+function safeNum(v) { const n = parseFloat(v); return isFinite(n) ? Math.round(n * 10000) / 10000 : 0; }
 function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
