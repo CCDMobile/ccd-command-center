@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.4.8</title>
+<title>CCD Inventory System v2.4.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -589,7 +589,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.4.8 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.4.9 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -601,7 +601,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.4.8</div>
+      <div class="topbar-version">v2.4.9</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -2896,8 +2896,8 @@ async function getOBBenchmarkRates() {
     container.innerHTML = `<div class="table-wrapper"><table>
       <thead><tr><th>Carrier</th><th>Service</th><th>Est. Days</th><th>Cost</th><th>vs Current OB</th><th></th></tr></thead>
       <tbody>${rates.map(r => {
-        const diff = pf(r.amount) - currentOB;
-        const diffColor = diff > 0 ? 'var(--red)' : 'var(--green)';
+        const diff = currentOB - pf(r.amount);
+        const diffColor = diff >= 0 ? 'var(--green)' : 'var(--red)';
         return `<tr>
         <td>${escHtml(r.provider || '—')}</td>
         <td>${escHtml(r.service || '—')}</td>
@@ -2972,7 +2972,7 @@ async function loadShippingHistory(sku) {
 
     const costs = rows.filter(r => pf(r.label_cost) > 0).map(r => pf(r.label_cost));
     const avgCost = costs.length > 0 ? costs.reduce((a,b) => a+b, 0) / costs.length : 0;
-    const avgDiff = avgCost - currentOB;
+    const avgDiff = currentOB - avgCost;
 
     let html = `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
       <colgroup><col style="width:100px"><col style="width:80px"><col style="width:90px"><col style="width:70px"><col style="width:auto"><col style="width:80px"><col style="width:80px"></colgroup>
@@ -2980,8 +2980,8 @@ async function loadShippingHistory(sku) {
       <tbody>${rows.map((r, idx) => {
         const date = (r.shippo_created_at || r.synced_at || r.created_at || '').substring(0,10);
         const cost = pf(r.label_cost || r.rate_amount);
-        const diff = cost > 0 ? cost - currentOB : 0;
-        const diffColor = diff > 0 ? 'var(--red)' : 'var(--green)';
+        const diff = cost > 0 ? currentOB - cost : 0;
+        const diffColor = diff >= 0 ? 'var(--green)' : 'var(--red)';
         const status = r.label_status || r.status || '—';
         const statusColor = status === 'DELIVERED' ? 'var(--green)' : status === 'SUCCESS' ? 'var(--blue)' : status === 'TRANSIT' ? 'var(--yellow)' : 'var(--muted)';
         return `<tr style="cursor:pointer;" onclick="toggleShipDetail(${idx})" title="Click for details">
@@ -3010,12 +3010,12 @@ async function loadShippingHistory(sku) {
       }).join('')}</tbody></table></div>`;
 
     if (costs.length > 0) {
-      const avgColor = avgDiff > 0 ? 'var(--red)' : 'var(--green)';
+      const avgColor = avgDiff >= 0 ? 'var(--green)' : 'var(--red)';
       html += `<div style="margin-top:10px;padding:10px 14px;background:var(--bg3);border-radius:var(--radius);font-size:12px;display:flex;justify-content:space-between;align-items:center;">
         <span>📊 <strong>${costs.length}</strong> shipments · Avg cost: <strong class="mono">$${avgCost.toFixed(2)}</strong>
           <span style="color:${avgColor};margin-left:6px;">(${avgDiff >= 0 ? '+' : ''}$${avgDiff.toFixed(2)} vs OB)</span>
         </span>
-        ${avgDiff > 0.50 ? `<span style="color:var(--yellow);font-size:11px;">💡 Consider raising OB to $${avgCost.toFixed(2)}</span>` : ''}
+        ${avgDiff < -0.50 ? `<span style="color:var(--yellow);font-size:11px;">💡 Consider raising OB to $${avgCost.toFixed(2)}</span>` : ''}
       </div>`;
     }
 
