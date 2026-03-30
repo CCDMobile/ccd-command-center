@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.5.7</title>
+<title>CCD Inventory System v2.5.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -167,10 +167,10 @@ tbody td{padding:10px 14px;white-space:nowrap;}
 /* ═══════════════════════════════════════════
    INLINE STATUS
    ═══════════════════════════════════════════ */
-.inline-status{font-size:12px;padding:6px 12px;border-radius:var(--radius);margin-top:8px;display:none;}
+.inline-status{font-size:14px;font-weight:700;padding:12px 18px;border-radius:var(--radius);margin-top:8px;display:none;text-align:center;}
 .inline-status.show{display:block;}
-.inline-status.ok{background:rgba(45,212,160,0.08);color:var(--green);border:1px solid rgba(45,212,160,0.2);}
-.inline-status.error{background:rgba(240,92,92,0.08);color:var(--red);border:1px solid rgba(240,92,92,0.2);}
+.inline-status.ok{background:rgba(45,212,160,0.2);color:#2dd4a0;border:2px solid rgba(45,212,160,0.5);box-shadow:0 0 12px rgba(45,212,160,0.15);}
+.inline-status.error{background:rgba(240,92,92,0.2);color:#f05c5c;border:2px solid rgba(240,92,92,0.5);box-shadow:0 0 12px rgba(240,92,92,0.15);}
 
 /* ═══════════════════════════════════════════
    RESPONSIVE
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.5.7 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.5.8 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.5.7</div>
+      <div class="topbar-version">v2.5.8</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1225,7 +1225,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.5.7';
+const TOOL_VERSION = '2.5.8';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2756,7 +2756,10 @@ function renderShipping(item) {
   </div>
   <!-- Shipping History -->
   <div class="section">
-    <div class="section-title">Shipping History</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div class="section-title" style="margin-bottom:0;">Shipping History</div>
+      <button class="btn-card" onclick="syncShippoToDb()" id="btnSyncShippo" style="padding:5px 14px;font-size:12px;">📦 Sync from Shippo</button>
+    </div>
     <div id="shippingHistoryContent" style="text-align:center;padding:20px;color:var(--muted);">Loading...</div>
   </div>`;
 
@@ -3208,6 +3211,70 @@ async function refreshTrackingStatuses() {
     } catch(e) { console.log(`Tracking fetch failed for ${r.tracking_number}:`, e.message); }
   }
   if (btn) { btn.disabled = false; btn.textContent = `🔄 Refresh Tracking${updated > 0 ? ` (${updated} updated)` : ''}`; }
+}
+
+async function syncShippoToDb() {
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { showCardStatus('Shippo proxy not configured. Go to Settings.', 'error'); return; }
+  const btn = $('btnSyncShippo');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing...'; }
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'fetchAllForCache',
+      key: apiKey,
+      months: '2'
+    });
+    if (!result.success && !result.transactions) {
+      throw new Error(result.error || 'No data returned');
+    }
+    const transactions = result.transactions || result.data || [];
+    if (transactions.length === 0) {
+      showCardStatus('No transactions found in Shippo.', 'ok');
+      if (btn) { btn.disabled = false; btn.textContent = '📦 Sync from Shippo'; }
+      return;
+    }
+    let inserted = 0, skipped = 0;
+    for (const tx of transactions) {
+      const rawDigits = (tx.itemDescription || tx.metadata || '').match(/Order\s+(\d+)/i);
+      const row = {
+        transaction_id: tx.transactionId || tx.transaction_id || tx.id,
+        order_id: null,
+        order_number_raw: rawDigits ? rawDigits[1] : null,
+        label_cost: parseFloat(tx.rate || tx.label_cost || tx.cost || 0),
+        carrier: tx.carrier || null,
+        service_name: tx.serviceName || tx.service_name || null,
+        tracking_number: tx.trackingNumber || tx.tracking_number || null,
+        shippo_created_at: tx.createdAt || tx.shipDate || tx.ship_date || null,
+        synced_at: new Date().toISOString(),
+        recipient_name: tx.recipientName || tx.recipient_name || null,
+        recipient_city: tx.recipientCity || tx.city || null,
+        recipient_state: tx.recipientState || tx.state || null,
+        recipient_zip: tx.recipientZip || tx.zip || null,
+        parcel_weight: tx.parcelWeight || tx.weight || tx.parcel_weight || null,
+        parcel_length: tx.parcelLength || tx.length || tx.parcel_length || null,
+        parcel_width: tx.parcelWidth || tx.width || tx.parcel_width || null,
+        parcel_height: tx.parcelHeight || tx.height || tx.parcel_height || null,
+        sku: tx.sku || null,
+        item_description: tx.itemDescription || null,
+        status: tx.status || null,
+        raw_metadata: tx.itemDescription || tx.metadata || null,
+        label_status: tx.status || null,
+        matched_to_sale: false
+      };
+      try {
+        const { error } = await sb.from('shippo_transactions').upsert(row, { onConflict: 'transaction_id', ignoreDuplicates: true });
+        if (error) { skipped++; } else { inserted++; }
+      } catch(e) { skipped++; }
+    }
+    showCardStatus(`Shippo sync: ${inserted} new, ${skipped} existing of ${transactions.length} total`, 'ok');
+    // Reload shipping history for current item
+    const item = state.currentItem;
+    if (item) loadShippingHistory(item.sku);
+  } catch(e) {
+    showCardStatus(`Shippo sync failed: ${e.message}`, 'error');
+  }
+  if (btn) { btn.disabled = false; btn.textContent = '📦 Sync from Shippo'; }
 }
 
 function toggleShipDetail(idx) {
@@ -4088,7 +4155,8 @@ function showCardStatus(msg, type) {
   el.className = `inline-status show ${type}`;
   el.textContent = msg;
   el.style.display = 'block';
-  setTimeout(() => { el.style.display = 'none'; }, 3000);
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  setTimeout(() => { el.style.display = 'none'; }, type === 'error' ? 8000 : 5000);
 }
 
 // ═══════════════════════════════════════════════════════════
