@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.5.4</title>
+<title>CCD Inventory System v2.5.5</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.5.4 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.5.5 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.5.4</div>
+      <div class="topbar-version">v2.5.5</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1225,7 +1225,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.4.1';
+const TOOL_VERSION = '2.5.5';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -3614,13 +3614,33 @@ async function saveItem() {
     updates.wix_price = updates.etsy_price;
     updates.wix_qty = updates.etsy_qty;
 
-    // Allocation validation: total channel qty cannot exceed warehouse qty
-    const totalAlloc = (updates.etsy_qty || 0) + (updates.wayfair_qty || 0) + (updates.treasuremarts_qty || 0);
+    // Allocation validation: online channels share the same warehouse pool.
+    // TM physically removes items, so it reduces the available pool.
+    // Each online channel can list up to (warehouse - TM) independently.
     const warehouseQty = updates.qty || 0;
-    if (totalAlloc > warehouseQty) {
+    const tmQty = updates.treasuremarts_qty || 0;
+    const availableOnline = warehouseQty - tmQty;
+    const etsyQty = updates.etsy_qty || 0;
+    const wayfairQty = updates.wayfair_qty || 0;
+
+    if (tmQty > warehouseQty) {
       state.saving = false;
       statusEl.className = 'inline-status show error';
-      statusEl.textContent = `Allocation error: channels total ${totalAlloc} but warehouse only has ${warehouseQty}. Reduce allocations or increase warehouse qty.`;
+      statusEl.textContent = `Allocation error: TM qty (${tmQty}) exceeds warehouse qty (${warehouseQty}).`;
+      statusEl.style.display = 'block';
+      return;
+    }
+    if (etsyQty > availableOnline) {
+      state.saving = false;
+      statusEl.className = 'inline-status show error';
+      statusEl.textContent = `Allocation error: Etsy qty (${etsyQty}) exceeds available online pool (${availableOnline} = ${warehouseQty} warehouse − ${tmQty} TM).`;
+      statusEl.style.display = 'block';
+      return;
+    }
+    if (wayfairQty > availableOnline) {
+      state.saving = false;
+      statusEl.className = 'inline-status show error';
+      statusEl.textContent = `Allocation error: Wayfair qty (${wayfairQty}) exceeds available online pool (${availableOnline} = ${warehouseQty} warehouse − ${tmQty} TM).`;
       statusEl.style.display = 'block';
       return;
     }
