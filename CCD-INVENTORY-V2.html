@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.5.6</title>
+<title>CCD Inventory System v2.5.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.5.6 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.5.7 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.5.6</div>
+      <div class="topbar-version">v2.5.7</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1225,7 +1225,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.5.6';
+const TOOL_VERSION = '2.5.7';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1247,6 +1247,7 @@ let state = {
   },
   brands: [],             // Unique brand list for filter dropdown
   categories: [],         // Unique category list for dropdown
+  vendors: [],            // Unique vendor list for dropdown
   saleCounts: {},         // SKU → 90-day sale count
   stats: {},               // Computed stats
   activeTopTab: 'inventory', // Currently active top-level tab
@@ -1360,6 +1361,7 @@ async function showApp() {
   // Load brand list for filter dropdown
   await loadBrands();
   await loadCategories();
+  await loadVendors();
 
   // Load sale counts for badges
   await loadSaleCounts();
@@ -1435,6 +1437,15 @@ async function loadCategories() {
     (data || []).forEach(r => { if (r.category && r.category.trim()) set.add(r.category.trim()); });
     state.categories = [...set].sort((a,b) => a.localeCompare(b));
   } catch(e) { console.log('Category load error:', e.message); }
+}
+
+async function loadVendors() {
+  try {
+    const { data } = await sb.from('items').select('vendor').not('vendor', 'is', null).limit(5000);
+    const set = new Set();
+    (data || []).forEach(r => { if (r.vendor && r.vendor.trim()) set.add(r.vendor.trim()); });
+    state.vendors = [...set].sort((a,b) => a.localeCompare(b));
+  } catch(e) { console.log('Vendor load error:', e.message); }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2077,7 +2088,10 @@ function renderOverview(item) {
       </div>
       <div class="form-row">
         <div class="form-label">Vendor / Supplier</div>
-        <div class="form-value"><input class="form-input" id="f_vendor" value="${escAttr(item.vendor || '')}"></div>
+        <div class="form-value">
+          <input class="form-input" id="f_vendor" list="vendorList" value="${escAttr(item.vendor || '')}" autocomplete="off">
+          <datalist id="vendorList">${state.vendors.map(v => `<option value="${escAttr(v)}">`).join('')}</datalist>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-label">Date Added</div>
@@ -3019,6 +3033,7 @@ async function getOBBenchmarkRates() {
 function selectOBRate(amount, provider, service) {
   const item = state.currentItem;
   if (!item) return;
+  captureEdits(); // Preserve all field edits before re-render
   item.ob_shipping = amount;
   if ($('f_ob')) $('f_ob').value = amount.toFixed(2);
   showCardStatus(`OB Shipping set to $${amount.toFixed(2)} (${provider} ${service}) — Save to keep`, 'ok');
@@ -3028,6 +3043,7 @@ function selectOBRate(amount, provider, service) {
 function applyManualOB() {
   const item = state.currentItem;
   if (!item) return;
+  captureEdits(); // Preserve all field edits before re-render
   const el = $('f_ob_inline');
   if (!el) return;
   const amount = parseFloat(el.value);
@@ -3041,6 +3057,7 @@ function applyManualOB() {
 function onOBFieldChange() {
   const item = state.currentItem;
   if (!item) return;
+  captureEdits(); // Preserve all field edits before re-render
   const el = $('f_ob');
   if (!el) return;
   const amount = parseFloat(el.value);
@@ -3053,7 +3070,8 @@ function onOBFieldChange() {
 function onCostBasisChange() {
   const item = state.currentItem;
   if (!item) return;
-  // Read all cost basis fields into state
+  captureEdits(); // Preserve all field edits before re-render
+  // Read cost basis fields into state (redundant with captureEdits but explicit)
   if ($('f_wholesale')) item.wholesale_price = parseFloat($('f_wholesale').value) || 0;
   if ($('f_ib')) item.ib_shipping = parseFloat($('f_ib').value) || 0;
   if ($('f_tariff')) item.tariff = parseFloat($('f_tariff').value) || 0;
@@ -3069,6 +3087,7 @@ async function loadShippingHistory(sku) {
   try {
     const { data } = await sb.from('shippo_transactions').select('*').eq('sku', sku).order('shippo_created_at', { ascending: false }).limit(20);
     const rows = data || [];
+    state.shippingRows = rows; // Store for tracking refresh
     if (rows.length === 0) {
       container.innerHTML = '<div style="text-align:center;padding:20px;color:var(--muted);">No shipping history for this item.</div>';
       return;
@@ -3078,21 +3097,30 @@ async function loadShippingHistory(sku) {
     const avgCost = costs.length > 0 ? costs.reduce((a,b) => a+b, 0) / costs.length : 0;
     const avgDiff = currentOB - avgCost;
 
-    let html = `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
-      <colgroup><col style="width:100px"><col style="width:80px"><col style="width:90px"><col style="width:70px"><col style="width:auto"><col style="width:80px"><col style="width:80px"></colgroup>
+    function trackingStatusDisplay(r) {
+      const status = r.tracking_status || r.label_status || r.status || '—';
+      const color = status === 'DELIVERED' ? 'var(--green)' : status === 'TRANSIT' || status === 'IN_TRANSIT' ? 'var(--yellow)' : status === 'PRE_TRANSIT' ? 'var(--muted)' : status === 'SUCCESS' ? 'var(--blue)' : 'var(--muted)';
+      return { status, color };
+    }
+
+    let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span style="font-size:12px;color:var(--muted);">Status updates from Shippo</span>
+      <button class="btn-card" onclick="refreshTrackingStatuses()" id="btnRefreshTracking" style="padding:4px 12px;font-size:11px;">🔄 Refresh Tracking</button>
+    </div>`;
+    html += `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
+      <colgroup><col style="width:100px"><col style="width:80px"><col style="width:90px"><col style="width:85px"><col style="width:auto"><col style="width:80px"><col style="width:80px"></colgroup>
       <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Status</th><th>Tracking</th><th>Cost</th><th>vs OB</th></tr></thead>
       <tbody>${rows.map((r, idx) => {
         const date = (r.shippo_created_at || r.synced_at || r.created_at || '').substring(0,10);
         const cost = pf(r.label_cost || r.rate_amount);
         const diff = cost > 0 ? currentOB - cost : 0;
         const diffColor = diff >= 0 ? 'var(--green)' : 'var(--red)';
-        const status = r.label_status || r.status || '—';
-        const statusColor = status === 'DELIVERED' ? 'var(--green)' : status === 'SUCCESS' ? 'var(--blue)' : status === 'TRANSIT' ? 'var(--yellow)' : 'var(--muted)';
+        const ts = trackingStatusDisplay(r);
         return `<tr style="cursor:pointer;" onclick="toggleShipDetail(${idx})" title="Click for details">
         <td class="mono">${date}</td>
         <td>${escHtml(r.carrier || '—')}</td>
         <td style="font-size:12px;">${escHtml(r.service_name || '—')}</td>
-        <td style="font-size:11px;font-weight:600;color:${statusColor};">${escHtml(status)}</td>
+        <td id="shipStatus_${idx}" style="font-size:11px;font-weight:600;color:${ts.color};">${escHtml(ts.status)}</td>
         <td style="overflow:hidden;text-overflow:ellipsis;"><span class="tracking-num">${escHtml(r.tracking_number || '—')}</span></td>
         <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
         <td class="mono" style="color:${cost > 0 ? diffColor : 'var(--muted)'};text-align:right;">${cost > 0 ? (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2) : '—'}</td>
@@ -3124,9 +3152,62 @@ async function loadShippingHistory(sku) {
     }
 
     container.innerHTML = html;
+
+    // Auto-refresh tracking for recent non-delivered shipments
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const needsRefresh = rows.some((r, i) => {
+      const ts = r.tracking_status || r.label_status || '';
+      const created = new Date(r.shippo_created_at || r.synced_at || 0).getTime();
+      return r.tracking_number && ts !== 'DELIVERED' && created > cutoff;
+    });
+    if (needsRefresh) refreshTrackingStatuses();
   } catch(e) {
     container.innerHTML = `<div style="color:var(--red);">Error: ${escHtml(e.message)}</div>`;
   }
+}
+
+async function refreshTrackingStatuses() {
+  const rows = state.shippingRows;
+  if (!rows || rows.length === 0) return;
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) return;
+  const btn = $('btnRefreshTracking');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Refreshing...'; }
+  const carrierMap = { 'UPS': 'ups', 'USPS': 'usps', 'FEDEX': 'fedex', 'DHL': 'dhl_express' };
+  let updated = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (!r.tracking_number || !r.carrier) continue;
+    // Skip already delivered
+    if (r.tracking_status === 'DELIVERED') {
+      const cell = $(`shipStatus_${i}`);
+      if (cell) { cell.textContent = 'DELIVERED'; cell.style.color = 'var(--green)'; }
+      continue;
+    }
+    try {
+      const carrierLower = carrierMap[(r.carrier || '').toUpperCase()] || (r.carrier || '').toLowerCase();
+      const result = await fetchOrJsonp(shippoUrl, {
+        action: 'getTrackingStatus',
+        key: apiKey,
+        carrier: carrierLower,
+        tracking: r.tracking_number
+      });
+      if (result.success && result.tracking_status) {
+        const liveStatus = result.tracking_status.status || '—';
+        const color = liveStatus === 'DELIVERED' ? 'var(--green)' : liveStatus === 'TRANSIT' || liveStatus === 'IN_TRANSIT' ? 'var(--yellow)' : liveStatus === 'PRE_TRANSIT' ? 'var(--muted)' : 'var(--blue)';
+        const cell = $(`shipStatus_${i}`);
+        if (cell) { cell.textContent = liveStatus; cell.style.color = color; }
+        // Cache status back to DB (fire-and-forget)
+        if (r.id) {
+          sb.from('shippo_transactions').update({ tracking_status: liveStatus }).eq('id', r.id).then(() => {});
+        }
+        r.tracking_status = liveStatus;
+        updated++;
+      }
+    } catch(e) { console.log(`Tracking fetch failed for ${r.tracking_number}:`, e.message); }
+  }
+  if (btn) { btn.disabled = false; btn.textContent = `🔄 Refresh Tracking${updated > 0 ? ` (${updated} updated)` : ''}`; }
 }
 
 function toggleShipDetail(idx) {
