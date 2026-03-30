@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.6.0</title>
+<title>CCD Inventory System v2.6.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.6.0 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.6.2 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.6.0</div>
+      <div class="topbar-version">v2.6.2</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.6.0';
+const TOOL_VERSION = '2.6.2';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -5044,6 +5044,7 @@ function renderShippingTab() {
   if (fromDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) >= fromDate);
   if (toDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) <= toDate);
 
+  state.filteredShipRows = rows; // store for drill-down
   $('shipResultCount').textContent = `${rows.length} shipments`;
 
   if (rows.length === 0) {
@@ -5066,30 +5067,168 @@ function renderShippingTab() {
   </div>`;
 
   html += `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
-    <colgroup><col style="width:95px"><col style="width:110px"><col style="width:75px"><col style="width:80px"><col style="width:85px"><col style="width:auto"><col style="width:170px"><col style="width:75px"></colgroup>
-    <thead><tr><th>Date</th><th>SKU</th><th>Carrier</th><th>Service</th><th>Status</th><th>Recipient</th><th>Tracking</th><th>Cost</th></tr></thead>
+    <colgroup><col style="width:90px"><col style="width:100px"><col style="width:60px"><col style="width:130px"><col style="width:90px"><col style="width:180px"><col style="width:auto"><col style="width:70px"></colgroup>
+    <thead><tr><th>Date</th><th>SKU</th><th>Carrier</th><th>Service</th><th>Status</th><th>Recipient</th><th>Tracking</th><th style="text-align:right;">Cost</th></tr></thead>
     <tbody>${rows.map((r, idx) => {
       const date = (r.shippo_created_at || '').substring(0,10);
       const cost = pf(r.label_cost);
       const ts = r.tracking_status || r.label_status || r.status || '—';
       const tsColor = ts === 'DELIVERED' ? 'var(--green)' : ts === 'TRANSIT' || ts === 'IN_TRANSIT' ? 'var(--yellow)' : ts === 'PRE_TRANSIT' ? 'var(--muted)' : ts === 'SUCCESS' ? 'var(--blue)' : 'var(--muted)';
       const sku = escHtml(r.sku || '—');
-      const skuLink = r.sku ? `<a href="#" onclick="switchTopTab('inventory');setTimeout(()=>{$('searchInput').value='${escAttr(r.sku)}';onSearchDebounced();},100);return false;" style="color:var(--gold);">${sku}</a>` : sku;
-      const recipient = escHtml([r.recipient_name, r.recipient_city, r.recipient_state].filter(Boolean).join(', ') || '—');
-      const trackLink = r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);font-size:11px;">${escHtml(r.tracking_number)}</a>` : '—';
-      return `<tr>
+      const skuLink = r.sku ? `<a href="#" onclick="openItemFromShipping('${escAttr(r.sku)}');return false;" style="color:var(--gold);">${sku}</a>` : `<span style="color:var(--muted2);">${sku}</span>`;
+      const recipientName = escHtml(r.recipient_name || '—');
+      const recipientLoc = [r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ');
+      const trackNum = r.tracking_number ? escHtml(r.tracking_number) : '—';
+      return `<tr style="cursor:pointer;" onclick="toggleGlobalShipDetail(${idx})" title="Click for details">
         <td class="mono" style="font-size:12px;">${date}</td>
-        <td style="font-size:12px;">${skuLink}</td>
+        <td style="font-size:12px;" onclick="event.stopPropagation();">${skuLink}</td>
         <td style="font-size:12px;">${escHtml(r.carrier || '—')}</td>
         <td style="font-size:11px;">${escHtml(r.service_name || '—')}</td>
         <td id="gShipStatus_${idx}" style="font-size:11px;font-weight:600;color:${tsColor};">${escHtml(ts)}</td>
-        <td style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(recipient)}">${recipient}</td>
-        <td style="overflow:hidden;text-overflow:ellipsis;">${trackLink}</td>
+        <td style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(recipientName + ', ' + recipientLoc)}">${recipientName}</td>
+        <td style="overflow:hidden;text-overflow:ellipsis;font-size:11px;" onclick="event.stopPropagation();">${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);">${trackNum}</a>` : '—'}</td>
         <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
+      </tr>
+      <tr id="gShipDetail_${idx}" style="display:none;">
+        <td colspan="8" style="padding:0;">
+          <div style="padding:14px 18px;background:var(--bg3);border-left:3px solid var(--gold);">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 24px;font-size:12px;">
+              <div><span style="color:var(--muted2);">Recipient:</span> <strong>${recipientName}</strong></div>
+              <div><span style="color:var(--muted2);">Location:</span> ${escHtml(recipientLoc || '—')}</div>
+              <div><span style="color:var(--muted2);">Cost:</span> <strong style="color:var(--gold);">$${cost.toFixed(2)}</strong></div>
+              <div><span style="color:var(--muted2);">Weight:</span> ${r.parcel_weight ? pf(r.parcel_weight) + ' lb' : '—'}</div>
+              <div><span style="color:var(--muted2);">Dimensions:</span> ${r.parcel_length ? pf(r.parcel_length) + '×' + pf(r.parcel_width) + '×' + pf(r.parcel_height) + '"' : '—'}</div>
+              <div><span style="color:var(--muted2);">Order:</span> ${escHtml(r.order_id || r.order_number_raw || '—')}</div>
+              <div><span style="color:var(--muted2);">Metadata:</span> ${escHtml(r.raw_metadata || r.item_description || '—')}</div>
+              <div><span style="color:var(--muted2);">Transaction ID:</span> <span class="mono" style="font-size:10px;">${escHtml(r.transaction_id || '—')}</span></div>
+              <div><span style="color:var(--muted2);">Synced:</span> ${(r.synced_at || '').substring(0,10)}</div>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
+              ${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);color:var(--blue);">🔗 Track Package</a>` : ''}
+              <button class="btn-card" onclick="event.stopPropagation();openItemFromShipping('${escAttr(r.sku || '')}')" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>📦 Open Item</button>
+              <button class="btn-card" onclick="event.stopPropagation();openItemShippingTab('${escAttr(r.sku || '')}')" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>🏷 Buy Another Label</button>
+              <button class="btn-card" onclick="event.stopPropagation();openSlipFromShipping(${idx})" style="padding:6px 16px;font-size:12px;">🧾 Packing Slip</button>
+            </div>
+          </div>
+        </td>
       </tr>`;
     }).join('')}</tbody></table></div>`;
 
   container.innerHTML = html;
+}
+
+function toggleGlobalShipDetail(idx) {
+  const el = $(`gShipDetail_${idx}`);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+function openItemFromShipping(sku) {
+  // Search for item and open it
+  switchTopTab('inventory');
+  setTimeout(() => {
+    $('searchInput').value = sku;
+    onSearchDebounced();
+  }, 100);
+}
+
+async function openItemShippingTab(sku) {
+  if (!sku) return;
+  switchTopTab('inventory');
+  setTimeout(async () => {
+    $('searchInput').value = sku;
+    await loadInventory();
+    const match = state.items.find(i => i.sku === sku);
+    if (match) {
+      openItem(match.id);
+      setTimeout(() => switchSub('shipping'), 300);
+    }
+  }, 100);
+}
+
+async function openSlipFromShipping(idx) {
+  const r = state.filteredShipRows && state.filteredShipRows[idx];
+  if (!r) return;
+
+  // Build address from Shippo data
+  const addrParts = [r.recipient_name || ''];
+  const loc = [r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ');
+  if (loc) addrParts.push(loc);
+  const shipToText = addrParts.filter(Boolean).join('\n');
+
+  // Try to find associated sale items by order_id
+  const orderId = r.order_id || null;
+  let orderItems = [];
+  let saleRecord = null;
+
+  if (orderId && sb) {
+    try {
+      const { data } = await sb.from('sales_history')
+        .select('product_name, sku, qty_sold, sale_price, total_revenue, sale_date, sale_channel, order_id, ship_to_name, ship_to_address, is_gift, gift_message')
+        .eq('order_id', orderId)
+        .order('id');
+      if (data && data.length > 0) {
+        saleRecord = data[0];
+        orderItems = data.map(row => ({
+          product_name: row.product_name || row.sku || 'Item',
+          qty_sold: row.qty_sold || 1,
+          sale_price: pf(row.sale_price),
+          total_revenue: pf(row.total_revenue)
+        }));
+      }
+    } catch(e) { console.log('Sale lookup for slip:', e.message); }
+  }
+
+  // If no sale found, try by SKU for a recent sale
+  if (orderItems.length === 0 && r.sku) {
+    try {
+      const { data } = await sb.from('sales_history')
+        .select('product_name, sku, qty_sold, sale_price, total_revenue, sale_date, sale_channel, order_id, ship_to_name, ship_to_address, is_gift, gift_message')
+        .eq('sku', r.sku)
+        .order('sale_date', { ascending: false })
+        .limit(1);
+      if (data && data.length > 0) {
+        saleRecord = data[0];
+        orderItems = [{ product_name: data[0].product_name || r.sku || 'Item', qty_sold: data[0].qty_sold || 1, sale_price: pf(data[0].sale_price), total_revenue: pf(data[0].total_revenue) }];
+      }
+    } catch(e) { /* skip */ }
+  }
+
+  // Fallback: use metadata / SKU for a basic slip
+  if (orderItems.length === 0) {
+    orderItems = [{ product_name: r.sku || r.item_description || 'Item', qty_sold: 1, sale_price: 0, total_revenue: 0 }];
+  }
+
+  // Build fake sale for the modal
+  const sale = saleRecord || {
+    order_id: orderId || `Ship-${(r.shippo_created_at || '').substring(0,10)}`,
+    sale_date: r.shippo_created_at || new Date().toISOString(),
+    sale_channel: r.order_id ? (r.order_id.startsWith('ETSY') ? 'etsy' : r.order_id.startsWith('WF') ? 'wayfair' : 'direct') : 'direct',
+    ship_to_name: r.recipient_name || '',
+    ship_to_address: loc || '',
+    is_gift: false,
+    gift_message: ''
+  };
+
+  slipSaleData = { sale, item: null, orderItems };
+
+  const itemCount = orderItems.length;
+  const totalQty = orderItems.reduce((s, i) => s + (i.qty_sold || 1), 0);
+  $('slipInfo').innerHTML = `<strong>${escHtml(sale.order_id || 'Shipment')}</strong> — ${itemCount} item${itemCount !== 1 ? 's' : ''}, ${totalQty} unit${totalQty !== 1 ? 's' : ''}`;
+
+  // Use sale's ship-to if available, otherwise Shippo's recipient
+  const saleShipTo = (sale.ship_to_name && sale.ship_to_address) ? `${sale.ship_to_name}\n${sale.ship_to_address}` : '';
+  $('slipShipTo').value = saleShipTo || shipToText;
+
+  // Gift handling
+  if (sale.is_gift && sale.gift_message) {
+    $('slipType').value = 'gift';
+    $('slipGiftField').style.display = '';
+    $('slipGiftMsg').value = sale.gift_message;
+  } else {
+    $('slipType').value = 'standard';
+    $('slipGiftField').style.display = 'none';
+  }
+  $('slipModal').classList.add('active');
 }
 
 async function syncShippoGlobal() {
