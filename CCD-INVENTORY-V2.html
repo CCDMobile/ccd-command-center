@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.5.2</title>
+<title>CCD Inventory System v2.5.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.5.2 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.5.4 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.5.2</div>
+      <div class="topbar-version">v2.5.4</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -2263,48 +2263,67 @@ function renderPricing(item) {
   const ibDollar = wholesale * ibPct / 100;
   const tariffDollar = wholesale * tariffPct / 100;
 
-  // Channel-specific — Wayfair and TM have NO outbound shipping
+  // Channel-specific cost basis and fees baked into retail
   const chHasOB = (activeCh.key === 'etsy' || activeCh.key === 'wix');
   const effectiveOB = chHasOB ? ob : 0;
-  const fixedCosts = ibDollar + tariffDollar + effectiveOB;
-  const landed = wholesale + fixedCosts;
+  const costBasis = wholesale + ibDollar + tariffDollar + effectiveOB;
+  const landed = costBasis;
   const retailPrice = pf(item[activeCh.priceCol]);
-  // Markup is on wholesale only — fixed costs are pass-through
-  const markup = wholesale > 0 ? ((retailPrice - fixedCosts) / wholesale - 1) * 100 : 0;
+  const markedUpWS = retailPrice; // will reverse-calc below
 
-  // Fee calculations — match calculate_sale_profit() RPC exactly
-  let transaction = 0, cc = 0, ohFee = 0, surcharge = 0, listing = 0;
-  let wayfairFee = 0, commission = 0;
-  let feeLabel1 = '', feeLabel2 = '', feeVal1 = 0, feeVal2 = 0;
+  // Channel-specific built-in fees (baked into retail price) and sale fees
+  let builtInOH = 0, builtInSurcharge = 0, builtInRecovery = 0, builtInCommission = 0;
+  let transaction = 0, cc = 0, listing = 0;
+  let wayfairFee = 0, saleFees = 0;
+  let feeRows = []; // for display
 
   if (activeCh.key === 'etsy') {
-    transaction = retailPrice * 0.065;      // 6.5% Etsy transaction
-    cc = retailPrice * 0.03 + 0.25;        // 3% + $0.25 per txn
-    ohFee = retailPrice * 0.10;             // 10% OH (tracking only)
-    surcharge = retailPrice * 0.07;          // 7% surcharge (tracking only)
+    builtInOH = costBasis * 0.10;                 // 10% OH on cost basis
+    builtInSurcharge = effectiveOB * 0.07;         // 7% of OB
+    transaction = retailPrice * 0.065;             // 6.5% Etsy transaction
+    cc = retailPrice * 0.03 + 0.25;               // 3% + $0.25
     listing = 0.20;
-    feeLabel1 = 'Transaction Fee (6.5%)'; feeVal1 = transaction;
-    feeLabel2 = 'CC Processing (3%+$0.25)'; feeVal2 = cc;
+    saleFees = transaction + cc + listing;
+    feeRows = [
+      { label: 'Transaction Fee (6.5%)', val: transaction },
+      { label: 'CC Processing (3%+$0.25)', val: cc },
+      { label: 'Listing Fee', val: listing }
+    ];
   } else if (activeCh.key === 'wix') {
-    transaction = retailPrice * 0.026;      // 2.6% Wix transaction
-    cc = retailPrice * 0.029 + 0.30;       // 2.9% + $0.30 Stripe
-    ohFee = retailPrice * 0.10;
-    surcharge = retailPrice * 0.07;
-    feeLabel1 = 'Transaction Fee (2.6%)'; feeVal1 = transaction;
-    feeLabel2 = 'CC / Stripe (2.9%+$0.30)'; feeVal2 = cc;
+    builtInOH = costBasis * 0.10;
+    builtInSurcharge = effectiveOB * 0.07;
+    transaction = retailPrice * 0.026;             // 2.6% Wix
+    cc = retailPrice * 0.029 + 0.30;              // 2.9% + $0.30 Stripe
+    saleFees = transaction + cc;
+    feeRows = [
+      { label: 'Transaction Fee (2.6%)', val: transaction },
+      { label: 'CC / Stripe (2.9%+$0.30)', val: cc }
+    ];
   } else if (activeCh.key === 'wayfair') {
-    wayfairFee = retailPrice * 0.20;        // ~20% Wayfair commission
-    feeLabel1 = 'Wayfair Commission (20%)'; feeVal1 = wayfairFee;
-    feeLabel2 = ''; feeVal2 = 0;
+    // Reverse-calc marked-up wholesale from retail: retail = MU + IB + tariff + recovery + OH
+    // recovery = MU * 0.04, OH = costBasis * 0.10 where costBasis = W + IB + tariff (no OB)
+    builtInOH = (wholesale + ibDollar + tariffDollar) * 0.10;  // 10% OH on cost basis
+    builtInRecovery = (retailPrice - ibDollar - tariffDollar - builtInOH) * 0.04 / 1.04 || 0; // back-solve
+    wayfairFee = retailPrice * 0.02;               // 2% Wayfair platform fee
+    saleFees = wayfairFee;
+    feeRows = [
+      { label: 'Wayfair Platform (2%)', val: wayfairFee }
+    ];
   } else if (activeCh.key === 'tm') {
-    commission = retailPrice * 0.10;         // 10% TM commission
-    feeLabel1 = 'TM Commission (10%)'; feeVal1 = commission;
-    feeLabel2 = ''; feeVal2 = 0;
+    // Reverse-calc: retail = MU + IB + tariff + OH(10% of MU) + commission(10% of MU)
+    // So retail = MU*1.2 + IB + tariff → MU = (retail - IB - tariff) / 1.2
+    const muEstimate = (retailPrice - ibDollar - tariffDollar) / 1.2;
+    builtInOH = muEstimate * 0.10;
+    builtInCommission = muEstimate * 0.10;
+    saleFees = 0; // commission is built in, no additional sale fees
+    feeRows = [];
   }
 
-  // Total channel fees (OH and surcharge are tracking only — NOT deducted from profit per RPC)
-  const totalChannelFees = transaction + cc + wayfairFee + commission + listing;
-  const netProfit = retailPrice - landed - totalChannelFees;
+  const totalBuiltIn = builtInOH + builtInSurcharge + builtInRecovery + builtInCommission;
+  // Markup reverse: (retail - fixedCosts - builtInFees) / wholesale - 1
+  const fixedCosts = ibDollar + tariffDollar + effectiveOB;
+  const markup = wholesale > 0 ? ((retailPrice - fixedCosts - totalBuiltIn) / wholesale - 1) * 100 : 0;
+  const netProfit = retailPrice - landed - saleFees;
   const margin = retailPrice > 0 ? (netProfit / retailPrice * 100) : 0;
 
   const tabsHtml = channels.map(c => {
@@ -2342,16 +2361,28 @@ function renderPricing(item) {
       <input class="form-input" id="f_${activeCh.key}_price" value="${retailPrice.toFixed(2)}" style="width:100px;" onchange="onPriceAdjust('${activeCh.key}', this.value)">
       <span class="hint">Direct price — tab out to apply</span>
     </div>
-    <div class="section-title" style="font-size:11px;letter-spacing:1px;">FEE BREAKDOWN (matches RPC)</div>
+    <div class="section-title" style="font-size:11px;letter-spacing:1px;">PRICE BREAKDOWN</div>
     <div class="fee-grid">
-      <div class="fee-item"><div class="fee-label">${feeLabel1}</div><div class="fee-val">-$${feeVal1.toFixed(2)}</div></div>
-      ${feeLabel2 ? `<div class="fee-item"><div class="fee-label">${feeLabel2}</div><div class="fee-val">-$${feeVal2.toFixed(2)}</div></div>` : ''}
-      ${listing > 0 ? `<div class="fee-item"><div class="fee-label">Listing Fee</div><div class="fee-val">-$${listing.toFixed(2)}</div></div>` : ''}
-      <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val" style="color:var(--text);">$${landed.toFixed(2)}</div></div>
-      ${chHasOB ? `<div class="fee-item"><div class="fee-label">OB Shipping (in landed)</div><div class="fee-val">$${effectiveOB.toFixed(2)}</div></div>` : ''}
-      <div class="fee-item"><div class="fee-label">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
+      <div class="fee-item"><div class="fee-label">Wholesale × Markup</div><div class="fee-val" style="color:var(--text);">$${(retailPrice - fixedCosts - totalBuiltIn).toFixed(2)}</div></div>
+      <div class="fee-item"><div class="fee-label">IB + Tariff</div><div class="fee-val" style="color:var(--text);">$${(ibDollar + tariffDollar).toFixed(2)}</div></div>
+      ${chHasOB ? `<div class="fee-item"><div class="fee-label">OB Shipping</div><div class="fee-val" style="color:var(--text);">$${effectiveOB.toFixed(2)}</div></div>` : ''}
+      ${builtInOH > 0 ? `<div class="fee-item"><div class="fee-label">Overhead (10%)</div><div class="fee-val" style="color:var(--text);">$${builtInOH.toFixed(2)}</div></div>` : ''}
+      ${builtInSurcharge > 0 ? `<div class="fee-item"><div class="fee-label">Surcharge (7% OB)</div><div class="fee-val" style="color:var(--text);">$${builtInSurcharge.toFixed(2)}</div></div>` : ''}
+      ${builtInRecovery > 0 ? `<div class="fee-item"><div class="fee-label">Recovery Fee (4%)</div><div class="fee-val" style="color:var(--text);">$${builtInRecovery.toFixed(2)}</div></div>` : ''}
+      ${builtInCommission > 0 ? `<div class="fee-item"><div class="fee-label">TM Commission (10%)</div><div class="fee-val" style="color:var(--text);">$${builtInCommission.toFixed(2)}</div></div>` : ''}
+      <div class="fee-item"><div class="fee-label" style="font-weight:700;">= Retail Price</div><div class="fee-val" style="color:var(--gold);font-weight:700;">$${retailPrice.toFixed(2)}</div></div>
     </div>
-    ${(ohFee > 0 || surcharge > 0) ? `<div style="margin-top:8px;font-size:11px;color:var(--muted2);">Internal tracking: OH $${ohFee.toFixed(2)} · Surcharge $${surcharge.toFixed(2)} (not deducted from profit)</div>` : ''}
+    ${feeRows.length > 0 ? `
+    <div class="section-title" style="font-size:11px;letter-spacing:1px;margin-top:14px;">FEES DEDUCTED ON SALE</div>
+    <div class="fee-grid">
+      ${feeRows.map(f => `<div class="fee-item"><div class="fee-label">${f.label}</div><div class="fee-val">-$${f.val.toFixed(2)}</div></div>`).join('')}
+      <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val">-$${landed.toFixed(2)}</div></div>
+      <div class="fee-item"><div class="fee-label" style="font-weight:700;">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
+    </div>` : `
+    <div class="fee-grid" style="margin-top:14px;">
+      <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val">-$${landed.toFixed(2)}</div></div>
+      <div class="fee-item"><div class="fee-label" style="font-weight:700;">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
+    </div>`}
   </div>`;
 }
 
@@ -2361,16 +2392,37 @@ function switchPricingChannel(ch) {
   renderPricing(state.currentItem);
 }
 
+// Shared retail price builder — all channel fees baked in, one source of truth
+function calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct) {
+  const markedUp = wholesale * (1 + pct / 100);
+  let price = markedUp + ibDollar + tariffDollar;
+
+  if (chKey === 'etsy' || chKey === 'wix') {
+    price += ob;
+    const ohFee = (wholesale + ibDollar + tariffDollar + ob) * 0.10;  // 10% OH on cost basis
+    const surcharge = ob * 0.07;  // 7% of OB
+    price += ohFee + surcharge;
+  } else if (chKey === 'wayfair') {
+    // No OB — Wayfair provides label
+    const recoveryFee = markedUp * 0.04;  // 4% recovery on marked-up wholesale
+    const ohFee = (wholesale + ibDollar + tariffDollar) * 0.10;  // 10% OH on cost basis
+    price += recoveryFee + ohFee;
+  } else if (chKey === 'tm') {
+    // No OB — brick and mortar
+    const ohFee = markedUp * 0.10;  // 10% OH on marked-up wholesale
+    const commission = markedUp * 0.10;  // 10% commission on marked-up wholesale
+    price += ohFee + commission;
+  }
+  return Math.round(price * 100) / 100;
+}
+
 function applyMarkup(chKey, pct) {
   const item = state.currentItem;
   const wholesale = pf(item.wholesale_price);
-  const ibPct = pf(item.ib_shipping);
-  const tariffPct = pf(item.tariff);
-  const ibDollar = wholesale * ibPct / 100;
-  const tariffDollar = wholesale * tariffPct / 100;
-  const ob = (chKey === 'etsy' || chKey === 'wix') ? pf(item.ob_shipping) : 0;
-  // Markup on wholesale only — fixed costs are pass-through
-  const newPrice = Math.round((wholesale * (1 + pct/100) + ibDollar + tariffDollar + ob) * 100) / 100;
+  const ibDollar = wholesale * pf(item.ib_shipping) / 100;
+  const tariffDollar = wholesale * pf(item.tariff) / 100;
+  const ob = pf(item.ob_shipping);
+  const newPrice = calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct);
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
   syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
@@ -2388,17 +2440,13 @@ function onMarkupSlide(chKey, pctVal) {
   if (label) label.textContent = pct + '%';
   const item = state.currentItem;
   const wholesale = pf(item.wholesale_price);
-  const ibPct = pf(item.ib_shipping);
-  const tariffPct = pf(item.tariff);
-  const ibDollar = wholesale * ibPct / 100;
-  const tariffDollar = wholesale * tariffPct / 100;
-  const ob = (chKey === 'etsy' || chKey === 'wix') ? pf(item.ob_shipping) : 0;
-  // Markup on wholesale only — fixed costs are pass-through
-  const newPrice = Math.round((wholesale * (1 + pct/100) + ibDollar + tariffDollar + ob) * 100) / 100;
+  const ibDollar = wholesale * pf(item.ib_shipping) / 100;
+  const tariffDollar = wholesale * pf(item.tariff) / 100;
+  const ob = pf(item.ob_shipping);
+  const newPrice = calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct);
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
   syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
-  // Debounce full re-render — update KPIs inline for snappy slider feel
   clearTimeout(state._sliderTimer);
   state._sliderTimer = setTimeout(() => renderPricing(item), 150);
 }
@@ -3484,7 +3532,12 @@ async function renderActivityTab(item) {
 // ═══════════════════════════════════════════════════════════
 async function saveItem() {
   const item = state.currentItem;
-  if (!item || state.saving) return;
+  if (!item) return;
+  // Safety reset — if saving got stuck from a prior error, allow retry
+  if (state.saving) {
+    console.warn('[Save] state.saving was stuck — resetting');
+    state.saving = false;
+  }
   state.saving = true;
   captureEdits(); // Ensure latest DOM edits are in state
   const statusEl = $('cardStatus');
@@ -3580,16 +3633,22 @@ async function saveItem() {
     state.cardDirty = true;
 
     statusEl.className = 'inline-status show ok';
-    statusEl.textContent = `Saved ${item.sku} successfully`;
+    statusEl.textContent = `✅ Saved ${item.sku} successfully`;
+    statusEl.style.display = 'block';
     logActivity('INVENTORY','ITEM_SAVED',null,`Saved ${item.sku}`,{},item.sku);
     clearUnsavedMark();
 
     state.saving = false;
-    setTimeout(() => { statusEl.style.display = 'none'; }, 3000);
+    // Scroll status into view so it's always visible
+    statusEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
   } catch(e) {
     state.saving = false;
     statusEl.className = 'inline-status show error';
-    statusEl.textContent = `Save failed: ${e.message}`;
+    statusEl.textContent = `❌ Save failed: ${e.message}`;
+    statusEl.style.display = 'block';
+    statusEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    console.error('[Save Error]', e);
   }
 }
 
