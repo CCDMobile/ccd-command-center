@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.5.8</title>
+<title>CCD Inventory System v2.5.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.5.8 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.5.9 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.5.8</div>
+      <div class="topbar-version">v2.5.9</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -619,6 +619,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     <button class="tab-btn active" data-tab="inventory" onclick="switchTopTab('inventory')">📦 Inventory</button>
     <button class="tab-btn" data-tab="channels" onclick="switchTopTab('channels')">🏪 Channels</button>
     <button class="tab-btn" data-tab="bulk" onclick="switchTopTab('bulk')">⚡ Bulk Ops</button>
+    <button class="tab-btn" data-tab="shipping" onclick="switchTopTab('shipping')">🚚 Shipping</button>
     <button class="tab-btn" data-tab="analytics" onclick="switchTopTab('analytics')">📊 Analytics</button>
     <button class="tab-btn" data-tab="settings" onclick="switchTopTab('settings')">⚙️ Settings</button>
   </div>
@@ -1059,6 +1060,36 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
       </div>
     </div><!-- end settingsView -->
 
+    <div class="top-view" id="shippingView">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="color:var(--gold);margin:0;font-size:18px;">🚚 Shipping History</h2>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn-card" onclick="syncShippoGlobal()" id="btnSyncShippoGlobal" style="padding:6px 14px;font-size:12px;">📦 Sync from Shippo</button>
+          <button class="btn-card" onclick="refreshAllTracking()" id="btnRefreshAllTracking" style="padding:6px 14px;font-size:12px;">🔄 Refresh Tracking</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <select class="filter-select" id="shipFilterCarrier" onchange="renderShippingTab()">
+          <option value="all">All Carriers</option>
+          <option value="UPS">UPS</option>
+          <option value="USPS">USPS</option>
+          <option value="FedEx">FedEx</option>
+        </select>
+        <select class="filter-select" id="shipFilterStatus" onchange="renderShippingTab()">
+          <option value="all">All Statuses</option>
+          <option value="DELIVERED">Delivered</option>
+          <option value="TRANSIT">In Transit</option>
+          <option value="PRE_TRANSIT">Pre-Transit</option>
+          <option value="SUCCESS">Label Created</option>
+        </select>
+        <input type="date" class="date-input" id="shipFilterFrom" onchange="renderShippingTab()" style="width:140px;">
+        <span style="color:var(--muted);">to</span>
+        <input type="date" class="date-input" id="shipFilterTo" onchange="renderShippingTab()" style="width:140px;">
+        <span id="shipResultCount" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
+      </div>
+      <div id="shippingTabContent" style="color:var(--muted);text-align:center;padding:40px;">Loading shipping data...</div>
+    </div><!-- end shippingView -->
+
   </div>
 </div>
 
@@ -1225,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.5.8';
+const TOOL_VERSION = '2.5.9';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1850,7 +1881,7 @@ function closeCard() {
   $('cardView').classList.remove('visible');
   // Return to whichever top-level tab was active
   const activeView = state.activeTopTab || 'inventory';
-  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', analytics:'analyticsView', settings:'settingsView' };
+  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', analytics:'analyticsView', settings:'settingsView' };
   const viewId = viewMap[activeView];
   if (viewId) $(viewId).classList.add('active');
   state.currentItem = null;
@@ -2295,23 +2326,21 @@ function renderPricing(item) {
     builtInOH = costBasis * 0.10;                 // 10% OH on cost basis
     builtInSurcharge = effectiveOB * 0.07;         // 7% of OB
     transaction = retailPrice * 0.065;             // 6.5% Etsy transaction
-    cc = retailPrice * 0.03 + 0.25;               // 3% + $0.25
+    cc = retailPrice * 0.03 + 0.30;               // 3% + $0.30
     listing = 0.20;
     saleFees = transaction + cc + listing;
     feeRows = [
       { label: 'Transaction Fee (6.5%)', val: transaction },
-      { label: 'CC Processing (3%+$0.25)', val: cc },
+      { label: 'CC Processing (3%+$0.30)', val: cc },
       { label: 'Listing Fee', val: listing }
     ];
   } else if (activeCh.key === 'wix') {
     builtInOH = costBasis * 0.10;
     builtInSurcharge = effectiveOB * 0.07;
-    transaction = retailPrice * 0.026;             // 2.6% Wix
-    cc = retailPrice * 0.029 + 0.30;              // 2.9% + $0.30 Stripe
-    saleFees = transaction + cc;
+    cc = retailPrice * 0.03 + 0.30;               // 3% + $0.30
+    saleFees = cc;
     feeRows = [
-      { label: 'Transaction Fee (2.6%)', val: transaction },
-      { label: 'CC / Stripe (2.9%+$0.30)', val: cc }
+      { label: 'CC Processing (3%+$0.30)', val: cc }
     ];
   } else if (activeCh.key === 'wayfair') {
     // Reverse-calc marked-up wholesale from retail: retail = MU + IB + tariff + recovery + OH
@@ -4966,6 +4995,181 @@ document.addEventListener('keydown', e => {
 
 
 // ═══════════════════════════════════════════════════════════
+// SHIPPING TAB (top-level — all items)
+// ═══════════════════════════════════════════════════════════
+let shipTabData = [];
+
+async function loadShippingTab() {
+  const container = $('shippingTabContent');
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">Loading shipping data...</div>';
+  try {
+    const { data, error } = await sb.from('shippo_transactions').select('*').order('shippo_created_at', { ascending: false }).limit(500);
+    if (error) throw error;
+    shipTabData = data || [];
+    // Set default date filter to last 30 days
+    if (!$('shipFilterFrom').value) {
+      const d30 = new Date(); d30.setDate(d30.getDate() - 30);
+      $('shipFilterFrom').value = d30.toISOString().split('T')[0];
+      $('shipFilterTo').value = new Date().toISOString().split('T')[0];
+    }
+    renderShippingTab();
+  } catch(e) {
+    container.innerHTML = `<div style="color:var(--red);text-align:center;padding:40px;">Error loading shipping data: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderShippingTab() {
+  const container = $('shippingTabContent');
+  const carrier = $('shipFilterCarrier').value;
+  const status = $('shipFilterStatus').value;
+  const fromDate = $('shipFilterFrom').value;
+  const toDate = $('shipFilterTo').value;
+
+  let rows = shipTabData;
+  if (carrier !== 'all') rows = rows.filter(r => (r.carrier || '').toUpperCase().includes(carrier.toUpperCase()));
+  if (status !== 'all') {
+    rows = rows.filter(r => {
+      const s = r.tracking_status || r.label_status || r.status || '';
+      return s === status;
+    });
+  }
+  if (fromDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) >= fromDate);
+  if (toDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) <= toDate);
+
+  $('shipResultCount').textContent = `${rows.length} shipments`;
+
+  if (rows.length === 0) {
+    container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">No shipments match filters.</div>';
+    return;
+  }
+
+  // Summary stats
+  const costs = rows.filter(r => pf(r.label_cost) > 0).map(r => pf(r.label_cost));
+  const totalCost = costs.reduce((a,b) => a+b, 0);
+  const avgCost = costs.length > 0 ? totalCost / costs.length : 0;
+  const delivered = rows.filter(r => (r.tracking_status || '') === 'DELIVERED').length;
+  const inTransit = rows.filter(r => ['TRANSIT','IN_TRANSIT'].includes(r.tracking_status || '')).length;
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+    <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Total Shipments</div><div style="font-size:22px;font-weight:700;color:var(--text);">${rows.length}</div></div>
+    <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Total Cost</div><div style="font-size:22px;font-weight:700;color:var(--gold);">$${totalCost.toFixed(2)}</div></div>
+    <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Avg Cost</div><div style="font-size:22px;font-weight:700;color:var(--text);">$${avgCost.toFixed(2)}</div></div>
+    <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--green);text-transform:uppercase;">Delivered</div><div style="font-size:22px;font-weight:700;color:var(--green);">${delivered}</div><div style="font-size:11px;color:var(--yellow);">${inTransit} in transit</div></div>
+  </div>`;
+
+  html += `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
+    <colgroup><col style="width:95px"><col style="width:110px"><col style="width:75px"><col style="width:80px"><col style="width:85px"><col style="width:auto"><col style="width:170px"><col style="width:75px"></colgroup>
+    <thead><tr><th>Date</th><th>SKU</th><th>Carrier</th><th>Service</th><th>Status</th><th>Recipient</th><th>Tracking</th><th>Cost</th></tr></thead>
+    <tbody>${rows.map((r, idx) => {
+      const date = (r.shippo_created_at || '').substring(0,10);
+      const cost = pf(r.label_cost);
+      const ts = r.tracking_status || r.label_status || r.status || '—';
+      const tsColor = ts === 'DELIVERED' ? 'var(--green)' : ts === 'TRANSIT' || ts === 'IN_TRANSIT' ? 'var(--yellow)' : ts === 'PRE_TRANSIT' ? 'var(--muted)' : ts === 'SUCCESS' ? 'var(--blue)' : 'var(--muted)';
+      const sku = escHtml(r.sku || '—');
+      const skuLink = r.sku ? `<a href="#" onclick="switchTopTab('inventory');setTimeout(()=>{$('searchInput').value='${escAttr(r.sku)}';onSearchDebounced();},100);return false;" style="color:var(--gold);">${sku}</a>` : sku;
+      const recipient = escHtml([r.recipient_name, r.recipient_city, r.recipient_state].filter(Boolean).join(', ') || '—');
+      const trackLink = r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);font-size:11px;">${escHtml(r.tracking_number)}</a>` : '—';
+      return `<tr>
+        <td class="mono" style="font-size:12px;">${date}</td>
+        <td style="font-size:12px;">${skuLink}</td>
+        <td style="font-size:12px;">${escHtml(r.carrier || '—')}</td>
+        <td style="font-size:11px;">${escHtml(r.service_name || '—')}</td>
+        <td id="gShipStatus_${idx}" style="font-size:11px;font-weight:600;color:${tsColor};">${escHtml(ts)}</td>
+        <td style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(recipient)}">${recipient}</td>
+        <td style="overflow:hidden;text-overflow:ellipsis;">${trackLink}</td>
+        <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
+
+  container.innerHTML = html;
+}
+
+async function syncShippoGlobal() {
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { alert('Shippo proxy not configured. Go to Settings.'); return; }
+  const btn = $('btnSyncShippoGlobal');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing...'; }
+  try {
+    const result = await fetchOrJsonp(shippoUrl, { action: 'fetchAllForCache', key: apiKey, months: '2' });
+    if (!result.success && !result.transactions) throw new Error(result.error || 'No data');
+    const transactions = result.transactions || result.data || [];
+    let inserted = 0, skipped = 0;
+    for (const tx of transactions) {
+      const rawDigits = (tx.itemDescription || tx.metadata || '').match(/Order\s+(\d+)/i);
+      const row = {
+        transaction_id: tx.transactionId || tx.transaction_id || tx.id,
+        label_cost: parseFloat(tx.rate || tx.label_cost || tx.cost || 0),
+        carrier: tx.carrier || null,
+        service_name: tx.serviceName || tx.service_name || null,
+        tracking_number: tx.trackingNumber || tx.tracking_number || null,
+        shippo_created_at: tx.createdAt || tx.shipDate || tx.ship_date || null,
+        synced_at: new Date().toISOString(),
+        recipient_name: tx.recipientName || tx.recipient_name || null,
+        recipient_city: tx.recipientCity || tx.city || null,
+        recipient_state: tx.recipientState || tx.state || null,
+        recipient_zip: tx.recipientZip || tx.zip || null,
+        parcel_weight: tx.parcelWeight || tx.weight || tx.parcel_weight || null,
+        parcel_length: tx.parcelLength || tx.length || tx.parcel_length || null,
+        parcel_width: tx.parcelWidth || tx.width || tx.parcel_width || null,
+        parcel_height: tx.parcelHeight || tx.height || tx.parcel_height || null,
+        sku: tx.sku || null,
+        item_description: tx.itemDescription || null,
+        status: tx.status || null,
+        raw_metadata: tx.itemDescription || tx.metadata || null,
+        order_number_raw: rawDigits ? rawDigits[1] : null,
+        label_status: tx.status || null,
+        matched_to_sale: false
+      };
+      try {
+        const { error } = await sb.from('shippo_transactions').upsert(row, { onConflict: 'transaction_id', ignoreDuplicates: true });
+        if (error) { skipped++; } else { inserted++; }
+      } catch(e) { skipped++; }
+    }
+    if (btn) { btn.textContent = `✅ ${inserted} new, ${skipped} existing`; }
+    loadShippingTab();
+    setTimeout(() => { if (btn) btn.textContent = '📦 Sync from Shippo'; btn.disabled = false; }, 4000);
+  } catch(e) {
+    if (btn) { btn.textContent = '❌ Sync failed'; btn.disabled = false; }
+    alert('Shippo sync failed: ' + e.message);
+  }
+}
+
+async function refreshAllTracking() {
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) return;
+  const btn = $('btnRefreshAllTracking');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Refreshing...'; }
+  const carrierMap = { 'UPS': 'ups', 'USPS': 'usps', 'FEDEX': 'fedex', 'DHL': 'dhl_express' };
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  let updated = 0;
+  // Only refresh non-delivered with tracking numbers from last 30 days
+  const toRefresh = shipTabData.filter(r => {
+    const ts = r.tracking_status || r.label_status || '';
+    const created = new Date(r.shippo_created_at || 0).getTime();
+    return r.tracking_number && r.carrier && ts !== 'DELIVERED' && created > cutoff;
+  });
+  for (let i = 0; i < toRefresh.length; i++) {
+    const r = toRefresh[i];
+    try {
+      const carrierLower = carrierMap[(r.carrier || '').toUpperCase()] || (r.carrier || '').toLowerCase();
+      const result = await fetchOrJsonp(shippoUrl, { action: 'getTrackingStatus', key: apiKey, carrier: carrierLower, tracking: r.tracking_number });
+      if (result.success && result.tracking_status) {
+        const liveStatus = result.tracking_status.status || '—';
+        r.tracking_status = liveStatus;
+        if (r.id) sb.from('shippo_transactions').update({ tracking_status: liveStatus }).eq('id', r.id).then(() => {});
+        updated++;
+      }
+    } catch(e) { /* skip */ }
+  }
+  renderShippingTab();
+  if (btn) { btn.disabled = false; btn.textContent = `🔄 Refresh Tracking${updated > 0 ? ` (${updated} updated)` : ''}`; }
+  setTimeout(() => { if (btn) btn.textContent = '🔄 Refresh Tracking'; }, 5000);
+}
+
+
+// ═══════════════════════════════════════════════════════════
 // TOP-LEVEL TAB SWITCHING
 // ═══════════════════════════════════════════════════════════
 function switchTopTab(tab) {
@@ -4980,11 +5184,12 @@ function switchTopTab(tab) {
   if (btn) btn.classList.add('active');
   // Toggle views
   $qa('.top-view').forEach(v => v.classList.remove('active'));
-  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', analytics:'analyticsView', settings:'settingsView' };
+  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', analytics:'analyticsView', settings:'settingsView' };
   if (viewMap[tab]) $(viewMap[tab]).classList.add('active');
   // Load data for the tab
   if (tab === 'channels') { loadChannelCounts(); loadChannelView(state.activeChannel || 'etsy'); }
   if (tab === 'bulk') { loadBulkItems(); }
+  if (tab === 'shipping') { loadShippingTab(); }
   if (tab === 'analytics') { loadAnalytics(); }
   if (tab === 'settings') { loadSettings(); }
 }
