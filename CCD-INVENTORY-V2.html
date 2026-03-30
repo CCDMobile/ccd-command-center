@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.6.2</title>
+<title>CCD Inventory System v2.6.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.6.2 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.6.4 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.6.2</div>
+      <div class="topbar-version">v2.6.4</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.6.2';
+const TOOL_VERSION = '2.6.4';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2353,12 +2353,15 @@ function renderPricing(item) {
       { label: 'Wayfair Platform (2%)', val: wayfairFee }
     ];
   } else if (activeCh.key === 'tm') {
-    // Reverse-calc: retail = MU + IB + tariff + OH(10% of MU) + commission(10% of MU)
-    // So retail = MU*1.2 + IB + tariff → MU = (retail - IB - tariff) / 1.2
-    const muEstimate = (retailPrice - ibDollar - tariffDollar) / 1.2;
-    builtInOH = muEstimate * 0.10;
+    // TM: OH = 10% of landed cost, commission = 10% of marked-up wholesale
+    // landed = wholesale + IB + tariff (no OB for TM)
+    const tmLanded = wholesale + ibDollar + tariffDollar;
+    builtInOH = tmLanded * 0.10;
+    // Reverse-calc MU: retail = MU + IB + tariff + OH + commission(10% of MU)
+    // retail - IB - tariff - tmLanded*0.10 = MU * 1.10
+    const muEstimate = (retailPrice - ibDollar - tariffDollar - builtInOH) / 1.10;
     builtInCommission = muEstimate * 0.10;
-    saleFees = 0; // commission is built in, no additional sale fees
+    saleFees = 0;
     feeRows = [];
   }
 
@@ -2452,7 +2455,7 @@ function calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct)
     price += recoveryFee + ohFee;
   } else if (chKey === 'tm') {
     // No OB — brick and mortar
-    const ohFee = markedUp * 0.10;  // 10% OH on marked-up wholesale
+    const ohFee = (wholesale + ibDollar + tariffDollar) * 0.10;  // 10% OH on landed cost
     const commission = markedUp * 0.10;  // 10% commission on marked-up wholesale
     price += ohFee + commission;
   }
