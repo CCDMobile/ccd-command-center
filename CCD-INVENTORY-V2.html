@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.5.9</title>
+<title>CCD Inventory System v2.6.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.5.9 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.6.0 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.5.9</div>
+      <div class="topbar-version">v2.6.0</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.5.9';
+const TOOL_VERSION = '2.6.0';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -5013,6 +5013,14 @@ async function loadShippingTab() {
       $('shipFilterTo').value = new Date().toISOString().split('T')[0];
     }
     renderShippingTab();
+    // Auto-refresh tracking for non-delivered recent shipments
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const needsRefresh = shipTabData.some(r => {
+      const ts = r.tracking_status || r.label_status || '';
+      const created = new Date(r.shippo_created_at || 0).getTime();
+      return r.tracking_number && ts !== 'DELIVERED' && created > cutoff;
+    });
+    if (needsRefresh) refreshAllTracking();
   } catch(e) {
     container.innerHTML = `<div style="color:var(--red);text-align:center;padding:40px;">Error loading shipping data: ${escHtml(e.message)}</div>`;
   }
@@ -5094,9 +5102,38 @@ async function syncShippoGlobal() {
     const result = await fetchOrJsonp(shippoUrl, { action: 'fetchAllForCache', key: apiKey, months: '2' });
     if (!result.success && !result.transactions) throw new Error(result.error || 'No data');
     const transactions = result.transactions || result.data || [];
+
+    // Build SKU lookup from items for metadata matching
+    const { data: itemRows } = await sb.from('items').select('sku').limit(5000);
+    const knownSkus = new Set((itemRows || []).map(r => (r.sku || '').toUpperCase()).filter(Boolean));
+
+    function extractSkuFromMetadata(meta) {
+      if (!meta) return null;
+      const trimmed = meta.trim();
+      // Direct match: metadata IS the SKU (V2 labels)
+      if (knownSkus.has(trimmed.toUpperCase())) return trimmed;
+      // Try common patterns: "SKU: XXXX", "Item: XXXX", just the first word
+      const patterns = [
+        /SKU[:\s]+(\S+)/i,
+        /Item[:\s]+(\S+)/i,
+        /^(\S+)$/  // single-word metadata = likely a SKU
+      ];
+      for (const p of patterns) {
+        const m = trimmed.match(p);
+        if (m && m[1] && knownSkus.has(m[1].toUpperCase())) return m[1];
+      }
+      // Try each word in metadata against known SKUs
+      const words = trimmed.split(/[\s,;|]+/);
+      for (const w of words) {
+        if (w.length >= 3 && knownSkus.has(w.toUpperCase())) return w;
+      }
+      return null;
+    }
+
     let inserted = 0, skipped = 0;
     for (const tx of transactions) {
       const rawDigits = (tx.itemDescription || tx.metadata || '').match(/Order\s+(\d+)/i);
+      const parsedSku = tx.sku || extractSkuFromMetadata(tx.itemDescription || tx.metadata || '');
       const row = {
         transaction_id: tx.transactionId || tx.transaction_id || tx.id,
         label_cost: parseFloat(tx.rate || tx.label_cost || tx.cost || 0),
@@ -5113,7 +5150,7 @@ async function syncShippoGlobal() {
         parcel_length: tx.parcelLength || tx.length || tx.parcel_length || null,
         parcel_width: tx.parcelWidth || tx.width || tx.parcel_width || null,
         parcel_height: tx.parcelHeight || tx.height || tx.parcel_height || null,
-        sku: tx.sku || null,
+        sku: parsedSku || null,
         item_description: tx.itemDescription || null,
         status: tx.status || null,
         raw_metadata: tx.itemDescription || tx.metadata || null,
@@ -5127,6 +5164,21 @@ async function syncShippoGlobal() {
       } catch(e) { skipped++; }
     }
     if (btn) { btn.textContent = `✅ ${inserted} new, ${skipped} existing`; }
+
+    // Backfill: update existing rows that have null SKU but have metadata we can match
+    try {
+      const { data: nullSkuRows } = await sb.from('shippo_transactions').select('id,raw_metadata,item_description').is('sku', null).limit(500);
+      let backfilled = 0;
+      for (const row of (nullSkuRows || [])) {
+        const parsed = extractSkuFromMetadata(row.raw_metadata || row.item_description || '');
+        if (parsed) {
+          await sb.from('shippo_transactions').update({ sku: parsed }).eq('id', row.id);
+          backfilled++;
+        }
+      }
+      if (backfilled > 0) console.log(`[Shippo] Backfilled SKU on ${backfilled} existing rows`);
+    } catch(e) { console.warn('SKU backfill error:', e.message); }
+
     loadShippingTab();
     setTimeout(() => { if (btn) btn.textContent = '📦 Sync from Shippo'; btn.disabled = false; }, 4000);
   } catch(e) {
