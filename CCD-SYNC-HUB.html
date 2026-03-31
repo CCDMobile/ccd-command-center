@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.1</title>
+    <title>CCD Sync Hub v4.3.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.1 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.2 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -711,7 +711,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.1';
+    const SH_VERSION = 'v4.3.2';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1086,7 +1086,14 @@
             // v4.2.7: Tariff is a PERCENTAGE (aligned with V2 formula)
             // Formula: wholesale * (1 + ib%/100 + tariff%/100) + ob_shipping
             const totalCost = (wholesalePrice * (1 + ibShipping / 100 + tariff / 100) + effectiveObShipping) * qty;
-            const totalRevenue = salePrice * qty;
+            
+            // v4.3.2: Subtract discount from revenue (coupons, promotions)
+            // Discount is at the order level — pro-rate across line items
+            const orderDiscount = parseFloat(order?.discount) || 0;
+            const orderItemCount = (order?.items || []).length || 1;
+            const perItemDiscount = orderDiscount > 0 ? (orderDiscount / orderItemCount) : 0;
+            const totalRevenue = (salePrice * qty) - perItemDiscount;
+            
             let netProfit = totalRevenue - totalCost;
             let profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
 
@@ -1101,7 +1108,7 @@
                     p_ib_pct: ibShipping,
                     p_tariff: tariff,
                     p_ob_shipping: effectiveObShipping,
-                    p_sale_price: salePrice,
+                    p_sale_price: perItemDiscount > 0 ? (salePrice - perItemDiscount / qty) : salePrice,
                     p_qty: qty,
                     p_sale_date: new Date().toISOString().split('T')[0]
                 });
@@ -1140,7 +1147,7 @@
                 buyer_email: order?.buyer || null,
                 customer_shipping_paid: order?.shipping || null,
                 tax_collected: order?.tax || null,
-                discount_amount: order?.discount || null,
+                discount_amount: perItemDiscount > 0 ? perItemDiscount : (order?.discount || null),
                 // v4.2.6: Ship-to address + gift fields
                 ship_to_name: order?.shipToName || null,
                 ship_to_address: order?.shipToAddress || null,
@@ -1161,8 +1168,8 @@
                 total_fees:            feeBreakdown ? feeBreakdown.total_fees            : null,
                 accounting_category:   feeBreakdown ? feeBreakdown.accounting_category   : null
             });
-            console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
-        } catch (e) {
+            console.log(`[Sales] Recorded: ${item.sku} x${qty} on ${channel} = $${totalRevenue.toFixed(2)}${perItemDiscount > 0 ? ` (discount: -$${perItemDiscount.toFixed(2)})` : ''}${feeBreakdown ? ' (fees calculated)' : ' (simplified)'}`);
+            if (perItemDiscount > 0) addLog(`💰 Discount applied: ${item.sku} -$${perItemDiscount.toFixed(2)} (order discount: $${orderDiscount.toFixed(2)})`, 'info');        } catch (e) {
             console.warn('[Supabase] Sales record error:', e.message);
         }
     }
