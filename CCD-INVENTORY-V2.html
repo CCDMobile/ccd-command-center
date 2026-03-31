@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.6.5</title>
+<title>CCD Inventory System v2.6.6</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.6.5 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.6.6 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.6.5</div>
+      <div class="topbar-version">v2.6.6</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.6.5';
+const TOOL_VERSION = '2.6.6';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -5169,41 +5169,40 @@ function toggleGlobalShipDetail(idx) {
 }
 
 function openItemFromShipping(sku) {
-  // Search for item and open it
+  if (!sku) return;
   switchTopTab('inventory');
-  setTimeout(() => {
-    $('searchInput').value = sku;
-    onSearchDebounced();
-  }, 100);
+  state.filters.search = sku;
+  if ($('searchInput')) $('searchInput').value = sku;
+  state.page = 1;
+  loadInventory();
 }
 
 async function openItemShippingTab(sku, shipIdx) {
   if (!sku) return;
-  // Store shipment data for pre-fill
   const shipRow = (shipIdx !== undefined && state.filteredShipRows) ? state.filteredShipRows[shipIdx] : null;
   switchTopTab('inventory');
-  setTimeout(async () => {
-    $('searchInput').value = sku;
-    await loadInventory();
-    const match = state.items.find(i => i.sku === sku);
-    if (match) {
-      await onRowClick(match.id);
+  // Set search state AND DOM
+  state.filters.search = sku;
+  if ($('searchInput')) $('searchInput').value = sku;
+  await loadInventory();
+  const match = state.items.find(i => i.sku === sku);
+  if (match) {
+    await onRowClick(match.id);
+    switchSub('shipping');
+    // Pre-fill ship-to from previous shipment
+    if (shipRow) {
       setTimeout(() => {
-        switchSub('shipping');
-        // Pre-fill ship-to from previous shipment
-        if (shipRow) {
-          setTimeout(() => {
-            if ($('shipToName')) $('shipToName').value = shipRow.recipient_name || '';
-            if ($('shipToStreet')) $('shipToStreet').value = '';
-            if ($('shipToCity')) $('shipToCity').value = shipRow.recipient_city || '';
-            if ($('shipToState')) $('shipToState').value = shipRow.recipient_state || '';
-            if ($('shipToZip')) $('shipToZip').value = shipRow.recipient_zip || '';
-            showCardStatus('📋 Ship-to pre-filled from previous shipment. Review, then Get Quotes → Buy.', 'ok');
-          }, 200);
-        }
+        if ($('shipToName')) $('shipToName').value = shipRow.recipient_name || '';
+        if ($('shipToStreet')) $('shipToStreet').value = '';
+        if ($('shipToCity')) $('shipToCity').value = shipRow.recipient_city || '';
+        if ($('shipToState')) $('shipToState').value = shipRow.recipient_state || '';
+        if ($('shipToZip')) $('shipToZip').value = shipRow.recipient_zip || '';
+        showCardStatus('📋 Ship-to pre-filled from previous shipment. Review, then Get Quotes → Buy.', 'ok');
       }, 300);
     }
-  }, 100);
+  } else {
+    showCardStatus(`Could not find item ${sku}`, 'error');
+  }
 }
 
 async function openSlipFromShipping(idx) {
