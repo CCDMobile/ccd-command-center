@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.3</title>
+    <title>CCD Sync Hub v4.3.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.3 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.2 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -711,7 +711,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.3';
+    const SH_VERSION = 'v4.3.2';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1087,7 +1087,7 @@
             // Formula: wholesale * (1 + ib%/100 + tariff%/100) + ob_shipping
             const totalCost = (wholesalePrice * (1 + ibShipping / 100 + tariff / 100) + effectiveObShipping) * qty;
             
-            // v4.3.3: Subtract discount from revenue (coupons, promotions)
+            // v4.3.2: Subtract discount from revenue (coupons, promotions)
             // Discount is at the order level — pro-rate across line items
             const orderDiscount = parseFloat(order?.discount) || 0;
             const orderItemCount = (order?.items || []).length || 1;
@@ -1122,16 +1122,8 @@
                 console.warn('[Sales] Fee calculation skipped, using simplified formula:', feeErr.message);
             }
 
-            // Find item_id and wayfair_price from database
-            const { data: itemRow } = await sbClient.from('items').select('id, wayfair_price').eq('sku', item.sku).single();
-
-            // v4.3.3: Detect Wayfair promo — API price is post-promo, compare to our retail price
-            let wayfairPromo = 0;
-            if (channel === 'wayfair' && itemRow?.wayfair_price > 0 && salePrice < itemRow.wayfair_price) {
-                wayfairPromo = Math.round((itemRow.wayfair_price - salePrice) * qty * 100) / 100;
-                console.log(`[Sales] Wayfair promo detected: ${item.sku} retail=$${itemRow.wayfair_price} → sold=$${salePrice} (promo: -$${wayfairPromo})`);
-                addLog(`💰 Wayfair promo: ${item.sku} -$${wayfairPromo.toFixed(2)} (retail $${itemRow.wayfair_price} → $${salePrice})`, 'info');
-            }
+            // Find item_id from database
+            const { data: itemRow } = await sbClient.from('items').select('id').eq('sku', item.sku).single();
 
             await sbClient.from('sales_history').insert({
                 item_id: itemRow?.id || null,
@@ -1155,7 +1147,7 @@
                 buyer_email: order?.buyer || null,
                 customer_shipping_paid: order?.shipping || null,
                 tax_collected: order?.tax || null,
-                discount_amount: wayfairPromo > 0 ? wayfairPromo : (perItemDiscount > 0 ? perItemDiscount : (order?.discount || null)),
+                discount_amount: perItemDiscount > 0 ? perItemDiscount : (order?.discount || null),
                 // v4.2.6: Ship-to address + gift fields
                 ship_to_name: order?.shipToName || null,
                 ship_to_address: order?.shipToAddress || null,
