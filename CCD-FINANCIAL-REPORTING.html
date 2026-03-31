@@ -683,6 +683,7 @@ body {
           <div class="kpi-card"><div class="kpi-label">Orders</div><div class="kpi-value" id="kpi-orders">—</div><div class="kpi-delta neutral" id="kpi-orders-d">—</div></div>
           <div class="kpi-card"><div class="kpi-label">Units Sold</div><div class="kpi-value" id="kpi-units">—</div><div class="kpi-delta neutral" id="kpi-units-d">—</div></div>
           <div class="kpi-card"><div class="kpi-label">Actual Shipping</div><div class="kpi-value" id="kpi-shipping">—</div><div class="kpi-delta neutral" id="kpi-shipping-d">—</div></div>
+          <div class="kpi-card"><div class="kpi-label">Discounts</div><div class="kpi-value negative" id="kpi-discounts">—</div><div class="kpi-delta neutral" id="kpi-discounts-d">—</div></div>
         </div>
 
         <!-- Charts row -->
@@ -1277,7 +1278,7 @@ body {
 // ALL financial values read from sales_history columns — zero recalculation.
 // ============================================================================
 
-const FR_VERSION = 'v1.7.0';
+const FR_VERSION = 'v1.8.0';
 const FR_VERSION_KEY = 'financial';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1540,7 +1541,7 @@ function buildQuery(table, cols) {
 
 async function fetchAgg(from, to, ch) {
   let q = sbClient.from('sales_history')
-    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,total_fees,actual_shipping_cost,ob_shipping,profit_margin')
+    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,total_fees,actual_shipping_cost,ob_shipping,profit_margin,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
   if (ch) q = q.eq('sale_channel', ch);
   const { data } = await q;
@@ -1553,8 +1554,9 @@ function aggregate(rows) {
   const units     = rows.reduce((s,r) => s + (parseInt(r.qty_sold)||0), 0);
   const orders    = rows.length;
   const shipping  = rows.reduce((s,r) => s + (parseFloat(r.actual_shipping_cost)||0), 0);
+  const discounts = rows.reduce((s,r) => s + (parseFloat(r.discount_amount)||0), 0);
   const margin    = revenue > 0 ? (profit/revenue)*100 : 0;
-  return { revenue, profit, units, orders, shipping, margin };
+  return { revenue, profit, units, orders, shipping, discounts, margin };
 }
 
 // ── FORMAT HELPERS ─────────────────────────────────────────────────────────
@@ -1597,6 +1599,7 @@ async function loadDashboard() {
   document.getElementById('kpi-orders').textContent   = num(c.orders);
   document.getElementById('kpi-units').textContent    = num(c.units);
   document.getElementById('kpi-shipping').textContent = $$(c.shipping);
+  document.getElementById('kpi-discounts').textContent = c.discounts > 0 ? '-'+$$(c.discounts) : '—';
 
   if (compareMode) {
     document.getElementById('kpi-revenue-d').innerHTML  = deltaHtml(c.revenue, p.revenue);
@@ -1605,8 +1608,9 @@ async function loadDashboard() {
     document.getElementById('kpi-orders-d').innerHTML   = deltaHtml(c.orders, p.orders);
     document.getElementById('kpi-units-d').innerHTML    = deltaHtml(c.units, p.units);
     document.getElementById('kpi-shipping-d').innerHTML = deltaHtml(c.shipping, p.shipping);
+    document.getElementById('kpi-discounts-d').innerHTML = deltaHtml(c.discounts, p.discounts);
   } else {
-    ['revenue','profit','margin','orders','units','shipping'].forEach(k => {
+    ['revenue','profit','margin','orders','units','shipping','discounts'].forEach(k => {
       document.getElementById('kpi-'+k+'-d').innerHTML = '<span class="kpi-delta neutral">—</span>';
     });
   }
@@ -1830,6 +1834,7 @@ function renderSalesTable() {
         <th class="text-right" onclick="sortSales('qty_sold')">Qty ${sortArrow('qty_sold')}</th>
         <th class="text-right" onclick="sortSales('sale_price')">Price ${sortArrow('sale_price')}</th>
         <th class="text-right" onclick="sortSales('total_revenue')">Revenue ${sortArrow('total_revenue')}</th>
+        <th class="text-right" onclick="sortSales('discount_amount')">Discount ${sortArrow('discount_amount')}</th>
         <th class="text-right" onclick="sortSales('total_cost')">COGS ${sortArrow('total_cost')}</th>
         <th class="text-right" onclick="sortSales('total_fees')">Fees ${sortArrow('total_fees')}</th>
         <th class="text-right" onclick="sortSales('net_profit')">Net Profit ${sortArrow('net_profit')}</th>
@@ -1853,6 +1858,7 @@ function renderSalesTable() {
           <td class="text-right">${r.qty_sold||1}</td>
           <td class="text-right">${$$(r.sale_price)}</td>
           <td class="text-right">${$$(r.total_revenue)}</td>
+          <td class="text-right val-dim">${parseFloat(r.discount_amount||0) > 0 ? '<span class="val-neg">-'+$$(r.discount_amount)+'</span>' : '—'}</td>
           <td class="text-right val-dim">${$$(r.total_cost)}</td>
           <td class="text-right val-dim">${$$(r.total_fees)}</td>
           <td class="text-right ${profCls}">${$$(r.net_profit)}${adjShip != null ? `<span style="font-size:9px;color:var(--muted);display:block;">adj:${$$(adjShip)}</span>` : ''}</td>
@@ -1864,7 +1870,7 @@ function renderSalesTable() {
       <tr style="background:var(--bg3);">
         <td colspan="6" style="padding:10px 14px;font-size:11px;color:var(--muted);">${total.toLocaleString()} sales</td>
         <td class="text-right val-gold">${$$(totRev)}</td>
-        <td></td><td></td>
+        <td></td><td></td><td></td>
         <td class="text-right ${totProf>=0?'val-pos':'val-neg'}">${$$(totProf)}</td>
         <td class="text-right">${pct(avgMarg)}</td>
       </tr>
@@ -1937,6 +1943,7 @@ function openDrill(r) {
     ${dr('Qty Sold', r.qty_sold||1)}
     ${dr('Sale Price (unit)', $$(r.sale_price))}
     ${dr('Total Revenue', `<span class="val-gold">${$$(r.total_revenue)}</span>`)}
+    ${parseFloat(r.discount_amount||0) > 0 ? dr('Discount/Promo', `<span class="val-neg">-${$$(r.discount_amount)}</span>`) : ''}
 
     <div class="drill-section-title">Cost Basis</div>
     ${dr('Wholesale (unit)', $$(r.wholesale_price))}
@@ -1950,6 +1957,7 @@ function openDrill(r) {
       ${feeItem('OH Fee', r.oh_fee)}
       ${feeItem('Transaction', r.transaction_fee)}
       ${feeItem('CC Fee', r.cc_fee)}
+      ${feeItem('Listing Fee', r.listing_fee)}
       ${feeItem('Wayfair Fee', r.wayfair_fee)}
       ${feeItem('Recovery Fee', r.recovery_fee)}
       ${feeItem('Commission', r.commission)}
@@ -2131,6 +2139,7 @@ async function loadChannelReport() {
         <div><div style="font-size:9px;color:var(--muted);">Margin</div><div class="mono">${pct(c.margin)}</div></div>
         <div><div style="font-size:9px;color:var(--muted);">Orders</div><div class="mono">${num(c.orders)}</div></div>
         <div><div style="font-size:9px;color:var(--muted);">Units</div><div class="mono">${num(c.units)}</div></div>
+        ${c.discounts > 0 ? `<div style="grid-column:span 2;"><div style="font-size:9px;color:var(--muted);">Discounts/Promos</div><div class="mono val-neg">-${$$(c.discounts)}</div></div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -2211,6 +2220,7 @@ function buildChannelFeeBreakdown(channels, byCh, allRows) {
     { key:'oh_fee', label:'OH Fee' },
     { key:'transaction_fee', label:'Transaction' },
     { key:'cc_fee', label:'CC Fee' },
+    { key:'listing_fee', label:'Listing Fee' },
     { key:'wayfair_fee', label:'Wayfair Fee' },
     { key:'recovery_fee', label:'Recovery' },
     { key:'commission', label:'Commission' },
@@ -2288,7 +2298,7 @@ async function loadProductReport() {
   const chDb = CH_DB[channelFilter] || null;
 
   let q = sbClient.from('sales_history')
-    .select('sku,product_name,brand_name,sale_channel,sale_price,total_revenue,net_profit,total_cost,total_fees,qty_sold,profit_margin')
+    .select('sku,product_name,brand_name,sale_channel,sale_price,total_revenue,net_profit,total_cost,total_fees,qty_sold,profit_margin,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
   if (chDb) q = q.eq('sale_channel', chDb);
   const [{ data }, { data: itemsBrand }] = await Promise.all([
@@ -2304,13 +2314,14 @@ async function loadProductReport() {
   const bySku = {};
   (data||[]).forEach(r => {
     const k = r.sku || '?';
-    if (!bySku[k]) bySku[k] = { sku:k, product:r.product_name||'', brand:r.brand_name||skuBrandMap[r.sku]||'', units:0, revenue:0, cost:0, fees:0, profit:0, sales:0, channels:{} };
+    if (!bySku[k]) bySku[k] = { sku:k, product:r.product_name||'', brand:r.brand_name||skuBrandMap[r.sku]||'', units:0, revenue:0, cost:0, fees:0, profit:0, discounts:0, sales:0, channels:{} };
     const p = bySku[k];
     p.units   += parseInt(r.qty_sold)||0;
     p.revenue += parseFloat(r.total_revenue)||0;
     p.cost    += parseFloat(r.total_cost)||0;
     p.fees    += parseFloat(r.total_fees)||0;
     p.profit  += parseFloat(r.net_profit)||0;
+    p.discounts += parseFloat(r.discount_amount)||0;
     p.sales   += 1;
     const ch = r.sale_channel;
     if (!p.channels[ch]) p.channels[ch] = { revenue:0, profit:0, units:0 };
@@ -3442,7 +3453,7 @@ async function loadPnlReport() {
   document.getElementById('pnl-period-label').textContent = `Income statement — ${periodLabel()} — ${chLabel}`;
 
   let q = sbClient.from('sales_history')
-    .select('sale_date,sale_channel,total_revenue,wholesale_price,ib_shipping,tariff,ob_shipping,qty_sold,total_cost,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,gross_revenue')
+    .select('sale_date,sale_channel,total_revenue,wholesale_price,ib_shipping,tariff,ob_shipping,qty_sold,total_cost,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,gross_revenue,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
   if (chDb) q = q.eq('sale_channel', chDb);
   const { data } = await q;
@@ -3451,7 +3462,7 @@ async function loadPnlReport() {
   let priorData = [];
   if (compareMode && priorFrom) {
     let pq = sbClient.from('sales_history')
-      .select('sale_date,total_revenue,total_cost,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue')
+      .select('sale_date,total_revenue,total_cost,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount')
       .gte('sale_date', priorFrom).lte('sale_date', priorTo).limit(5000);
     if (chDb) pq = pq.eq('sale_channel', chDb);
     const { data: pd } = await pq;
@@ -3464,8 +3475,8 @@ async function loadPnlReport() {
     const mo = r.sale_date.substring(0,7);
     if (!byMonth[mo]) byMonth[mo] = {
       month:mo, revenue:0, grossRevenue:0, cogs:0, units:0, orders:0,
-      ohFee:0, txnFee:0, ccFee:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0,
-      totalFees:0, netProfit:0
+      ohFee:0, txnFee:0, ccFee:0, listingFee:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0,
+      totalFees:0, netProfit:0, discounts:0
     };
     const m = byMonth[mo];
     m.revenue      += parseFloat(r.total_revenue)||0;
@@ -3476,6 +3487,7 @@ async function loadPnlReport() {
     m.ohFee        += parseFloat(r.oh_fee)||0;
     m.txnFee       += parseFloat(r.transaction_fee)||0;
     m.ccFee        += parseFloat(r.cc_fee)||0;
+    m.listingFee   += parseFloat(r.listing_fee)||0;
     m.wfFee        += parseFloat(r.wayfair_fee)||0;
     m.recoveryFee  += parseFloat(r.recovery_fee)||0;
     m.commission   += parseFloat(r.commission)||0;
@@ -3483,6 +3495,7 @@ async function loadPnlReport() {
     m.mktDeduct    += parseFloat(r.marketplace_deduction)||0;
     m.totalFees    += parseFloat(r.total_fees)||0;
     m.netProfit    += parseFloat(r.net_profit)||0;
+    m.discounts    += parseFloat(r.discount_amount)||0;
   });
 
   const months = Object.values(byMonth).sort((a,b) => a.month.localeCompare(b.month));
@@ -3610,11 +3623,18 @@ function renderPnlTable(months, priorByMonth) {
       ${pnlRow('Overhead Fee', 'ohFee', 'val-dim', true)}
       ${pnlRow('Transaction Fee', 'txnFee', 'val-dim', true)}
       ${pnlRow('Credit Card Fee', 'ccFee', 'val-dim', true)}
+      ${pnlRow('Listing Fee', 'listingFee', 'val-dim', true)}
       ${pnlRow('Wayfair Fee', 'wfFee', 'val-dim', true)}
       ${pnlRow('Recovery Fee', 'recoveryFee', 'val-dim', true)}
+      ${pnlRow('Commission', 'commission', 'val-dim', true)}
       ${pnlRow('Rent', 'rent', 'val-dim', true)}
       ${pnlRow('Marketplace Deduction', 'mktDeduct', 'val-dim', true)}
       ${pnlRow('Total Fees', 'totalFees', 'val-neg')}
+
+      ${total.discounts > 0 ? `
+      <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Discounts &amp; Promos</td></tr>
+      ${pnlRow('Discounts/Promos', 'discounts', 'val-neg', true)}
+      ` : ''}
 
       <tr style="background:rgba(45,212,160,.08);border-top:2px solid var(--green);"><td style="font-weight:700;font-size:14px;color:var(--green);">Net Profit</td>
         ${months.map(m => {
@@ -4354,7 +4374,7 @@ async function loadScenarioPlanner() {
     // Load baseline data once
     const { from, to } = getRange();
     const { data } = await sbClient.from('sales_history')
-      .select('sale_channel,sku,product_name,brand_name,sale_price,total_revenue,total_cost,net_profit,total_fees,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,qty_sold,wholesale_price,ib_shipping,ob_shipping,profit_margin')
+      .select('sale_channel,sku,product_name,brand_name,sale_price,total_revenue,total_cost,net_profit,total_fees,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,qty_sold,wholesale_price,ib_shipping,ob_shipping,profit_margin,discount_amount')
       .gte('sale_date', from).lte('sale_date', to).limit(5000);
     scenarioBaseData = data || [];
   }
@@ -5319,20 +5339,23 @@ function exportPnlExcel() {
   // Re-trigger the P&L load to get data, then export
   const { from, to } = getRange();
   sbClient.from('sales_history')
-    .select('sale_date,total_revenue,total_cost,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,rent,marketplace_deduction,total_fees,net_profit,qty_sold')
+    .select('sale_date,total_revenue,total_cost,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000)
     .then(({ data }) => {
       const byMonth = {};
       (data||[]).forEach(r => {
         const mo = r.sale_date.substring(0,7);
-        if (!byMonth[mo]) byMonth[mo] = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, wfFee:0, recoveryFee:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0 };
+        if (!byMonth[mo]) byMonth[mo] = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
         const m = byMonth[mo];
         m.revenue += parseFloat(r.total_revenue)||0; m.cogs += parseFloat(r.total_cost)||0;
         m.ohFee += parseFloat(r.oh_fee)||0; m.txnFee += parseFloat(r.transaction_fee)||0;
-        m.ccFee += parseFloat(r.cc_fee)||0; m.wfFee += parseFloat(r.wayfair_fee)||0;
-        m.recoveryFee += parseFloat(r.recovery_fee)||0; m.rent += parseFloat(r.rent)||0;
+        m.ccFee += parseFloat(r.cc_fee)||0; m.listingFee += parseFloat(r.listing_fee)||0;
+        m.wfFee += parseFloat(r.wayfair_fee)||0;
+        m.recoveryFee += parseFloat(r.recovery_fee)||0; m.commission += parseFloat(r.commission)||0;
+        m.rent += parseFloat(r.rent)||0;
         m.mktDeduct += parseFloat(r.marketplace_deduction)||0; m.totalFees += parseFloat(r.total_fees)||0;
-        m.netProfit += parseFloat(r.net_profit)||0; m.orders++; m.units += parseInt(r.qty_sold)||0;
+        m.netProfit += parseFloat(r.net_profit)||0; m.discounts += parseFloat(r.discount_amount)||0;
+        m.orders++; m.units += parseInt(r.qty_sold)||0;
       });
       const months = Object.entries(byMonth).sort((a,b)=>a[0].localeCompare(b[0]));
       const labels = months.map(([mo])=>mo);
@@ -5345,8 +5368,11 @@ function exportPnlExcel() {
         row('Gross Revenue','revenue'), row('COGS','cogs'),
         ['Gross Profit', ...months.map(([,m])=>parseFloat((m.revenue-m.cogs).toFixed(2))), parseFloat(months.reduce((s,[,m])=>s+(m.revenue-m.cogs),0).toFixed(2))],
         row('OH Fee','ohFee'), row('Transaction Fee','txnFee'), row('CC Fee','ccFee'),
-        row('Wayfair Fee','wfFee'), row('Recovery Fee','recoveryFee'), row('Rent','rent'),
-        row('Mkt Deduction','mktDeduct'), row('Total Fees','totalFees'), row('Net Profit','netProfit'),
+        row('Listing Fee','listingFee'),
+        row('Wayfair Fee','wfFee'), row('Recovery Fee','recoveryFee'), row('Commission','commission'), row('Rent','rent'),
+        row('Mkt Deduction','mktDeduct'), row('Total Fees','totalFees'),
+        row('Discounts/Promos','discounts'),
+        row('Net Profit','netProfit'),
         ['Net Margin %', ...months.map(([,m])=>m.revenue>0?((m.netProfit/m.revenue)*100).toFixed(1)+'%':'0%'),
          months.reduce((s,[,m])=>s+m.revenue,0)>0?((months.reduce((s,[,m])=>s+m.netProfit,0)/months.reduce((s,[,m])=>s+m.revenue,0))*100).toFixed(1)+'%':'0%']
       ];
@@ -5474,14 +5500,15 @@ function exportInventoryExcel() {
 // ── EXPORTS (Phase 2) ─────────────────────────────────────────────────────
 function exportSalesExcel() {
   if (!salesFiltered.length) return;
-  const headers = ['Date','Channel','SKU','Product','Brand','Qty','Sale Price','Revenue','COGS','OH Fee','Transaction Fee','CC Fee','Wayfair Fee','Recovery Fee','Commission','Rent','Mkt Deduction','Total Fees','Net Profit','Adj Net Profit','Margin%','Accounting Category'];
+  const headers = ['Date','Channel','SKU','Product','Brand','Qty','Sale Price','Revenue','Discount','COGS','OH Fee','Transaction Fee','CC Fee','Listing Fee','Wayfair Fee','Recovery Fee','Commission','Rent','Mkt Deduction','Total Fees','Net Profit','Adj Net Profit','Margin%','Accounting Category'];
   const rows = salesFiltered.map(r => {
     const margin = r.profit_margin != null ? (parseFloat(r.profit_margin)*100).toFixed(1)+'%' : '';
     const adjP   = r.actual_shipping_cost != null && r.ob_shipping != null
       ? ((parseFloat(r.net_profit)||0) + (parseFloat(r.ob_shipping)||0) - (parseFloat(r.actual_shipping_cost)||0)).toFixed(2) : '';
     return [r.sale_date?.substring(0,10), CH_LABEL[r.sale_channel]||r.sale_channel, r.sku, r.product_name, r.brand_name,
-      r.qty_sold, r.sale_price, r.total_revenue, r.total_cost,
-      r.oh_fee, r.transaction_fee, r.cc_fee, r.wayfair_fee, r.recovery_fee,
+      r.qty_sold, r.sale_price, r.total_revenue, r.discount_amount,
+      r.total_cost,
+      r.oh_fee, r.transaction_fee, r.cc_fee, r.listing_fee, r.wayfair_fee, r.recovery_fee,
       r.commission, r.rent, r.marketplace_deduction, r.total_fees,
       r.net_profit, adjP, margin, r.accounting_category];
   });
@@ -5554,11 +5581,11 @@ function exportChannelExcel() {
   const { from, to } = getRange();
   const channels = ['etsy','wix','wayfair','treasuremarts'];
   sbClient.from('sales_history')
-    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,transaction_fee,cc_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,actual_shipping_cost,ob_shipping,profit_margin')
+    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,actual_shipping_cost,ob_shipping,profit_margin,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000)
     .then(({ data }) => {
-      const feeKeys = ['oh_fee','transaction_fee','cc_fee','wayfair_fee','recovery_fee','commission','rent','marketplace_deduction','total_fees'];
-      const feeLabels = ['OH Fee','Transaction Fee','CC Fee','Wayfair Fee','Recovery Fee','Commission','Rent','Mkt Deduction','Total Fees'];
+      const feeKeys = ['oh_fee','transaction_fee','cc_fee','listing_fee','wayfair_fee','recovery_fee','commission','rent','marketplace_deduction','total_fees'];
+      const feeLabels = ['OH Fee','Transaction Fee','CC Fee','Listing Fee','Wayfair Fee','Recovery Fee','Commission','Rent','Mkt Deduction','Total Fees'];
 
       // Summary sheet
       const summaryHeaders = ['Channel','Orders','Units','Revenue','Net Profit','Avg Margin %','Actual Shipping',...feeLabels];
