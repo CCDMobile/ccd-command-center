@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.6.4</title>
+<title>CCD Inventory System v2.6.5</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.6.4 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.6.5 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.6.4</div>
+      <div class="topbar-version">v2.6.5</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.6.4';
+const TOOL_VERSION = '2.6.5';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -5009,6 +5009,49 @@ async function loadShippingTab() {
     const { data, error } = await sb.from('shippo_transactions').select('*').order('shippo_created_at', { ascending: false }).limit(500);
     if (error) throw error;
     shipTabData = data || [];
+    
+    // Enrich missing SKUs from sales_history by matching order_id or recipient+date
+    const needsSku = shipTabData.filter(r => !r.sku && (r.order_id || r.recipient_name));
+    if (needsSku.length > 0) {
+      try {
+        // Batch lookup: get recent sales with order_id or ship_to_name
+        const { data: salesRows } = await sb.from('sales_history')
+          .select('sku, order_id, ship_to_name, sale_date')
+          .order('sale_date', { ascending: false })
+          .limit(2000);
+        if (salesRows && salesRows.length > 0) {
+          // Build lookup maps
+          const byOrderId = {};
+          const byNameDate = {};
+          for (const s of salesRows) {
+            if (s.order_id) byOrderId[s.order_id] = s.sku;
+            if (s.ship_to_name && s.sale_date) {
+              const key = (s.ship_to_name || '').toLowerCase().trim() + '|' + s.sale_date.substring(0,10);
+              if (!byNameDate[key]) byNameDate[key] = s.sku;
+            }
+          }
+          let enriched = 0;
+          for (const r of needsSku) {
+            // Try order_id match first
+            if (r.order_id && byOrderId[r.order_id]) {
+              r.sku = byOrderId[r.order_id];
+              enriched++;
+              continue;
+            }
+            // Try recipient name + date match
+            if (r.recipient_name && r.shippo_created_at) {
+              const key = (r.recipient_name || '').toLowerCase().trim() + '|' + (r.shippo_created_at || '').substring(0,10);
+              if (byNameDate[key]) {
+                r.sku = byNameDate[key];
+                enriched++;
+              }
+            }
+          }
+          if (enriched > 0) console.log(`[Shipping] Enriched ${enriched} rows with SKUs from sales_history`);
+        }
+      } catch(e) { console.log('SKU enrichment error:', e.message); }
+    }
+    
     // Set default date filter to last 30 days
     if (!$('shipFilterFrom').value) {
       const d30 = new Date(); d30.setDate(d30.getDate() - 30);
@@ -5109,7 +5152,7 @@ function renderShippingTab() {
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
               ${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);color:var(--blue);">🔗 Track Package</a>` : ''}
               <button class="btn-card" onclick="event.stopPropagation();openItemFromShipping('${escAttr(r.sku || '')}')" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>📦 Open Item</button>
-              <button class="btn-card" onclick="event.stopPropagation();openItemShippingTab('${escAttr(r.sku || '')}')" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>🏷 Buy Another Label</button>
+              <button class="btn-card" onclick="event.stopPropagation();openItemShippingTab('${escAttr(r.sku || '')}', ${idx})" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>🏷 Buy Another Label</button>
               <button class="btn-card" onclick="event.stopPropagation();openSlipFromShipping(${idx})" style="padding:6px 16px;font-size:12px;">🧾 Packing Slip</button>
             </div>
           </div>
@@ -5134,16 +5177,31 @@ function openItemFromShipping(sku) {
   }, 100);
 }
 
-async function openItemShippingTab(sku) {
+async function openItemShippingTab(sku, shipIdx) {
   if (!sku) return;
+  // Store shipment data for pre-fill
+  const shipRow = (shipIdx !== undefined && state.filteredShipRows) ? state.filteredShipRows[shipIdx] : null;
   switchTopTab('inventory');
   setTimeout(async () => {
     $('searchInput').value = sku;
     await loadInventory();
     const match = state.items.find(i => i.sku === sku);
     if (match) {
-      openItem(match.id);
-      setTimeout(() => switchSub('shipping'), 300);
+      await onRowClick(match.id);
+      setTimeout(() => {
+        switchSub('shipping');
+        // Pre-fill ship-to from previous shipment
+        if (shipRow) {
+          setTimeout(() => {
+            if ($('shipToName')) $('shipToName').value = shipRow.recipient_name || '';
+            if ($('shipToStreet')) $('shipToStreet').value = '';
+            if ($('shipToCity')) $('shipToCity').value = shipRow.recipient_city || '';
+            if ($('shipToState')) $('shipToState').value = shipRow.recipient_state || '';
+            if ($('shipToZip')) $('shipToZip').value = shipRow.recipient_zip || '';
+            showCardStatus('📋 Ship-to pre-filled from previous shipment. Review, then Get Quotes → Buy.', 'ok');
+          }, 200);
+        }
+      }, 300);
     }
   }, 100);
 }
@@ -5407,7 +5465,7 @@ const CH_CONFIG = {
   etsy:    { label:'Etsy',         color:'var(--etsy)',    activeClass:'active-etsy',    listingCol:'etsy_listing_id', qtyCol:'etsy_qty',         priceCol:'etsy_price',         filter: q => q.not('etsy_listing_id','is',null) },
   wix:     { label:'Wix',          color:'var(--wix)',     activeClass:'active-wix',     listingCol:'wix_product_id',  qtyCol:'wix_qty',          priceCol:'wix_price',          filter: q => q.not('wix_product_id','is',null) },
   wayfair: { label:'Wayfair',      color:'var(--wayfair)', activeClass:'active-wayfair', listingCol:'wayfair_sku',     qtyCol:'wayfair_qty',       priceCol:'wayfair_price',      filter: q => q.not('wayfair_sku','is',null).neq('wayfair_sku','') },
-  tm:      { label:'TreasureMarts', color:'var(--tm)',     activeClass:'active-tm',      listingCol:null,              qtyCol:'treasuremarts_qty', priceCol:'treasuremarts_price', filter: q => q.or('treasuremarts_qty.gt.0,treasuremarts_price.gt.0') }
+  tm:      { label:'TreasureMarts', color:'var(--tm)',     activeClass:'active-tm',      listingCol:null,              qtyCol:'treasuremarts_qty', priceCol:'treasuremarts_price', filter: q => q.gt('treasuremarts_qty', 0) }
 };
 
 async function loadChannelCounts() {
@@ -5419,7 +5477,7 @@ async function loadChannelCounts() {
     counts.wix = w || 0;
     const { count: wf } = await sb.from('items').select('*',{count:'exact',head:true}).not('wayfair_sku','is',null).neq('wayfair_sku','').eq('is_active',true);
     counts.wayfair = wf || 0;
-    const { count: t } = await sb.from('items').select('*',{count:'exact',head:true}).or('treasuremarts_qty.gt.0,treasuremarts_price.gt.0').eq('is_active',true);
+    const { count: t } = await sb.from('items').select('*',{count:'exact',head:true}).gt('treasuremarts_qty', 0).eq('is_active',true);
     counts.tm = t || 0;
     chState.counts = counts;
     $('chCountEtsy').textContent = `(${counts.etsy})`;
