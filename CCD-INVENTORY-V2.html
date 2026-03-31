@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.7.2</title>
+<title>CCD Inventory System v2.7.5</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -570,6 +570,16 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   .kpi-row{flex-wrap:wrap;}
   .kpi{min-width:calc(50% - 6px);}
 }
+/* Unsaved-changes modal */
+.unsaved-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;}
+.unsaved-modal{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px 28px;max-width:380px;width:90%;text-align:center;box-shadow:0 8px 32px rgba(0,0,0,0.4);}
+.unsaved-modal h3{margin:0 0 8px;color:var(--gold);font-size:16px;}
+.unsaved-modal p{margin:0 0 20px;color:var(--muted);font-size:13px;}
+.unsaved-btns{display:flex;gap:8px;justify-content:center;}
+.unsaved-btns button{padding:8px 16px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:13px;font-weight:600;}
+.unsaved-btn-save{background:var(--green);color:#fff;border-color:var(--green)!important;}
+.unsaved-btn-discard{background:transparent;color:var(--red);border-color:var(--red)!important;}
+.unsaved-btn-cancel{background:transparent;color:var(--muted);}
 </style>
 </head>
 <body>
@@ -591,7 +601,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.7.2 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.7.5 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +613,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.7.2</div>
+      <div class="topbar-version">v2.7.5</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1282,7 +1292,8 @@ let state = {
   saleCounts: {},         // SKU → 90-day sale count
   stats: {},               // Computed stats
   activeTopTab: 'inventory', // Currently active top-level tab
-  shippingFilters: null     // Loaded from settings; null = use defaults
+  shippingFilters: null,     // Loaded from settings; null = use defaults
+  hasUnsavedEdits: false     // True when user has edited fields without saving
 };
 
 let searchTimer = null;
@@ -1782,6 +1793,7 @@ async function onRowClick(itemId) {
   // Clone item so edits don't mutate state.items (prevents stale list data on cancel)
   state.currentItem = JSON.parse(JSON.stringify(item));
   state.cardDirty = false;
+  state.hasUnsavedEdits = false;
   state.cardRendered = false;
   clearUnsavedMark();
 
@@ -1878,7 +1890,22 @@ async function populateKpiRow(item) {
   }
 }
 
-function closeCard() {
+async function closeCard() {
+  // Guard: if unsaved edits, prompt before closing
+  if (state.hasUnsavedEdits) {
+    const action = await showUnsavedModal();
+    if (action === 'cancel') return;
+    if (action === 'save') {
+      await saveItem();
+      if (state.saving) return;
+    }
+    state.hasUnsavedEdits = false;
+    clearUnsavedMark();
+  }
+  _closeCard();
+}
+
+function _closeCard() {
   unsubscribeFromItem();
   $('cardView').classList.remove('visible');
   // Return to shipping tab if we came from there
@@ -1899,10 +1926,7 @@ function closeCard() {
 }
 
 function cancelCard() {
-  if (confirm('Discard unsaved changes and return to inventory?')) {
-    state.cardDirty = false; // Don't refresh list — nothing was saved
-    closeCard();
-  }
+  closeCard(); // closeCard now handles the unsaved guard
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2017,6 +2041,39 @@ function clearUnsavedMark() {
   }
 }
 
+// Detect real user edits via event delegation on card
+document.addEventListener('DOMContentLoaded', () => {
+  const card = $('cardView');
+  if (!card) return;
+  card.addEventListener('input', (e) => {
+    if (!state.currentItem || !state.cardRendered) return;
+    state.hasUnsavedEdits = true;
+    markUnsaved();
+  });
+});
+
+// Unsaved-changes guard — returns Promise that resolves to 'save', 'discard', or 'cancel'
+function showUnsavedModal() {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'unsaved-overlay';
+    overlay.innerHTML = `<div class="unsaved-modal">
+      <h3>⚠️ Unsaved Changes</h3>
+      <p>You have unsaved edits on this item. What would you like to do?</p>
+      <div class="unsaved-btns">
+        <button class="unsaved-btn-save" data-action="save">💾 Save &amp; Leave</button>
+        <button class="unsaved-btn-discard" data-action="discard">🗑 Discard</button>
+        <button class="unsaved-btn-cancel" data-action="cancel">← Stay</button>
+      </div>
+    </div>`;
+    overlay.addEventListener('click', (e) => {
+      const action = e.target.dataset.action;
+      if (action) { overlay.remove(); resolve(action); }
+    });
+    document.body.appendChild(overlay);
+  });
+}
+
 // Capture visible field edits back into state.currentItem so they survive tab switches
 
 // ═══════════════════════════════════════════════════════════
@@ -2027,7 +2084,7 @@ function captureEdits() {
   if (!item) return;
   const fields = {
     f_product_name: 'product_name', f_brand_name: 'brand_name', f_vendor: 'vendor',
-    f_category: 'category', f_shelf: 'shelf_number', f_comments: 'comments',
+    f_category: 'category', f_shelf: 'shelf_number', f_comments: 'comments', f_pricing_notes: 'pricing_notes',
     f_wholesale: 'wholesale_price', f_ib: 'ib_shipping', f_tariff: 'tariff', f_ob: 'ob_shipping',
     f_qty: 'qty', f_etsy_qty: 'etsy_qty', f_wix_qty: 'wix_qty', f_wayfair_qty: 'wayfair_qty', f_tm_qty: 'treasuremarts_qty',
     f_etsy_price: 'etsy_price', f_wix_price: 'wix_price', f_wayfair_price: 'wayfair_price', f_tm_price: 'treasuremarts_price',
@@ -2353,9 +2410,11 @@ function renderPricing(item) {
     builtInOH = (wholesale + ibDollar + tariffDollar) * 0.10;  // 10% OH on cost basis
     builtInRecovery = (retailPrice - ibDollar - tariffDollar - builtInOH) * 0.04 / 1.04 || 0; // back-solve
     wayfairFee = retailPrice * 0.02;               // 2% Wayfair platform fee
-    saleFees = wayfairFee;
+    const wayfairRecoveryDeduct = retailPrice * 0.04; // 4% recovery deducted on sale
+    saleFees = wayfairFee + wayfairRecoveryDeduct;
     feeRows = [
-      { label: 'Wayfair Platform (2%)', val: wayfairFee }
+      { label: 'Wayfair Platform (2%)', val: wayfairFee },
+      { label: 'Recovery Fee (4%)', val: wayfairRecoveryDeduct }
     ];
   } else if (activeCh.key === 'tm') {
     // TM: OH = 10% of marked-up wholesale, commission = 10% of marked-up wholesale
@@ -2364,8 +2423,10 @@ function renderPricing(item) {
     const muEstimate = (retailPrice - ibDollar - tariffDollar) / 1.2;
     builtInOH = muEstimate * 0.10;
     builtInCommission = muEstimate * 0.10;
-    saleFees = 0;
-    feeRows = [];
+    saleFees = retailPrice * 0.10;                  // 10% commission deducted on sale
+    feeRows = [
+      { label: 'TM Commission (10%)', val: saleFees }
+    ];
   }
 
   const totalBuiltIn = builtInOH + builtInSurcharge + builtInRecovery + builtInCommission;
@@ -2432,6 +2493,8 @@ function renderPricing(item) {
       <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val">-$${landed.toFixed(2)}</div></div>
       <div class="fee-item"><div class="fee-label" style="font-weight:700;">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
     </div>`}
+    <div class="section-title" style="font-size:11px;letter-spacing:1px;margin-top:14px;">PRICING NOTES / COMMITMENTS</div>
+    <textarea class="form-input" id="f_pricing_notes" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Pricing commitments, agreements, notes...">${escHtml(item.pricing_notes || '')}</textarea>
   </div>`;
 }
 
@@ -3798,6 +3861,7 @@ async function saveItem() {
       par_tm_target: gn('f_par_tm_target') ?? pi(item.par_tm_target),
       // Vendor
       vendor: gv('f_vendor') ?? item.vendor,
+      pricing_notes: gv('f_pricing_notes') ?? item.pricing_notes,
       // Listing IDs (editable on Overview tab) — bigint columns need null not empty string
       etsy_listing_id: gv('f_etsy_listing_id') || null,
       wix_product_id: gv('f_wix_product_id') || null,
@@ -3854,6 +3918,7 @@ async function saveItem() {
     statusEl.style.display = 'block';
     logActivity('INVENTORY','ITEM_SAVED',null,`Saved ${item.sku}`,{},item.sku);
     clearUnsavedMark();
+    state.hasUnsavedEdits = false;
 
     state.saving = false;
     // Scroll status into view so it's always visible
@@ -5486,10 +5551,24 @@ async function refreshAllTracking() {
 // ═══════════════════════════════════════════════════════════
 // TOP-LEVEL TAB SWITCHING
 // ═══════════════════════════════════════════════════════════
-function switchTopTab(tab) {
-  // If card is open, close it first
-  if ($('cardView').classList.contains('visible')) {
-    $('cardView').classList.remove('visible');
+async function switchTopTab(tab) {
+  // Guard: if card is open with unsaved edits, prompt user
+  const cardOpen = $('cardView').classList.contains('visible');
+  if (cardOpen && state.hasUnsavedEdits) {
+    const action = await showUnsavedModal();
+    if (action === 'cancel') return;
+    if (action === 'save') {
+      await saveItem();
+      // If save failed, don't navigate away
+      if (state.saving) return;
+    }
+    // 'discard' or successful 'save' — proceed
+    state.hasUnsavedEdits = false;
+    clearUnsavedMark();
+  }
+  // If card is open, close it (guard already handled above)
+  if (cardOpen) {
+    _closeCard();
   }
   state.activeTopTab = tab;
   // Toggle tab buttons
