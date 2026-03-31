@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.7.5</title>
+<title>CCD Inventory System v2.7.6</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -601,7 +601,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.7.5 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.7.6 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -613,7 +613,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.7.5</div>
+      <div class="topbar-version">v2.7.6</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1897,7 +1897,8 @@ async function closeCard() {
     if (action === 'cancel') return;
     if (action === 'save') {
       await saveItem();
-      if (state.saving) return;
+      // hasUnsavedEdits is only cleared on success — if still true, save failed
+      if (state.hasUnsavedEdits) return;
     }
     state.hasUnsavedEdits = false;
     clearUnsavedMark();
@@ -2423,9 +2424,10 @@ function renderPricing(item) {
     const muEstimate = (retailPrice - ibDollar - tariffDollar) / 1.2;
     builtInOH = muEstimate * 0.10;
     builtInCommission = muEstimate * 0.10;
-    saleFees = retailPrice * 0.10;                  // 10% commission deducted on sale
+    saleFees = retailPrice * 0.10 + builtInOH;      // 10% commission + OH deducted on sale
     feeRows = [
-      { label: 'TM Commission (10%)', val: saleFees }
+      { label: 'TM Commission (10%)', val: retailPrice * 0.10 },
+      { label: 'TM Overhead (10%)', val: builtInOH }
     ];
   }
 
@@ -2493,8 +2495,8 @@ function renderPricing(item) {
       <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val">-$${landed.toFixed(2)}</div></div>
       <div class="fee-item"><div class="fee-label" style="font-weight:700;">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
     </div>`}
-    <div class="section-title" style="font-size:11px;letter-spacing:1px;margin-top:14px;">PRICING NOTES / COMMITMENTS</div>
-    <textarea class="form-input" id="f_pricing_notes" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Pricing commitments, agreements, notes...">${escHtml(item.pricing_notes || '')}</textarea>
+    <div class="section-title" style="font-size:11px;letter-spacing:1px;margin-top:14px;">PRICING NOTES</div>
+    <textarea class="form-input" id="f_pricing_notes" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Commit">${escHtml(item.pricing_notes || '')}</textarea>
   </div>`;
 }
 
@@ -5559,8 +5561,8 @@ async function switchTopTab(tab) {
     if (action === 'cancel') return;
     if (action === 'save') {
       await saveItem();
-      // If save failed, don't navigate away
-      if (state.saving) return;
+      // hasUnsavedEdits is only cleared on success — if still true, save failed
+      if (state.hasUnsavedEdits) return;
     }
     // 'discard' or successful 'save' — proceed
     state.hasUnsavedEdits = false;
