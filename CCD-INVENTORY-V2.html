@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.6.9</title>
+<title>CCD Inventory System v2.7.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.6.9 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.7.1 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.6.9</div>
+      <div class="topbar-version">v2.7.1</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.6.9';
+const TOOL_VERSION = '2.7.1';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2042,12 +2042,14 @@ function captureEdits() {
     f_par_tm_min: 'par_tm_min', f_par_tm_target: 'par_tm_target'
   };
   const numericCols = new Set(['wholesale_price','ib_shipping','tariff','ob_shipping','qty','etsy_qty','wix_qty','wayfair_qty','treasuremarts_qty','etsy_price','wix_price','wayfair_price','treasuremarts_price','shipping_weight','box_length','box_width','box_height','par_reorder_point','par_reorder_qty','par_max_stock','par_etsy_min','par_etsy_target','par_wix_min','par_wix_target','par_wayfair_min','par_wayfair_target','par_tm_min','par_tm_target']);
+  const nullIfEmptyCols = new Set(['description_last_updated','etsy_listing_id','wix_product_id','wix_variant_id','etsy_variant_id']);
   for (const [domId, col] of Object.entries(fields)) {
     const el = $(domId);
     if (!el) continue;
     const v = el.value;
     if (v === undefined || v === null) continue;
-    item[col] = numericCols.has(col) ? (parseFloat(v) || 0) : v;
+    if (nullIfEmptyCols.has(col)) { item[col] = v || null; }
+    else { item[col] = numericCols.has(col) ? (parseFloat(v) || 0) : v; }
   }
   // Checkbox fields
   if (ge('f_photographed')) item.photographed = $('f_photographed').checked;
@@ -2354,13 +2356,11 @@ function renderPricing(item) {
       { label: 'Wayfair Platform (2%)', val: wayfairFee }
     ];
   } else if (activeCh.key === 'tm') {
-    // TM: OH = 10% of landed cost, commission = 10% of marked-up wholesale
-    // landed = wholesale + IB + tariff (no OB for TM)
-    const tmLanded = wholesale + ibDollar + tariffDollar;
-    builtInOH = tmLanded * 0.10;
-    // Reverse-calc MU: retail = MU + IB + tariff + OH + commission(10% of MU)
-    // retail - IB - tariff - tmLanded*0.10 = MU * 1.10
-    const muEstimate = (retailPrice - ibDollar - tariffDollar - builtInOH) / 1.10;
+    // TM: OH = 10% of marked-up wholesale, commission = 10% of marked-up wholesale
+    // retail = MU + IB + tariff + OH(10% MU) + commission(10% MU)
+    // retail = MU*1.2 + IB + tariff → MU = (retail - IB - tariff) / 1.2
+    const muEstimate = (retailPrice - ibDollar - tariffDollar) / 1.2;
+    builtInOH = muEstimate * 0.10;
     builtInCommission = muEstimate * 0.10;
     saleFees = 0;
     feeRows = [];
@@ -2456,7 +2456,7 @@ function calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct)
     price += recoveryFee + ohFee;
   } else if (chKey === 'tm') {
     // No OB — brick and mortar
-    const ohFee = (wholesale + ibDollar + tariffDollar) * 0.10;  // 10% OH on landed cost
+    const ohFee = markedUp * 0.10;  // 10% OH on marked-up wholesale
     const commission = markedUp * 0.10;  // 10% commission on marked-up wholesale
     price += ohFee + commission;
   }
@@ -2830,7 +2830,7 @@ const SHIPPING_SERVICES = [
   { id:'ups_ground', carrier:'ups', match:'ground', exclude:'saver', label:'UPS Ground' },
   { id:'ups_ground_saver', carrier:'ups', match:'ground saver', label:'UPS Ground Saver' },
   { id:'usps_ground_advantage', carrier:'usps', match:'ground advantage', label:'USPS Ground Advantage' },
-  { id:'usps_priority', carrier:'usps', match:'priority', label:'USPS Priority Mail' },
+  { id:'usps_priority', carrier:'usps', match:'priority', exclude:'express', label:'USPS Priority Mail' },
   { id:'fedex_ground', carrier:'fedex', match:'ground', exclude:'economy', label:'FedEx Ground' },
   { id:'fedex_home', carrier:'fedex', match:'home delivery', label:'FedEx Home Delivery' },
 ];
@@ -5206,6 +5206,25 @@ async function openItemShippingTab(sku, shipIdx) {
         .limit(1);
       if (data && data[0] && data[0].ship_to_address) {
         streetAddr = data[0].ship_to_address;
+        // Try to extract just the street from the full address
+        // Remove recipient name if it starts with it
+        const name = (shipRow.recipient_name || '').trim();
+        if (name && streetAddr.startsWith(name)) {
+          streetAddr = streetAddr.substring(name.length).trim();
+        }
+        // Remove city, state, zip from the end if present
+        const city = (shipRow.recipient_city || '').trim();
+        const st = (shipRow.recipient_state || '').trim();
+        const zip = (shipRow.recipient_zip || '').trim();
+        // Try comma-separated format first
+        if (streetAddr.includes(',')) {
+          streetAddr = streetAddr.split(',')[0].trim();
+        } else {
+          // Remove known suffixes
+          if (city) { const ci = streetAddr.toUpperCase().lastIndexOf(city.toUpperCase()); if (ci > 0) streetAddr = streetAddr.substring(0, ci).trim(); }
+          if (zip) { const zi = streetAddr.lastIndexOf(zip); if (zi > 0) streetAddr = streetAddr.substring(0, zi).trim(); }
+          if (st && streetAddr.toUpperCase().endsWith(st.toUpperCase())) streetAddr = streetAddr.substring(0, streetAddr.length - st.length).trim();
+        }
       }
     } catch(e) { /* skip */ }
   }
