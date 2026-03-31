@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.6.6</title>
+<title>CCD Inventory System v2.6.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -591,7 +591,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.6.6 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.6.8 · Phases 1-6 Complete</div>
   </div>
 </div>
 
@@ -603,7 +603,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.6.6</div>
+      <div class="topbar-version">v2.6.8</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -717,7 +717,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 
     <!-- ═══════════════════════════════════════ ITEM CARD VIEW ═══════════════════════════════════════ -->
     <div class="card-view" id="cardView">
-      <button class="card-back" onclick="closeCard()">← Back to Inventory</button>
+      <button class="card-back" onclick="closeCard()" id="cardBackBtn">← Back to Inventory</button>
 
       <!-- Variant Banner (shown only for variants) -->
       <div class="variant-banner" id="variantBanner" style="display:none;">
@@ -1256,7 +1256,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.6.6';
+const TOOL_VERSION = '2.6.8';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1879,14 +1879,15 @@ async function populateKpiRow(item) {
 function closeCard() {
   unsubscribeFromItem();
   $('cardView').classList.remove('visible');
-  // Return to whichever top-level tab was active
-  const activeView = state.activeTopTab || 'inventory';
+  // Return to shipping tab if we came from there
+  const returnTab = state.shipReturnTab || state.activeTopTab || 'inventory';
+  state.shipReturnTab = null; // Clear after use
   const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', analytics:'analyticsView', settings:'settingsView' };
-  const viewId = viewMap[activeView];
+  const viewId = viewMap[returnTab];
   if (viewId) $(viewId).classList.add('active');
+  state.activeTopTab = returnTab;
   state.currentItem = null;
-  state.activePricingChannel = null; // Reset so next item defaults to Etsy
-  // Refresh list to show any changes made while in card view
+  state.activePricingChannel = null;
   if (state.cardDirty) {
     loadInventory();
     loadStats();
@@ -2745,12 +2746,8 @@ function renderShipping(item) {
   $('sub-shipping').innerHTML = `
   <!-- Ship-To Address + Rate Quotes -->
   <div class="section">
-    <div class="flex-between mb-8">
-      <div class="section-title" style="margin-bottom:0;">Ship-To Address &amp; Rate Quotes</div>
-      <span style="font-size:12px;color:${hasDims ? 'var(--muted2)' : 'var(--red)'};">${dimLabel}</span>
-    </div>
-    ${!shippoUrl ? '<div class="note-banner" style="color:var(--red);">⚠ Shippo proxy URL not configured. Go to Settings → Proxy URLs.</div>' :
-    !hasDims ? '<div class="note-banner" style="color:var(--red);">⚠ Shipping dimensions required. Set weight, length, width, height on the Overview tab first.</div>' : `
+    <div class="section-title" style="margin-bottom:12px;">Ship-To Address &amp; Rate Quotes</div>
+    ${!shippoUrl ? '<div class="note-banner" style="color:var(--red);">⚠ Shippo proxy URL not configured. Go to Settings → Proxy URLs.</div>' : `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-bottom:14px;">
       <div>
         <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Recipient Name</div>
@@ -2775,9 +2772,27 @@ function renderShipping(item) {
         </div>
       </div>
     </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;padding:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);">
+      <div>
+        <div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Weight (lb)</div>
+        <input class="form-input" id="shipWeight" value="${w || ''}" style="width:100%;text-align:center;font-weight:700;" placeholder="0">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Length (in)</div>
+        <input class="form-input" id="shipLength" value="${l || ''}" style="width:100%;text-align:center;font-weight:700;" placeholder="0">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Width (in)</div>
+        <input class="form-input" id="shipWidth" value="${wd || ''}" style="width:100%;text-align:center;font-weight:700;" placeholder="0">
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Height (in)</div>
+        <input class="form-input" id="shipHeight" value="${h || ''}" style="width:100%;text-align:center;font-weight:700;" placeholder="0">
+      </div>
+    </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
       <button class="btn-card btn-push" onclick="getShippingRates()" style="padding:8px 20px;">📦 Get Quotes</button>
-      <span style="font-size:12px;color:var(--muted2);">Rates based on item dimensions above</span>
+      <span style="font-size:12px;color:var(--muted2);">Rates based on dimensions above</span>
     </div>
     <div id="rateQuoteResults" style="color:var(--muted);font-size:13px;">Enter ship-to address and click Get Quotes.</div>`}
   </div>
@@ -2869,10 +2884,10 @@ async function getShippingRates() {
     const result = await fetchOrJsonp(shippoUrl, {
       action: 'getRates',
       key: apiKey,
-      weight: String(pf(item.shipping_weight) || 1),
-      length: String(pf(item.box_length) || 10),
-      width: String(pf(item.box_width) || 10),
-      height: String(pf(item.box_height) || 5),
+      weight: String(pf($('shipWeight')?.value) || pf(item.shipping_weight) || 1),
+      length: String(pf($('shipLength')?.value) || pf(item.box_length) || 10),
+      width: String(pf($('shipWidth')?.value) || pf(item.box_width) || 10),
+      height: String(pf($('shipHeight')?.value) || pf(item.box_height) || 5),
       toName: addr.name || 'Customer',
       toStreet: addr.street || '1234 Main St',
       toCity: addr.city || 'Portland',
@@ -5180,24 +5195,51 @@ function openItemFromShipping(sku) {
 async function openItemShippingTab(sku, shipIdx) {
   if (!sku) return;
   const shipRow = (shipIdx !== undefined && state.filteredShipRows) ? state.filteredShipRows[shipIdx] : null;
+  
+  // Try to get full address from sales_history before switching tabs
+  let streetAddr = '';
+  if (shipRow && shipRow.order_id) {
+    try {
+      const { data } = await sb.from('sales_history')
+        .select('ship_to_name, ship_to_address')
+        .eq('order_id', shipRow.order_id)
+        .limit(1);
+      if (data && data[0] && data[0].ship_to_address) {
+        streetAddr = data[0].ship_to_address;
+      }
+    } catch(e) { /* skip */ }
+  }
+  
+  // Store return context so we can go back
+  state.shipReturnTab = 'shipping';
+  
   switchTopTab('inventory');
-  // Set search state AND DOM
   state.filters.search = sku;
   if ($('searchInput')) $('searchInput').value = sku;
   await loadInventory();
   const match = state.items.find(i => i.sku === sku);
   if (match) {
     await onRowClick(match.id);
+    // Set back button to return to shipping history
+    if ($('cardBackBtn')) $('cardBackBtn').textContent = '← Back to Shipping History';
     switchSub('shipping');
     // Pre-fill ship-to from previous shipment
     if (shipRow) {
       setTimeout(() => {
         if ($('shipToName')) $('shipToName').value = shipRow.recipient_name || '';
-        if ($('shipToStreet')) $('shipToStreet').value = '';
+        if ($('shipToStreet')) {
+          // Parse street from sales_history address (first line before city)
+          if (streetAddr) {
+            const parts = streetAddr.split(',');
+            $('shipToStreet').value = parts[0] ? parts[0].trim() : '';
+          } else {
+            $('shipToStreet').value = '';
+          }
+        }
         if ($('shipToCity')) $('shipToCity').value = shipRow.recipient_city || '';
         if ($('shipToState')) $('shipToState').value = shipRow.recipient_state || '';
         if ($('shipToZip')) $('shipToZip').value = shipRow.recipient_zip || '';
-        showCardStatus('📋 Ship-to pre-filled from previous shipment. Review, then Get Quotes → Buy.', 'ok');
+        showCardStatus('📋 Ship-to pre-filled from previous shipment. Review address, Get Quotes → Buy.', 'ok');
       }, 300);
     }
   } else {
