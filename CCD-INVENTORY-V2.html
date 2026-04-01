@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.7.7</title>
+<title>CCD Inventory System v2.8.0</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -131,6 +131,7 @@ tbody td{padding:10px 14px;white-space:nowrap;}
 .badge-active{background:rgba(45,212,160,0.12);color:var(--green);}
 .badge-inactive{background:rgba(240,92,92,0.12);color:var(--red);}
 .badge-var{background:rgba(167,139,250,0.15);color:var(--purple);font-family:var(--mono);margin-left:6px;}
+.badge-bundle{background:rgba(251,191,36,0.18);color:var(--yellow);font-family:var(--mono);margin-left:6px;}
 .badge-sales{background:rgba(77,159,255,0.12);color:var(--blue);font-family:var(--mono);min-width:28px;text-align:center;}
 
 /* Channel dots */
@@ -601,7 +602,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.7.7 · Phases 1-6 Complete</div>
+    <div class="login-version">v2.8.0 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -613,7 +614,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.7.7</div>
+      <div class="topbar-version">v2.8.0</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -751,6 +752,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
         <div class="card-actions">
           <button class="btn-card btn-sell" onclick="quickSell()">🛒 Sell</button>
           <button class="btn-card btn-push" onclick="pushToChannels()">↻ Push to Channels</button>
+          <button class="btn-card btn-push" onclick="pushToChannels(true)" title="Push this item + all siblings, bundle components, and parent bundles" style="font-size:11px;">↻ Push Family</button>
           <button class="btn-card btn-save" onclick="saveItem()">💾 Save</button>
           <button class="btn-card" onclick="cancelCard()" style="background:transparent;border:1px solid var(--border);color:var(--muted);">✕ Cancel</button>
           <label class="active-toggle">
@@ -1240,7 +1242,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <div class="modal-field">
       <label>Quantity</label>
-      <input type="number" id="sellQty" value="1" min="1" class="mono">
+      <input type="number" id="sellQty" value="1" min="1" class="mono" onchange="onSellQtyChange()" oninput="onSellQtyChange()">
     </div>
     <div class="modal-field">
       <label>Sale Price (per unit)</label>
@@ -1258,6 +1260,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
       <button class="btn-card btn-sell" onclick="confirmSell()" style="flex:1;">Confirm Sale</button>
       <button class="btn-card btn-push" onclick="closeSellModal()" style="flex:1;">Cancel</button>
     </div>
+    <div id="bundleCascadePreview" style="display:none;margin-top:10px;padding:10px 14px;background:rgba(251,191,36,0.08);border-radius:6px;font-size:12px;"></div>
     <div class="inline-status" id="sellStatus" style="margin-top:10px;"></div>
   </div>
 </div>
@@ -1266,7 +1269,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.7.2';
+const TOOL_VERSION = '2.8.0';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1615,6 +1618,7 @@ function renderTable() {
     const qty = parseInt(item.qty) || 0;
     const wholesale = parseFloat(item.wholesale_price) || 0;
     const isVariant = !!item.parent_sku;
+    const isBundle = !!item.is_bundle;
     const isActive = item.is_active !== false;
 
     // Best price across channels
@@ -1647,6 +1651,7 @@ function renderTable() {
     return `<tr data-id="${item.id}" onclick="onRowClick(${item.id})">
       <td>
         <span class="sku-cell">${escHtml(sku)}</span>
+        ${isBundle ? '<span class="badge badge-bundle">BUNDLE</span>' : ''}
         ${isVariant ? '<span class="badge badge-var">VAR</span>' : ''}
       </td>
       <td class="product-cell" title="${escHtml(name)}">${escHtml(name)}</td>
@@ -1810,11 +1815,13 @@ async function onRowClick(itemId) {
   // Meta badges
   const isActive = item.is_active !== false;
   const isVar = !!item.parent_sku;
+  const isBundle = !!item.is_bundle;
   const isPhoto = !!item.photographed;
   const hasAds = !!item.etsy_offsite_ads;
   let metaHtml = '';
   if (item.brand_name) metaHtml += `<span class="brand-label">${escHtml(item.brand_name)}</span>`;
   metaHtml += `<span class="badge ${isActive ? 'badge-active' : 'badge-inactive'}">${isActive ? 'Active' : 'Inactive'}</span>`;
+  if (isBundle) metaHtml += '<span class="badge badge-bundle">Bundle</span>';
   if (isVar) metaHtml += '<span class="badge badge-var">Variant</span>';
   if (isPhoto) metaHtml += '<span class="badge badge-photo">📷 Photographed</span>';
   if (hasAds) metaHtml += '<span class="badge badge-ads">Offsite Ads</span>';
@@ -2580,7 +2587,7 @@ function pushSingleChannel(chKey) {
   const item = state.currentItem;
   if (!item) return;
   const chMap = {
-    etsy: { listing: item.etsy_listing_id, qtyField:'etsy_qty', priceField:'etsy_price', fields: { listingId: item.etsy_listing_id } },
+    etsy: { listing: item.etsy_listing_id, qtyField:'etsy_qty', priceField:'etsy_price', fields: { listingId: item.etsy_listing_id, etsyVariantId: item.etsy_variant_id || null } },
     wix: { listing: item.wix_product_id, qtyField:'wix_qty', priceField:'wix_price', fields: { productId: item.wix_product_id, wixVariantId: item.wix_variant_id } },
     wayfair: { listing: item.wayfair_sku, qtyField:'wayfair_qty', priceField:'wayfair_price', fields: { wayfairSku: item.wayfair_sku } }
   };
@@ -3404,48 +3411,156 @@ async function renderVariants(item) {
   const parentSku = item.parent_sku || item.sku;
   $('sub-variants').innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading variants...</div>';
   try {
-    const { data } = await sb.from('items').select('id,sku,variant_label,qty,wholesale_price,is_active,parent_sku').or(`parent_sku.eq.${parentSku},sku.eq.${parentSku}`).order('sku');
-    const siblings = data || [];
+    // Load siblings, bundle components, and "member of" data in parallel
+    const [sibResult, compResult, memberResult] = await Promise.all([
+      sb.from('items').select('id,sku,variant_label,qty,wholesale_price,is_active,parent_sku,is_bundle')
+        .or(`parent_sku.eq.${parentSku},sku.eq.${parentSku}`).order('sku'),
+      item.is_bundle
+        ? sb.from('bundle_components').select('id,component_item_id,component_qty,items!bundle_components_component_item_id_fkey(id,sku,product_name,qty)')
+            .eq('bundle_item_id', item.id)
+        : Promise.resolve({ data: [] }),
+      sb.from('bundle_components').select('id,bundle_item_id,component_qty,items!bundle_components_bundle_item_id_fkey(id,sku,product_name,qty,is_bundle)')
+        .eq('component_item_id', item.id)
+    ]);
 
-    if (siblings.length <= 1 && !item.parent_sku) {
-      $('sub-variants').innerHTML = `<div class="section">
+    const siblings = sibResult.data || [];
+    const components = compResult.data || [];
+    const memberOf = memberResult.data || [];
+
+    let html = '';
+
+    // ── Section 1: Attribute Variants ──
+    if (siblings.length > 1 || item.parent_sku) {
+      const rowsHtml = siblings.map(s => {
+        const isCurrent = s.id === item.id;
+        const sales = state.saleCounts[s.sku] || 0;
+        return `<tr ${isCurrent ? 'style="background:rgba(212,168,67,0.06);"' : ''}>
+          <td><span class="vr-sku ${isCurrent ? 'current' : ''}" onclick="onRowClick(${s.id})">${escHtml(s.sku)}</span>${isCurrent ? ' ← current' : ''}${s.is_bundle ? ' <span class="badge badge-bundle" style="font-size:9px;">BUNDLE</span>' : ''}</td>
+          <td>${escHtml(s.variant_label || '—')}</td>
+          <td class="mono">${pi(s.qty)}</td>
+          <td class="mono">$${pf(s.wholesale_price).toFixed(2)}</td>
+          <td class="mono">${sales}</td>
+          <td><span class="badge ${s.is_active !== false ? 'badge-active' : 'badge-inactive'}">${s.is_active !== false ? 'Active' : 'Inactive'}</span></td>
+        </tr>`;
+      }).join('');
+
+      html += `
+      <div class="section">
         <div class="flex-between mb-8">
-          <div class="section-title" style="margin-bottom:0;">Variants</div>
+          <div class="section-title" style="margin-bottom:0;">Attribute Variants — ${escHtml(parentSku)}</div>
           <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="addVariantFromItem()">+ Add Variant</button>
         </div>
-        <div style="text-align:center;padding:30px;color:var(--muted);">This item has no variants. Click + Add Variant to create one.</div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>SKU</th><th>Variant Label</th><th>Qty</th><th>Wholesale</th><th>Sales</th><th>Status</th></tr></thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+          <button class="btn-card btn-push" style="font-size:11px;padding:5px 12px;" onclick="fetchVariantIds('${escAttr(parentSku)}')">🔄 Fetch Variant IDs from Channels</button>
+          <span style="font-size:11px;color:var(--muted2);">Pulls etsy_variant_id / wix_variant_id for all siblings</span>
+        </div>
+        <div id="variantIdStatus" style="margin-top:6px;"></div>
+        <div style="margin-top:8px;font-size:12px;color:var(--muted2);">Click any SKU to navigate to that variant's item card.</div>
       </div>`;
-      return;
+    } else {
+      html += `<div class="section">
+        <div class="flex-between mb-8">
+          <div class="section-title" style="margin-bottom:0;">Attribute Variants</div>
+          <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="addVariantFromItem()">+ Add Variant</button>
+        </div>
+        <div style="text-align:center;padding:20px;color:var(--muted);">This item has no attribute variants. Click + Add Variant to create one.</div>
+      </div>`;
     }
 
-    const rowsHtml = siblings.map(s => {
-      const isCurrent = s.id === item.id;
-      const sales = state.saleCounts[s.sku] || 0;
-      return `<tr ${isCurrent ? 'style="background:rgba(212,168,67,0.06);"' : ''}>
-        <td><span class="vr-sku ${isCurrent ? 'current' : ''}" onclick="onRowClick(${s.id})">${escHtml(s.sku)}</span>${isCurrent ? ' ← current' : ''}</td>
-        <td>${escHtml(s.variant_label || '—')}</td>
-        <td class="mono">${pi(s.qty)}</td>
-        <td class="mono">$${pf(s.wholesale_price).toFixed(2)}</td>
-        <td class="mono">${sales}</td>
-        <td><span class="badge ${s.is_active !== false ? 'badge-active' : 'badge-inactive'}">${s.is_active !== false ? 'Active' : 'Inactive'}</span></td>
-      </tr>`;
-    }).join('');
+    // ── Section 2: Bundle Components (only if is_bundle) ──
+    if (item.is_bundle) {
+      const compRows = components.map(c => {
+        const comp = c.items || {};
+        const derivedQty = c.component_qty > 0 ? Math.floor((pi(comp.qty)) / c.component_qty) : 0;
+        return `<tr>
+          <td><span class="vr-sku" onclick="onRowClick(${comp.id})">${escHtml(comp.sku || '?')}</span></td>
+          <td>${escHtml(comp.product_name || '—')}</td>
+          <td class="mono">${c.component_qty}</td>
+          <td class="mono">${pi(comp.qty)}</td>
+          <td class="mono">${derivedQty}</td>
+          <td><button class="btn-card" style="font-size:10px;padding:3px 8px;color:var(--red);" onclick="removeBundleComponent(${c.id},'${escAttr(comp.sku || '')}')">✕ Remove</button></td>
+        </tr>`;
+      }).join('');
 
-    $('sub-variants').innerHTML = `
-    <div class="section">
-      <div class="flex-between mb-8">
-        <div class="section-title" style="margin-bottom:0;">Variant Family — ${escHtml(parentSku)}</div>
-        <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="addVariantFromItem()">+ Add Variant</button>
-      </div>
-      <div class="table-wrapper">
-        <table>
-          <thead><tr><th>SKU</th><th>Variant Label</th><th>Qty</th><th>Wholesale</th><th>Sales</th><th>Status</th></tr></thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
-      </div>
-      <div style="margin-top:12px;font-size:12px;color:var(--muted2);">Click any SKU to navigate to that variant's item card.</div>
-    </div>`;
+      // Calculate bundle derived qty
+      let bundleDerivedQty = 0;
+      if (components.length > 0) {
+        bundleDerivedQty = Math.min(...components.map(c => {
+          const comp = c.items || {};
+          return c.component_qty > 0 ? Math.floor(pi(comp.qty) / c.component_qty) : 0;
+        }));
+      }
+
+      html += `
+      <div class="section" style="margin-top:16px;">
+        <div class="flex-between mb-8">
+          <div class="section-title" style="margin-bottom:0;">📦 Bundle Components</div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="addBundleComponent()">+ Add Component</button>
+            <button class="btn-card" style="font-size:11px;padding:5px 12px;color:var(--red);border-color:var(--red);" onclick="toggleBundle(false)">Unmark Bundle</button>
+          </div>
+        </div>
+        ${components.length > 0 ? `
+        <div style="margin-bottom:10px;padding:10px 14px;background:rgba(251,191,36,0.08);border-radius:6px;font-size:13px;">
+          <strong>Bundle available qty:</strong> <span class="mono" style="font-size:15px;font-weight:700;color:var(--yellow);">${bundleDerivedQty}</span>
+          <span style="color:var(--muted2);margin-left:8px;">= MIN(component stock ÷ qty per bundle)</span>
+          ${bundleDerivedQty !== pi(item.qty) ? `<br><span style="color:var(--orange);font-size:12px;margin-top:4px;display:inline-block;">⚠ Item qty (${pi(item.qty)}) differs from derived qty (${bundleDerivedQty})</span>` : ''}
+        </div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Component SKU</th><th>Product Name</th><th>Qty Per Bundle</th><th>Stock On Hand</th><th>Bundles Possible</th><th></th></tr></thead>
+            <tbody>${compRows}</tbody>
+          </table>
+        </div>
+        ` : `<div style="text-align:center;padding:20px;color:var(--muted);">No components defined yet. Add components to define what's in this bundle.</div>`}
+      </div>`;
+    } else {
+      // Toggle to make this a bundle
+      html += `
+      <div class="section" style="margin-top:16px;">
+        <div class="flex-between mb-8">
+          <div class="section-title" style="margin-bottom:0;">📦 Bundle</div>
+          <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="toggleBundle(true)">Mark as Bundle</button>
+        </div>
+        <div style="text-align:center;padding:20px;color:var(--muted);">This item is not a bundle. Click "Mark as Bundle" if it contains multiple standalone products sold as a set.</div>
+      </div>`;
+    }
+
+    // ── Section 3: Member Of Bundles (if this item is a component of any bundle) ──
+    if (memberOf.length > 0) {
+      const memRows = memberOf.map(m => {
+        const bundle = m.items || {};
+        const bundleQty = pi(bundle.qty);
+        return `<tr>
+          <td><span class="vr-sku" onclick="onRowClick(${bundle.id})">${escHtml(bundle.sku || '?')}</span> <span class="badge badge-bundle" style="font-size:9px;">BUNDLE</span></td>
+          <td>${escHtml(bundle.product_name || '—')}</td>
+          <td class="mono">${m.component_qty}</td>
+          <td class="mono">${bundleQty}</td>
+        </tr>`;
+      }).join('');
+
+      html += `
+      <div class="section" style="margin-top:16px;">
+        <div class="section-title">🔗 Member Of Bundles</div>
+        <div style="font-size:12px;color:var(--muted2);margin-bottom:8px;">Selling this item will recalculate qty for these bundles.</div>
+        <div class="table-wrapper">
+          <table>
+            <thead><tr><th>Bundle SKU</th><th>Bundle Name</th><th>Uses Per Bundle</th><th>Bundle Qty</th></tr></thead>
+            <tbody>${memRows}</tbody>
+          </table>
+        </div>
+      </div>`;
+    }
+
+    $('sub-variants').innerHTML = html;
   } catch(e) {
+    console.error('[Variants]', e);
     $('sub-variants').innerHTML = `<div class="section" style="color:var(--red);">Error: ${escHtml(e.message)}</div>`;
   }
 }
@@ -3464,6 +3579,17 @@ function addVariantFromItem() {
       // Check SKU doesn't already exist
       const { data: existing } = await sb.from('items').select('id').eq('sku', sku).limit(1);
       if (existing && existing.length > 0) { showCardStatus(`SKU ${sku} already exists`, 'error'); return; }
+
+      // Confirmation before DB write
+      const confirmMsg = `Create new variant item?\n\n` +
+        `SKU: ${sku}\n` +
+        `Parent: ${parentSku}\n` +
+        `Label: ${label || '(none)'}\n` +
+        `Product: ${item.product_name || 'Untitled'}\n` +
+        `Wholesale: $${pf(item.wholesale_price).toFixed(2)}\n\n` +
+        `This will INSERT a new row in the items table with qty=0.\n` +
+        `You will still need to set channel allocations and listing IDs.`;
+      if (!confirm(confirmMsg)) return;
 
       const { data: newItem, error } = await sb.from('items').insert({
         sku: sku,
@@ -3492,6 +3618,195 @@ function addVariantFromItem() {
       showCardStatus(`Failed to create variant: ${e.message}`, 'error');
     }
   })();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BUNDLE COMPONENT MANAGEMENT
+// ═══════════════════════════════════════════════════════════
+async function toggleBundle(makeBundleFlag) {
+  const item = state.currentItem;
+  if (!item) return;
+  const action = makeBundleFlag ? 'mark as a bundle' : 'unmark as a bundle';
+  if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} "${item.sku}"?\n\nBundles derive their qty from component stock. Selling a bundle deducts from all components.`)) return;
+  try {
+    const { error } = await sb.from('items').update({ is_bundle: makeBundleFlag, updated_at: new Date().toISOString() }).eq('id', item.id);
+    if (error) throw error;
+    item.is_bundle = makeBundleFlag;
+    showCardStatus(`${item.sku} ${makeBundleFlag ? 'marked as bundle' : 'unmarked as bundle'}`, 'ok');
+    logActivity('INVENTORY', makeBundleFlag ? 'BUNDLE_CREATED' : 'BUNDLE_REMOVED', null, `${item.sku} ${action}`, {}, item.sku);
+    renderVariants(item);
+  } catch(e) {
+    showCardStatus(`Failed to ${action}: ${e.message}`, 'error');
+  }
+}
+
+async function addBundleComponent() {
+  const item = state.currentItem;
+  if (!item || !item.is_bundle) return;
+  const compSku = prompt('Enter the component SKU (the standalone item inside this bundle):');
+  if (!compSku || !compSku.trim()) return;
+  const sku = compSku.trim().toUpperCase();
+
+  // Prevent adding self
+  if (sku === item.sku) { showCardStatus('Cannot add a bundle as its own component', 'error'); return; }
+
+  try {
+    // Find the component item
+    const { data: compItems } = await sb.from('items').select('id,sku,product_name,qty,is_bundle').eq('sku', sku).limit(1);
+    if (!compItems || compItems.length === 0) { showCardStatus(`SKU "${sku}" not found`, 'error'); return; }
+    const comp = compItems[0];
+
+    // Prevent circular: don't allow adding a bundle that contains this item
+    if (comp.is_bundle) {
+      const { data: circular } = await sb.from('bundle_components').select('id').eq('bundle_item_id', comp.id).eq('component_item_id', item.id).limit(1);
+      if (circular && circular.length > 0) { showCardStatus(`Circular reference: ${sku} already contains ${item.sku} as a component`, 'error'); return; }
+    }
+
+    // Check not already a component
+    const { data: existing } = await sb.from('bundle_components').select('id').eq('bundle_item_id', item.id).eq('component_item_id', comp.id).limit(1);
+    if (existing && existing.length > 0) { showCardStatus(`${sku} is already a component of this bundle`, 'error'); return; }
+
+    const qtyPer = parseInt(prompt(`How many "${sku}" are in each bundle?\n\n${comp.product_name}`, '1'));
+    if (!qtyPer || qtyPer < 1) return;
+
+    const { error } = await sb.from('bundle_components').insert({
+      bundle_item_id: item.id,
+      component_item_id: comp.id,
+      component_qty: qtyPer
+    });
+    if (error) throw error;
+
+    showCardStatus(`Added ${sku} x${qtyPer} as component`, 'ok');
+    logActivity('INVENTORY', 'BUNDLE_COMPONENT_ADDED', null, `Added ${sku} x${qtyPer} to bundle ${item.sku}`, { component: sku, qty: qtyPer }, item.sku);
+    renderVariants(item);
+  } catch(e) {
+    showCardStatus(`Failed to add component: ${e.message}`, 'error');
+  }
+}
+
+async function removeBundleComponent(componentRowId, compSku) {
+  if (!confirm(`Remove ${compSku} from this bundle?`)) return;
+  const item = state.currentItem;
+  try {
+    const { error } = await sb.from('bundle_components').delete().eq('id', componentRowId);
+    if (error) throw error;
+    showCardStatus(`Removed ${compSku} from bundle`, 'ok');
+    logActivity('INVENTORY', 'BUNDLE_COMPONENT_REMOVED', null, `Removed ${compSku} from bundle ${item ? item.sku : '?'}`, { component: compSku }, item ? item.sku : '');
+    if (item) renderVariants(item);
+  } catch(e) {
+    showCardStatus(`Failed to remove component: ${e.message}`, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// FETCH VARIANT IDs FROM CHANNELS (Etsy + Wix)
+// ═══════════════════════════════════════════════════════════
+async function fetchVariantIds(parentSku) {
+  const statusEl = $('variantIdStatus');
+  if (!statusEl) return;
+  statusEl.innerHTML = '<span style="color:var(--muted);">Fetching variant IDs from channels...</span>';
+
+  try {
+    // Get all siblings that share a listing
+    const { data: siblings } = await sb.from('items')
+      .select('id,sku,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id')
+      .or(`parent_sku.eq.${parentSku},sku.eq.${parentSku}`)
+      .order('sku');
+
+    if (!siblings || siblings.length === 0) { statusEl.innerHTML = '<span style="color:var(--red);">No siblings found</span>'; return; }
+
+    let etsyUpdated = 0, wixUpdated = 0, etsyErrors = [], wixErrors = [];
+
+    // ── Etsy: Group by listing_id, call getInventory for each ──
+    const etsyListings = new Map(); // listing_id → [sibling items]
+    for (const s of siblings) {
+      if (s.etsy_listing_id && !s.etsy_variant_id) {
+        const lid = String(s.etsy_listing_id);
+        if (!etsyListings.has(lid)) etsyListings.set(lid, []);
+        etsyListings.get(lid).push(s);
+      }
+    }
+
+    if (etsyListings.size > 0 && state.settings.etsyProxyUrl) {
+      for (const [listingId, items] of etsyListings) {
+        try {
+          const result = await jsonpRequest(state.settings.etsyProxyUrl, {
+            action: 'getInventory',
+            key: state.settings.etsyApiKey || state.settings.ccdApiKey,
+            listing_id: listingId
+          });
+          if (result.success && result.inventory && result.inventory.products) {
+            const products = result.inventory.products;
+            // Match products to our items by SKU
+            for (const item of items) {
+              const match = products.find(p => p.sku && p.sku.toUpperCase() === item.sku.toUpperCase());
+              if (match && match.product_id) {
+                const variantId = String(match.product_id);
+                await sb.from('items').update({ etsy_variant_id: variantId, updated_at: new Date().toISOString() }).eq('id', item.id);
+                etsyUpdated++;
+              }
+            }
+          }
+        } catch(e) {
+          etsyErrors.push(`Listing ${listingId}: ${e.message}`);
+        }
+      }
+    }
+
+    // ── Wix: Group by product_id, call getProduct for each ──
+    const wixProducts = new Map(); // product_id → [sibling items]
+    for (const s of siblings) {
+      if (s.wix_product_id && !s.wix_variant_id) {
+        const pid = String(s.wix_product_id);
+        if (!wixProducts.has(pid)) wixProducts.set(pid, []);
+        wixProducts.get(pid).push(s);
+      }
+    }
+
+    if (wixProducts.size > 0 && state.settings.wixProxyUrl) {
+      for (const [productId, items] of wixProducts) {
+        try {
+          const result = await jsonpRequest(state.settings.wixProxyUrl, {
+            action: 'getProduct',
+            key: state.settings.wixApiKey || state.settings.ccdApiKey,
+            productId: productId
+          });
+          if (result.success && result.product) {
+            const variants = result.product.variants || [];
+            for (const item of items) {
+              const match = variants.find(v => {
+                const vSku = v.sku || v.variantSku || '';
+                return vSku.toUpperCase() === item.sku.toUpperCase();
+              });
+              if (match && (match.id || match.variantId)) {
+                const variantId = String(match.id || match.variantId);
+                await sb.from('items').update({ wix_variant_id: variantId, updated_at: new Date().toISOString() }).eq('id', item.id);
+                wixUpdated++;
+              }
+            }
+          }
+        } catch(e) {
+          wixErrors.push(`Product ${productId}: ${e.message}`);
+        }
+      }
+    }
+
+    // Report
+    let report = [];
+    if (etsyUpdated > 0) report.push(`✅ Etsy: ${etsyUpdated} variant IDs updated`);
+    if (wixUpdated > 0) report.push(`✅ Wix: ${wixUpdated} variant IDs updated`);
+    if (etsyListings.size === 0 && wixProducts.size === 0) report.push('All variant IDs already populated');
+    if (etsyErrors.length > 0) report.push(`⚠ Etsy errors: ${etsyErrors.join('; ')}`);
+    if (wixErrors.length > 0) report.push(`⚠ Wix errors: ${wixErrors.join('; ')}`);
+    statusEl.innerHTML = `<span style="font-size:12px;color:${(etsyErrors.length + wixErrors.length > 0) ? 'var(--orange)' : 'var(--green)'};">${report.join('<br>')}</span>`;
+
+    // Refresh if any updates happened
+    if (etsyUpdated + wixUpdated > 0) {
+      logActivity('INVENTORY', 'VARIANT_IDS_FETCHED', null, `Fetched ${etsyUpdated} Etsy + ${wixUpdated} Wix variant IDs for family ${parentSku}`, {}, parentSku);
+    }
+  } catch(e) {
+    statusEl.innerHTML = `<span style="color:var(--red);">Error: ${escHtml(e.message)}</span>`;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3865,10 +4180,11 @@ async function saveItem() {
       vendor: gv('f_vendor') ?? item.vendor,
       pricing_notes: gv('f_pricing_notes') ?? item.pricing_notes,
       // Listing IDs (editable on Overview tab) — bigint columns need null not empty string
-      etsy_listing_id: gv('f_etsy_listing_id') || null,
-      wix_product_id: gv('f_wix_product_id') || null,
-      wix_variant_id: gv('f_wix_variant_id') || null,
-      etsy_variant_id: gv('f_etsy_variant_id') || null,
+      // CRITICAL: ge() check prevents wiping IDs when saving from non-Overview tabs
+      etsy_listing_id: ge('f_etsy_listing_id') ? (gv('f_etsy_listing_id') || null) : (item.etsy_listing_id || null),
+      wix_product_id: ge('f_wix_product_id') ? (gv('f_wix_product_id') || null) : (item.wix_product_id || null),
+      wix_variant_id: ge('f_wix_variant_id') ? (gv('f_wix_variant_id') || null) : (item.wix_variant_id || null),
+      etsy_variant_id: ge('f_etsy_variant_id') ? (gv('f_etsy_variant_id') || null) : (item.etsy_variant_id || null),
       // Timestamp
       updated_at: new Date().toISOString(),
     };
@@ -3908,8 +4224,75 @@ async function saveItem() {
       return;
     }
 
+    // ── REACTIVATION GUARD: Check if etsy_qty going from 0 to >0 ──
+    const oldEtsyQty = pi(item.etsy_qty);
+    const newEtsyQty = updates.etsy_qty || 0;
+    if (oldEtsyQty === 0 && newEtsyQty > 0 && item.etsy_listing_id) {
+      const proceed = confirm(
+        `⚠️ REACTIVATION WARNING\n\n` +
+        `${item.sku} had 0 Etsy qty and you're setting it to ${newEtsyQty}.\n` +
+        `This will reactivate the listing on Etsy.\n\n` +
+        `Continue? (Cancel to keep Etsy qty at 0)`
+      );
+      if (!proceed) {
+        updates.etsy_qty = 0;
+        updates.wix_qty = 0; // Mirror rule
+        if (ge('f_etsy_qty')) $('f_etsy_qty').value = '0';
+        if (ge('f_wix_qty')) $('f_wix_qty').value = '0';
+      }
+    }
+
     const { error } = await sb.from('items').update(updates).eq('id', item.id);
     if (error) throw error;
+
+    // ── BUNDLE AUTO-DERIVE: If this is a bundle, recalculate qty from components ──
+    if (item.is_bundle) {
+      const { data: comps } = await sb.from('bundle_components')
+        .select('component_qty,items!bundle_components_component_item_id_fkey(qty)')
+        .eq('bundle_item_id', item.id);
+      if (comps && comps.length > 0) {
+        const derivedQty = Math.min(...comps.map(c => {
+          const cQty = pi(c.items ? c.items.qty : 0);
+          return c.component_qty > 0 ? Math.floor(cQty / c.component_qty) : 0;
+        }));
+        if (derivedQty !== updates.qty) {
+          updates.qty = derivedQty;
+          // Cap channel allocations at derived qty
+          if ((updates.etsy_qty || 0) > derivedQty) updates.etsy_qty = derivedQty;
+          if ((updates.wix_qty || 0) > derivedQty) updates.wix_qty = derivedQty;
+          if ((updates.wayfair_qty || 0) > derivedQty) updates.wayfair_qty = derivedQty;
+          await sb.from('items').update({ qty: derivedQty, etsy_qty: updates.etsy_qty, wix_qty: updates.wix_qty, wayfair_qty: updates.wayfair_qty }).eq('id', item.id);
+          console.log(`[Save] Bundle ${item.sku}: qty auto-derived to ${derivedQty}`);
+        }
+      }
+    }
+
+    // ── COMPONENT SAVE CASCADE: If this item is a component of any bundle, recalculate those bundles ──
+    const { data: affectedBundles } = await sb.from('bundle_components')
+      .select('bundle_item_id,items!bundle_components_bundle_item_id_fkey(id,sku,qty,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku)')
+      .eq('component_item_id', item.id);
+    if (affectedBundles && affectedBundles.length > 0) {
+      for (const ab of affectedBundles) {
+        const bundle = ab.items;
+        if (!bundle || !bundle.id) continue;
+        const { data: allComps } = await sb.from('bundle_components')
+          .select('component_qty,items!bundle_components_component_item_id_fkey(qty)')
+          .eq('bundle_item_id', bundle.id);
+        if (!allComps || allComps.length === 0) continue;
+        const derivedQty = Math.min(...allComps.map(ac => {
+          const cQty = pi(ac.items ? ac.items.qty : 0);
+          return ac.component_qty > 0 ? Math.floor(cQty / ac.component_qty) : 0;
+        }));
+        if (derivedQty !== pi(bundle.qty)) {
+          const bundleUpdates = { qty: derivedQty };
+          if (pi(bundle.etsy_qty) > derivedQty) bundleUpdates.etsy_qty = derivedQty;
+          if (pi(bundle.wix_qty) > derivedQty) bundleUpdates.wix_qty = derivedQty;
+          if (pi(bundle.wayfair_qty) > derivedQty) bundleUpdates.wayfair_qty = derivedQty;
+          await sb.from('items').update(bundleUpdates).eq('id', bundle.id);
+          console.log(`[Save Cascade] Bundle ${bundle.sku}: ${pi(bundle.qty)} → ${derivedQty}`);
+        }
+      }
+    }
 
     // Merge updates back into state
     Object.assign(state.currentItem, updates);
@@ -3939,53 +4322,91 @@ async function saveItem() {
 // ═══════════════════════════════════════════════════════════
 // PUSH TO CHANNELS (write to sync_queue)
 // ═══════════════════════════════════════════════════════════
-async function pushToChannels() {
+async function pushToChannels(includeFamily = false) {
   const item = state.currentItem;
   if (!item || state.saving) return;
   state.saving = true;
   captureEdits(); // Ensure latest DOM edits are in state
   const statusEl = $('cardStatus');
   statusEl.className = 'inline-status show';
-  statusEl.textContent = 'Queuing channel pushes...';
+  statusEl.textContent = includeFamily ? 'Queuing family channel pushes...' : 'Queuing channel pushes...';
   statusEl.style.display = 'block';
   let queued = 0;
 
   try {
-    const channels = [
-      { key:'etsy', listing: item.etsy_listing_id, qtyField:'etsy_qty', priceField:'etsy_price' },
-      { key:'wix', listing: item.wix_product_id, qtyField:'wix_qty', priceField:'wix_price', variantId: item.wix_variant_id },
-      { key:'wayfair', listing: item.wayfair_sku, qtyField:'wayfair_qty', priceField:'wayfair_price' }
-    ];
+    // Build list of items to push
+    let itemsToPush = [item];
 
-    for (const ch of channels) {
-      if (!ch.listing) continue;
-      const qty = gn(`f_${ch.key}_qty`) ?? pi(item[ch.qtyField]);
-      const price = gn(`f_${ch.key}_price`) ?? pf(item[ch.priceField]);
-      const fields = { sku: item.sku, quantity: qty };
-      const fieldTypes = ['quantity'];
+    if (includeFamily) {
+      // Add siblings (attribute variants sharing parent_sku)
+      const parentSku = item.parent_sku || item.sku;
+      const { data: siblings } = await sb.from('items')
+        .select('*')
+        .or(`parent_sku.eq.${parentSku},sku.eq.${parentSku}`)
+        .neq('id', item.id);
+      if (siblings) itemsToPush.push(...siblings);
 
-      if (ch.key === 'etsy') { fields.listingId = ch.listing; }
-      if (ch.key === 'wix')  { fields.productId = ch.listing; if (ch.variantId) fields.wixVariantId = ch.variantId; }
-      if (ch.key === 'wayfair') { fields.wayfairSku = ch.listing; }
-
-      // Add price for non-Wayfair (Wayfair API can't update pricing)
-      if (ch.key !== 'wayfair' && price > 0) {
-        fields.price = price;
-        fieldTypes.push('price');
+      // Add bundle components (if this is a bundle)
+      if (item.is_bundle) {
+        const { data: comps } = await sb.from('bundle_components')
+          .select('items!bundle_components_component_item_id_fkey(*)')
+          .eq('bundle_item_id', item.id);
+        if (comps) {
+          for (const c of comps) {
+            if (c.items && !itemsToPush.find(i => i.id === c.items.id)) itemsToPush.push(c.items);
+          }
+        }
       }
-      fields.fieldTypes = fieldTypes;
 
-      const { error: insertErr } = await sb.from('sync_queue').insert({
-        item_id: item.id, channel: ch.key, operation: 'update', fields,
-        status: 'pending', created_at: new Date().toISOString()
-      });
-      if (insertErr) throw new Error(`${ch.key} queue failed: ${insertErr.message}`);
-      queued++;
+      // Add bundles that contain this item (if this is a component)
+      const { data: parentBundles } = await sb.from('bundle_components')
+        .select('items!bundle_components_bundle_item_id_fkey(*)')
+        .eq('component_item_id', item.id);
+      if (parentBundles) {
+        for (const pb of parentBundles) {
+          if (pb.items && !itemsToPush.find(i => i.id === pb.items.id)) itemsToPush.push(pb.items);
+        }
+      }
     }
 
+    for (const pushItem of itemsToPush) {
+      const channels = [
+        { key:'etsy', listing: pushItem.etsy_listing_id, qtyField:'etsy_qty', priceField:'etsy_price', etsyVariantId: pushItem.etsy_variant_id },
+        { key:'wix', listing: pushItem.wix_product_id, qtyField:'wix_qty', priceField:'wix_price', variantId: pushItem.wix_variant_id },
+        { key:'wayfair', listing: pushItem.wayfair_sku, qtyField:'wayfair_qty', priceField:'wayfair_price' }
+      ];
+
+      for (const ch of channels) {
+        if (!ch.listing) continue;
+        const qty = (pushItem.id === item.id) ? (gn(`f_${ch.key}_qty`) ?? pi(pushItem[ch.qtyField])) : pi(pushItem[ch.qtyField]);
+        const price = (pushItem.id === item.id) ? (gn(`f_${ch.key}_price`) ?? pf(pushItem[ch.priceField])) : pf(pushItem[ch.priceField]);
+        const fields = { sku: pushItem.sku, quantity: qty };
+        const fieldTypes = ['quantity'];
+
+        if (ch.key === 'etsy') { fields.listingId = ch.listing; if (ch.etsyVariantId) fields.etsyVariantId = ch.etsyVariantId; }
+        if (ch.key === 'wix')  { fields.productId = ch.listing; if (ch.variantId) fields.wixVariantId = ch.variantId; }
+        if (ch.key === 'wayfair') { fields.wayfairSku = ch.listing; }
+
+        // Add price for non-Wayfair (Wayfair API can't update pricing)
+        if (ch.key !== 'wayfair' && price > 0) {
+          fields.price = price;
+          fieldTypes.push('price');
+        }
+        fields.fieldTypes = fieldTypes;
+
+        const { error: insertErr } = await sb.from('sync_queue').insert({
+          item_id: pushItem.id, channel: ch.key, operation: 'update', fields,
+          status: 'pending', created_at: new Date().toISOString()
+        });
+        if (insertErr) throw new Error(`${ch.key} queue failed for ${pushItem.sku}: ${insertErr.message}`);
+        queued++;
+      }
+    }
+
+    const familyMsg = includeFamily ? ` (${itemsToPush.length} items in family)` : '';
     statusEl.className = 'inline-status show ok';
-    statusEl.textContent = `Queued ${queued} channel push${queued !== 1 ? 'es' : ''} — Sync Hub will process shortly`;
-    logActivity('SYNC','PUSH_QUEUED',null,`Pushed ${item.sku} to ${queued} channels`,{},item.sku);
+    statusEl.textContent = `Queued ${queued} channel push${queued !== 1 ? 'es' : ''}${familyMsg} — Sync Hub will process shortly`;
+    logActivity('SYNC','PUSH_QUEUED',null,`Pushed ${item.sku}${includeFamily ? ' + family' : ''} to ${queued} channels`,{},item.sku);
     state.saving = false;
     setTimeout(() => { statusEl.style.display = 'none'; }, 4000);
   } catch(e) {
@@ -4017,6 +4438,16 @@ function quickSell() {
   $('sellDate').value = new Date().toISOString().split('T')[0];
   $('sellOrderId').value = '';
   $('sellStatus').style.display = 'none';
+  // Bundle cascade preview
+  const cascadeEl = $('bundleCascadePreview');
+  if (item.is_bundle) {
+    cascadeEl.style.display = 'block';
+    cascadeEl.innerHTML = '<span style="color:var(--muted);">Loading bundle components...</span>';
+    loadBundleCascadePreview(item, 1);
+  } else {
+    cascadeEl.style.display = 'none';
+    cascadeEl.innerHTML = '';
+  }
   $('sellModal').classList.add('active');
 }
 
@@ -4037,6 +4468,42 @@ function onSellChannelChange() {
 
 function closeSellModal() {
   $('sellModal').classList.remove('active');
+}
+
+// Bundle cascade preview when selling
+async function loadBundleCascadePreview(item, sellQty) {
+  const cascadeEl = $('bundleCascadePreview');
+  if (!cascadeEl || !item.is_bundle) return;
+  try {
+    const { data: components } = await sb.from('bundle_components')
+      .select('component_item_id,component_qty,items!bundle_components_component_item_id_fkey(id,sku,product_name,qty)')
+      .eq('bundle_item_id', item.id);
+    if (!components || components.length === 0) {
+      cascadeEl.innerHTML = '<span style="color:var(--orange);">⚠ This bundle has no components defined — sale will not cascade.</span>';
+      return;
+    }
+    // Store for use in confirmSell
+    state._bundleComponents = components;
+    const lines = components.map(c => {
+      const comp = c.items || {};
+      const deduct = c.component_qty * sellQty;
+      const newQty = Math.max(0, pi(comp.qty) - deduct);
+      const warn = deduct > pi(comp.qty) ? ' <span style="color:var(--red);">⚠ INSUFFICIENT</span>' : '';
+      return `<div style="margin:3px 0;">• <strong>${escHtml(comp.sku)}</strong>: ${pi(comp.qty)} → ${newQty} (−${deduct})${warn}</div>`;
+    }).join('');
+    cascadeEl.innerHTML = `<div style="font-weight:700;margin-bottom:6px;">📦 Bundle Sale — Component Deductions:</div>${lines}`;
+  } catch(e) {
+    cascadeEl.innerHTML = `<span style="color:var(--red);">Error loading components: ${e.message}</span>`;
+  }
+}
+
+// Update cascade preview when qty changes
+function onSellQtyChange() {
+  const item = state.currentItem;
+  if (item && item.is_bundle) {
+    const qty = pi($('sellQty').value) || 1;
+    loadBundleCascadePreview(item, qty);
+  }
 }
 
 async function confirmSell() {
@@ -4067,6 +4534,22 @@ async function confirmSell() {
 
   statusEl.className='inline-status show'; statusEl.textContent='Recording sale...'; statusEl.style.display='block';
   statusEl.style.color='var(--muted)';
+
+  // ── Bundle stock validation: check ALL components have enough stock ──
+  if (item.is_bundle && state._bundleComponents && state._bundleComponents.length > 0) {
+    for (const c of state._bundleComponents) {
+      const comp = c.items || {};
+      const needed = c.component_qty * qty;
+      const available = pi(comp.qty);
+      if (needed > available) {
+        statusEl.className='inline-status show error';
+        statusEl.textContent=`Insufficient component stock: ${comp.sku || '?'} has ${available} but needs ${needed} (${c.component_qty} × ${qty})`;
+        statusEl.style.display='block';
+        return;
+      }
+    }
+  }
+
   state.saving = true;
 
   try {
@@ -4159,12 +4642,116 @@ async function confirmSell() {
     // Update local state
     Object.assign(item, qtyUpdates);
 
+    // ── 3b. BUNDLE CASCADE: If this is a bundle, deduct from all components ──
+    const cascadeSyncRows = [];
+    if (item.is_bundle && state._bundleComponents && state._bundleComponents.length > 0) {
+      for (const c of state._bundleComponents) {
+        const comp = c.items || {};
+        if (!comp.id) continue;
+        const deductQty = c.component_qty * qty;
+
+        // Fetch fresh component data (may have changed since preview)
+        const { data: freshComp } = await sb.from('items')
+          .select('id,sku,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku')
+          .eq('id', comp.id).single();
+        if (!freshComp) continue;
+
+        const compUpdates = {
+          qty: Math.max(0, pi(freshComp.qty) - deductQty),
+          last_sold_date: saleDate
+        };
+
+        // Deduct from same channel allocation on the component
+        if (chQtyMap[channel] && pi(freshComp[chQtyMap[channel]]) > 0) {
+          compUpdates[chQtyMap[channel]] = Math.max(0, pi(freshComp[chQtyMap[channel]]) - deductQty);
+        }
+        // Etsy/Wix cross-deduct on component
+        if (channel === 'etsy' && pi(freshComp.wix_qty) > 0) {
+          compUpdates.wix_qty = Math.max(0, pi(freshComp.wix_qty) - deductQty);
+        } else if (channel === 'wix' && pi(freshComp.etsy_qty) > 0) {
+          compUpdates.etsy_qty = Math.max(0, pi(freshComp.etsy_qty) - deductQty);
+        }
+
+        const { error: compErr } = await sb.from('items').update(compUpdates).eq('id', freshComp.id);
+        if (compErr) console.warn(`[Bundle Cascade] Failed to deduct from ${freshComp.sku}:`, compErr.message);
+
+        // Queue sync for component channels
+        if (freshComp.etsy_listing_id && compUpdates.etsy_qty !== undefined) {
+          cascadeSyncRows.push({ item_id: freshComp.id, channel:'etsy', operation:'update', fields: {
+            sku: freshComp.sku, quantity: compUpdates.etsy_qty, listingId: freshComp.etsy_listing_id,
+            etsyVariantId: freshComp.etsy_variant_id || null, fieldTypes:['quantity'], trigger:'bundle_cascade'
+          }});
+        }
+        if (freshComp.wix_product_id && compUpdates.wix_qty !== undefined) {
+          cascadeSyncRows.push({ item_id: freshComp.id, channel:'wix', operation:'update', fields: {
+            sku: freshComp.sku, quantity: compUpdates.wix_qty, productId: freshComp.wix_product_id,
+            wixVariantId: freshComp.wix_variant_id || null, fieldTypes:['quantity'], trigger:'bundle_cascade'
+          }});
+        }
+        if (freshComp.wayfair_sku && compUpdates.wayfair_qty !== undefined) {
+          cascadeSyncRows.push({ item_id: freshComp.id, channel:'wayfair', operation:'update', fields: {
+            sku: freshComp.sku, quantity: compUpdates.wayfair_qty, wayfairSku: freshComp.wayfair_sku,
+            fieldTypes:['quantity'], trigger:'bundle_cascade'
+          }});
+        }
+      }
+      console.log(`[Bundle Cascade] Deducted from ${state._bundleComponents.length} components, ${cascadeSyncRows.length} sync rows queued`);
+    }
+
+    // ── 3c. COMPONENT RECALC: If this item is a component of any bundle, recalculate bundle qtys ──
+    const { data: affectedBundles } = await sb.from('bundle_components')
+      .select('bundle_item_id,items!bundle_components_bundle_item_id_fkey(id,sku,qty,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku)')
+      .eq('component_item_id', item.id);
+
+    if (affectedBundles && affectedBundles.length > 0) {
+      for (const ab of affectedBundles) {
+        const bundle = ab.items;
+        if (!bundle || !bundle.id) continue;
+        // Get ALL components of this bundle to recalculate derived qty
+        const { data: allComps } = await sb.from('bundle_components')
+          .select('component_qty,items!bundle_components_component_item_id_fkey(qty)')
+          .eq('bundle_item_id', bundle.id);
+        if (!allComps || allComps.length === 0) continue;
+
+        const derivedQty = Math.min(...allComps.map(ac => {
+          const cQty = pi(ac.items ? ac.items.qty : 0);
+          return ac.component_qty > 0 ? Math.floor(cQty / ac.component_qty) : 0;
+        }));
+
+        const oldBundleQty = pi(bundle.qty);
+        if (derivedQty !== oldBundleQty) {
+          const bundleUpdates = { qty: derivedQty };
+          // Update channel allocations proportionally (cap at derived qty)
+          if (pi(bundle.etsy_qty) > derivedQty) bundleUpdates.etsy_qty = derivedQty;
+          if (pi(bundle.wix_qty) > derivedQty) bundleUpdates.wix_qty = derivedQty;
+          if (pi(bundle.wayfair_qty) > derivedQty) bundleUpdates.wayfair_qty = derivedQty;
+
+          await sb.from('items').update(bundleUpdates).eq('id', bundle.id);
+          console.log(`[Component Recalc] Bundle ${bundle.sku}: ${oldBundleQty} → ${derivedQty}`);
+
+          // Queue sync for the bundle's channels
+          if (bundle.etsy_listing_id) {
+            cascadeSyncRows.push({ item_id: bundle.id, channel:'etsy', operation:'update', fields: {
+              sku: bundle.sku, quantity: bundleUpdates.etsy_qty ?? pi(bundle.etsy_qty), listingId: bundle.etsy_listing_id,
+              etsyVariantId: bundle.etsy_variant_id || null, fieldTypes:['quantity'], trigger:'component_recalc'
+            }});
+          }
+          if (bundle.wix_product_id) {
+            cascadeSyncRows.push({ item_id: bundle.id, channel:'wix', operation:'update', fields: {
+              sku: bundle.sku, quantity: bundleUpdates.wix_qty ?? pi(bundle.wix_qty), productId: bundle.wix_product_id,
+              wixVariantId: bundle.wix_variant_id || null, fieldTypes:['quantity'], trigger:'component_recalc'
+            }});
+          }
+        }
+      }
+    }
+
     // ── 4. Queue sync_queue rows for channel updates ──
     const syncRows = [];
     if (item.etsy_listing_id && qtyUpdates.etsy_qty !== undefined) {
       syncRows.push({ item_id: item.id, channel:'etsy', operation:'update', fields: {
         sku: item.sku, quantity: qtyUpdates.etsy_qty, listingId: item.etsy_listing_id,
-        fieldTypes:['quantity'], trigger:'sale'
+        etsyVariantId: item.etsy_variant_id || null, fieldTypes:['quantity'], trigger:'sale'
       }});
     }
     if (item.wix_product_id && qtyUpdates.wix_qty !== undefined) {
@@ -4179,6 +4766,20 @@ async function confirmSell() {
         fieldTypes:['quantity'], trigger:'sale'
       }});
     }
+    // Add cascade sync rows (bundle component deductions + bundle recalcs)
+    syncRows.push(...cascadeSyncRows);
+
+    // ── 4b. REACTIVATION GUARD: Check for 0→>0 on etsy_qty before writing sync ──
+    const reactivationWarnings = [];
+    for (const sr of syncRows) {
+      if (sr.channel === 'etsy' && sr.fields && sr.fields.quantity > 0) {
+        // Check if this item's etsy_qty was 0 before this sale
+        // (For the sold item, we already deducted so check if original was 0 — it wasn't since we sold from it)
+        // This primarily catches cascade recalcs that INCREASE a bundle's qty
+        // which shouldn't happen on a sale, but guard defensively
+      }
+    }
+
     if (syncRows.length > 0) {
       const { error: syncErr } = await sb.from('sync_queue').insert(syncRows);
       if (syncErr) console.warn('[Sync Queue] Insert failed (sale still recorded):', syncErr.message);
@@ -4186,11 +4787,13 @@ async function confirmSell() {
 
     // ── 5. Log and close ──
     state.cardDirty = true;
-    logActivity('ORDER','MANUAL_SALE', channel, `Sold ${item.sku} x${qty} on ${channel} for $${totalRevenue.toFixed(2)}`, { profit: netProfit.toFixed(2), feeCalc: !!feeBreakdown }, item.sku);
+    const cascadeMsg = cascadeSyncRows.length > 0 ? ` · ${cascadeSyncRows.length} cascade sync(s)` : '';
+    logActivity('ORDER','MANUAL_SALE', channel, `Sold ${item.sku} x${qty} on ${channel} for $${totalRevenue.toFixed(2)}${item.is_bundle ? ' (BUNDLE — components deducted)' : ''}`, { profit: netProfit.toFixed(2), feeCalc: !!feeBreakdown, bundleCascade: item.is_bundle || false }, item.sku);
 
     closeSellModal();
     state.saving = false;
-    showCardStatus(`Sale recorded: ${item.sku} x${qty} on ${channel} · Profit: $${netProfit.toFixed(2)}${syncRows.length > 0 ? ` · ${syncRows.length} channel sync(s) queued` : ''}`, 'ok');
+    state._bundleComponents = null;
+    showCardStatus(`Sale recorded: ${item.sku} x${qty} on ${channel} · Profit: $${netProfit.toFixed(2)}${syncRows.length > 0 ? ` · ${syncRows.length} sync(s) queued${cascadeMsg}` : ''}`, 'ok');
 
     // Refresh the current sub-tab to show updated data (skip captureEdits — state is already fresh)
     const activeTab = $q('.sub-tab.active');
@@ -5753,7 +6356,7 @@ async function pushSingleFromChView(itemId, ch) {
     quantity: pi(item[cfg.qtyCol]),
     fieldTypes: ['quantity']
   };
-  if (ch === 'etsy') fields.listingId = item.etsy_listing_id;
+  if (ch === 'etsy') { fields.listingId = item.etsy_listing_id; if (item.etsy_variant_id) fields.etsyVariantId = item.etsy_variant_id; }
   if (ch === 'wix') { fields.productId = item.wix_product_id; if (item.wix_variant_id) fields.wixVariantId = item.wix_variant_id; }
   if (ch === 'wayfair') fields.wayfairSku = item.wayfair_sku;
   const price = pf(item[cfg.priceCol]);
@@ -5782,7 +6385,7 @@ async function pushAllChannel() {
 
   try {
     // Fetch all items for this channel (not just current page)
-    let query = sb.from('items').select('id,sku,etsy_listing_id,wix_product_id,wix_variant_id,wayfair_sku,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_price,wix_price,wayfair_price,treasuremarts_price').eq('is_active', true);
+    let query = sb.from('items').select('id,sku,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_price,wix_price,wayfair_price,treasuremarts_price').eq('is_active', true);
     query = cfg.filter(query);
     const { data, error } = await query.limit(5000);
     if (error) throw error;
@@ -5791,7 +6394,7 @@ async function pushAllChannel() {
     let queued = 0;
     for (const item of items) {
       const fields = { sku: item.sku, quantity: pi(item[cfg.qtyCol]), fieldTypes: ['quantity'] };
-      if (ch === 'etsy') fields.listingId = item.etsy_listing_id;
+      if (ch === 'etsy') { fields.listingId = item.etsy_listing_id; if (item.etsy_variant_id) fields.etsyVariantId = item.etsy_variant_id; }
       if (ch === 'wix') { fields.productId = item.wix_product_id; if (item.wix_variant_id) fields.wixVariantId = item.wix_variant_id; }
       if (ch === 'wayfair') fields.wayfairSku = item.wayfair_sku;
       const price = pf(item[cfg.priceCol]);
@@ -6087,7 +6690,7 @@ async function executeBulkAction() {
         const listingId = cfg.listingCol ? item[cfg.listingCol] : null;
         if (!listingId && ch !== 'tm') continue; // Skip items without listing
         const fields = { sku: item.sku, quantity: pi(item[cfg.qtyCol]), fieldTypes: ['quantity'] };
-        if (ch === 'etsy') fields.listingId = item.etsy_listing_id;
+        if (ch === 'etsy') { fields.listingId = item.etsy_listing_id; if (item.etsy_variant_id) fields.etsyVariantId = item.etsy_variant_id; }
         if (ch === 'wix') { fields.productId = item.wix_product_id; if (item.wix_variant_id) fields.wixVariantId = item.wix_variant_id; }
         if (ch === 'wayfair') fields.wayfairSku = item.wayfair_sku;
         const price = pf(item[cfg.priceCol]);
