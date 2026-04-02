@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.3</title>
+    <title>CCD Sync Hub v4.3.4</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.3.3 — Clean Build Styles
+           CCD SYNC HUB v4.3.4 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.3 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.4 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -517,13 +517,9 @@
             </div>
         </div>
         
-        <!-- ==================== CHANNEL IDS TAB ==================== -->
+        <!-- ==================== CHANNEL IDS TAB (DEPRECATED v4.3.4) ==================== -->
         <div class="tab-content" id="tab-channels">
-            <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center;">
-                <button class="btn btn-primary" onclick="syncChannelIds()">🔗 Sync All Channel IDs</button>
-                <span id="channelIdSyncStatus" style="font-size: 0.85rem; color: var(--text-dim);"></span>
-            </div>
-            <div id="channelIdContainer"></div>
+            <p style="color: var(--text-dim); font-size: 0.9rem;">⚠️ Channel ID Sync has been retired. Use the <strong>Channel SKU Audit</strong> tool instead.</p>
         </div>
         
         <!-- ==================== CONNECTIONS TAB ==================== -->
@@ -707,11 +703,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.3.3 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.3.4 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.3';
+    const SH_VERSION = 'v4.3.4';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1476,7 +1472,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.3.3-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.3.4-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1588,10 +1584,20 @@
             const statusIcon = row.status === 'completed' ? '✅' : row.status === 'failed' ? '❌' : row.status === 'skipped' ? '⏭️' : '⏳';
             const age = row.created_at ? getTimeAgo(row.created_at) : '';
             const source = row.source || (fields._source) || 'desktop';
+            
+            // v4.3.4: Reactivation warning — flag etsy pushes that may reactivate a sold-out listing
+            let reactivationBadge = '';
+            if (row.channel === 'etsy' && row.status === 'pending' && fields.quantity > 0) {
+                const product = getMasterJsonProduct(fields.sku);
+                if (product && (product.etsyQty === 0 || product.etsyQty === undefined) && product.etsyListingId) {
+                    reactivationBadge = '<span style="background:#854d0e;color:#eab308;padding:1px 6px;border-radius:3px;font-size:0.7rem;font-weight:600;margin-left:6px;">⚠️ REACTIVATE</span>';
+                }
+            }
+            
             return `
                 <div class="queue-item">
                     <span class="channel-badge ${row.channel}">${row.channel}</span>
-                    <span class="action-badge ${row.operation || 'update'}">${(row.operation || 'UPDATE').toUpperCase()}</span>
+                    <span class="action-badge ${row.operation || 'update'}">${(row.operation || 'UPDATE').toUpperCase()}</span>${reactivationBadge}
                     <div class="queue-info">
                         <div class="queue-product">${esc(fields.sku || 'Unknown SKU')}</div>
                         <div class="queue-details">
@@ -1690,7 +1696,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.3.3',
+                processedBy: 'Sync Hub v4.3.4',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2842,20 +2848,24 @@
         // ==========================================================================
         
         // Rule 1: Etsy and Wix always sync together
+        // v4.3.4 FIX: Only mirror if the item actually has the channel's listing ID.
+        // Without this check, items without wix_product_id get phantom wix allocations.
+        const hasEtsyId = !!(product.etsyListingId || product.etsy_listing_id);
+        const hasWixId = !!(product.wixProductId || product.wixId || product.wix_product_id);
         let etsyQty = parseInt(channels.etsy) || 0;
         let wixQty = parseInt(channels.wix) || 0;
         
         if (sourceChannel === 'etsy') {
-            // Sale from Etsy - sync Wix to match
-            if (wixQty !== etsyQty && wixQty > 0) {
+            // Sale from Etsy - sync Wix to match (only if item has Wix listing)
+            if (hasWixId && wixQty !== etsyQty && wixQty > 0) {
                 adjustments.changes.push({ channel: 'wix', from: wixQty, to: etsyQty, reason: 'sync with etsy sale' });
                 channels.wix = etsyQty;
                 wixQty = etsyQty;
                 adjustments.adjusted = true;
             }
         } else if (sourceChannel === 'wix') {
-            // Sale from Wix - sync Etsy to match
-            if (etsyQty !== wixQty && etsyQty > 0) {
+            // Sale from Wix - sync Etsy to match (only if item has Etsy listing)
+            if (hasEtsyId && etsyQty !== wixQty && etsyQty > 0) {
                 adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: wixQty, reason: 'sync with wix sale' });
                 channels.etsy = wixQty;
                 etsyQty = wixQty;
@@ -2863,13 +2873,14 @@
             }
         } else {
             // Sale from Wayfair or other - ensure Etsy = Wix (use lower value)
+            // v4.3.4: Only sync channels that have listing IDs
             const syncedQty = Math.min(etsyQty, wixQty);
-            if (etsyQty > 0 && etsyQty !== syncedQty) {
+            if (hasEtsyId && etsyQty > 0 && etsyQty !== syncedQty) {
                 adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: syncedQty, reason: 'sync etsy=wix' });
                 channels.etsy = syncedQty;
                 adjustments.adjusted = true;
             }
-            if (wixQty > 0 && wixQty !== syncedQty) {
+            if (hasWixId && wixQty > 0 && wixQty !== syncedQty) {
                 adjustments.changes.push({ channel: 'wix', from: wixQty, to: syncedQty, reason: 'sync etsy=wix' });
                 channels.wix = syncedQty;
                 adjustments.adjusted = true;
@@ -2878,12 +2889,17 @@
         }
         
         // Rule 2: Cap Etsy/Wix at available online (warehouse qty)
+        // v4.3.4: Only cap channels that have listing IDs
         const currentEtsyWix = parseInt(channels.etsy) || 0;
         if (currentEtsyWix > availableForOnline) {
-            adjustments.changes.push({ channel: 'etsy', from: currentEtsyWix, to: availableForOnline, reason: 'exceeds warehouse' });
-            adjustments.changes.push({ channel: 'wix', from: currentEtsyWix, to: availableForOnline, reason: 'exceeds warehouse' });
-            channels.etsy = availableForOnline;
-            channels.wix = availableForOnline;
+            if (hasEtsyId) {
+                adjustments.changes.push({ channel: 'etsy', from: currentEtsyWix, to: availableForOnline, reason: 'exceeds warehouse' });
+                channels.etsy = availableForOnline;
+            }
+            if (hasWixId) {
+                adjustments.changes.push({ channel: 'wix', from: parseInt(channels.wix) || 0, to: availableForOnline, reason: 'exceeds warehouse' });
+                channels.wix = availableForOnline;
+            }
             adjustments.adjusted = true;
         }
         
@@ -4368,6 +4384,12 @@
      * Main orchestrator - Syncs channel IDs from all platforms
      */
     async function syncChannelIds() {
+        // DEPRECATED v4.3.4 — Channel ID Sync is dead code (MASTER.json based).
+        // Use Channel SKU Audit tool instead.
+        console.warn('[Channel ID Sync] DEPRECATED — use Channel SKU Audit tool');
+        toast('Channel ID Sync has been retired. Use the Channel SKU Audit tool.', 'info');
+        return;
+        // === Original code below is unreachable ===
         try {
             console.log('[Channel ID Sync] Starting sync process...');
             
@@ -7245,7 +7267,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.3.3 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.3.4 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -7305,10 +7327,8 @@
                 setTimeout(() => loadNotificationSettings(), 1000);
             }
             
-            // Channel ID status
-            if (window.masterJsonData) {
-                updateChannelIdStatus();
-            }
+            // Channel ID status — DEPRECATED v4.3.4 (dead code, use Channel SKU Audit)
+            // if (window.masterJsonData) { updateChannelIdStatus(); }
             
             // v4.1: Auto-sync Shippo on startup + start background timer
             if (sbConnected && state.settings.shippoProxyUrl) {
@@ -7316,11 +7336,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.3.3 initialized successfully');
-            addLog('CCD Sync Hub v4.3.3 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.3.4 initialized successfully');
+            addLog('CCD Sync Hub v4.3.4 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.3.3 started (Supabase-Native Push)',
+                'Sync Hub v4.3.4 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
