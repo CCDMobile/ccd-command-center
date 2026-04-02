@@ -1099,6 +1099,10 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
         <span style="color:var(--muted);">to</span>
         <input type="date" class="date-input" id="shipFilterTo" onchange="renderShippingTab()" style="width:140px;">
         <span id="shipResultCount" style="font-size:12px;color:var(--muted);margin-left:auto;"></span>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer;margin-left:12px;">
+          <input type="checkbox" id="shipShowHidden" onchange="renderShippingTab()" style="accent-color:var(--gold);cursor:pointer;">
+          Show Hidden
+        </label>
       </div>
       <div id="shippingTabContent" style="color:var(--muted);text-align:center;padding:40px;">Loading shipping data...</div>
     </div><!-- end shippingView -->
@@ -3094,6 +3098,7 @@ async function buyLabel(rateIndex) {
         carrier: result.carrier || rate.provider,
         service_name: result.service || rate.service,
         tracking_number: result.trackingNumber || null,
+        label_url: result.labelUrl || null,
         label_status: result.status || 'SUCCESS',
         status: result.status || 'SUCCESS',
         label_cost: pf(result.amount || rate.amount),
@@ -3402,6 +3407,7 @@ async function syncShippoToDb() {
         carrier: tx.carrier || null,
         service_name: tx.serviceName || tx.service_name || null,
         tracking_number: tx.trackingNumber || tx.tracking_number || null,
+        label_url: tx.labelUrl || tx.label_url || null,
         shippo_created_at: tx.createdAt || tx.shipDate || tx.ship_date || null,
         synced_at: new Date().toISOString(),
         recipient_name: tx.recipientName || tx.recipient_name || null,
@@ -5973,6 +5979,9 @@ function renderShippingTab() {
   }
   if (fromDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) >= fromDate);
   if (toDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) <= toDate);
+  // Hide hidden orders unless toggle is checked
+  const showHidden = $('shipShowHidden') && $('shipShowHidden').checked;
+  if (!showHidden) rows = rows.filter(r => !r.is_hidden);
 
   state.filteredShipRows = rows; // store for drill-down
   $('shipResultCount').textContent = `${rows.length} shipments`;
@@ -6009,7 +6018,7 @@ function renderShippingTab() {
       const recipientName = escHtml(r.recipient_name || '—');
       const recipientLoc = [r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ');
       const trackNum = r.tracking_number ? escHtml(r.tracking_number) : '—';
-      return `<tr style="cursor:pointer;" onclick="toggleGlobalShipDetail(${idx})" title="Click for details">
+      return `<tr style="cursor:pointer;${r.is_hidden ? 'opacity:0.4;' : ''}" onclick="toggleGlobalShipDetail(${idx})" title="Click for details">
         <td class="mono" style="font-size:12px;">${date}</td>
         <td style="font-size:12px;" onclick="event.stopPropagation();">${skuLink}</td>
         <td style="font-size:12px;">${escHtml(r.carrier || '—')}</td>
@@ -6035,9 +6044,11 @@ function renderShippingTab() {
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
               ${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);color:var(--blue);">🔗 Track Package</a>` : ''}
+              ${r.label_url ? `<a href="${escAttr(r.label_url)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(212,168,83,0.15);border-color:rgba(212,168,83,0.4);color:var(--gold);">📄 Download Label</a>` : ''}
               <button class="btn-card" onclick="event.stopPropagation();openItemFromShipping('${escAttr(r.sku || '')}')" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>📦 Open Item</button>
               <button class="btn-card" onclick="event.stopPropagation();openItemShippingTab('${escAttr(r.sku || '')}', ${idx})" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>🏷 Buy Another Label</button>
               <button class="btn-card" onclick="event.stopPropagation();openSlipFromShipping(${idx})" style="padding:6px 16px;font-size:12px;">🧾 Packing Slip</button>
+              <button class="btn-card" onclick="event.stopPropagation();hideShipment(${idx})" style="padding:6px 16px;font-size:12px;border-color:rgba(90,110,148,0.4);color:var(--muted);">${r.is_hidden ? '👁 Unhide' : '👁‍🗨 Hide'}</button>
             </div>
           </div>
         </td>
@@ -6050,6 +6061,22 @@ function renderShippingTab() {
 function toggleGlobalShipDetail(idx) {
   const el = $(`gShipDetail_${idx}`);
   if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+async function hideShipment(idx) {
+  const r = state.filteredShipRows[idx];
+  if (!r || !r.id) return;
+  const newState = !r.is_hidden;
+  try {
+    await sb.from('shippo_transactions').update({ is_hidden: newState }).eq('id', r.id);
+    // Update in-memory data
+    r.is_hidden = newState;
+    const master = shipTabData.find(s => s.id === r.id);
+    if (master) master.is_hidden = newState;
+    renderShippingTab();
+  } catch(e) {
+    alert('Failed to update: ' + e.message);
+  }
 }
 
 function openItemFromShipping(sku) {
@@ -6269,6 +6296,7 @@ async function syncShippoGlobal() {
         carrier: tx.carrier || null,
         service_name: tx.serviceName || tx.service_name || null,
         tracking_number: tx.trackingNumber || tx.tracking_number || null,
+        label_url: tx.labelUrl || tx.label_url || null,
         shippo_created_at: tx.createdAt || tx.shipDate || tx.ship_date || null,
         synced_at: new Date().toISOString(),
         recipient_name: tx.recipientName || tx.recipient_name || null,

@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.5</title>
+    <title>CCD Sync Hub v4.3.6</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.3.5 — Clean Build Styles
+           CCD SYNC HUB v4.3.6 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.5 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.6 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -703,11 +703,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.3.5 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.3.6 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.5';
+    const SH_VERSION = 'v4.3.6';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1305,6 +1305,8 @@
             etsyTitle: row.etsy_sync_title,
             etsyPrice: row.etsy_sync_price != null ? parseFloat(row.etsy_sync_price) : null,
             etsyQuantity: row.etsy_sync_quantity,
+            isBundle: row.is_bundle || false,
+            parentSku: row.parent_sku || null,
             orderDate: row.order_date,
             orderNumber: row.order_number || '',
             shippedDate: row.shipped_date,
@@ -1472,7 +1474,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.3.5-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.3.6-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1696,7 +1698,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.3.5',
+                processedBy: 'Sync Hub v4.3.6',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -3643,6 +3645,90 @@
                 }
             }
         
+        // ===== v4.3.6: BUNDLE AWARENESS — Deduct component quantities =====
+        // If any sold item is a bundle, look up its components and deduct their quantities.
+        // Component allocations are auto-adjusted and saved. Cascades for components are
+        // written alongside the normal cascades below.
+        const bundleComponentProducts = []; // Track for cascade writes
+        
+        if (enableDeduction && sbConnected) {
+            for (const item of order.items) {
+                const lookupSku = item.resolvedSku || item.sku;
+                if (lookupSku === 'UNKNOWN') continue;
+                const product = products.find(p => (p.sku || p.SKU) === lookupSku);
+                if (!product || !product.isBundle) continue;
+                
+                // Fetch components from bundle_components table
+                try {
+                    const { data: comps, error: compErr } = await sbClient
+                        .from('bundle_components')
+                        .select('component_item_id, component_qty')
+                        .eq('bundle_item_id', product.id);
+                    
+                    if (compErr || !comps || comps.length === 0) {
+                        addLog(`⚠️ Bundle ${lookupSku}: no components found — skipping component deduction`, 'warning');
+                        continue;
+                    }
+                    
+                    // Load component items from products array (they should already be loaded)
+                    for (const comp of comps) {
+                        const compProduct = products.find(p => p.id === comp.component_item_id);
+                        if (!compProduct) {
+                            addLog(`⚠️ Bundle ${lookupSku}: component id=${comp.component_item_id} not in products — skipping`, 'warning');
+                            continue;
+                        }
+                        
+                        const deductQty = item.qty * (comp.component_qty || 1);
+                        const oldCompQty = compProduct.qty || compProduct.warehouseQty || 0;
+                        const newCompQty = Math.max(0, oldCompQty - deductQty);
+                        
+                        // Update component in-memory
+                        compProduct.qty = newCompQty;
+                        compProduct.warehouseQty = newCompQty;
+                        compProduct.quantity = newCompQty;
+                        
+                        // Auto-adjust component channel allocations
+                        const compAdjust = autoAdjustChannelAllocations(compProduct, null);
+                        
+                        // Sync flat properties
+                        compProduct.etsyQty = parseInt(compProduct.channels?.etsy ?? 0);
+                        compProduct.wixQty = parseInt(compProduct.channels?.wix ?? 0);
+                        compProduct.wayfairQty = parseInt(compProduct.channels?.wayfair ?? 0);
+                        
+                        // Save component to Supabase
+                        try {
+                            await saveItemToSupabase(compProduct);
+                            addLog(`📦 Bundle ${lookupSku} → component ${compProduct.sku}: ${oldCompQty} → ${newCompQty} (-${deductQty})`, 'info');
+                        } catch (ce) {
+                            addLog(`❌ Bundle component save failed: ${compProduct.sku}: ${ce.message}`, 'error');
+                        }
+                        
+                        // Track for cascade writes
+                        bundleComponentProducts.push(compProduct);
+                        
+                        logActivity('inventory', 'bundle_component_deduction', order.channel,
+                            `📦 Bundle ${lookupSku} sold → ${compProduct.sku}: ${oldCompQty} → ${newCompQty} (-${deductQty})`,
+                            {
+                                bundleSku: lookupSku,
+                                componentSku: compProduct.sku,
+                                orderId: orderId,
+                                deducted: deductQty,
+                                before: oldCompQty,
+                                after: newCompQty,
+                                bundleQtySold: item.qty,
+                                componentQtyPer: comp.component_qty
+                            }
+                        );
+                    }
+                    
+                    addLog(`📦 Bundle ${lookupSku}: ${comps.length} component(s) deducted`, 'success');
+                } catch (bundleErr) {
+                    addLog(`❌ Bundle component lookup failed for ${lookupSku}: ${bundleErr.message}`, 'error');
+                    console.error('[Bundle] Component lookup error:', bundleErr);
+                }
+            }
+        }
+        
         // ===== v4.2.0: WRITE CASCADE ROWS TO sync_queue IN SUPABASE =====
         // Instead of building in-memory queue items from mutated masterJsonData,
         // write sync_queue rows with the computed values we already have.
@@ -3729,6 +3815,47 @@
                     } catch (e) { console.error(`[Cascade] Wayfair insert failed for ${lookupSku}:`, e.message); }
                 }
             }
+        }
+        
+        // ===== v4.3.6: BUNDLE COMPONENT CASCADE ROWS =====
+        // Write cascade rows for each component product affected by bundle sales.
+        if (bundleComponentProducts.length > 0 && sbConnected) {
+            for (const comp of bundleComponentProducts) {
+                const compSbId = comp._sbId || comp.id;
+                const compChannels = comp.channels || {};
+                
+                if (comp.etsyListingId || comp.etsyListing) {
+                    const etsyQty = parseInt(compChannels.etsy) ?? 0;
+                    try {
+                        await sbClient.from('sync_queue').insert({
+                            item_id: compSbId, channel: 'etsy', operation: 'update', status: 'pending',
+                            fields: { sku: comp.sku, quantity: etsyQty, listingId: comp.etsyListingId || comp.etsyListing, fieldTypes: ['quantity'], _source: 'cascade' }
+                        });
+                        cascadeCount++;
+                    } catch (e) { console.error(`[Bundle Cascade] Etsy failed for ${comp.sku}:`, e.message); }
+                }
+                if (comp.wixProductId || comp.wixId) {
+                    const wixQty = parseInt(compChannels.wix) ?? 0;
+                    try {
+                        await sbClient.from('sync_queue').insert({
+                            item_id: compSbId, channel: 'wix', operation: 'update', status: 'pending',
+                            fields: { sku: comp.sku, quantity: wixQty, productId: comp.wixProductId || comp.wixId, wixVariantId: comp.wixVariantId || null, fieldTypes: ['quantity'], _source: 'cascade' }
+                        });
+                        cascadeCount++;
+                    } catch (e) { console.error(`[Bundle Cascade] Wix failed for ${comp.sku}:`, e.message); }
+                }
+                if (comp.wayfairSku || comp.supplierPartNumber) {
+                    const wayfairQty = parseInt(compChannels.wayfair) ?? 0;
+                    try {
+                        await sbClient.from('sync_queue').insert({
+                            item_id: compSbId, channel: 'wayfair', operation: 'update', status: 'pending',
+                            fields: { sku: comp.sku, quantity: wayfairQty, wayfairSku: comp.wayfairSku || comp.supplierPartNumber, fieldTypes: ['quantity'], _source: 'cascade' }
+                        });
+                        cascadeCount++;
+                    } catch (e) { console.error(`[Bundle Cascade] Wayfair failed for ${comp.sku}:`, e.message); }
+                }
+            }
+            addLog(`📦 Wrote cascade rows for ${bundleComponentProducts.length} bundle component(s)`, 'info');
         }
         
         if (cascadeCount > 0) {
@@ -6281,10 +6408,41 @@
                 return;
             }
             
-            console.log(`[Sync Queue] Found ${pending.length} pending item(s)`);
-            addLog(`📤 Processing ${pending.length} sync queue item(s)`, 'info');
-            
+            // ── v4.3.6: DEDUP CASCADE ROWS ──
+            // If back-to-back orders wrote multiple cascade rows for the same item+channel,
+            // only the LATEST row has the correct final qty. Mark older duplicates as superseded.
+            const seen = new Map(); // key: "item_id|channel" → latest row
+            const toSupersede = [];
             for (const row of pending) {
+                const key = `${row.item_id}|${row.channel}`;
+                const isCascade = row.fields?._source === 'cascade';
+                if (isCascade && seen.has(key)) {
+                    // This key already has a newer row (we process oldest-first, so the current
+                    // row IS older). Mark the OLDER one (already stored) as superseded? No —
+                    // we want to keep the LATEST. Since rows are sorted ascending (oldest first),
+                    // each new occurrence is NEWER. So supersede the previous one.
+                    toSupersede.push(seen.get(key).id);
+                }
+                if (isCascade) seen.set(key, row);
+            }
+            if (toSupersede.length > 0) {
+                try {
+                    await sbClient.from('sync_queue').update({
+                        status: 'superseded',
+                        processed_at: new Date().toISOString(),
+                        error_message: 'Superseded by newer cascade row for same item+channel'
+                    }).in('id', toSupersede);
+                    console.log(`[Sync Queue] Superseded ${toSupersede.length} duplicate cascade row(s)`);
+                    addLog(`⏭️ Deduped ${toSupersede.length} stale cascade row(s)`, 'info');
+                } catch (e) { console.warn('[Sync Queue] Dedup update failed:', e.message); }
+            }
+            // Filter out superseded rows from processing
+            const toProcess = pending.filter(r => !toSupersede.includes(r.id));
+            
+            console.log(`[Sync Queue] Found ${pending.length} pending, processing ${toProcess.length} (${toSupersede.length} deduped)`);
+            if (toProcess.length > 0) addLog(`📤 Processing ${toProcess.length} sync queue item(s)`, 'info');
+            
+            for (const row of toProcess) {
                 await processSyncQueueRow(row);
             }
             
