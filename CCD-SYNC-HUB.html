@@ -2911,12 +2911,9 @@
             adjustments.adjusted = true;
         }
         
-        // Clean up zero allocations
-        ['etsy', 'wix', 'wayfair'].forEach(ch => {
-            if (channels[ch] === 0) {
-                delete channels[ch];
-            }
-        });
+        // v4.3.4 FIX: Do NOT delete zero-value channels. Deleting causes
+        // itemToSbRow fallback to stale flat properties (etsyQty/wixQty/wayfairQty),
+        // writing pre-deduction values back to the DB. Keep zeros explicit.
         
         // Rule 4: Check Channel PAR (Etsy/Wix)
         const finalEtsyWix = parseInt(channels.etsy) || 0;
@@ -3480,7 +3477,9 @@
                     if (product.channels && product.channels[srcCh] !== undefined) {
                         const oldChQty = product.channels[srcCh];
                         product.channels[srcCh] = Math.max(0, (product.channels[srcCh] || 0) - item.qty);
-                        if (product.channels[srcCh] === 0) delete product.channels[srcCh];
+                        // v4.3.4 FIX: Do NOT delete zero-value channels. Deleting causes
+                        // itemToSbRow to fall back to stale flat properties (etsyQty/wixQty),
+                        // writing the pre-deduction value back to the DB.
                         console.log(`[v3.3.5.13] Reduced ${srcCh} allocation: ${oldChQty} → ${product.channels[srcCh] || 0}`);
                         
                         // ✅ v3.3.5.21: Log source channel reduction to Activity Log
@@ -3501,6 +3500,12 @@
                     
                     // v2.1.0: Auto-adjust channel allocations after order
                     adjustResult = autoAdjustChannelAllocations(product, order.channel);
+                    
+                    // v4.3.4 FIX: Sync flat qty properties with channels object.
+                    // itemToSbRow falls back to these if channels.* is undefined.
+                    product.etsyQty = parseInt(product.channels?.etsy ?? 0);
+                    product.wixQty = parseInt(product.channels?.wix ?? 0);
+                    product.wayfairQty = parseInt(product.channels?.wayfair ?? 0);
                     
                     // Log each channel adjustment individually for detailed tracking
                     if (adjustResult.adjusted && adjustResult.changes.length > 0) {
