@@ -533,7 +533,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.1</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.2</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1286,11 +1286,11 @@ body {
 <script>
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
-// v1.8.1 — March 2026
+// v1.8.2 — March 2026
 // ALL financial values read from sales_history columns — zero recalculation.
 // ============================================================================
 
-const FR_VERSION = 'v1.8.1';
+const FR_VERSION = 'v1.8.2';
 const FR_VERSION_KEY = 'financial';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -3156,7 +3156,7 @@ function setInventoryView(v) {
 async function loadInventoryReport() {
   // Items from DB (limit: Supabase defaults to 1000, bump for safety)
   const { data: items } = await sbClient.from('items')
-    .select('id,sku,product_name,brand_name,qty,treasuremarts_qty,wholesale_price,ob_shipping,ib_shipping,tariff')
+    .select('id,sku,product_name,brand_name,qty,treasuremarts_qty,wholesale_price,ob_shipping,ib_shipping,tariff,is_bundle')
     .limit(5000);
 
   // Recent sales for velocity (last 90 days) — must override 1000-row default
@@ -3209,22 +3209,26 @@ async function loadInventoryReport() {
       invValue: Math.round(invValue*100)/100,
       lastSold: lastSale, daysSince,
       velocity30: vel.units30, velocity90: vel.units90,
-      daysOfStock
+      daysOfStock,
+      isBundle: !!item.is_bundle
     };
   }).filter(i => i.totalQty > 0);
 
-  // KPI cards
+  // KPI cards — v1.8.2: exclude bundles from totals (they hold no independent inventory)
   const kpiEl = document.getElementById('inventoryKpis');
-  const totalValue = inventoryData.reduce((s,i) => s+i.invValue, 0);
-  const totalUnits = inventoryData.reduce((s,i) => s+i.totalQty, 0);
-  const deadCount = inventoryData.filter(i => i.daysSince >= 90).length;
-  const skuCount = inventoryData.length;
+  const physicalItems = inventoryData.filter(i => !i.isBundle);
+  const bundleCount = inventoryData.length - physicalItems.length;
+  const totalValue = physicalItems.reduce((s,i) => s+i.invValue, 0);
+  const totalUnits = physicalItems.reduce((s,i) => s+i.totalQty, 0);
+  const deadCount = physicalItems.filter(i => i.daysSince >= 90).length;
+  const skuCount = physicalItems.length;
 
   kpiEl.innerHTML = `
     <div class="kpi-card"><div class="kpi-label">Total SKUs (in stock)</div><div class="kpi-value">${num(skuCount)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Total Units</div><div class="kpi-value">${num(totalUnits)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Inventory Value</div><div class="kpi-value">${$$(totalValue)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Dead Stock (90d)</div><div class="kpi-value ${deadCount>0?'val-neg':''}">${num(deadCount)}</div></div>
+    ${bundleCount > 0 ? `<div class="kpi-card"><div class="kpi-label">Bundles (excluded)</div><div class="kpi-value" style="color:var(--dim);">${num(bundleCount)}</div></div>` : ''}
   `;
 
   renderInventoryTable();
@@ -3272,8 +3276,10 @@ function renderInventoryTable() {
     <tbody>${rows.map(r => {
       const deadCls = r.daysSince >= 90 ? 'val-neg' : '';
       const dosCls = r.daysOfStock < 14 && r.velocity30 > 0 ? 'val-neg' : r.daysOfStock > 365 ? 'val-dim' : '';
-      return `<tr onclick="drillProductSku('${(r.sku||'').replace(/'/g,"\\'")}')" style="cursor:pointer;">
-        <td class="val-gold">${r.sku}</td>
+      const bundleBadge = r.isBundle ? ' <span style="background:#854d0e;color:#eab308;padding:1px 4px;border-radius:3px;font-size:9px;font-weight:600;">BUNDLE</span>' : '';
+      const bundleDim = r.isBundle ? 'opacity:0.5;' : '';
+      return `<tr onclick="drillProductSku('${(r.sku||'').replace(/'/g,"\\'")}')" style="cursor:pointer;${bundleDim}">
+        <td class="val-gold">${r.sku}${bundleBadge}</td>
         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;">${r.product}</td>
         <td style="color:var(--dim);font-size:11px;">${r.brand}</td>
         <td class="text-right">${r.wQty}</td>
@@ -3288,12 +3294,12 @@ function renderInventoryTable() {
       </tr>`;
     }).join('')}</tbody>
     <tfoot><tr style="background:var(--bg3);">
-      <td colspan="3" style="padding:10px 14px;font-size:11px;color:var(--muted);">${rows.length} items</td>
-      <td class="text-right">${num(rows.reduce((s,r)=>s+r.wQty,0))}</td>
-      <td class="text-right">${num(rows.reduce((s,r)=>s+r.tQty,0))}</td>
-      <td class="text-right" style="font-weight:500;">${num(rows.reduce((s,r)=>s+r.totalQty,0))}</td>
+      <td colspan="3" style="padding:10px 14px;font-size:11px;color:var(--muted);">${rows.length} items${rows.some(r=>r.isBundle) ? ' (bundles dimmed, excluded from totals)' : ''}</td>
+      <td class="text-right">${num(rows.filter(r=>!r.isBundle).reduce((s,r)=>s+r.wQty,0))}</td>
+      <td class="text-right">${num(rows.filter(r=>!r.isBundle).reduce((s,r)=>s+r.tQty,0))}</td>
+      <td class="text-right" style="font-weight:500;">${num(rows.filter(r=>!r.isBundle).reduce((s,r)=>s+r.totalQty,0))}</td>
       <td></td><td></td>
-      <td class="text-right val-gold">${$$(rows.reduce((s,r)=>s+r.invValue,0))}</td>
+      <td class="text-right val-gold">${$$(rows.filter(r=>!r.isBundle).reduce((s,r)=>s+r.invValue,0))}</td>
       <td colspan="3"></td>
     </tr></tfoot>
   </table></div>`;
@@ -4673,8 +4679,11 @@ async function runInventoryScenario() {
 
   // Need inventory + velocity data
   let invItems = (await sbClient.from('items')
-    .select('sku,product_name,brand_name,qty,wholesale_price,ib_shipping,ob_shipping,tariff')
+    .select('sku,product_name,brand_name,qty,wholesale_price,ib_shipping,ob_shipping,tariff,is_bundle')
     .gt('qty', 0).limit(5000)).data || [];
+
+  // v1.8.2: Exclude bundles from scenario analysis (they hold no independent inventory)
+  invItems = invItems.filter(i => !i.is_bundle);
 
   // Apply SKU filter if active
   if (selectedScenarioSkus.size > 0) {
