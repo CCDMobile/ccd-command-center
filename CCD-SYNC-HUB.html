@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.4</title>
+    <title>CCD Sync Hub v4.3.5</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.3.4 — Clean Build Styles
+           CCD SYNC HUB v4.3.5 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.4 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.5 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -703,11 +703,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.3.4 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.3.5 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.4';
+    const SH_VERSION = 'v4.3.5';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1472,7 +1472,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.3.4-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.3.5-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1696,7 +1696,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.3.4',
+                processedBy: 'Sync Hub v4.3.5',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -3538,7 +3538,7 @@
                     product.totalActual = (product.qty || product.warehouseQty || 0) + (product.channels?.treasuremarts || 0);
                     
                     updates.push({
-                        sku: sku,
+                        sku: item.resolvedSku || sku,
                         oldQty: currentQty,
                         newQty: newQty,
                         deducted: item.qty,
@@ -3591,77 +3591,19 @@
                 }
                 // ===== END INVENTORY DEDUCTION =====
                 
-                // ===== UPDATE ALLOCATIONS IN MASTER.json =====
-                // v4.2.0: Reduce each non-source channel by sale qty (option B).
-                // Preserves Desktop-set allocations instead of overwriting with warehouse qty.
-                // Cap: can't go below 0, can't exceed warehouse qty.
-                const sourceChannel = order.channel;
-                
-                // v4.1.5 FIX: Was using isFeatureEnabled('inventoryDeduction') which defaults FALSE,
-                // causing cascade to push qty=0 even when deduction succeeded.
-                // Must use the same enableDeduction flag as the deduction block above.
+                // ===== v4.3.5: LEGACY BLOCK B REMOVED =====
+                // Previously had a second allocation block here that reduced non-source
+                // channels by item.qty. This DOUBLE-DEDUCTED because autoAdjust (line ~3502)
+                // already handles mirroring and capping. Caused Bug: Wix cascade sent
+                // qty=3 instead of 4 (5→4 via autoAdjust, then 4→3 here).
+                // Wayfair block had no sourceChannel guard — always double-deducted.
+                // All allocation work is now handled by:
+                //   1. Source channel reduction (line ~3479)
+                //   2. autoAdjustChannelAllocations (line ~3502)
+                //   3. Flat property sync (lines ~3504-3508)
                 if (enableDeduction) {
-                    // Update allocations for OTHER channels (not the source)
-                    // Source channel already updated by the sale itself
-                    
-                    if (sourceChannel !== 'etsy' && (product.etsyListing || product.etsyListingId)) {
-                        const oldEtsyQty = product.etsyQty || 0;
-                        const reducedEtsy = Math.min(Math.max(0, oldEtsyQty - item.qty), newQty);
-                        product.etsyQty = reducedEtsy;
-                        if (product.channels) product.channels.etsy = reducedEtsy;
-                        console.log(`[Allocation] Etsy: ${oldEtsyQty} - ${item.qty} = ${reducedEtsy} (capped at warehouse ${newQty})`);
-                        
-                        changes.push({
-                            changeType: 'allocation',
-                            sku: sku,
-                            field: 'etsyQty',
-                            before: oldEtsyQty,
-                            after: reducedEtsy,
-                            reason: `Cascade from ${order.channel} order ${orderId}`,
-                            user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
-                        });
-                    }
-                    
-                    if (sourceChannel !== 'wix' && (product.wixProductId || product.wixId)) {
-                        const oldWixQty = product.wixQty || 0;
-                        const reducedWix = Math.min(Math.max(0, oldWixQty - item.qty), newQty);
-                        product.wixQty = reducedWix;
-                        if (product.channels) product.channels.wix = reducedWix;
-                        console.log(`[Allocation] Wix: ${oldWixQty} - ${item.qty} = ${reducedWix} (capped at warehouse ${newQty})`);
-                        
-                        changes.push({
-                            changeType: 'allocation',
-                            sku: sku,
-                            field: 'wixQty',
-                            before: oldWixQty,
-                            after: reducedWix,
-                            reason: `Cascade from ${order.channel} order ${orderId}`,
-                            user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
-                        });
-                    }
-                    
-                    // Wayfair: always update (Wayfair doesn't auto-reduce on their side)
-                    if (product.wayfairSku || product.supplierPartNumber) {
-                        const oldWayfairQty = product.wayfairQty || 0;
-                        const reducedWayfair = Math.min(Math.max(0, oldWayfairQty - item.qty), newQty);
-                        product.wayfairQty = reducedWayfair;
-                        if (product.channels) product.channels.wayfair = reducedWayfair;
-                        console.log(`[Allocation] Wayfair: ${oldWayfairQty} - ${item.qty} = ${reducedWayfair} (capped at warehouse ${newQty})`);
-                        
-                        changes.push({
-                            changeType: 'allocation',
-                            sku: sku,
-                            field: 'wayfairQty',
-                            before: oldWayfairQty,
-                            after: reducedWayfair,
-                            reason: `Cascade from ${order.channel} order ${orderId}`,
-                            user: isAutoProcess ? 'auto-process' : (localStorage.getItem('ccd_hostname') || 'Unknown')
-                        });
-                    }
-                    
-                    console.log(`[Allocation] Summary for ${sku}: warehouse=${newQty}, etsy=${product.etsyQty || 'N/A'}, wix=${product.wixQty || 'N/A'}, wayfair=${product.wayfairQty || 'N/A'}`);
+                    console.log(`[Allocation] Summary for ${sku}: warehouse=${newQty}, etsy=${product.channels?.etsy ?? 'N/A'}, wix=${product.channels?.wix ?? 'N/A'}, wayfair=${product.channels?.wayfair ?? 'N/A'}`);
                 }
-                // ===== END ALLOCATION UPDATE =====
                 
                 // v3.3.5.13: Removed dead cascade queue code that was here.
                 // It pushed warehouse qty (newQty) to all channels, but the cascadeQueue
@@ -3813,7 +3755,8 @@
         // ====== RECORD SALES TO DATABASE ======
         if (sbConnected) {
             for (const item of (order.items || [])) {
-                const product = getMasterJsonProduct(item.sku);
+                // v4.3.5: Use resolvedSku for Wayfair orders where order SKU ≠ master SKU
+                const product = getMasterJsonProduct(item.resolvedSku || item.sku);
                 if (product) {
                     await recordSaleToSupabase(product, item.qty || 1, order.channel, item.price || 0, orderId, order);
                 }
@@ -4152,7 +4095,7 @@
                     title: (product.productName || product.name || product.sku).substring(0, 140), // Etsy max 140 chars
                     description: product.description || product.productDescription || `${product.productName || product.name} - Quality product from Country Charm Decor`,
                     price: parseFloat(product.retailPrice || product.price || 19.99),
-                    quantity: parseInt(product.wixQty || product.qty || product.quantity || 1),
+                    quantity: parseInt(product.channels?.etsy ?? product.etsyQty ?? product.qty ?? 1),
                     sku: product.sku,
                     // Etsy required fields with defaults
                     taxonomy_id: product.taxonomyId || 891, // Home & Living > Home Decor
@@ -4247,7 +4190,7 @@
                     description: product.description || product.productDescription || `${product.productName || product.name} - Quality product from Country Charm Decor`,
                     price: parseFloat(product.retailPrice || product.price || 19.99),
                     sku: product.sku,
-                    quantity: parseInt(product.wixQty || product.qty || product.quantity || 1),
+                    quantity: parseInt(product.channels?.wix ?? product.wixQty ?? product.qty ?? 1),
                     weight: parseFloat(product.shippingWeight || product.weight || 1),
                     productType: 'physical',
                     visible: true,
@@ -4355,7 +4298,7 @@
                     addLog(`⚠️ ${msg}`, 'warning');
                     return { success: false, error: msg };
                 }
-                const wayfairQty = parseInt(product.wayfairQty || product.qty || product.quantity || 0);
+                const wayfairQty = parseInt(product.channels?.wayfair ?? product.wayfairQty ?? product.qty ?? 0);
                 console.log(`[Wayfair Push] 📤 Sending: wayfairSku=${wayfairSku}, qty=${wayfairQty}, url=${url ? 'SET' : 'MISSING'}`);
                 
                 const result = await corsSafePost(url, {
@@ -4394,135 +4337,6 @@
         console.warn('[Channel ID Sync] DEPRECATED — use Channel SKU Audit tool');
         toast('Channel ID Sync has been retired. Use the Channel SKU Audit tool.', 'info');
         return;
-        // === Original code below is unreachable ===
-        try {
-            console.log('[Channel ID Sync] Starting sync process...');
-            
-            // Show loading state
-            const syncBtn = document.getElementById('syncChannelIdsBtn');
-            if (syncBtn) {
-                syncBtn.disabled = true;
-                syncBtn.textContent = '⏳ Syncing...';
-            }
-            
-            // Check if MASTER.json loaded
-            if (!window.masterJsonData) {
-                toast('Please connect MASTER.json first', 'error');
-                if (syncBtn) {
-                    syncBtn.disabled = false;
-                    syncBtn.textContent = '🔗 Sync Channel IDs';
-                }
-                return;
-            }
-            
-            // v3.3.5.21: Re-read Master JSON from disk to pick up changes from Inventory System
-            if (masterJsonFileHandle) {
-                try {
-                    const freshFile = await masterJsonFileHandle.getFile();
-                    const freshText = await freshFile.text();
-                    const freshData = JSON.parse(freshText);
-                    
-                    // Merge: keep in-memory _activityLog, take everything else from disk
-                    const memoryLog = window.masterJsonData._activityLog || [];
-                    window.masterJsonData = freshData;
-                    if (memoryLog.length > 0) {
-                        window.masterJsonData._activityLog = memoryLog;
-                    }
-                    
-                    console.log(`[Channel ID Sync] ✅ Refreshed Master JSON from disk (${(freshData.inventory || []).length} products)`);
-                } catch (refreshErr) {
-                    console.warn('[Channel ID Sync] Could not refresh from disk, using in-memory data:', refreshErr.message);
-                }
-            }
-            
-            // Scan for missing IDs
-            const products = window.masterJsonData.inventory || [];
-            const missingEtsy = products.filter(p => !p.etsyListingId);
-            const missingWix = products.filter(p => !p.wixProductId && !p.wixId);
-            const missingWayfair = products.filter(p => !p.wayfairSku && !p.supplierPartNumber);
-            
-            console.log(`[Channel ID Sync] Found ${missingEtsy.length} products missing Etsy IDs`);
-            console.log(`[Channel ID Sync] Found ${missingWix.length} products missing Wix IDs`);
-            console.log(`[Channel ID Sync] Found ${missingWayfair.length} products missing Wayfair IDs`);
-            
-            toast(`🔍 Scanning ${products.length} products for missing IDs...`, 'info');
-            
-            // Track results
-            const results = {
-                etsy: { found: 0, notFound: 0, errors: 0 },
-                wix: { found: 0, notFound: 0, errors: 0 },
-                wayfair: { found: 0, notFound: 0, errors: 0 }
-            };
-            
-            // v3.3.5.22: Collect SKU mismatch data for report
-            window._skuMismatchData = { etsy: [], wix: [], etsyListings: null, wixProducts: null };
-            
-            // Fetch from each channel (only if needed)
-            if (missingEtsy.length > 0) {
-                toast(`🛍️ Fetching Etsy listings...`, 'info');
-                const etsyResults = await fetchEtsyListingIds(missingEtsy);
-                results.etsy = etsyResults;
-            }
-            
-            if (missingWix.length > 0) {
-                toast(`🌐 Fetching Wix products...`, 'info');
-                const wixResults = await fetchWixProductIds(missingWix);
-                results.wix = wixResults;
-            }
-            
-            if (missingWayfair.length > 0) {
-                toast(`🏠 Fetching Wayfair inventory...`, 'info');
-                const wayfairResults = await fetchWayfairSkus(missingWayfair);
-                results.wayfair = wayfairResults;
-            }
-            
-            // ✅ v3.3.5.21: Always save (moved after logActivity so the log entry persists)
-            const totalFound = results.etsy.found + results.wix.found + results.wayfair.found;
-            
-            // Log to Activity Log FIRST
-            logActivity('sync', 'channel_id_sync', 'system',
-                `✅ Channel ID sync complete: ${totalFound} IDs added`,
-                {
-                    etsyFound: results.etsy.found,
-                    wixFound: results.wix.found,
-                    wayfairFound: results.wayfair.found,
-                    etsyNotFound: results.etsy.notFound,
-                    wixNotFound: results.wix.notFound,
-                    wayfairNotFound: results.wayfair.notFound,
-                    totalUpdated: totalFound
-                }
-            );
-            
-            // Save AFTER logActivity so the activity entry persists to disk
-            await saveMasterJson({
-                actionDescription: `Channel ID Sync: +${results.etsy.found} Etsy, +${results.wix.found} Wix, +${results.wayfair.found} Wayfair`,
-                skipLog: true  // Already logged above
-            });
-            
-            // Show results
-            showSyncReport(results);
-            
-            // Update status badge
-            updateChannelIdStatus();
-            
-            toast(`✅ Synced ${totalFound} channel IDs`, 'success');
-            
-        } catch (error) {
-            console.error('[Channel ID Sync] Error:', error);
-            toast('Channel ID sync failed: ' + error.message, 'error');
-            
-            logActivity('error', 'channel_id_sync_failed', 'system',
-                `❌ Channel ID sync failed: ${error.message}`,
-                { error: error.message, stack: error.stack }
-            );
-        } finally {
-            // Reset button state
-            const syncBtn = document.getElementById('syncChannelIdsBtn');
-            if (syncBtn) {
-                syncBtn.disabled = false;
-                syncBtn.textContent = '🔗 Sync Channel IDs';
-            }
-        }
     }
 
 
@@ -6083,51 +5897,7 @@
 
 
     // === updateChannelIdStatus (line 10913) ===
-    /**
-     * Update Channel ID Status Badge
-     */
-    function updateChannelIdStatus() {
-        if (!window.masterJsonData) return;
-        
-        const products = window.masterJsonData.inventory || [];
-        
-        const total = products.length;
-        const withEtsy = products.filter(p => p.etsyListingId).length;
-        const withWix = products.filter(p => p.wixProductId || p.wixId).length;
-        const withWayfair = products.filter(p => p.wayfairSku || p.supplierPartNumber).length;
-        const withAll = products.filter(p => 
-            (p.etsyListingId) && 
-            (p.wixProductId || p.wixId) && 
-            (p.wayfairSku || p.supplierPartNumber)
-        ).length;
-        
-        // Calculate percentage (used in both UI and console.log)
-        const percentage = Math.round((withAll / total) * 100);
-        const statusClass = percentage >= 90 ? 'success' : percentage >= 50 ? 'warning' : 'error';
-        
-        const statusElement = document.getElementById('channelIdStatus');
-        const widgetElement = document.getElementById('channelIdStatusWidget');
-        
-        if (statusElement && widgetElement) {
-            
-            statusElement.innerHTML = `
-                <div class="channel-id-status ${statusClass}">
-                    <div class="status-main">${withAll}/${total} Complete (${percentage}%)</div>
-                    <div class="status-details">
-                        <span>🛍️ Etsy: ${withEtsy}</span>
-                        <span>🌐 Wix: ${withWix}</span>
-                        <span>🏠 Wayfair: ${withWayfair}</span>
-                    </div>
-                    ${withAll < total ? `<div class="status-warning">⚠️ ${total - withAll} products missing IDs - cascade will not work for these products</div>` : ''}
-                </div>
-            `;
-            
-            // Show the widget
-            widgetElement.style.display = 'block';
-        }
-        
-        console.log(`[Channel ID Status] ${withAll}/${total} products have all channel IDs (${percentage}%)`);
-    }
+    // updateChannelIdStatus — REMOVED v4.3.5 (dead code, only called from retired Channel ID Sync)
 
 
 
@@ -6740,12 +6510,14 @@
 
     // === updateEtsyInventory (line 4965) ===
     async function updateEtsyInventory(product, url, key) {
+        // v4.3.5: Use channels.etsy as source of truth. ?? respects zero (sold-out).
+        // Old code used || which treated 0 as falsy and fell through to wixQty/warehouse.
+        const qty = parseInt(product.channels?.etsy ?? product.etsyQty ?? product.qty ?? 0);
         const data = {
             key: key,
             action: 'updateInventory',
-            // v3.3.5.13: Accept generic 'listingId' and 'qty' from cascade queue items
             listing_id: product.etsyListing || product.etsyListingId || product.listingId,
-            quantity: parseInt(product.qty || product.wixQty || product.etsyQty || product.quantity || 0),
+            quantity: qty,
             sku: product.sku
         };
         return await etsyPostRequest(url, data);
@@ -6757,14 +6529,15 @@
         // v3.3.5.25: Reject push if no valid Wix product ID — prevents false success
         const productId = product.wixProductId || product.productId;
         if (!productId) {
-            const msg = `No Wix product ID for SKU ${product.sku} — skipping inventory push. Map this product in Inventory System or run Channel ID Sync.`;
+            const msg = `No Wix product ID for SKU ${product.sku} — skipping inventory push. Map this product in Inventory V2 or use Channel SKU Audit.`;
             console.warn(`[Wix Push] ❌ ${msg}`);
             addLog(`⚠️ ${msg}`, 'warning');
             return { success: false, error: msg };
         }
         // v4.1.3: Include variantId for variant-level inventory targeting
         const variantId = product.wixVariantId || product.wix_variant_id || null;
-        const qty = parseInt(product.qty || product.wixQty || product.quantity || 0);
+        // v4.3.5: Use channels.wix as source of truth. ?? respects zero (sold-out).
+        const qty = parseInt(product.channels?.wix ?? product.wixQty ?? product.qty ?? 0);
         
         console.log(`[Wix Push] 📤 Sending: productId=${productId}, variantId=${variantId}, sku=${product.sku}, qty=${qty}, url=${url ? 'SET' : 'MISSING'}`);
         
@@ -7084,178 +6857,12 @@
     }
 
 
-    // === showSyncReport (line 10959) ===
-    /**
-     * Show Sync Report Modal
-     */
-    function showSyncReport(results) {
-        const totalFound = results.etsy.found + results.wix.found + results.wayfair.found;
-        const totalNotFound = results.etsy.notFound + results.wix.notFound + results.wayfair.notFound;
-        const totalErrors = results.etsy.errors + results.wix.errors + results.wayfair.errors;
-        
-        const html = `
-            <div class="sync-report-modal">
-                <div class="sync-report-header">
-                    <h2>📊 Channel ID Sync Report</h2>
-                    <button onclick="closeSyncReport()">✕</button>
-                </div>
-                
-                <div class="sync-report-summary">
-                    <div class="summary-stat success">
-                        <div class="stat-value">${totalFound}</div>
-                        <div class="stat-label">IDs Added</div>
-                    </div>
-                    <div class="summary-stat warning">
-                        <div class="stat-value">${totalNotFound}</div>
-                        <div class="stat-label">Not Found</div>
-                    </div>
-                    ${totalErrors > 0 ? `
-                    <div class="summary-stat error">
-                        <div class="stat-value">${totalErrors}</div>
-                        <div class="stat-label">Errors</div>
-                    </div>
-                    ` : ''}
-                </div>
-                
-                <div class="sync-report-details">
-                    <h3>By Channel</h3>
-                    
-                    <div class="channel-result">
-                        <div class="channel-name">🛍️ Etsy</div>
-                        <div class="channel-stats">
-                            <span class="stat-success">✅ ${results.etsy.found} found</span>
-                            ${results.etsy.notFound > 0 ? `<span class="stat-warning">⚠️ ${results.etsy.notFound} not found</span>` : ''}
-                            ${results.etsy.errors > 0 ? `<span class="stat-error">❌ ${results.etsy.errors} errors</span>` : ''}
-                        </div>
-                    </div>
-                    
-                    <div class="channel-result">
-                        <div class="channel-name">🌐 Wix</div>
-                        <div class="channel-stats">
-                            <span class="stat-success">✅ ${results.wix.found} found</span>
-                            ${results.wix.notFound > 0 ? `<span class="stat-warning">⚠️ ${results.wix.notFound} not found</span>` : ''}
-                            ${results.wix.errors > 0 ? `<span class="stat-error">❌ ${results.wix.errors} errors</span>` : ''}
-                        </div>
-                        ${results.wix.unmatchedVariants > 0 ? `
-                        <div style="font-size: 0.85rem; color: #8b8fa3; margin-top: 4px; padding-left: 8px;">
-                            ℹ️ ${results.wix.unmatchedVariants} Wix variant SKUs skipped (promo combos)
-                        </div>` : ''}
-                        ${results.wix.unmatchedParents > 0 ? `
-                        <div style="font-size: 0.85rem; color: #e8a838; margin-top: 4px; padding-left: 8px;">
-                            ⚠️ ${results.wix.unmatchedParents} Wix products have no matching inventory SKU — check console for details
-                        </div>` : ''}
-                    </div>
-                    
-                    <div class="channel-result">
-                        <div class="channel-name">🏠 Wayfair</div>
-                        <div class="channel-stats">
-                            <span class="stat-success">✅ ${results.wayfair.found} found</span>
-                            ${results.wayfair.notFound > 0 ? `<span class="stat-warning">⚠️ ${results.wayfair.notFound} not found</span>` : ''}
-                            ${results.wayfair.errors > 0 ? `<span class="stat-error">❌ ${results.wayfair.errors} errors</span>` : ''}
-                        </div>
-                    </div>
-                </div>
-                
-                ${totalNotFound > 0 ? `
-                <div class="sync-report-note">
-                    <strong>Note:</strong> Products not found may not be listed on those channels yet, 
-                    or their SKUs may not match. Wix variant SKUs are matched automatically — 
-                    unmatched variants (promo combos) are safely skipped. Check console for unmatched Wix parent products.
-                </div>
-                ` : ''}
-                
-                <div class="sync-report-actions">
-                    <button class="btn btn-primary" onclick="closeSyncReport()">Close</button>
-                    <button class="btn btn-secondary" onclick="switchView('activity'); closeSyncReport();">View Activity Log</button>
-                    ${totalNotFound > 0 ? `<button class="btn btn-secondary" onclick="exportSkuMismatchReport()" style="background: #2a6f97; color: white;">📋 Download SKU Mismatch Report</button>` : ''}
-                    <button class="btn btn-secondary" onclick="exportChannelSkuComparison()" style="background: #5a8a3c; color: white;">📊 Download Channel SKU Comparison</button>
-                    <button class="btn btn-secondary" onclick="openSkuFixUtility()" style="background: #d4740e; color: white;">🔧 Fix Inventory SKUs</button>
-                </div>
-            </div>
-        `;
-        
-        // Show modal
-        const modal = document.createElement('div');
-        modal.id = 'syncReportModal';
-        modal.className = 'modal-overlay';
-        modal.innerHTML = html;
-        modal.onclick = (e) => {
-            if (e.target === modal) closeSyncReport();
-        };
-        document.body.appendChild(modal);
-    }
-
-
-    
     // ============================================================
-    // SYNC REPORT FUNCTIONS (Channel ID Sync Report UI)
+    // SYNC REPORT FUNCTIONS — REMOVED v4.3.5
+    // showSyncReport, closeSyncReport, switchView, exportSkuMismatchReport,
+    // exportChannelSkuComparison, openSkuFixUtility all removed.
+    // Only called from retired Channel ID Sync. Use Channel SKU Audit tool.
     // ============================================================
-
-    function closeSyncReport() {
-        const modal = document.getElementById('syncReportModal');
-        if (modal) modal.remove();
-    }
-
-    function switchView(viewName) {
-        // Map view names to tab names
-        const viewToTab = { 'activity': 'log', 'orders': 'orders', 'queue': 'queue', 'settings': 'settings' };
-        switchTab(viewToTab[viewName] || viewName);
-    }
-
-    function exportSkuMismatchReport() {
-        // Collect mismatch data from last sync
-        const products = getProductsArray();
-        if (!products.length) { toast('No inventory loaded', 'error'); return; }
-
-        let csv = 'SKU,Product Name,Has Etsy ID,Has Wix ID,Has Wayfair ID\n';
-        for (const p of products) {
-            const sku = p.sku || p.SKU || '';
-            const name = (p.productName || p.name || '').replace(/,/g, ' ');
-            const hasEtsy = (p.etsyListingId || p.etsyListing) ? 'Yes' : 'No';
-            const hasWix = (p.wixProductId || p.wixId) ? 'Yes' : 'No';
-            const hasWayfair = (p.wayfairSku || p.supplierPartNumber) ? 'Yes' : 'No';
-            if (hasEtsy === 'No' || hasWix === 'No' || hasWayfair === 'No') {
-                csv += `"${sku}","${name}",${hasEtsy},${hasWix},${hasWayfair}\n`;
-            }
-        }
-
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `sku-mismatch-report-${new Date().toISOString().split('T')[0]}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast('SKU Mismatch Report downloaded', 'success');
-    }
-
-    function exportChannelSkuComparison() {
-        const products = getProductsArray();
-        if (!products.length) { toast('No inventory loaded', 'error'); return; }
-
-        let csv = 'SKU,Product Name,Etsy Listing ID,Wix Product ID,Wayfair SKU\n';
-        for (const p of products) {
-            const sku = p.sku || p.SKU || '';
-            const name = (p.productName || p.name || '').replace(/,/g, ' ');
-            const etsy = p.etsyListingId || p.etsyListing || '';
-            const wix = p.wixProductId || p.wixId || '';
-            const wayfair = p.wayfairSku || p.supplierPartNumber || '';
-            csv += `"${sku}","${name}","${etsy}","${wix}","${wayfair}"\n`;
-        }
-
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `channel-sku-comparison-${new Date().toISOString().split('T')[0]}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-        toast('Channel SKU Comparison downloaded', 'success');
-    }
-
-    function openSkuFixUtility() {
-        toast('SKU Fix Utility is a standalone tool — open IB-Shipping-Fix-Utility.html or use Channel Manager', 'info');
-    }
 
     // ============================================================
     // COMPATIBILITY ALIASES
@@ -7272,7 +6879,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.3.4 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.3.5 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -7341,11 +6948,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.3.4 initialized successfully');
-            addLog('CCD Sync Hub v4.3.4 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.3.5 initialized successfully');
+            addLog('CCD Sync Hub v4.3.5 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.3.4 started (Supabase-Native Push)',
+                'Sync Hub v4.3.5 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
