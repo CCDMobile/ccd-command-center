@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.1</title>
+<title>CCD Inventory System v2.8.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -602,7 +602,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.1 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.2 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -614,7 +614,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.1</div>
+      <div class="topbar-version">v2.8.2</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -755,6 +755,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
           <button class="btn-card btn-push" onclick="pushToChannels(true)" title="Push this item + all siblings, bundle components, and parent bundles" style="font-size:11px;">↻ Push Family</button>
           <button class="btn-card btn-save" onclick="saveItem()">💾 Save</button>
           <button class="btn-card" onclick="cancelCard()" style="background:transparent;border:1px solid var(--border);color:var(--muted);">✕ Cancel</button>
+          <button class="btn-card" onclick="deleteItem()" style="background:transparent;border:1px solid var(--red);color:var(--red);font-size:11px;" title="Permanently remove this item from inventory (sales history preserved)">🗑 Delete</button>
           <label class="active-toggle">
             Active <input type="checkbox" id="cardActive" checked>
           </label>
@@ -1269,7 +1270,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.8.1';
+const TOOL_VERSION = '2.8.2';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1797,6 +1798,7 @@ async function onRowClick(itemId) {
   }
   // Clone item so edits don't mutate state.items (prevents stale list data on cancel)
   state.currentItem = JSON.parse(JSON.stringify(item));
+  state.currentItem._originalSku = state.currentItem.sku; // Preserve for SKU change detection
   state.cardDirty = false;
   state.hasUnsavedEdits = false;
   state.cardRendered = false;
@@ -2084,6 +2086,28 @@ function showUnsavedModal() {
   });
 }
 
+// ═══════════════════════════════════════════════════════════
+// EDIT SKU — toggle readonly on SKU input
+// ═══════════════════════════════════════════════════════════
+function toggleSkuEdit() {
+  const inp = $('f_sku');
+  if (!inp) return;
+  if (inp.readOnly) {
+    inp.readOnly = false;
+    inp.style.border = '1px solid var(--gold)';
+    inp.style.background = 'var(--bg1)';
+    inp.focus();
+    inp.select();
+    $('skuEditBtn').textContent = '🔓';
+    markUnsaved();
+  } else {
+    inp.readOnly = true;
+    inp.style.border = '';
+    inp.style.background = '';
+    $('skuEditBtn').textContent = '✏️';
+  }
+}
+
 // Capture visible field edits back into state.currentItem so they survive tab switches
 
 // ═══════════════════════════════════════════════════════════
@@ -2093,8 +2117,9 @@ function captureEdits() {
   const item = state.currentItem;
   if (!item) return;
   const fields = {
+    f_sku: 'sku',
     f_product_name: 'product_name', f_brand_name: 'brand_name', f_vendor: 'vendor',
-    f_category: 'category', f_shelf: 'shelf_number', f_comments: 'comments', f_pricing_notes: 'pricing_notes',
+    f_category: 'category', f_shelf: 'shelf_number', f_comments: 'comments',
     f_wholesale: 'wholesale_price', f_ib: 'ib_shipping', f_tariff: 'tariff', f_ob: 'ob_shipping',
     f_qty: 'qty', f_etsy_qty: 'etsy_qty', f_wix_qty: 'wix_qty', f_wayfair_qty: 'wayfair_qty', f_tm_qty: 'treasuremarts_qty',
     f_etsy_price: 'etsy_price', f_wix_price: 'wix_price', f_wayfair_price: 'wayfair_price', f_tm_price: 'treasuremarts_price',
@@ -2123,6 +2148,12 @@ function captureEdits() {
   // Checkbox fields
   if (ge('f_photographed')) item.photographed = $('f_photographed').checked;
   if ($('cardActive')) item.is_active = $('cardActive').checked;
+  // Per-channel pricing notes — route to correct column based on active channel
+  if (ge('f_pricing_notes')) {
+    const notesColMap = { etsy: 'etsy_pricing_notes', wix: 'wix_pricing_notes', wayfair: 'wayfair_pricing_notes', tm: 'tm_pricing_notes' };
+    const col = notesColMap[state.activePricingChannel];
+    if (col) item[col] = $('f_pricing_notes').value || '';
+  }
   // Etsy ↔ Wix always mirror each other
   syncEtsyWix(item);
 }
@@ -2165,7 +2196,10 @@ function renderOverview(item) {
       <div class="section-title">Product Information</div>
       <div class="form-row">
         <div class="form-label">SKU</div>
-        <div class="form-value"><span class="mono" style="color:var(--gold);font-weight:600;">${escHtml(item.sku || '')}</span></div>
+        <div class="form-value" style="display:flex;align-items:center;gap:8px;">
+          <input class="form-input mono" id="f_sku" value="${escAttr(item.sku || '')}" style="color:var(--gold);font-weight:600;max-width:200px;" readonly>
+          <button onclick="toggleSkuEdit()" id="skuEditBtn" title="Edit SKU" style="background:none;border:1px solid var(--border);color:var(--muted);font-size:13px;padding:4px 8px;border-radius:var(--radius);cursor:pointer;">✏️</button>
+        </div>
       </div>
       <div class="form-row">
         <div class="form-label">Product Name</div>
@@ -2504,8 +2538,8 @@ function renderPricing(item) {
       <div class="fee-item"><div class="fee-label">Landed Cost${!chHasOB ? ' (no OB)' : ''}</div><div class="fee-val">-$${landed.toFixed(2)}</div></div>
       <div class="fee-item"><div class="fee-label" style="font-weight:700;">Est. Net Profit</div><div class="fee-val total">$${netProfit.toFixed(2)}</div></div>
     </div>`}
-    <div class="section-title" style="font-size:11px;letter-spacing:1px;margin-top:14px;">PRICING NOTES</div>
-    <textarea class="form-input" id="f_pricing_notes" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Commit">${escHtml(item.pricing_notes || '')}</textarea>
+    <div class="section-title" style="font-size:11px;letter-spacing:1px;margin-top:14px;">PRICING NOTES — ${activeCh.label.toUpperCase()}</div>
+    <textarea class="form-input" id="f_pricing_notes" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Notes for ${activeCh.label} pricing (commitments, promo history, etc.)">${escHtml(item[activeCh.key === 'tm' ? 'tm_pricing_notes' : activeCh.key + '_pricing_notes'] || '')}</textarea>
   </div>`;
 }
 
@@ -4180,7 +4214,11 @@ async function saveItem() {
       par_tm_target: gn('f_par_tm_target') ?? pi(item.par_tm_target),
       // Vendor
       vendor: gv('f_vendor') ?? item.vendor,
-      pricing_notes: gv('f_pricing_notes') ?? item.pricing_notes,
+      // Per-channel pricing notes (captured by captureEdits routing)
+      etsy_pricing_notes: item.etsy_pricing_notes ?? '',
+      wix_pricing_notes: item.wix_pricing_notes ?? '',
+      wayfair_pricing_notes: item.wayfair_pricing_notes ?? '',
+      tm_pricing_notes: item.tm_pricing_notes ?? '',
       // Listing IDs (editable on Overview tab) — bigint columns need null not empty string
       // CRITICAL: ge() check prevents wiping IDs when saving from non-Overview tabs
       etsy_listing_id: ge('f_etsy_listing_id') ? (gv('f_etsy_listing_id') || null) : (item.etsy_listing_id || null),
@@ -4244,8 +4282,72 @@ async function saveItem() {
       }
     }
 
+    // ── SKU CHANGE: Detect, validate, confirm, cascade ──
+    const newSku = ge('f_sku') ? ($('f_sku').value || '').trim() : '';
+    const oldSku = item._originalSku || item.sku || '';
+    const skuChanged = newSku && newSku !== oldSku;
+    if (skuChanged) {
+      // Validate: no empty, no duplicates
+      if (!newSku) {
+        state.saving = false;
+        statusEl.className = 'inline-status show error';
+        statusEl.textContent = 'SKU cannot be empty.';
+        statusEl.style.display = 'block';
+        return;
+      }
+      const { data: dupeCheck } = await sb.from('items').select('id').eq('sku', newSku).limit(1);
+      if (dupeCheck && dupeCheck.length > 0) {
+        state.saving = false;
+        statusEl.className = 'inline-status show error';
+        statusEl.textContent = `SKU "${newSku}" already exists. Choose a different SKU.`;
+        statusEl.style.display = 'block';
+        return;
+      }
+      const proceed = confirm(
+        `⚠️ SKU CHANGE\n\n` +
+        `Change "${oldSku}" → "${newSku}"?\n\n` +
+        `This will update the item and cascade to:\n` +
+        `• Sales history records\n` +
+        `• Child variant parent_sku references\n` +
+        `• Shippo transactions\n` +
+        `• Activity log entries\n` +
+        `• Write-off records\n\n` +
+        `Continue?`
+      );
+      if (!proceed) {
+        state.saving = false;
+        if (ge('f_sku')) $('f_sku').value = oldSku;
+        statusEl.style.display = 'none';
+        return;
+      }
+      updates.sku = newSku;
+    }
+
     const { error } = await sb.from('items').update(updates).eq('id', item.id);
     if (error) throw error;
+
+    // ── SKU CASCADE: Update all related tables ──
+    if (skuChanged) {
+      const cascadeTables = [
+        { table: 'sales_history', col: 'sku' },
+        { table: 'shippo_transactions', col: 'sku' },
+        { table: 'activity_log', col: 'sku' },
+        { table: 'write_offs', col: 'sku' },
+        { table: 'channel_content', col: 'sku' },
+      ];
+      for (const { table, col } of cascadeTables) {
+        try {
+          await sb.from(table).update({ [col]: newSku }).eq(col, oldSku);
+        } catch(ce) { console.warn(`[SKU Cascade] ${table}: ${ce.message}`); }
+      }
+      // Update parent_sku on child variants
+      try {
+        await sb.from('items').update({ parent_sku: newSku }).eq('parent_sku', oldSku);
+      } catch(ce) { console.warn('[SKU Cascade] parent_sku:', ce.message); }
+      console.log(`[SKU Change] ${oldSku} → ${newSku} cascaded`);
+      logActivity('INVENTORY','SKU_CHANGED',null,`SKU changed: ${oldSku} → ${newSku}`,{ old_sku: oldSku, new_sku: newSku }, newSku);
+      item._originalSku = newSku; // Prevent re-cascade on subsequent saves
+    }
 
     // ── BUNDLE AUTO-DERIVE: If this is a bundle, recalculate qty from components ──
     if (item.is_bundle) {
@@ -4300,8 +4402,14 @@ async function saveItem() {
     Object.assign(state.currentItem, updates);
     state.cardDirty = true;
 
+    // Update card header DOM so name/SKU reflect immediately (no refresh needed)
+    $('cardName').textContent = updates.product_name || 'Untitled';
+    if (skuChanged) $('cardSku').textContent = newSku;
+
     statusEl.className = 'inline-status show ok';
-    statusEl.textContent = `✅ Saved ${item.sku} successfully`;
+    statusEl.textContent = skuChanged
+      ? `✅ Saved — SKU changed: ${oldSku} → ${newSku}`
+      : `✅ Saved ${item.sku} successfully`;
     statusEl.style.display = 'block';
     logActivity('INVENTORY','ITEM_SAVED',null,`Saved ${item.sku}`,{},item.sku);
     clearUnsavedMark();
@@ -4318,6 +4426,92 @@ async function saveItem() {
     statusEl.style.display = 'block';
     statusEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     console.error('[Save Error]', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// DELETE ITEM — hard delete from items table, preserves sales history
+// ═══════════════════════════════════════════════════════════
+async function deleteItem() {
+  const item = state.currentItem;
+  if (!item) return;
+  const statusEl = $('cardStatus');
+
+  try {
+    // ── GUARD: Block if item is a bundle with components ──
+    const { data: bundleComps } = await sb.from('bundle_components')
+      .select('id').eq('bundle_item_id', item.id).limit(1);
+    if (bundleComps && bundleComps.length > 0) {
+      alert(`Cannot delete "${item.sku}" — it is a bundle with linked components.\n\nRemove all components from the Variants & Bundles tab first.`);
+      return;
+    }
+
+    // ── GUARD: Block if item is a component of another bundle ──
+    const { data: parentBundles } = await sb.from('bundle_components')
+      .select('bundle_item_id,items!bundle_components_bundle_item_id_fkey(sku)')
+      .eq('component_item_id', item.id).limit(5);
+    if (parentBundles && parentBundles.length > 0) {
+      const parentSkus = parentBundles.map(pb => pb.items?.sku || '?').join(', ');
+      alert(`Cannot delete "${item.sku}" — it is a component of bundle(s): ${parentSkus}.\n\nRemove this component from those bundles first.`);
+      return;
+    }
+
+    // ── GUARD: Block if item has child variants ──
+    const { data: children } = await sb.from('items')
+      .select('sku').eq('parent_sku', item.sku).limit(5);
+    if (children && children.length > 0) {
+      const childSkus = children.map(c => c.sku).join(', ');
+      alert(`Cannot delete "${item.sku}" — it has child variants: ${childSkus}.\n\nReassign or delete child variants first.`);
+      return;
+    }
+
+    // ── CONFIRMATION ──
+    const salesCount = state.saleCounts[item.sku] || 0;
+    const proceed = confirm(
+      `🗑 DELETE ITEM\n\n` +
+      `Permanently remove "${item.sku}" (${item.product_name || 'Untitled'}) from inventory?\n\n` +
+      (salesCount > 0 ? `This item has ${salesCount} sales in the last 90 days.\n` : '') +
+      `• Item will be removed from the inventory list\n` +
+      `• Sales history will be PRESERVED\n` +
+      `• Pending sync queue entries will be removed\n\n` +
+      `This cannot be undone. Continue?`
+    );
+    if (!proceed) return;
+
+    statusEl.className = 'inline-status show';
+    statusEl.textContent = 'Deleting item...';
+    statusEl.style.color = 'var(--red)';
+    statusEl.style.display = 'block';
+
+    // ── Clean up sync_queue entries ──
+    try {
+      await sb.from('sync_queue').delete().eq('item_id', item.id);
+    } catch(e) { console.warn('[Delete] sync_queue cleanup:', e.message); }
+
+    // ── Delete the item ──
+    const { error } = await sb.from('items').delete().eq('id', item.id);
+    if (error) throw error;
+
+    logActivity('INVENTORY','ITEM_DELETED',null,`Deleted item ${item.sku} (${item.product_name || ''})`,{ sku: item.sku }, item.sku);
+    console.log(`[Delete] Item ${item.sku} removed from inventory`);
+
+    // Return to list and refresh
+    state.currentItem = null;
+    state.cardDirty = false;
+    $('cardView').classList.remove('visible');
+    const returnTab = state.activeTopTab || 'inventory';
+    const viewMap = { inventory: 'inventoryView', shipping: 'shippingView', channels: 'channelsView', reorder: 'reorderView', ai: 'aiView' };
+    const viewId = viewMap[returnTab];
+    if (viewId) $(viewId).classList.add('active');
+    await loadInventory();
+    loadStats();
+    loadSaleCounts();
+
+  } catch(e) {
+    statusEl.className = 'inline-status show error';
+    statusEl.textContent = `❌ Delete failed: ${e.message}`;
+    statusEl.style.display = 'block';
+    console.error('[Delete Error]', e);
   }
 }
 
