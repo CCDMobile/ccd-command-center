@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.2</title>
+<title>CCD Inventory System v2.8.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -460,6 +460,13 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 /* ===== WRITE-OFF TAB ===== */
 .writeoff-form{max-width:700px;}
 .writeoff-form .form-row{padding:10px 0;}
+/* ===== WRITE-OFF LOG VIEW ===== */
+.wo-reversed td{text-decoration:line-through;opacity:0.5;}
+.wo-reversed td .wo-restore-btn{text-decoration:none;opacity:1;}
+.wo-restore-btn{padding:4px 10px;font-size:11px;border:1px solid var(--blue);color:var(--blue);background:transparent;border-radius:4px;cursor:pointer;transition:all 0.15s;}
+.wo-restore-btn:hover{background:rgba(91,155,213,0.15);}
+.wo-badge-reversed{font-size:10px;padding:2px 6px;border-radius:8px;background:rgba(136,153,170,0.15);color:var(--muted);font-weight:600;}
+.wo-badge-active{font-size:10px;padding:2px 6px;border-radius:8px;background:rgba(229,115,115,0.15);color:var(--red);font-weight:600;}
 .insurance-section{margin-top:16px;padding:16px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:var(--radius);}
 .insurance-section .section-title{color:var(--blue);}
 
@@ -602,7 +609,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.2 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.3 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -614,7 +621,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.2</div>
+      <div class="topbar-version">v2.8.3</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -631,6 +638,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     <button class="tab-btn" data-tab="channels" onclick="switchTopTab('channels')">🏪 Channels</button>
     <button class="tab-btn" data-tab="bulk" onclick="switchTopTab('bulk')">⚡ Bulk Ops</button>
     <button class="tab-btn" data-tab="shipping" onclick="switchTopTab('shipping')">🚚 Shipping</button>
+    <button class="tab-btn" data-tab="writeoffs" onclick="switchTopTab('writeoffs')">📋 Write-Offs</button>
     <button class="tab-btn" data-tab="analytics" onclick="switchTopTab('analytics')">📊 Analytics</button>
     <button class="tab-btn" data-tab="settings" onclick="switchTopTab('settings')">⚙️ Settings</button>
   </div>
@@ -1107,6 +1115,62 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
       <div id="shippingTabContent" style="color:var(--muted);text-align:center;padding:40px;">Loading shipping data...</div>
     </div><!-- end shippingView -->
 
+    <!-- ═══════════════════════════════════════ WRITE-OFF LOG VIEW ═══════════════════════════════════════ -->
+    <div class="top-view" id="writeoffsView">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="color:var(--gold);margin:0;font-size:18px;">📋 Write-Off Log</h2>
+        <span id="woLogResultCount" style="font-size:12px;color:var(--muted);"></span>
+      </div>
+      <!-- Summary Cards -->
+      <div class="stats-bar" id="woLogStats">
+        <div class="stat-card">
+          <div class="stat-label">Total Write-Offs</div>
+          <div class="stat-value" id="woStatCount">—</div>
+          <div class="stat-sub" id="woStatCountSub"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Units</div>
+          <div class="stat-value" id="woStatUnits">—</div>
+          <div class="stat-sub" id="woStatUnitsSub"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Loss</div>
+          <div class="stat-value" id="woStatLoss" style="color:var(--red);">—</div>
+          <div class="stat-sub" id="woStatLossSub"></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Total Recovered</div>
+          <div class="stat-value" id="woStatRecovered" style="color:var(--green);">—</div>
+          <div class="stat-sub" id="woStatRecoveredSub"></div>
+        </div>
+      </div>
+      <!-- Filters -->
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <select class="filter-select" id="woFilterReason" onchange="renderWriteoffLog()">
+          <option value="all">All Reasons</option>
+          <option value="Damaged — Shipping">Damaged — Shipping</option>
+          <option value="Damaged — Warehouse">Damaged — Warehouse</option>
+          <option value="Damaged — Customer Return">Damaged — Customer Return</option>
+          <option value="Missing">Missing</option>
+          <option value="Defective">Defective</option>
+          <option value="Expired / Obsolete">Expired / Obsolete</option>
+          <option value="Theft">Theft</option>
+          <option value="Sample / Giveaway">Sample / Giveaway</option>
+          <option value="Other">Other</option>
+        </select>
+        <select class="filter-select" id="woFilterStatus" onchange="renderWriteoffLog()">
+          <option value="all">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="reversed">Reversed</option>
+        </select>
+        <input type="date" class="date-input" id="woFilterFrom" onchange="renderWriteoffLog()" style="width:140px;">
+        <span style="color:var(--muted);">to</span>
+        <input type="date" class="date-input" id="woFilterTo" onchange="renderWriteoffLog()" style="width:140px;">
+        <input type="text" id="woFilterSearch" placeholder="Search SKU or product..." oninput="renderWriteoffLog()" style="flex:1;min-width:160px;padding:6px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;">
+      </div>
+      <div id="woLogContent" style="color:var(--muted);text-align:center;padding:40px;">Loading write-offs...</div>
+    </div><!-- end writeoffsView -->
+
   </div>
 </div>
 
@@ -1274,7 +1338,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.8.2';
+const TOOL_VERSION = '2.8.3';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1927,7 +1991,7 @@ function _closeCard() {
   // Return to shipping tab if we came from there
   const returnTab = state.shipReturnTab || state.activeTopTab || 'inventory';
   state.shipReturnTab = null; // Clear after use
-  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', analytics:'analyticsView', settings:'settingsView' };
+  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', writeoffs:'writeoffsView', analytics:'analyticsView', settings:'settingsView' };
   const viewId = viewMap[returnTab];
   if (viewId) $(viewId).classList.add('active');
   state.activeTopTab = returnTab;
@@ -3992,8 +4056,10 @@ async function renderWriteoff(item) {
     const rows = data || [];
     if (rows.length > 0) {
       historyHtml = `<div class="table-wrapper"><table>
-        <thead><tr><th>Date</th><th>Qty</th><th>Reason</th><th>Location</th><th>Loss</th><th>Insurance</th><th>Recovered</th></tr></thead>
-        <tbody>${rows.map(r => `<tr>
+        <thead><tr><th>Date</th><th>Qty</th><th>Reason</th><th>Location</th><th>Loss</th><th>Insurance</th><th>Recovered</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody>${rows.map(r => {
+          const isReversed = r.status === 'reversed';
+          return `<tr class="${isReversed ? 'wo-reversed' : ''}">
           <td class="mono">${(r.created_at || '').substring(0,10)}</td>
           <td>${r.quantity || 0}</td>
           <td>${escHtml(r.reason || '—')}</td>
@@ -4001,7 +4067,9 @@ async function renderWriteoff(item) {
           <td class="mono" style="color:var(--red);">$${pf(r.total_loss).toFixed(2)}</td>
           <td><span class="par-status ${r.claim_filed === 'Yes — Paid' ? 'par-ok' : (r.claim_filed && r.claim_filed !== 'No' ? 'par-warn' : 'sync-na')}">${escHtml(r.claim_filed || 'No')}</span></td>
           <td class="mono" style="color:var(--green);">$${pf(r.amount_recovered).toFixed(2)}</td>
-        </tr>`).join('')}</tbody></table></div>`;
+          <td>${isReversed ? '<span class="wo-badge-reversed">Reversed</span>' : '<span class="wo-badge-active">Active</span>'}</td>
+          <td>${isReversed ? '' : `<button class="wo-restore-btn" onclick="reverseWriteoff(${r.id},'${escHtml(r.sku)}',${r.quantity})">↩ Restore</button>`}</td>
+        </tr>`}).join('')}</tbody></table></div>`;
     } else {
       historyHtml = '<div style="text-align:center;padding:20px;color:var(--muted);">No write-offs recorded.</div>';
     }
@@ -5069,6 +5137,148 @@ async function recordWriteoff() {
   } catch(e) {
     state.saving = false;
     showCardStatus(`Write-off failed: ${e.message}`, 'error');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// WRITE-OFF LOG (Top-Level Tab)
+// ═══════════════════════════════════════════════════════════
+let woLogData = [];
+
+async function loadWriteoffLog() {
+  const el = $('woLogContent');
+  if (!el) return;
+  el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">Loading write-offs...</div>';
+  try {
+    const { data, error } = await sb.from('write_offs').select('*').order('created_at', { ascending: false }).limit(5000);
+    if (error) throw error;
+    woLogData = data || [];
+    renderWriteoffLog();
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--red);text-align:center;padding:40px;">Error: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function renderWriteoffLog() {
+  const el = $('woLogContent');
+  if (!el) return;
+  let rows = [...woLogData];
+
+  // Apply filters
+  const reasonFilter = gv('woFilterReason') || 'all';
+  const statusFilter = gv('woFilterStatus') || 'all';
+  const fromDate = gv('woFilterFrom') || '';
+  const toDate = gv('woFilterTo') || '';
+  const search = (gv('woFilterSearch') || '').toLowerCase().trim();
+
+  if (reasonFilter !== 'all') rows = rows.filter(r => r.reason === reasonFilter);
+  if (statusFilter === 'active') rows = rows.filter(r => r.status !== 'reversed');
+  if (statusFilter === 'reversed') rows = rows.filter(r => r.status === 'reversed');
+  if (fromDate) rows = rows.filter(r => (r.created_at || '').substring(0,10) >= fromDate);
+  if (toDate) rows = rows.filter(r => (r.created_at || '').substring(0,10) <= toDate);
+  if (search) rows = rows.filter(r => (r.sku || '').toLowerCase().includes(search) || (r.product_name || '').toLowerCase().includes(search));
+
+  // Summary cards (filtered)
+  const activeRows = rows.filter(r => r.status !== 'reversed');
+  const reversedRows = rows.filter(r => r.status === 'reversed');
+  const totalUnits = activeRows.reduce((s,r) => s + pi(r.quantity), 0);
+  const totalLoss = activeRows.reduce((s,r) => s + pf(r.total_loss), 0);
+  const totalRecovered = rows.reduce((s,r) => s + pf(r.amount_recovered), 0);
+
+  $('woStatCount').textContent = activeRows.length;
+  $('woStatCountSub').textContent = reversedRows.length > 0 ? `${reversedRows.length} reversed` : '';
+  $('woStatUnits').textContent = totalUnits;
+  $('woStatUnitsSub').textContent = `across ${activeRows.length} records`;
+  $('woStatLoss').textContent = '$' + totalLoss.toFixed(2);
+  $('woStatLossSub').textContent = totalUnits > 0 ? `$${(totalLoss / totalUnits).toFixed(2)} avg/unit` : '';
+  $('woStatRecovered').textContent = '$' + totalRecovered.toFixed(2);
+  $('woStatRecoveredSub').textContent = totalLoss > 0 ? `${(totalRecovered / totalLoss * 100).toFixed(0)}% recovery rate` : '';
+
+  if ($('woLogResultCount')) $('woLogResultCount').textContent = `${rows.length} records`;
+
+  if (rows.length === 0) {
+    el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">No write-offs found matching filters.</div>';
+    return;
+  }
+
+  el.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr>
+      <th>Date</th><th>SKU</th><th>Product</th><th>Qty</th><th>Reason</th>
+      <th>Location</th><th>Loss</th><th>Insurance</th><th>Recovered</th>
+      <th>Status</th><th>Action</th>
+    </tr></thead>
+    <tbody>${rows.map(r => {
+      const isReversed = r.status === 'reversed';
+      return `<tr class="${isReversed ? 'wo-reversed' : ''}">
+        <td class="mono">${(r.created_at || '').substring(0,10)}</td>
+        <td><span class="sku-cell" style="cursor:pointer;" onclick="woLogOpenItem('${escHtml(r.sku)}')">${escHtml(r.sku || '—')}</span></td>
+        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.product_name || '')}">${escHtml(r.product_name || '—')}</td>
+        <td class="mono" style="text-align:center;">${r.quantity || 0}</td>
+        <td>${escHtml(r.reason || '—')}</td>
+        <td>${escHtml(r.location || '—')}</td>
+        <td class="mono" style="color:var(--red);">$${pf(r.total_loss).toFixed(2)}</td>
+        <td><span class="par-status ${r.claim_filed === 'Yes — Paid' ? 'par-ok' : (r.claim_filed && r.claim_filed !== 'No' ? 'par-warn' : 'sync-na')}">${escHtml(r.claim_filed || 'No')}</span></td>
+        <td class="mono" style="color:var(--green);">$${pf(r.amount_recovered).toFixed(2)}</td>
+        <td>${isReversed
+          ? `<span class="wo-badge-reversed">Reversed</span><div style="font-size:10px;color:var(--muted);margin-top:2px;">${(r.reversed_at || '').substring(0,10)}</div>`
+          : '<span class="wo-badge-active">Active</span>'}</td>
+        <td>${isReversed
+          ? ''
+          : `<button class="wo-restore-btn" onclick="reverseWriteoff(${r.id},'${escHtml(r.sku)}',${r.quantity})">↩ Restore</button>`}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+async function woLogOpenItem(sku) {
+  const item = state.items.find(i => i.sku === sku);
+  if (item) {
+    state.shipReturnTab = 'writeoffs';
+    openCard(item.id);
+  }
+}
+
+async function reverseWriteoff(woId, sku, qty) {
+  if (!confirm(`Reverse write-off?\n\nThis will restore ${qty} unit(s) of ${sku} back to warehouse inventory and mark this write-off as reversed.\n\nContinue?`)) return;
+
+  try {
+    // 1. Add qty back to items
+    const { data: itemData } = await sb.from('items').select('id,qty').eq('sku', sku).limit(1).single();
+    if (!itemData) throw new Error(`Item ${sku} not found`);
+
+    const newQty = pi(itemData.qty) + pi(qty);
+    const { error: qtyErr } = await sb.from('items').update({ qty: newQty }).eq('id', itemData.id);
+    if (qtyErr) throw new Error(`Failed to restore qty: ${qtyErr.message}`);
+
+    // 2. Mark write-off as reversed
+    const { error: woErr } = await sb.from('write_offs').update({
+      status: 'reversed',
+      reversed_at: new Date().toISOString()
+    }).eq('id', woId);
+    if (woErr) throw new Error(`Failed to update write-off record: ${woErr.message}`);
+
+    // 3. Activity log
+    logActivity('INVENTORY', 'WRITEOFF_REVERSED', null,
+      `Write-off reversed: ${sku} x${qty} restored to warehouse (${pi(itemData.qty)} → ${newQty})`,
+      { write_off_id: woId, qty_restored: qty }, sku);
+
+    // 4. Update local state if item is loaded
+    const localItem = state.items.find(i => i.sku === sku);
+    if (localItem) localItem.qty = newQty;
+
+    // 5. Update woLogData in memory
+    const rec = woLogData.find(r => r.id === woId);
+    if (rec) { rec.status = 'reversed'; rec.reversed_at = new Date().toISOString(); }
+
+    // 6. Refresh — if on the log tab, re-render; if card is open, re-render writeoff tab
+    renderWriteoffLog();
+    if (state.currentItem && state.currentItem.sku === sku) {
+      state.currentItem.qty = newQty;
+      renderWriteoff(state.currentItem);
+    }
+
+  } catch(e) {
+    alert(`Reverse failed: ${e.message}`);
   }
 }
 
@@ -6409,12 +6619,13 @@ async function switchTopTab(tab) {
   if (btn) btn.classList.add('active');
   // Toggle views
   $qa('.top-view').forEach(v => v.classList.remove('active'));
-  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', analytics:'analyticsView', settings:'settingsView' };
+  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', writeoffs:'writeoffsView', analytics:'analyticsView', settings:'settingsView' };
   if (viewMap[tab]) $(viewMap[tab]).classList.add('active');
   // Load data for the tab
   if (tab === 'channels') { loadChannelCounts(); loadChannelView(state.activeChannel || 'etsy'); }
   if (tab === 'bulk') { loadBulkItems(); }
   if (tab === 'shipping') { loadShippingTab(); }
+  if (tab === 'writeoffs') { loadWriteoffLog(); }
   if (tab === 'analytics') { loadAnalytics(); }
   if (tab === 'settings') { loadSettings(); }
 }
