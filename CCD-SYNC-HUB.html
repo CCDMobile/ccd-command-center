@@ -3493,6 +3493,9 @@
                 let newQty = currentQty;
                 let adjustResult = { adjusted: false, changes: [], parAlerts: [] };
                 
+                // v4.3.8: Capture original Etsy qty for reactivation guard
+                const originalEtsyQty = parseInt(product.channels?.etsy) || 0;
+                
                 // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
                 if (enableDeduction) {
                     // Calculate new quantity
@@ -3801,23 +3804,30 @@
                 // Etsy cascade
                 if ((product.etsyListingId || product.etsyListing) && sourceChannel !== 'etsy') {
                     const etsyQty = parseInt(channels.etsy) || 0;
-                    try {
-                        await sbClient.from('sync_queue').insert({
-                            item_id: sbId,
-                            channel: 'etsy',
-                            operation: 'update',
-                            status: 'pending',
-                            fields: {
-                                sku: lookupSku,
-                                quantity: etsyQty,
-                                listingId: product.etsyListingId || product.etsyListing,
-                                fieldTypes: ['quantity'],
-                                _source: 'cascade'
-                            }
-                        });
-                        cascadeCount++;
-                        console.log(`[Cascade] Etsy sync_queue row: ${lookupSku} qty=${etsyQty}`);
-                    } catch (e) { console.error(`[Cascade] Etsy insert failed for ${lookupSku}:`, e.message); }
+                    
+                    // v4.3.8 REACTIVATION GUARD: Don't push qty > 0 if Etsy was at 0
+                    if (etsyQty > 0 && originalEtsyQty === 0) {
+                        addLog(`⚠️ REACTIVATION BLOCKED: ${lookupSku} — Etsy was sold out (0), cascade would push ${etsyQty}. Skipped to prevent unwanted listing reactivation.`, 'warning');
+                        console.warn(`[Reactivation Guard] Blocked Etsy cascade for ${lookupSku}: was 0, would push ${etsyQty}`);
+                    } else {
+                        try {
+                            await sbClient.from('sync_queue').insert({
+                                item_id: sbId,
+                                channel: 'etsy',
+                                operation: 'update',
+                                status: 'pending',
+                                fields: {
+                                    sku: lookupSku,
+                                    quantity: etsyQty,
+                                    listingId: product.etsyListingId || product.etsyListing,
+                                    fieldTypes: ['quantity'],
+                                    _source: 'cascade'
+                                }
+                            });
+                            cascadeCount++;
+                            console.log(`[Cascade] Etsy sync_queue row: ${lookupSku} qty=${etsyQty}`);
+                        } catch (e) { console.error(`[Cascade] Etsy insert failed for ${lookupSku}:`, e.message); }
+                    }
                 }
                 
                 // Wix cascade

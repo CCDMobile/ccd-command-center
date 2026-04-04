@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Channel SKU Audit v1.0</title>
+<title>CCD Channel SKU Audit v2.0</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     :root {
@@ -16,6 +16,7 @@
         --red: #ef4444; --red-dim: #991b1b;
         --yellow: #eab308; --yellow-dim: #854d0e;
         --blue: #3b82f6; --accent: #6366f1;
+        --orange: #f97316; --orange-dim: #9a3412;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
@@ -116,13 +117,21 @@
         background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
         padding: 4px 8px; border-radius: 4px; font-size: 12px;
     }
+    .badge-orange { background: var(--orange-dim); color: var(--orange); }
+    .fix-input {
+        background: var(--bg-input); border: 1px solid var(--border); color: var(--text);
+        padding: 4px 8px; border-radius: 4px; font-size: 11px; font-family: 'JetBrains Mono', monospace; width: 170px;
+    }
+    .qty-diff-pos { color: var(--green); }
+    .qty-diff-neg { color: var(--red); }
+    .catalog-note { color: var(--text-dim); font-size: 12px; line-height: 1.5; margin-bottom: 12px; }
 </style>
 </head>
 <body>
 
 <div class="header">
     <h1><span class="logo">🔗</span> CCD Channel SKU Audit</h1>
-    <span class="version">v1.0 — Cross-Channel SKU Gap Finder</span>
+    <span class="version">v2.0 — Cross-Channel SKU Gap Finder + Wayfair Catalog Validation</span>
 </div>
 
 <div class="sb-bar">
@@ -145,7 +154,7 @@
         </div>
         <div class="proxy-box">
             <h3>🏠 Wayfair</h3>
-            <p style="font-size:12px;color:var(--text-dim);line-height:1.5;">No listing API — audits items with Wayfair allocation but no <code>wayfair_sku</code> set.</p>
+            <p style="font-size:12px;color:var(--text-dim);line-height:1.5;">DB-only gap check + Partner Home catalog validation (176 items embedded, exported 2026-04-01).</p>
         </div>
     </div>
     
@@ -207,7 +216,7 @@
         
         <!-- WAYFAIR GAPS -->
         <div class="channel-section" id="wayfairSection" style="display:none;">
-            <div class="channel-header"><span class="badge-channel badge-wayfair">WAYFAIR</span> SKU Gaps</div>
+            <div class="channel-header"><span class="badge-channel badge-wayfair">WAYFAIR</span> SKU Gaps (DB Check)</div>
             <div class="filter-bar">
                 <label>Show:</label>
                 <select id="wayfairFilter" onchange="renderWayfairTable()">
@@ -226,6 +235,54 @@
                 </div>
             </div>
         </div>
+        
+        <!-- WAYFAIR CATALOG VALIDATION -->
+        <div class="channel-section" id="wfCatalogSection" style="display:none;">
+            <div class="channel-header"><span class="badge-channel badge-wayfair">WAYFAIR</span> Partner Home Catalog Validation</div>
+            <p class="catalog-note">Cross-references our <code>wayfair_sku</code> values against the Wayfair Partner Home export. Items with wrong SKUs silently fail on push.</p>
+            
+            <div class="stats-grid" id="wfCatalogStats" style="margin-bottom:16px;"></div>
+            
+            <!-- Mismatched: DB has wayfair_sku not in WF catalog -->
+            <div id="wfMismatchWrap" style="display:none;">
+                <div class="table-wrap">
+                    <div class="table-title" style="color:var(--red);"><span id="wfMismatchTitle">🔴 DB wayfair_sku NOT in Wayfair Catalog</span></div>
+                    <div class="table-scroll"><table><thead><tr>
+                        <th>Our SKU</th><th>Product Name</th><th>DB wayfair_sku</th><th>Correct Part#</th><th>Action</th>
+                    </tr></thead><tbody id="wfMismatchBody"></tbody></table></div>
+                </div>
+            </div>
+            
+            <!-- WF catalog items not in DB -->
+            <div id="wfMissingWrap" style="display:none;">
+                <div class="table-wrap">
+                    <div class="table-title" style="color:var(--orange);"><span id="wfMissingTitle">🟠 In Wayfair Catalog but NOT Matched in DB</span></div>
+                    <div class="table-scroll"><table><thead><tr>
+                        <th>WF Part Number</th><th>WF SKU</th><th>WF Qty</th><th>WF Price</th><th>Likely DB Match</th><th>Action</th>
+                    </tr></thead><tbody id="wfMissingBody"></tbody></table></div>
+                </div>
+            </div>
+            
+            <!-- Qty mismatch -->
+            <div id="wfQtyWrap" style="display:none;">
+                <div class="table-wrap">
+                    <div class="table-title" style="color:var(--yellow);"><span id="wfQtyTitle">🟡 Qty Mismatch — Matched but Different</span></div>
+                    <div class="table-scroll"><table><thead><tr>
+                        <th>Our SKU</th><th>WF Part#</th><th>Our wayfair_qty</th><th>WF In Stock</th><th>Diff</th>
+                    </tr></thead><tbody id="wfQtyBody"></tbody></table></div>
+                </div>
+            </div>
+            
+            <!-- Matched (collapsible) -->
+            <details id="wfMatchedDetails" style="display:none;">
+                <summary style="cursor:pointer;color:var(--text-dim);font-size:13px;margin:12px 0;">🟢 Matched items — click to expand</summary>
+                <div class="table-wrap">
+                    <div class="table-scroll"><table><thead><tr>
+                        <th>Our SKU</th><th>WF Part#</th><th>Our Qty</th><th>WF Qty</th><th>WF Price</th>
+                    </tr></thead><tbody id="wfMatchedBody"></tbody></table></div>
+                </div>
+            </details>
+        </div>
     </div>
 </div>
 
@@ -237,7 +294,7 @@
 // ═══════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════
-const SKU_VERSION = 'v1.0';
+const SKU_VERSION = 'v2.0';
 const SKU_VERSION_KEY = 'skuaudit';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -858,6 +915,9 @@ async function auditWayfair() {
     
     document.getElementById('wayfairSection').style.display = 'block';
     renderWayfairTable();
+    
+    // Also run Partner Home catalog cross-reference
+    runCatalogValidation();
 }
 
 function renderWayfairTable() {
@@ -922,6 +982,205 @@ async function saveAllWayfair() {
     }
     toast(`Fixed ${fixed} Wayfair items`, 'success');
     renderWayfairTable();
+    renderStats();
+}
+
+// ═══════════════════════════════════════
+// WAYFAIR CATALOG VALIDATION (Partner Home cross-reference)
+// ═══════════════════════════════════════
+const WF_CATALOG=[{"pn":"CCD21012","ws":"PKDE2203","qty":4,"avail":4,"price":41.99},{"pn":"CCDA5G0228","ws":"ADRJ1015","qty":1,"avail":1,"price":49.99},{"pn":"CCDA5G0269","ws":"ADRJ1013","qty":0,"avail":0,"price":49.99},{"pn":"CCDA7T1152","ws":"ADRJ1011","qty":2,"avail":2,"price":74.99},{"pn":"CCDA8D5107FFF","ws":"ADRJ1023","qty":4,"avail":4,"price":19.99},{"pn":"CCDA8D5107FSF","ws":"ADRJ1019","qty":1,"avail":1,"price":9.16},{"pn":"CCDA8D5107GL","ws":"ADRJ1018","qty":5,"avail":5,"price":19.99},{"pn":"CCDA8D5107LIB","ws":"ADRJ1021","qty":1,"avail":1,"price":9.16},{"pn":"CCDA8D5107LTFL","ws":"ADRJ1022","qty":4,"avail":4,"price":19.99},{"pn":"CCDA8D5107WATS","ws":"ADRJ1020","qty":7,"avail":7,"price":19.99},{"pn":"CCDA8D5108FNF","ws":"ADRJ1016","qty":2,"avail":2,"price":19.99},{"pn":"CCDA8D5108HC","ws":"ADRJ1017","qty":6,"avail":6,"price":19.99},{"pn":"CCDA8G0251","ws":"ADRJ1003","qty":2,"avail":2,"price":62.99},{"pn":"CCDA8PT1337","ws":"ADRJ1002","qty":2,"avail":2,"price":35.99},{"pn":"CCDA8PT1400","ws":"ADRJ1005","qty":2,"avail":2,"price":63.99},{"pn":"CCDA8PT1402","ws":"ADRJ1004","qty":2,"avail":2,"price":38.99},{"pn":"CCDA8PT1570","ws":"ADRJ1014","qty":2,"avail":2,"price":39.99},{"pn":"CCDA8PT6034","ws":"ADRJ1006","qty":3,"avail":3,"price":33.99},{"pn":"CCDA8RS960","ws":"ADRJ1008","qty":1,"avail":1,"price":72.99},{"pn":"CCDA8T2188","ws":"ADRJ1010","qty":1,"avail":1,"price":74.99},{"pn":"CCDCHC81660","ws":"TEDC1000","qty":1,"avail":1,"price":36.99},{"pn":"CCDCHC90537","ws":"TEDC1001","qty":2,"avail":2,"price":30.99},{"pn":"CCDCHC95687","ws":"TEDC1002","qty":1,"avail":1,"price":30.99},{"pn":"CCDCTW370404","ws":"CWHO1110","qty":5,"avail":5,"price":0},{"pn":"CCDCTW370488","ws":"CWHO1075","qty":3,"avail":3,"price":21.99},{"pn":"CCDCTW370507","ws":"CWHO1061","qty":2,"avail":2,"price":47.99},{"pn":"CCDCTW370508","ws":"CWHO1061","qty":1,"avail":1,"price":54.99},{"pn":"CCDCTW370551","ws":"CWHO1093","qty":2,"avail":2,"price":36.99},{"pn":"CCDCTW370619","ws":"CWHO1052","qty":5,"avail":5,"price":41.99},{"pn":"CCDCTW370779","ws":"CWHO1080","qty":2,"avail":2,"price":107.99},{"pn":"CCDCTW370870","ws":"CWHO1049","qty":0,"avail":0,"price":53.43},{"pn":"CCDCTW370961","ws":"CWHO1108","qty":9,"avail":9,"price":24.99},{"pn":"CCDCTW430043","ws":"CWHO1109","qty":0,"avail":0,"price":52.99},{"pn":"CCDCTW440007","ws":"CWHO1070","qty":1,"avail":1,"price":35.99},{"pn":"CCDCTW440244","ws":"CWHO1096","qty":2,"avail":2,"price":99.99},{"pn":"CCDCTW440432","ws":"CWHO1092","qty":2,"avail":2,"price":44.99},{"pn":"CCDCTW440483","ws":"CWHO1094","qty":2,"avail":2,"price":41.99},{"pn":"CCDCTW460237","ws":"CWHO1106","qty":15,"avail":15,"price":28.99},{"pn":"CCDCTW460334","ws":"CWHO1088","qty":5,"avail":5,"price":25.99},{"pn":"CCDCTW460335","ws":"CWHO1097","qty":1,"avail":1,"price":26.99},{"pn":"CCDCTW460337","ws":"CWHO1082","qty":1,"avail":1,"price":25.99},{"pn":"CCDCTW460428","ws":"CWHO1060","qty":11,"avail":11,"price":39.99},{"pn":"CCDCTW460429","ws":"CWHO1059","qty":1,"avail":1,"price":46.99},{"pn":"CCDCTW520035","ws":"CWHO1053","qty":3,"avail":3,"price":40.99},{"pn":"CCDCTW520057","ws":"CWHO1051","qty":10,"avail":10,"price":37.35},{"pn":"CCDCTW530031","ws":"CWHO1056","qty":2,"avail":2,"price":45.99},{"pn":"CCDCTW530042","ws":"CWHO1107","qty":14,"avail":14,"price":34.99},{"pn":"CCDCTW530081","ws":"CWHO1099","qty":1,"avail":1,"price":47.99},{"pn":"CCDCTW530167","ws":"CWHO1067","qty":2,"avail":2,"price":21.99},{"pn":"CCDCTW530534","ws":"CWHO1071","qty":3,"avail":3,"price":31.99},{"pn":"CCDCTW530535","ws":"CWHO1071","qty":4,"avail":4,"price":26.99},{"pn":"CCDCTW530537","ws":"CWHO1102","qty":3,"avail":3,"price":28.99},{"pn":"CCDCTW600011","ws":"CWHO1105","qty":1,"avail":1,"price":36.99},{"pn":"CCDCTW680636","ws":"CWHO1066","qty":6,"avail":6,"price":31.99},{"pn":"CCDCTW680637","ws":"CWHO1066","qty":3,"avail":3,"price":39.99},{"pn":"CCDCTW680639","ws":"CWHO1101","qty":19,"avail":19,"price":23.99},{"pn":"CCDCTW680640","ws":"CWHO1068","qty":31,"avail":31,"price":38.99},{"pn":"CCDCTW770006","ws":"CWHO1054","qty":1,"avail":1,"price":36.99},{"pn":"CCDCTW770141","ws":"CWHO1055","qty":4,"avail":4,"price":38.99},{"pn":"CCDCTW770343L","ws":"CWHO1100","qty":3,"avail":3,"price":43.99},{"pn":"CCDCTW770343S","ws":"CWHO1100","qty":3,"avail":3,"price":37.99},{"pn":"CCDCTW770375","ws":"CWHO1090","qty":1,"avail":1,"price":54.99},{"pn":"CCDCTW770382","ws":"CWHO1087","qty":1,"avail":1,"price":42.99},{"pn":"CCDCTW770395","ws":"CWHO1091","qty":1,"avail":1,"price":182.99},{"pn":"CCDCTW770632L","ws":"CWHO1095","qty":1,"avail":1,"price":83.99},{"pn":"CCDCTW770632S","ws":"CWHO1095","qty":1,"avail":1,"price":77.99},{"pn":"CCDCTW860395","ws":"CWHO1063","qty":3,"avail":3,"price":39.99},{"pn":"CCDCWIG1217","ws":"GGWW4154","qty":3,"avail":3,"price":21.99},{"pn":"CCDCWIG18065","ws":"GGWW4412","qty":10,"avail":10,"price":21.99},{"pn":"CCDCWIG18066","ws":"GGWW4412","qty":11,"avail":11,"price":21.99},{"pn":"CCDCWIG35838","ws":"GGWW4156","qty":5,"avail":5,"price":22.99},{"pn":"CCDCWIG60169","ws":"GGWW1246","qty":6,"avail":6,"price":65.99},{"pn":"CCDCWIG60353","ws":"GGWW4149","qty":11,"avail":11,"price":75.99},{"pn":"CCDCWIG60382","ws":"GGWW4151","qty":1,"avail":1,"price":74.99},{"pn":"CCDCWIG60492","ws":"GGWW4158","qty":7,"avail":7,"price":83.99},{"pn":"CCDCWIG70066","ws":"GGWW4413","qty":1,"avail":1,"price":34.99},{"pn":"CCDCWIG75026","ws":"GGWW4415","qty":1,"avail":1,"price":40.99},{"pn":"CCDCWIG8348","ws":"GGWW4153","qty":5,"avail":5,"price":20.99},{"pn":"CCDCWIG90850","ws":"GGWW4157","qty":6,"avail":6,"price":21.99},{"pn":"CCDCWIGC23704J","ws":"GGWW4411","qty":4,"avail":4,"price":39.99},{"pn":"CCDCWIGC23704N","ws":"GGWW4410","qty":4,"avail":4,"price":39.99},{"pn":"CCDCWIGP39397","ws":"GGWW4155","qty":0,"avail":0,"price":26.99},{"pn":"CCDFFDAD00167","ws":"AORE6192","qty":1,"avail":1,"price":102.99},{"pn":"CCDFFDDD10599","ws":"AORE5100","qty":3,"avail":3,"price":64.99},{"pn":"CCDFFDFC08717","ws":"AORE3836","qty":1,"avail":1,"price":81.99},{"pn":"CCDFG500","ws":"FGDM2877","qty":5,"avail":5,"price":26.99},{"pn":"CCDFGG1054","ws":"FGDM1095","qty":1,"avail":1,"price":25.99},{"pn":"CCDFGG1391","ws":"FGDM1483","qty":0,"avail":0,"price":26.99},{"pn":"CCDHC13477","ws":"HTSD1755","qty":1,"avail":1,"price":27.99},{"pn":"CCDHC35480","ws":"HTSD1750","qty":2,"avail":2,"price":30.99},{"pn":"CCDHC35532","ws":"HTSD1751","qty":3,"avail":3,"price":30.99},{"pn":"CCDHC35626","ws":"HTSD1754","qty":3,"avail":3,"price":20.99},{"pn":"CCDHC60443","ws":"GGWW4152","qty":3,"avail":3,"price":77.99},{"pn":"CCDHC90707","ws":"HTSD1753","qty":4,"avail":4,"price":21.99},{"pn":"CCDJUCJ17","ws":"JURN1006","qty":2,"avail":2,"price":36.99},{"pn":"CCDJUCJ36","ws":"JURN1005","qty":2,"avail":2,"price":38.99},{"pn":"CCDJUJU17","ws":"JURN1008","qty":1,"avail":1,"price":36.99},{"pn":"CCDJUJU36","ws":"JURN1003","qty":1,"avail":1,"price":34.99},{"pn":"CCDJUJU90","ws":"JURN1004","qty":1,"avail":1,"price":35.99},{"pn":"CCDJUNP421","ws":"JURN1002","qty":7,"avail":7,"price":19.99},{"pn":"CCDJUNP424","ws":"JURN1009","qty":2,"avail":2,"price":17.99},{"pn":"CCDJUNP425","ws":"JURN1001","qty":1,"avail":1,"price":18.99},{"pn":"CCDJUNP428","ws":"JURN1007","qty":2,"avail":2,"price":16.99},{"pn":"CCDJUNP433","ws":"JURN1000","qty":2,"avail":2,"price":15.99},{"pn":"CCDKK11135A","ws":"LBBL1015","qty":1,"avail":1,"price":42.99},{"pn":"CCDKK14515A1","ws":"LBBL1011","qty":1,"avail":1,"price":72.99},{"pn":"CCDKK14515A2","ws":"LBBL1012","qty":1,"avail":1,"price":83.99},{"pn":"CCDKK14561AH","ws":"LBBL1004","qty":9,"avail":9,"price":31.99},{"pn":"CCDKK14561AL","ws":"LBBL1005","qty":12,"avail":12,"price":31.99},{"pn":"CCDKK15352AWH","ws":"LBBL1033","qty":3,"avail":3,"price":51.99},{"pn":"CCDKK16274A","ws":"LBBL1029","qty":3,"avail":3,"price":64.99},{"pn":"CCDKK16694A12","ws":"LBBL1009","qty":1,"avail":1,"price":79.99},{"pn":"CCDKK16909A","ws":"LBBL1008","qty":2,"avail":2,"price":49.99},{"pn":"CCDKK17070A","ws":"LBBL1014","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK17196A","ws":"PIMI1041","qty":4,"avail":4,"price":29.99},{"pn":"CCDKK17200AFU","ws":"LBBL1006","qty":3,"avail":3,"price":38.99},{"pn":"CCDKK17226A","ws":"LBBL1028","qty":3,"avail":3,"price":64.99},{"pn":"CCDKK17259B-PU","ws":"LBBL1007","qty":1,"avail":1,"price":26.99},{"pn":"CCDKK17260A-PK","ws":"LBBL1000","qty":1,"avail":1,"price":28.99},{"pn":"CCDKK17260A-PU","ws":"LBBL1000","qty":0,"avail":0,"price":28.99},{"pn":"CCDKK17987BYE","ws":"LBBL1030","qty":12,"avail":12,"price":29.99},{"pn":"CCDKK19313A1","ws":"LBBL1031","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK19313A2","ws":"LBBL1032","qty":2,"avail":2,"price":94.99},{"pn":"CCDKK20493ABPushing","ws":"LBBL1027","qty":2,"avail":2,"price":41.99},{"pn":"CCDKK20493AFPulling","ws":"LBBL1027","qty":2,"avail":2,"price":41.99},{"pn":"CCDKK51919A","ws":"LBBL1024","qty":1,"avail":1,"price":219.99},{"pn":"CCDKK52788A","ws":"LBBL1018","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK53407A","ws":"LBBL1002","qty":4,"avail":4,"price":86.99},{"pn":"CCDKK53675A","ws":"LBBL1025","qty":1,"avail":1,"price":33.99},{"pn":"CCDKK54368A","ws":"LBBL1022","qty":1,"avail":1,"price":43.99},{"pn":"CCDKK54680AWH","ws":"LBBL1001","qty":10,"avail":10,"price":23.99},{"pn":"CCDKK54681ARD","ws":"LBBL1026","qty":3,"avail":3,"price":24.99},{"pn":"CCDKK54687A","ws":"LBBL1023","qty":2,"avail":2,"price":97.99},{"pn":"CCDKK54723C","ws":"LBBL1020","qty":2,"avail":2,"price":61.99},{"pn":"CCDKKB6857","ws":"LBBL1013","qty":2,"avail":2,"price":51.99},{"pn":"CCDP4E9SQDASHING","ws":"CSNT1006","qty":2,"avail":2,"price":49.99},{"pn":"CCDP4E9SQMRYXMASSWRL","ws":"CSNT1001","qty":2,"avail":2,"price":43.99},{"pn":"CCDP4E9SQNCNA1","ws":"CSNT1005","qty":1,"avail":1,"price":49.99},{"pn":"CCDP4E9SQNGHTYNA1","ws":"CSNT1004","qty":1,"avail":1,"price":49.99},{"pn":"CCDP4E9SQXMASTRUCK","ws":"CSNT1003","qty":2,"avail":2,"price":49.99},{"pn":"CCDPBK102342","ws":"PIMI1047","qty":9,"avail":9,"price":29.99},{"pn":"CCDPBK102343","ws":"PIMI1045","qty":8,"avail":8,"price":35.99},{"pn":"CCDPBK102353","ws":"PIMI1046","qty":9,"avail":9,"price":33.99},{"pn":"CCDPBK102354","ws":"PIMI1046","qty":5,"avail":5,"price":30.99},{"pn":"CCDPBK109932","ws":"PIMI1050","qty":15,"avail":15,"price":20.99},{"pn":"CCDPBK109951","ws":"PIMI1043","qty":11,"avail":11,"price":29.99},{"pn":"CCDPBK109952","ws":"PIMI1042","qty":16,"avail":16,"price":28.99},{"pn":"CCDPBK109953","ws":"PIMI1044","qty":11,"avail":11,"price":28.99},{"pn":"CCDPBK110499","ws":"PIMI1049","qty":5,"avail":5,"price":25.99},{"pn":"CCDPBK121147","ws":"PIMI1200","qty":6,"avail":6,"price":41.99},{"pn":"CCDPBK39899","ws":"PIMI1051","qty":8,"avail":8,"price":30.99},{"pn":"CCDPBK39905","ws":"PIMI1052","qty":1,"avail":1,"price":66.99},{"pn":"CCDPD20127","ws":"PKDE1695","qty":3,"avail":3,"price":28.99},{"pn":"CCDPD21425","ws":"PKDE1911","qty":8,"avail":8,"price":84.99},{"pn":"CCDPD21436","ws":"PKDE1957","qty":0,"avail":0,"price":20.99},{"pn":"CCDPD23706A","ws":"PKDE1959","qty":9,"avail":9,"price":28.99},{"pn":"CCDPD23728","ws":"PKDE1961","qty":0,"avail":0,"price":40.99},{"pn":"CCDPD380623","ws":"PKDE2003","qty":7,"avail":7,"price":44.99},{"pn":"CCDPD4996820","ws":"PKDE2004","qty":5,"avail":5,"price":49.99},{"pn":"CCDPD8599878","ws":"PKDE1958","qty":0,"avail":0,"price":45.99},{"pn":"CCDRHE142326","ws":"RAGO1294","qty":0,"avail":0,"price":27.99},{"pn":"CCDRHE193185","ws":"QBBP1001","qty":4,"avail":4,"price":31.99},{"pn":"CCDRHE193212","ws":"QBBP1002","qty":1,"avail":1,"price":38.99},{"pn":"CCDRHHY194159","ws":"QBBP1000","qty":0,"avail":0,"price":92.99},{"pn":"CCDSSPAL1459","ws":"ONCE1000","qty":1,"avail":1,"price":49.99},{"pn":"CCDSV90015","ws":"TDFL2434","qty":20,"avail":20,"price":29.99},{"pn":"CCDSV90969","ws":"TDFL2837","qty":48,"avail":48,"price":21.99},{"pn":"CCDSV91031","ws":"TDFL2956","qty":29,"avail":29,"price":19.99},{"pn":"CCDSV92248","ws":"TDFL1962","qty":1,"avail":1,"price":65.99},{"pn":"CCDSV92735","ws":"TDFL1767","qty":11,"avail":11,"price":23.99},{"pn":"CCDSV92959","ws":"TDFL1920","qty":1,"avail":1,"price":40.99},{"pn":"CCDSV93107","ws":"TDFL2023","qty":14,"avail":14,"price":25.99},{"pn":"CCDSV93112","ws":"TDFL1940","qty":14,"avail":14,"price":32.99},{"pn":"CCDSV94062","ws":"TDFL2883","qty":13,"avail":13,"price":24.99},{"pn":"CCDUPSILENTNIGHT","ws":"CSNT1000","qty":2,"avail":2,"price":51.99},{"pn":"CCDUPWREATH","ws":"CSNT1002","qty":1,"avail":1,"price":51.99}];
+
+const WF_BY_PN = {};
+WF_CATALOG.forEach(w => { WF_BY_PN[w.pn] = w; });
+
+let wfCatMatched = [];
+let wfCatMismatched = [];
+let wfCatMissing = [];
+let wfCatQtyOff = [];
+
+function runCatalogValidation() {
+    wfCatMatched = [];
+    wfCatMismatched = [];
+    wfCatMissing = [];
+    wfCatQtyOff = [];
+    
+    const wfMatched = new Set();
+    
+    // Check each DB item with wayfair_sku against WF catalog
+    const wfItems = itemsList.filter(i => i.wayfair_sku);
+    wfItems.forEach(item => {
+        const wfEntry = WF_BY_PN[item.wayfair_sku];
+        if (wfEntry) {
+            wfMatched.add(item.wayfair_sku);
+            wfCatMatched.push({ db: item, wf: wfEntry });
+            if ((item.wayfair_qty || 0) !== wfEntry.qty) {
+                wfCatQtyOff.push({ db: item, wf: wfEntry });
+            }
+        } else {
+            wfCatMismatched.push({ db: item });
+        }
+    });
+    
+    // Check WF catalog items not matched to any DB wayfair_sku
+    WF_CATALOG.forEach(wf => {
+        if (!wfMatched.has(wf.pn)) {
+            const likely = findLikelyDbMatch(wf.pn);
+            wfCatMissing.push({ wf, likelyMatch: likely });
+        }
+    });
+    
+    log(`[WF Catalog] Matched: ${wfCatMatched.length}, Mismatched: ${wfCatMismatched.length}, Not in DB: ${wfCatMissing.length}, Qty off: ${wfCatQtyOff.length}`,
+        wfCatMismatched.length > 0 ? 'err' : 'ok');
+    
+    renderCatalogResults();
+}
+
+function findLikelyDbMatch(wfPartNumber) {
+    let bestMatch = null;
+    let bestLen = 0;
+    for (const item of itemsList) {
+        if (!item.sku) continue;
+        const sku = item.sku;
+        if (wfPartNumber.includes(sku) && sku.length > bestLen) {
+            bestMatch = item;
+            bestLen = sku.length;
+        }
+        const noDash = sku.replace(/-/g, '');
+        if (noDash !== sku && wfPartNumber.includes(noDash) && noDash.length > bestLen) {
+            bestMatch = item;
+            bestLen = noDash.length;
+        }
+    }
+    return bestMatch;
+}
+
+function findLikelyWfPn(ourSku) {
+    for (const wf of WF_CATALOG) {
+        if (wf.pn.includes(ourSku) || wf.pn.includes(ourSku.replace(/-/g, ''))) return wf;
+    }
+    return null;
+}
+
+function renderCatalogResults() {
+    document.getElementById('wfCatalogSection').style.display = 'block';
+    
+    // Stats
+    document.getElementById('wfCatalogStats').innerHTML = `
+        <div class="stat-card green"><div class="label">Catalog Match</div><div class="value">${wfCatMatched.length}</div></div>
+        <div class="stat-card red"><div class="label">SKU Not in WF</div><div class="value">${wfCatMismatched.length}</div></div>
+        <div class="stat-card" style="border-color:var(--orange)"><div class="label" style="color:var(--orange)">WF Not in DB</div><div class="value" style="color:var(--orange)">${wfCatMissing.length}</div></div>
+        <div class="stat-card yellow"><div class="label">Qty Mismatch</div><div class="value">${wfCatQtyOff.length}</div></div>
+    `;
+    
+    // Mismatched
+    if (wfCatMismatched.length > 0) {
+        document.getElementById('wfMismatchWrap').style.display = 'block';
+        document.getElementById('wfMismatchTitle').textContent = `🔴 DB wayfair_sku NOT in Wayfair Catalog (${wfCatMismatched.length})`;
+        document.getElementById('wfMismatchBody').innerHTML = wfCatMismatched.map((m, i) => {
+            const suggested = findLikelyWfPn(m.db.sku);
+            return `<tr class="gap-row">
+                <td>${esc(m.db.sku)}</td>
+                <td style="font-family:'DM Sans',sans-serif;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(m.db.product_name || '')}</td>
+                <td><span class="badge badge-red">${esc(m.db.wayfair_sku)}</span></td>
+                <td><input class="fix-input" id="wfcat_fix_${m.db.id}" value="${suggested ? esc(suggested.pn) : ''}" placeholder="Correct Part Number" list="wfCatalogList"></td>
+                <td><button class="btn btn-sm btn-green" onclick="fixCatalogSku(${m.db.id})" style="padding:2px 8px;font-size:10px;">Fix</button></td>
+            </tr>`;
+        }).join('');
+    } else {
+        document.getElementById('wfMismatchWrap').style.display = 'none';
+    }
+    
+    // Missing from DB
+    if (wfCatMissing.length > 0) {
+        document.getElementById('wfMissingWrap').style.display = 'block';
+        document.getElementById('wfMissingTitle').textContent = `🟠 In Wayfair Catalog but NOT Matched in DB (${wfCatMissing.length})`;
+        document.getElementById('wfMissingBody').innerHTML = wfCatMissing.map(m => {
+            const lm = m.likelyMatch;
+            return `<tr>
+                <td>${esc(m.wf.pn)}</td>
+                <td>${esc(m.wf.ws)}</td>
+                <td>${m.wf.qty}</td>
+                <td>$${m.wf.price.toFixed(2)}</td>
+                <td style="font-family:'DM Sans',sans-serif">${lm ? `${esc(lm.sku)} <span style="color:var(--text-muted);font-size:10px;">${esc((lm.product_name||'').substring(0,30))}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+                <td>${lm ? `<button class="btn btn-sm" style="padding:2px 8px;font-size:10px;background:var(--orange);color:white;" onclick="assignCatalogSku(${lm.id}, '${esc(m.wf.pn)}')">Assign</button>` : ''}</td>
+            </tr>`;
+        }).join('');
+    } else {
+        document.getElementById('wfMissingWrap').style.display = 'none';
+    }
+    
+    // Qty mismatch
+    if (wfCatQtyOff.length > 0) {
+        document.getElementById('wfQtyWrap').style.display = 'block';
+        document.getElementById('wfQtyTitle').textContent = `🟡 Qty Mismatch — Matched but Different (${wfCatQtyOff.length})`;
+        document.getElementById('wfQtyBody').innerHTML = wfCatQtyOff.map(m => {
+            const diff = (m.db.wayfair_qty || 0) - m.wf.qty;
+            return `<tr>
+                <td>${esc(m.db.sku)}</td>
+                <td>${esc(m.wf.pn)}</td>
+                <td>${m.db.wayfair_qty || 0}</td>
+                <td>${m.wf.qty}</td>
+                <td class="${diff > 0 ? 'qty-diff-pos' : 'qty-diff-neg'}">${diff > 0 ? '+' : ''}${diff}</td>
+            </tr>`;
+        }).join('');
+    } else {
+        document.getElementById('wfQtyWrap').style.display = 'none';
+    }
+    
+    // Matched
+    if (wfCatMatched.length > 0) {
+        document.getElementById('wfMatchedDetails').style.display = 'block';
+        document.getElementById('wfMatchedBody').innerHTML = wfCatMatched.map(m => {
+            const qOk = (m.db.wayfair_qty || 0) === m.wf.qty;
+            return `<tr style="${qOk ? 'opacity:0.6' : ''}">
+                <td>${esc(m.db.sku)}</td>
+                <td>${esc(m.wf.pn)}</td>
+                <td>${m.db.wayfair_qty || 0}</td>
+                <td>${m.wf.qty}</td>
+                <td>$${m.wf.price.toFixed(2)}</td>
+            </tr>`;
+        }).join('');
+    }
+    
+    // Build datalist for Part Number suggestions
+    let dl = document.getElementById('wfCatalogList');
+    if (!dl) {
+        dl = document.createElement('datalist');
+        dl.id = 'wfCatalogList';
+        document.body.appendChild(dl);
+    }
+    dl.innerHTML = WF_CATALOG.map(w => `<option value="${esc(w.pn)}">`).join('');
+}
+
+async function fixCatalogSku(itemId) {
+    const input = document.getElementById('wfcat_fix_' + itemId);
+    const newSku = (input?.value || '').trim();
+    if (!newSku) { toast('Enter the correct Wayfair Part Number', 'error'); return; }
+    if (!WF_BY_PN[newSku]) {
+        if (!confirm(`"${newSku}" is NOT in the Wayfair catalog. Continue anyway?`)) return;
+    }
+    const { error } = await sbClient.from('items').update({ wayfair_sku: newSku }).eq('id', itemId);
+    if (error) { toast('Fix failed: ' + error.message, 'error'); return; }
+    
+    // Update local state
+    const item = itemsList.find(i => i.id === itemId);
+    if (item) item.wayfair_sku = newSku;
+    toast(`Fixed: wayfair_sku → ${newSku}`, 'success');
+    log(`[WF Catalog] Fixed item ${itemId} → ${newSku}`, 'ok');
+    runCatalogValidation();
+    renderStats();
+}
+
+async function assignCatalogSku(itemId, partNumber) {
+    if (!confirm(`Set wayfair_sku = "${partNumber}" for item ${itemId}?`)) return;
+    const { error } = await sbClient.from('items').update({ wayfair_sku: partNumber }).eq('id', itemId);
+    if (error) { toast('Assign failed: ' + error.message, 'error'); return; }
+    
+    const item = itemsList.find(i => i.id === itemId);
+    if (item) item.wayfair_sku = partNumber;
+    toast(`Assigned: wayfair_sku → ${partNumber}`, 'success');
+    log(`[WF Catalog] Assigned ${partNumber} to item ${itemId}`, 'ok');
+    runCatalogValidation();
     renderStats();
 }
 
@@ -1056,16 +1315,18 @@ function renderStats() {
     const wixOk = wixAudit.filter(a => a.status === 'ok' || a.status === 'skipped').length;
     const wfGaps = wayfairAudit.filter(a => a.gaps.length > 0).length;
     const wfOk = wayfairAudit.length - wfGaps;
-    const totalGaps = etsyGaps + wixGaps + wfGaps;
+    const wfCatIssues = wfCatMismatched.length + wfCatMissing.length;
+    const totalGaps = etsyGaps + wixGaps + wfGaps + wfCatIssues;
     
     document.getElementById('statsGrid').innerHTML = `
         <div class="stat-card ${totalGaps > 0 ? 'red' : 'green'}"><div class="label">Total Gaps</div><div class="value">${totalGaps}</div></div>
         <div class="stat-card ${etsyGaps > 0 ? 'yellow' : 'green'}"><div class="label">Etsy Gaps</div><div class="value">${etsyGaps}<span style="font-size:12px;color:var(--text-dim);">/${etsyAudit.length}</span></div></div>
         <div class="stat-card ${wixGaps > 0 ? 'yellow' : 'green'}"><div class="label">Wix Gaps</div><div class="value">${wixGaps}<span style="font-size:12px;color:var(--text-dim);">/${wixAudit.length}</span></div></div>
-        <div class="stat-card ${wfGaps > 0 ? 'yellow' : 'green'}"><div class="label">Wayfair Gaps</div><div class="value">${wfGaps}<span style="font-size:12px;color:var(--text-dim);">/${wayfairAudit.length}</span></div></div>
+        <div class="stat-card ${wfGaps > 0 ? 'yellow' : 'green'}"><div class="label">Wayfair DB Gaps</div><div class="value">${wfGaps}<span style="font-size:12px;color:var(--text-dim);">/${wayfairAudit.length}</span></div></div>
+        <div class="stat-card ${wfCatMismatched.length > 0 ? 'red' : 'green'}"><div class="label">WF Catalog Issues</div><div class="value">${wfCatIssues}<span style="font-size:12px;color:var(--text-dim);">/${WF_CATALOG.length}</span></div></div>
         <div class="stat-card green"><div class="label">Etsy OK</div><div class="value">${etsyOk}</div></div>
         <div class="stat-card green"><div class="label">Wix OK</div><div class="value">${wixOk}</div></div>
-        <div class="stat-card green"><div class="label">Wayfair OK</div><div class="value">${wfOk}</div></div>
+        <div class="stat-card green"><div class="label">WF Catalog Match</div><div class="value">${wfCatMatched.length}</div></div>
     `;
 }
 
