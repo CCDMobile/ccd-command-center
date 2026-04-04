@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Channel SKU Audit v2.0</title>
+<title>CCD Channel SKU Audit v2.1</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     :root {
@@ -131,7 +131,7 @@
 
 <div class="header">
     <h1><span class="logo">🔗</span> CCD Channel SKU Audit</h1>
-    <span class="version">v2.0 — Cross-Channel SKU Gap Finder + Wayfair Catalog Validation</span>
+    <span class="version">v2.1 — Cross-Channel SKU Gap Finder + Wayfair API Catalog Audit</span>
 </div>
 
 <div class="sb-bar">
@@ -153,8 +153,12 @@
             <input type="text" id="wixProxyUrl" placeholder="https://script.google.com/macros/s/.../exec">
         </div>
         <div class="proxy-box">
-            <h3>🏠 Wayfair</h3>
-            <p style="font-size:12px;color:var(--text-dim);line-height:1.5;">DB-only gap check + Partner Home catalog validation (176 items embedded, exported 2026-04-01).</p>
+            <h3>🏠 Wayfair Catalog Proxy</h3>
+            <input type="text" id="wfCatalogProxyUrl" placeholder="https://script.google.com/macros/s/.../exec">
+            <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+                <span class="sb-dot" id="wfProxyDot"></span>
+                <span id="wfProxyStatus" style="font-size:11px;color:var(--text-dim);">Not connected</span>
+            </div>
         </div>
     </div>
     
@@ -238,8 +242,8 @@
         
         <!-- WAYFAIR CATALOG VALIDATION -->
         <div class="channel-section" id="wfCatalogSection" style="display:none;">
-            <div class="channel-header"><span class="badge-channel badge-wayfair">WAYFAIR</span> Partner Home Catalog Validation</div>
-            <p class="catalog-note">Cross-references our <code>wayfair_sku</code> values against the Wayfair Partner Home export. Items with wrong SKUs silently fail on push.</p>
+            <div class="channel-header"><span class="badge-channel badge-wayfair">WAYFAIR</span> Catalog Validation <span id="wfCatalogSource" style="font-size:12px;color:var(--text-dim);margin-left:8px;">(CSV fallback)</span></div>
+            <p class="catalog-note">Cross-references our <code>wayfair_sku</code> values against Wayfair catalog data. <strong>API mode</strong> uses live data from the Catalog Proxy. <strong>CSV mode</strong> uses the embedded Partner Home export (176 items, 2026-04-01).</p>
             
             <div class="stats-grid" id="wfCatalogStats" style="margin-bottom:16px;"></div>
             
@@ -294,7 +298,7 @@
 // ═══════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════
-const SKU_VERSION = 'v2.0';
+const SKU_VERSION = 'v2.1';
 const SKU_VERSION_KEY = 'skuaudit';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -410,6 +414,8 @@ function connectSupabase() {
     if (ep) document.getElementById('etsyProxyUrl').value = ep;
     const wp = localStorage.getItem('ccd_wix_proxy_url');
     if (wp) document.getElementById('wixProxyUrl').value = wp;
+    const wfp = localStorage.getItem('ccdWayfairCatalogProxy');
+    if (wfp) document.getElementById('wfCatalogProxyUrl').value = wfp;
 })();
 
 // ═══════════════════════════════════════
@@ -428,6 +434,8 @@ async function runFullAudit() {
     
     if (etsyUrl) localStorage.setItem('ccd_etsy_proxy_url', etsyUrl);
     if (wixUrl) localStorage.setItem('ccd_wix_proxy_url', wixUrl);
+    const wfProxyUrl = document.getElementById('wfCatalogProxyUrl').value.trim();
+    if (wfProxyUrl) localStorage.setItem('ccdWayfairCatalogProxy', wfProxyUrl);
     
     // Run all three in parallel
     const promises = [];
@@ -916,7 +924,22 @@ async function auditWayfair() {
     document.getElementById('wayfairSection').style.display = 'block';
     renderWayfairTable();
     
-    // Also run Partner Home catalog cross-reference
+    // Also run catalog cross-reference — try API first, fall back to CSV
+    const wfProxyUrl = document.getElementById('wfCatalogProxyUrl').value.trim();
+    if (wfProxyUrl) {
+        const apiOk = await fetchWayfairCatalogFromAPI();
+        if (!apiOk) {
+            log('[WF Catalog] API failed, falling back to embedded CSV data.', 'warn');
+            WF_CATALOG = WF_CATALOG_CSV;
+            wfCatalogMode = 'csv';
+            for (const key in WF_BY_PN) delete WF_BY_PN[key];
+            WF_CATALOG_CSV.forEach(w => { WF_BY_PN[w.pn] = w; });
+            document.getElementById('wfCatalogSource').textContent = '(CSV fallback — 176 items, 2026-04-01)';
+        }
+    } else {
+        log('[WF Catalog] No proxy configured — using embedded CSV data.', 'info');
+        document.getElementById('wfCatalogSource').textContent = '(CSV — 176 items, exported 2026-04-01)';
+    }
     runCatalogValidation();
 }
 
@@ -986,12 +1009,107 @@ async function saveAllWayfair() {
 }
 
 // ═══════════════════════════════════════
-// WAYFAIR CATALOG VALIDATION (Partner Home cross-reference)
+// WAYFAIR CATALOG VALIDATION (API + CSV fallback)
 // ═══════════════════════════════════════
-const WF_CATALOG=[{"pn":"CCD21012","ws":"PKDE2203","qty":4,"avail":4,"price":41.99},{"pn":"CCDA5G0228","ws":"ADRJ1015","qty":1,"avail":1,"price":49.99},{"pn":"CCDA5G0269","ws":"ADRJ1013","qty":0,"avail":0,"price":49.99},{"pn":"CCDA7T1152","ws":"ADRJ1011","qty":2,"avail":2,"price":74.99},{"pn":"CCDA8D5107FFF","ws":"ADRJ1023","qty":4,"avail":4,"price":19.99},{"pn":"CCDA8D5107FSF","ws":"ADRJ1019","qty":1,"avail":1,"price":9.16},{"pn":"CCDA8D5107GL","ws":"ADRJ1018","qty":5,"avail":5,"price":19.99},{"pn":"CCDA8D5107LIB","ws":"ADRJ1021","qty":1,"avail":1,"price":9.16},{"pn":"CCDA8D5107LTFL","ws":"ADRJ1022","qty":4,"avail":4,"price":19.99},{"pn":"CCDA8D5107WATS","ws":"ADRJ1020","qty":7,"avail":7,"price":19.99},{"pn":"CCDA8D5108FNF","ws":"ADRJ1016","qty":2,"avail":2,"price":19.99},{"pn":"CCDA8D5108HC","ws":"ADRJ1017","qty":6,"avail":6,"price":19.99},{"pn":"CCDA8G0251","ws":"ADRJ1003","qty":2,"avail":2,"price":62.99},{"pn":"CCDA8PT1337","ws":"ADRJ1002","qty":2,"avail":2,"price":35.99},{"pn":"CCDA8PT1400","ws":"ADRJ1005","qty":2,"avail":2,"price":63.99},{"pn":"CCDA8PT1402","ws":"ADRJ1004","qty":2,"avail":2,"price":38.99},{"pn":"CCDA8PT1570","ws":"ADRJ1014","qty":2,"avail":2,"price":39.99},{"pn":"CCDA8PT6034","ws":"ADRJ1006","qty":3,"avail":3,"price":33.99},{"pn":"CCDA8RS960","ws":"ADRJ1008","qty":1,"avail":1,"price":72.99},{"pn":"CCDA8T2188","ws":"ADRJ1010","qty":1,"avail":1,"price":74.99},{"pn":"CCDCHC81660","ws":"TEDC1000","qty":1,"avail":1,"price":36.99},{"pn":"CCDCHC90537","ws":"TEDC1001","qty":2,"avail":2,"price":30.99},{"pn":"CCDCHC95687","ws":"TEDC1002","qty":1,"avail":1,"price":30.99},{"pn":"CCDCTW370404","ws":"CWHO1110","qty":5,"avail":5,"price":0},{"pn":"CCDCTW370488","ws":"CWHO1075","qty":3,"avail":3,"price":21.99},{"pn":"CCDCTW370507","ws":"CWHO1061","qty":2,"avail":2,"price":47.99},{"pn":"CCDCTW370508","ws":"CWHO1061","qty":1,"avail":1,"price":54.99},{"pn":"CCDCTW370551","ws":"CWHO1093","qty":2,"avail":2,"price":36.99},{"pn":"CCDCTW370619","ws":"CWHO1052","qty":5,"avail":5,"price":41.99},{"pn":"CCDCTW370779","ws":"CWHO1080","qty":2,"avail":2,"price":107.99},{"pn":"CCDCTW370870","ws":"CWHO1049","qty":0,"avail":0,"price":53.43},{"pn":"CCDCTW370961","ws":"CWHO1108","qty":9,"avail":9,"price":24.99},{"pn":"CCDCTW430043","ws":"CWHO1109","qty":0,"avail":0,"price":52.99},{"pn":"CCDCTW440007","ws":"CWHO1070","qty":1,"avail":1,"price":35.99},{"pn":"CCDCTW440244","ws":"CWHO1096","qty":2,"avail":2,"price":99.99},{"pn":"CCDCTW440432","ws":"CWHO1092","qty":2,"avail":2,"price":44.99},{"pn":"CCDCTW440483","ws":"CWHO1094","qty":2,"avail":2,"price":41.99},{"pn":"CCDCTW460237","ws":"CWHO1106","qty":15,"avail":15,"price":28.99},{"pn":"CCDCTW460334","ws":"CWHO1088","qty":5,"avail":5,"price":25.99},{"pn":"CCDCTW460335","ws":"CWHO1097","qty":1,"avail":1,"price":26.99},{"pn":"CCDCTW460337","ws":"CWHO1082","qty":1,"avail":1,"price":25.99},{"pn":"CCDCTW460428","ws":"CWHO1060","qty":11,"avail":11,"price":39.99},{"pn":"CCDCTW460429","ws":"CWHO1059","qty":1,"avail":1,"price":46.99},{"pn":"CCDCTW520035","ws":"CWHO1053","qty":3,"avail":3,"price":40.99},{"pn":"CCDCTW520057","ws":"CWHO1051","qty":10,"avail":10,"price":37.35},{"pn":"CCDCTW530031","ws":"CWHO1056","qty":2,"avail":2,"price":45.99},{"pn":"CCDCTW530042","ws":"CWHO1107","qty":14,"avail":14,"price":34.99},{"pn":"CCDCTW530081","ws":"CWHO1099","qty":1,"avail":1,"price":47.99},{"pn":"CCDCTW530167","ws":"CWHO1067","qty":2,"avail":2,"price":21.99},{"pn":"CCDCTW530534","ws":"CWHO1071","qty":3,"avail":3,"price":31.99},{"pn":"CCDCTW530535","ws":"CWHO1071","qty":4,"avail":4,"price":26.99},{"pn":"CCDCTW530537","ws":"CWHO1102","qty":3,"avail":3,"price":28.99},{"pn":"CCDCTW600011","ws":"CWHO1105","qty":1,"avail":1,"price":36.99},{"pn":"CCDCTW680636","ws":"CWHO1066","qty":6,"avail":6,"price":31.99},{"pn":"CCDCTW680637","ws":"CWHO1066","qty":3,"avail":3,"price":39.99},{"pn":"CCDCTW680639","ws":"CWHO1101","qty":19,"avail":19,"price":23.99},{"pn":"CCDCTW680640","ws":"CWHO1068","qty":31,"avail":31,"price":38.99},{"pn":"CCDCTW770006","ws":"CWHO1054","qty":1,"avail":1,"price":36.99},{"pn":"CCDCTW770141","ws":"CWHO1055","qty":4,"avail":4,"price":38.99},{"pn":"CCDCTW770343L","ws":"CWHO1100","qty":3,"avail":3,"price":43.99},{"pn":"CCDCTW770343S","ws":"CWHO1100","qty":3,"avail":3,"price":37.99},{"pn":"CCDCTW770375","ws":"CWHO1090","qty":1,"avail":1,"price":54.99},{"pn":"CCDCTW770382","ws":"CWHO1087","qty":1,"avail":1,"price":42.99},{"pn":"CCDCTW770395","ws":"CWHO1091","qty":1,"avail":1,"price":182.99},{"pn":"CCDCTW770632L","ws":"CWHO1095","qty":1,"avail":1,"price":83.99},{"pn":"CCDCTW770632S","ws":"CWHO1095","qty":1,"avail":1,"price":77.99},{"pn":"CCDCTW860395","ws":"CWHO1063","qty":3,"avail":3,"price":39.99},{"pn":"CCDCWIG1217","ws":"GGWW4154","qty":3,"avail":3,"price":21.99},{"pn":"CCDCWIG18065","ws":"GGWW4412","qty":10,"avail":10,"price":21.99},{"pn":"CCDCWIG18066","ws":"GGWW4412","qty":11,"avail":11,"price":21.99},{"pn":"CCDCWIG35838","ws":"GGWW4156","qty":5,"avail":5,"price":22.99},{"pn":"CCDCWIG60169","ws":"GGWW1246","qty":6,"avail":6,"price":65.99},{"pn":"CCDCWIG60353","ws":"GGWW4149","qty":11,"avail":11,"price":75.99},{"pn":"CCDCWIG60382","ws":"GGWW4151","qty":1,"avail":1,"price":74.99},{"pn":"CCDCWIG60492","ws":"GGWW4158","qty":7,"avail":7,"price":83.99},{"pn":"CCDCWIG70066","ws":"GGWW4413","qty":1,"avail":1,"price":34.99},{"pn":"CCDCWIG75026","ws":"GGWW4415","qty":1,"avail":1,"price":40.99},{"pn":"CCDCWIG8348","ws":"GGWW4153","qty":5,"avail":5,"price":20.99},{"pn":"CCDCWIG90850","ws":"GGWW4157","qty":6,"avail":6,"price":21.99},{"pn":"CCDCWIGC23704J","ws":"GGWW4411","qty":4,"avail":4,"price":39.99},{"pn":"CCDCWIGC23704N","ws":"GGWW4410","qty":4,"avail":4,"price":39.99},{"pn":"CCDCWIGP39397","ws":"GGWW4155","qty":0,"avail":0,"price":26.99},{"pn":"CCDFFDAD00167","ws":"AORE6192","qty":1,"avail":1,"price":102.99},{"pn":"CCDFFDDD10599","ws":"AORE5100","qty":3,"avail":3,"price":64.99},{"pn":"CCDFFDFC08717","ws":"AORE3836","qty":1,"avail":1,"price":81.99},{"pn":"CCDFG500","ws":"FGDM2877","qty":5,"avail":5,"price":26.99},{"pn":"CCDFGG1054","ws":"FGDM1095","qty":1,"avail":1,"price":25.99},{"pn":"CCDFGG1391","ws":"FGDM1483","qty":0,"avail":0,"price":26.99},{"pn":"CCDHC13477","ws":"HTSD1755","qty":1,"avail":1,"price":27.99},{"pn":"CCDHC35480","ws":"HTSD1750","qty":2,"avail":2,"price":30.99},{"pn":"CCDHC35532","ws":"HTSD1751","qty":3,"avail":3,"price":30.99},{"pn":"CCDHC35626","ws":"HTSD1754","qty":3,"avail":3,"price":20.99},{"pn":"CCDHC60443","ws":"GGWW4152","qty":3,"avail":3,"price":77.99},{"pn":"CCDHC90707","ws":"HTSD1753","qty":4,"avail":4,"price":21.99},{"pn":"CCDJUCJ17","ws":"JURN1006","qty":2,"avail":2,"price":36.99},{"pn":"CCDJUCJ36","ws":"JURN1005","qty":2,"avail":2,"price":38.99},{"pn":"CCDJUJU17","ws":"JURN1008","qty":1,"avail":1,"price":36.99},{"pn":"CCDJUJU36","ws":"JURN1003","qty":1,"avail":1,"price":34.99},{"pn":"CCDJUJU90","ws":"JURN1004","qty":1,"avail":1,"price":35.99},{"pn":"CCDJUNP421","ws":"JURN1002","qty":7,"avail":7,"price":19.99},{"pn":"CCDJUNP424","ws":"JURN1009","qty":2,"avail":2,"price":17.99},{"pn":"CCDJUNP425","ws":"JURN1001","qty":1,"avail":1,"price":18.99},{"pn":"CCDJUNP428","ws":"JURN1007","qty":2,"avail":2,"price":16.99},{"pn":"CCDJUNP433","ws":"JURN1000","qty":2,"avail":2,"price":15.99},{"pn":"CCDKK11135A","ws":"LBBL1015","qty":1,"avail":1,"price":42.99},{"pn":"CCDKK14515A1","ws":"LBBL1011","qty":1,"avail":1,"price":72.99},{"pn":"CCDKK14515A2","ws":"LBBL1012","qty":1,"avail":1,"price":83.99},{"pn":"CCDKK14561AH","ws":"LBBL1004","qty":9,"avail":9,"price":31.99},{"pn":"CCDKK14561AL","ws":"LBBL1005","qty":12,"avail":12,"price":31.99},{"pn":"CCDKK15352AWH","ws":"LBBL1033","qty":3,"avail":3,"price":51.99},{"pn":"CCDKK16274A","ws":"LBBL1029","qty":3,"avail":3,"price":64.99},{"pn":"CCDKK16694A12","ws":"LBBL1009","qty":1,"avail":1,"price":79.99},{"pn":"CCDKK16909A","ws":"LBBL1008","qty":2,"avail":2,"price":49.99},{"pn":"CCDKK17070A","ws":"LBBL1014","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK17196A","ws":"PIMI1041","qty":4,"avail":4,"price":29.99},{"pn":"CCDKK17200AFU","ws":"LBBL1006","qty":3,"avail":3,"price":38.99},{"pn":"CCDKK17226A","ws":"LBBL1028","qty":3,"avail":3,"price":64.99},{"pn":"CCDKK17259B-PU","ws":"LBBL1007","qty":1,"avail":1,"price":26.99},{"pn":"CCDKK17260A-PK","ws":"LBBL1000","qty":1,"avail":1,"price":28.99},{"pn":"CCDKK17260A-PU","ws":"LBBL1000","qty":0,"avail":0,"price":28.99},{"pn":"CCDKK17987BYE","ws":"LBBL1030","qty":12,"avail":12,"price":29.99},{"pn":"CCDKK19313A1","ws":"LBBL1031","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK19313A2","ws":"LBBL1032","qty":2,"avail":2,"price":94.99},{"pn":"CCDKK20493ABPushing","ws":"LBBL1027","qty":2,"avail":2,"price":41.99},{"pn":"CCDKK20493AFPulling","ws":"LBBL1027","qty":2,"avail":2,"price":41.99},{"pn":"CCDKK51919A","ws":"LBBL1024","qty":1,"avail":1,"price":219.99},{"pn":"CCDKK52788A","ws":"LBBL1018","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK53407A","ws":"LBBL1002","qty":4,"avail":4,"price":86.99},{"pn":"CCDKK53675A","ws":"LBBL1025","qty":1,"avail":1,"price":33.99},{"pn":"CCDKK54368A","ws":"LBBL1022","qty":1,"avail":1,"price":43.99},{"pn":"CCDKK54680AWH","ws":"LBBL1001","qty":10,"avail":10,"price":23.99},{"pn":"CCDKK54681ARD","ws":"LBBL1026","qty":3,"avail":3,"price":24.99},{"pn":"CCDKK54687A","ws":"LBBL1023","qty":2,"avail":2,"price":97.99},{"pn":"CCDKK54723C","ws":"LBBL1020","qty":2,"avail":2,"price":61.99},{"pn":"CCDKKB6857","ws":"LBBL1013","qty":2,"avail":2,"price":51.99},{"pn":"CCDP4E9SQDASHING","ws":"CSNT1006","qty":2,"avail":2,"price":49.99},{"pn":"CCDP4E9SQMRYXMASSWRL","ws":"CSNT1001","qty":2,"avail":2,"price":43.99},{"pn":"CCDP4E9SQNCNA1","ws":"CSNT1005","qty":1,"avail":1,"price":49.99},{"pn":"CCDP4E9SQNGHTYNA1","ws":"CSNT1004","qty":1,"avail":1,"price":49.99},{"pn":"CCDP4E9SQXMASTRUCK","ws":"CSNT1003","qty":2,"avail":2,"price":49.99},{"pn":"CCDPBK102342","ws":"PIMI1047","qty":9,"avail":9,"price":29.99},{"pn":"CCDPBK102343","ws":"PIMI1045","qty":8,"avail":8,"price":35.99},{"pn":"CCDPBK102353","ws":"PIMI1046","qty":9,"avail":9,"price":33.99},{"pn":"CCDPBK102354","ws":"PIMI1046","qty":5,"avail":5,"price":30.99},{"pn":"CCDPBK109932","ws":"PIMI1050","qty":15,"avail":15,"price":20.99},{"pn":"CCDPBK109951","ws":"PIMI1043","qty":11,"avail":11,"price":29.99},{"pn":"CCDPBK109952","ws":"PIMI1042","qty":16,"avail":16,"price":28.99},{"pn":"CCDPBK109953","ws":"PIMI1044","qty":11,"avail":11,"price":28.99},{"pn":"CCDPBK110499","ws":"PIMI1049","qty":5,"avail":5,"price":25.99},{"pn":"CCDPBK121147","ws":"PIMI1200","qty":6,"avail":6,"price":41.99},{"pn":"CCDPBK39899","ws":"PIMI1051","qty":8,"avail":8,"price":30.99},{"pn":"CCDPBK39905","ws":"PIMI1052","qty":1,"avail":1,"price":66.99},{"pn":"CCDPD20127","ws":"PKDE1695","qty":3,"avail":3,"price":28.99},{"pn":"CCDPD21425","ws":"PKDE1911","qty":8,"avail":8,"price":84.99},{"pn":"CCDPD21436","ws":"PKDE1957","qty":0,"avail":0,"price":20.99},{"pn":"CCDPD23706A","ws":"PKDE1959","qty":9,"avail":9,"price":28.99},{"pn":"CCDPD23728","ws":"PKDE1961","qty":0,"avail":0,"price":40.99},{"pn":"CCDPD380623","ws":"PKDE2003","qty":7,"avail":7,"price":44.99},{"pn":"CCDPD4996820","ws":"PKDE2004","qty":5,"avail":5,"price":49.99},{"pn":"CCDPD8599878","ws":"PKDE1958","qty":0,"avail":0,"price":45.99},{"pn":"CCDRHE142326","ws":"RAGO1294","qty":0,"avail":0,"price":27.99},{"pn":"CCDRHE193185","ws":"QBBP1001","qty":4,"avail":4,"price":31.99},{"pn":"CCDRHE193212","ws":"QBBP1002","qty":1,"avail":1,"price":38.99},{"pn":"CCDRHHY194159","ws":"QBBP1000","qty":0,"avail":0,"price":92.99},{"pn":"CCDSSPAL1459","ws":"ONCE1000","qty":1,"avail":1,"price":49.99},{"pn":"CCDSV90015","ws":"TDFL2434","qty":20,"avail":20,"price":29.99},{"pn":"CCDSV90969","ws":"TDFL2837","qty":48,"avail":48,"price":21.99},{"pn":"CCDSV91031","ws":"TDFL2956","qty":29,"avail":29,"price":19.99},{"pn":"CCDSV92248","ws":"TDFL1962","qty":1,"avail":1,"price":65.99},{"pn":"CCDSV92735","ws":"TDFL1767","qty":11,"avail":11,"price":23.99},{"pn":"CCDSV92959","ws":"TDFL1920","qty":1,"avail":1,"price":40.99},{"pn":"CCDSV93107","ws":"TDFL2023","qty":14,"avail":14,"price":25.99},{"pn":"CCDSV93112","ws":"TDFL1940","qty":14,"avail":14,"price":32.99},{"pn":"CCDSV94062","ws":"TDFL2883","qty":13,"avail":13,"price":24.99},{"pn":"CCDUPSILENTNIGHT","ws":"CSNT1000","qty":2,"avail":2,"price":51.99},{"pn":"CCDUPWREATH","ws":"CSNT1002","qty":1,"avail":1,"price":51.99}];
+const WF_CATALOG_CSV=[{"pn":"CCD21012","ws":"PKDE2203","qty":4,"avail":4,"price":41.99},{"pn":"CCDA5G0228","ws":"ADRJ1015","qty":1,"avail":1,"price":49.99},{"pn":"CCDA5G0269","ws":"ADRJ1013","qty":0,"avail":0,"price":49.99},{"pn":"CCDA7T1152","ws":"ADRJ1011","qty":2,"avail":2,"price":74.99},{"pn":"CCDA8D5107FFF","ws":"ADRJ1023","qty":4,"avail":4,"price":19.99},{"pn":"CCDA8D5107FSF","ws":"ADRJ1019","qty":1,"avail":1,"price":9.16},{"pn":"CCDA8D5107GL","ws":"ADRJ1018","qty":5,"avail":5,"price":19.99},{"pn":"CCDA8D5107LIB","ws":"ADRJ1021","qty":1,"avail":1,"price":9.16},{"pn":"CCDA8D5107LTFL","ws":"ADRJ1022","qty":4,"avail":4,"price":19.99},{"pn":"CCDA8D5107WATS","ws":"ADRJ1020","qty":7,"avail":7,"price":19.99},{"pn":"CCDA8D5108FNF","ws":"ADRJ1016","qty":2,"avail":2,"price":19.99},{"pn":"CCDA8D5108HC","ws":"ADRJ1017","qty":6,"avail":6,"price":19.99},{"pn":"CCDA8G0251","ws":"ADRJ1003","qty":2,"avail":2,"price":62.99},{"pn":"CCDA8PT1337","ws":"ADRJ1002","qty":2,"avail":2,"price":35.99},{"pn":"CCDA8PT1400","ws":"ADRJ1005","qty":2,"avail":2,"price":63.99},{"pn":"CCDA8PT1402","ws":"ADRJ1004","qty":2,"avail":2,"price":38.99},{"pn":"CCDA8PT1570","ws":"ADRJ1014","qty":2,"avail":2,"price":39.99},{"pn":"CCDA8PT6034","ws":"ADRJ1006","qty":3,"avail":3,"price":33.99},{"pn":"CCDA8RS960","ws":"ADRJ1008","qty":1,"avail":1,"price":72.99},{"pn":"CCDA8T2188","ws":"ADRJ1010","qty":1,"avail":1,"price":74.99},{"pn":"CCDCHC81660","ws":"TEDC1000","qty":1,"avail":1,"price":36.99},{"pn":"CCDCHC90537","ws":"TEDC1001","qty":2,"avail":2,"price":30.99},{"pn":"CCDCHC95687","ws":"TEDC1002","qty":1,"avail":1,"price":30.99},{"pn":"CCDCTW370404","ws":"CWHO1110","qty":5,"avail":5,"price":0},{"pn":"CCDCTW370488","ws":"CWHO1075","qty":3,"avail":3,"price":21.99},{"pn":"CCDCTW370507","ws":"CWHO1061","qty":2,"avail":2,"price":47.99},{"pn":"CCDCTW370508","ws":"CWHO1061","qty":1,"avail":1,"price":54.99},{"pn":"CCDCTW370551","ws":"CWHO1093","qty":2,"avail":2,"price":36.99},{"pn":"CCDCTW370619","ws":"CWHO1052","qty":5,"avail":5,"price":41.99},{"pn":"CCDCTW370779","ws":"CWHO1080","qty":2,"avail":2,"price":107.99},{"pn":"CCDCTW370870","ws":"CWHO1049","qty":0,"avail":0,"price":53.43},{"pn":"CCDCTW370961","ws":"CWHO1108","qty":9,"avail":9,"price":24.99},{"pn":"CCDCTW430043","ws":"CWHO1109","qty":0,"avail":0,"price":52.99},{"pn":"CCDCTW440007","ws":"CWHO1070","qty":1,"avail":1,"price":35.99},{"pn":"CCDCTW440244","ws":"CWHO1096","qty":2,"avail":2,"price":99.99},{"pn":"CCDCTW440432","ws":"CWHO1092","qty":2,"avail":2,"price":44.99},{"pn":"CCDCTW440483","ws":"CWHO1094","qty":2,"avail":2,"price":41.99},{"pn":"CCDCTW460237","ws":"CWHO1106","qty":15,"avail":15,"price":28.99},{"pn":"CCDCTW460334","ws":"CWHO1088","qty":5,"avail":5,"price":25.99},{"pn":"CCDCTW460335","ws":"CWHO1097","qty":1,"avail":1,"price":26.99},{"pn":"CCDCTW460337","ws":"CWHO1082","qty":1,"avail":1,"price":25.99},{"pn":"CCDCTW460428","ws":"CWHO1060","qty":11,"avail":11,"price":39.99},{"pn":"CCDCTW460429","ws":"CWHO1059","qty":1,"avail":1,"price":46.99},{"pn":"CCDCTW520035","ws":"CWHO1053","qty":3,"avail":3,"price":40.99},{"pn":"CCDCTW520057","ws":"CWHO1051","qty":10,"avail":10,"price":37.35},{"pn":"CCDCTW530031","ws":"CWHO1056","qty":2,"avail":2,"price":45.99},{"pn":"CCDCTW530042","ws":"CWHO1107","qty":14,"avail":14,"price":34.99},{"pn":"CCDCTW530081","ws":"CWHO1099","qty":1,"avail":1,"price":47.99},{"pn":"CCDCTW530167","ws":"CWHO1067","qty":2,"avail":2,"price":21.99},{"pn":"CCDCTW530534","ws":"CWHO1071","qty":3,"avail":3,"price":31.99},{"pn":"CCDCTW530535","ws":"CWHO1071","qty":4,"avail":4,"price":26.99},{"pn":"CCDCTW530537","ws":"CWHO1102","qty":3,"avail":3,"price":28.99},{"pn":"CCDCTW600011","ws":"CWHO1105","qty":1,"avail":1,"price":36.99},{"pn":"CCDCTW680636","ws":"CWHO1066","qty":6,"avail":6,"price":31.99},{"pn":"CCDCTW680637","ws":"CWHO1066","qty":3,"avail":3,"price":39.99},{"pn":"CCDCTW680639","ws":"CWHO1101","qty":19,"avail":19,"price":23.99},{"pn":"CCDCTW680640","ws":"CWHO1068","qty":31,"avail":31,"price":38.99},{"pn":"CCDCTW770006","ws":"CWHO1054","qty":1,"avail":1,"price":36.99},{"pn":"CCDCTW770141","ws":"CWHO1055","qty":4,"avail":4,"price":38.99},{"pn":"CCDCTW770343L","ws":"CWHO1100","qty":3,"avail":3,"price":43.99},{"pn":"CCDCTW770343S","ws":"CWHO1100","qty":3,"avail":3,"price":37.99},{"pn":"CCDCTW770375","ws":"CWHO1090","qty":1,"avail":1,"price":54.99},{"pn":"CCDCTW770382","ws":"CWHO1087","qty":1,"avail":1,"price":42.99},{"pn":"CCDCTW770395","ws":"CWHO1091","qty":1,"avail":1,"price":182.99},{"pn":"CCDCTW770632L","ws":"CWHO1095","qty":1,"avail":1,"price":83.99},{"pn":"CCDCTW770632S","ws":"CWHO1095","qty":1,"avail":1,"price":77.99},{"pn":"CCDCTW860395","ws":"CWHO1063","qty":3,"avail":3,"price":39.99},{"pn":"CCDCWIG1217","ws":"GGWW4154","qty":3,"avail":3,"price":21.99},{"pn":"CCDCWIG18065","ws":"GGWW4412","qty":10,"avail":10,"price":21.99},{"pn":"CCDCWIG18066","ws":"GGWW4412","qty":11,"avail":11,"price":21.99},{"pn":"CCDCWIG35838","ws":"GGWW4156","qty":5,"avail":5,"price":22.99},{"pn":"CCDCWIG60169","ws":"GGWW1246","qty":6,"avail":6,"price":65.99},{"pn":"CCDCWIG60353","ws":"GGWW4149","qty":11,"avail":11,"price":75.99},{"pn":"CCDCWIG60382","ws":"GGWW4151","qty":1,"avail":1,"price":74.99},{"pn":"CCDCWIG60492","ws":"GGWW4158","qty":7,"avail":7,"price":83.99},{"pn":"CCDCWIG70066","ws":"GGWW4413","qty":1,"avail":1,"price":34.99},{"pn":"CCDCWIG75026","ws":"GGWW4415","qty":1,"avail":1,"price":40.99},{"pn":"CCDCWIG8348","ws":"GGWW4153","qty":5,"avail":5,"price":20.99},{"pn":"CCDCWIG90850","ws":"GGWW4157","qty":6,"avail":6,"price":21.99},{"pn":"CCDCWIGC23704J","ws":"GGWW4411","qty":4,"avail":4,"price":39.99},{"pn":"CCDCWIGC23704N","ws":"GGWW4410","qty":4,"avail":4,"price":39.99},{"pn":"CCDCWIGP39397","ws":"GGWW4155","qty":0,"avail":0,"price":26.99},{"pn":"CCDFFDAD00167","ws":"AORE6192","qty":1,"avail":1,"price":102.99},{"pn":"CCDFFDDD10599","ws":"AORE5100","qty":3,"avail":3,"price":64.99},{"pn":"CCDFFDFC08717","ws":"AORE3836","qty":1,"avail":1,"price":81.99},{"pn":"CCDFG500","ws":"FGDM2877","qty":5,"avail":5,"price":26.99},{"pn":"CCDFGG1054","ws":"FGDM1095","qty":1,"avail":1,"price":25.99},{"pn":"CCDFGG1391","ws":"FGDM1483","qty":0,"avail":0,"price":26.99},{"pn":"CCDHC13477","ws":"HTSD1755","qty":1,"avail":1,"price":27.99},{"pn":"CCDHC35480","ws":"HTSD1750","qty":2,"avail":2,"price":30.99},{"pn":"CCDHC35532","ws":"HTSD1751","qty":3,"avail":3,"price":30.99},{"pn":"CCDHC35626","ws":"HTSD1754","qty":3,"avail":3,"price":20.99},{"pn":"CCDHC60443","ws":"GGWW4152","qty":3,"avail":3,"price":77.99},{"pn":"CCDHC90707","ws":"HTSD1753","qty":4,"avail":4,"price":21.99},{"pn":"CCDJUCJ17","ws":"JURN1006","qty":2,"avail":2,"price":36.99},{"pn":"CCDJUCJ36","ws":"JURN1005","qty":2,"avail":2,"price":38.99},{"pn":"CCDJUJU17","ws":"JURN1008","qty":1,"avail":1,"price":36.99},{"pn":"CCDJUJU36","ws":"JURN1003","qty":1,"avail":1,"price":34.99},{"pn":"CCDJUJU90","ws":"JURN1004","qty":1,"avail":1,"price":35.99},{"pn":"CCDJUNP421","ws":"JURN1002","qty":7,"avail":7,"price":19.99},{"pn":"CCDJUNP424","ws":"JURN1009","qty":2,"avail":2,"price":17.99},{"pn":"CCDJUNP425","ws":"JURN1001","qty":1,"avail":1,"price":18.99},{"pn":"CCDJUNP428","ws":"JURN1007","qty":2,"avail":2,"price":16.99},{"pn":"CCDJUNP433","ws":"JURN1000","qty":2,"avail":2,"price":15.99},{"pn":"CCDKK11135A","ws":"LBBL1015","qty":1,"avail":1,"price":42.99},{"pn":"CCDKK14515A1","ws":"LBBL1011","qty":1,"avail":1,"price":72.99},{"pn":"CCDKK14515A2","ws":"LBBL1012","qty":1,"avail":1,"price":83.99},{"pn":"CCDKK14561AH","ws":"LBBL1004","qty":9,"avail":9,"price":31.99},{"pn":"CCDKK14561AL","ws":"LBBL1005","qty":12,"avail":12,"price":31.99},{"pn":"CCDKK15352AWH","ws":"LBBL1033","qty":3,"avail":3,"price":51.99},{"pn":"CCDKK16274A","ws":"LBBL1029","qty":3,"avail":3,"price":64.99},{"pn":"CCDKK16694A12","ws":"LBBL1009","qty":1,"avail":1,"price":79.99},{"pn":"CCDKK16909A","ws":"LBBL1008","qty":2,"avail":2,"price":49.99},{"pn":"CCDKK17070A","ws":"LBBL1014","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK17196A","ws":"PIMI1041","qty":4,"avail":4,"price":29.99},{"pn":"CCDKK17200AFU","ws":"LBBL1006","qty":3,"avail":3,"price":38.99},{"pn":"CCDKK17226A","ws":"LBBL1028","qty":3,"avail":3,"price":64.99},{"pn":"CCDKK17259B-PU","ws":"LBBL1007","qty":1,"avail":1,"price":26.99},{"pn":"CCDKK17260A-PK","ws":"LBBL1000","qty":1,"avail":1,"price":28.99},{"pn":"CCDKK17260A-PU","ws":"LBBL1000","qty":0,"avail":0,"price":28.99},{"pn":"CCDKK17987BYE","ws":"LBBL1030","qty":12,"avail":12,"price":29.99},{"pn":"CCDKK19313A1","ws":"LBBL1031","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK19313A2","ws":"LBBL1032","qty":2,"avail":2,"price":94.99},{"pn":"CCDKK20493ABPushing","ws":"LBBL1027","qty":2,"avail":2,"price":41.99},{"pn":"CCDKK20493AFPulling","ws":"LBBL1027","qty":2,"avail":2,"price":41.99},{"pn":"CCDKK51919A","ws":"LBBL1024","qty":1,"avail":1,"price":219.99},{"pn":"CCDKK52788A","ws":"LBBL1018","qty":2,"avail":2,"price":89.99},{"pn":"CCDKK53407A","ws":"LBBL1002","qty":4,"avail":4,"price":86.99},{"pn":"CCDKK53675A","ws":"LBBL1025","qty":1,"avail":1,"price":33.99},{"pn":"CCDKK54368A","ws":"LBBL1022","qty":1,"avail":1,"price":43.99},{"pn":"CCDKK54680AWH","ws":"LBBL1001","qty":10,"avail":10,"price":23.99},{"pn":"CCDKK54681ARD","ws":"LBBL1026","qty":3,"avail":3,"price":24.99},{"pn":"CCDKK54687A","ws":"LBBL1023","qty":2,"avail":2,"price":97.99},{"pn":"CCDKK54723C","ws":"LBBL1020","qty":2,"avail":2,"price":61.99},{"pn":"CCDKKB6857","ws":"LBBL1013","qty":2,"avail":2,"price":51.99},{"pn":"CCDP4E9SQDASHING","ws":"CSNT1006","qty":2,"avail":2,"price":49.99},{"pn":"CCDP4E9SQMRYXMASSWRL","ws":"CSNT1001","qty":2,"avail":2,"price":43.99},{"pn":"CCDP4E9SQNCNA1","ws":"CSNT1005","qty":1,"avail":1,"price":49.99},{"pn":"CCDP4E9SQNGHTYNA1","ws":"CSNT1004","qty":1,"avail":1,"price":49.99},{"pn":"CCDP4E9SQXMASTRUCK","ws":"CSNT1003","qty":2,"avail":2,"price":49.99},{"pn":"CCDPBK102342","ws":"PIMI1047","qty":9,"avail":9,"price":29.99},{"pn":"CCDPBK102343","ws":"PIMI1045","qty":8,"avail":8,"price":35.99},{"pn":"CCDPBK102353","ws":"PIMI1046","qty":9,"avail":9,"price":33.99},{"pn":"CCDPBK102354","ws":"PIMI1046","qty":5,"avail":5,"price":30.99},{"pn":"CCDPBK109932","ws":"PIMI1050","qty":15,"avail":15,"price":20.99},{"pn":"CCDPBK109951","ws":"PIMI1043","qty":11,"avail":11,"price":29.99},{"pn":"CCDPBK109952","ws":"PIMI1042","qty":16,"avail":16,"price":28.99},{"pn":"CCDPBK109953","ws":"PIMI1044","qty":11,"avail":11,"price":28.99},{"pn":"CCDPBK110499","ws":"PIMI1049","qty":5,"avail":5,"price":25.99},{"pn":"CCDPBK121147","ws":"PIMI1200","qty":6,"avail":6,"price":41.99},{"pn":"CCDPBK39899","ws":"PIMI1051","qty":8,"avail":8,"price":30.99},{"pn":"CCDPBK39905","ws":"PIMI1052","qty":1,"avail":1,"price":66.99},{"pn":"CCDPD20127","ws":"PKDE1695","qty":3,"avail":3,"price":28.99},{"pn":"CCDPD21425","ws":"PKDE1911","qty":8,"avail":8,"price":84.99},{"pn":"CCDPD21436","ws":"PKDE1957","qty":0,"avail":0,"price":20.99},{"pn":"CCDPD23706A","ws":"PKDE1959","qty":9,"avail":9,"price":28.99},{"pn":"CCDPD23728","ws":"PKDE1961","qty":0,"avail":0,"price":40.99},{"pn":"CCDPD380623","ws":"PKDE2003","qty":7,"avail":7,"price":44.99},{"pn":"CCDPD4996820","ws":"PKDE2004","qty":5,"avail":5,"price":49.99},{"pn":"CCDPD8599878","ws":"PKDE1958","qty":0,"avail":0,"price":45.99},{"pn":"CCDRHE142326","ws":"RAGO1294","qty":0,"avail":0,"price":27.99},{"pn":"CCDRHE193185","ws":"QBBP1001","qty":4,"avail":4,"price":31.99},{"pn":"CCDRHE193212","ws":"QBBP1002","qty":1,"avail":1,"price":38.99},{"pn":"CCDRHHY194159","ws":"QBBP1000","qty":0,"avail":0,"price":92.99},{"pn":"CCDSSPAL1459","ws":"ONCE1000","qty":1,"avail":1,"price":49.99},{"pn":"CCDSV90015","ws":"TDFL2434","qty":20,"avail":20,"price":29.99},{"pn":"CCDSV90969","ws":"TDFL2837","qty":48,"avail":48,"price":21.99},{"pn":"CCDSV91031","ws":"TDFL2956","qty":29,"avail":29,"price":19.99},{"pn":"CCDSV92248","ws":"TDFL1962","qty":1,"avail":1,"price":65.99},{"pn":"CCDSV92735","ws":"TDFL1767","qty":11,"avail":11,"price":23.99},{"pn":"CCDSV92959","ws":"TDFL1920","qty":1,"avail":1,"price":40.99},{"pn":"CCDSV93107","ws":"TDFL2023","qty":14,"avail":14,"price":25.99},{"pn":"CCDSV93112","ws":"TDFL1940","qty":14,"avail":14,"price":32.99},{"pn":"CCDSV94062","ws":"TDFL2883","qty":13,"avail":13,"price":24.99},{"pn":"CCDUPSILENTNIGHT","ws":"CSNT1000","qty":2,"avail":2,"price":51.99},{"pn":"CCDUPWREATH","ws":"CSNT1002","qty":1,"avail":1,"price":51.99}];
 
 const WF_BY_PN = {};
-WF_CATALOG.forEach(w => { WF_BY_PN[w.pn] = w; });
+let WF_CATALOG = WF_CATALOG_CSV; // Default to CSV, replaced by API when available
+let wfCatalogMode = 'csv';
+WF_CATALOG_CSV.forEach(w => { WF_BY_PN[w.pn] = w; });
+
+/**
+ * Fetch catalog data from the Wayfair Catalog Proxy API.
+ * Transforms API response to the same { pn, ws, qty, price } format
+ * that the existing validation logic expects.
+ */
+async function fetchWayfairCatalogFromAPI() {
+    const proxyUrl = document.getElementById('wfCatalogProxyUrl').value.trim();
+    if (!proxyUrl) return false;
+    
+    log('[WF API] Fetching catalog from API...', 'info');
+    document.getElementById('wfProxyStatus').textContent = 'Fetching...';
+    
+    try {
+        const resp = await fetch(`${proxyUrl}?action=catalogReadAll&key=${CCD_KEY}&pageSize=25`);
+        const data = await resp.json();
+        
+        if (!data.success) {
+            log(`[WF API] Error: ${data.error}`, 'err');
+            document.getElementById('wfProxyStatus').textContent = 'Error: ' + (data.error || 'Unknown');
+            return false;
+        }
+        
+        const products = data.products || [];
+        log(`[WF API] Fetched ${products.length} products (${data.pagesRead} pages)`, 'ok');
+        
+        // Transform API format → WF_CATALOG format { pn, ws, qty, price }
+        const apiCatalog = [];
+        for (const product of products) {
+            const pn = product.supplierPartNumber || '';
+            if (!pn) continue;
+            
+            const skuData = (product.skus && product.skus.length > 0) ? product.skus[0] : {};
+            const ws = skuData.sku || skuData.displaySku || '';
+            const price = (skuData.retailPrice && skuData.retailPrice.item) 
+                ? skuData.retailPrice.item.amount 
+                : 0;
+            // Sandbox may not have live qty — use 0 as default
+            const qty = 0; // Qty comes from inventory API, not catalog
+            
+            // Extract dimensions for field enrichment
+            const dims = skuData.productDimensions || {};
+            const productName = skuData.productName || '';
+            const className = skuData.className || '';
+            
+            // Extract descriptions
+            const descriptions = [];
+            if (skuData.productDescriptions && skuData.productDescriptions.descriptions) {
+                skuData.productDescriptions.descriptions.forEach(d => {
+                    if (d.isActive) descriptions.push(d);
+                });
+            }
+            
+            apiCatalog.push({
+                pn: pn,
+                ws: ws,
+                qty: qty,
+                price: price,
+                avail: qty,
+                // Extra fields from API (for enrichment)
+                _productName: productName,
+                _className: className,
+                _dims: dims,
+                _descriptions: descriptions,
+                _images: product.images || [],
+                _status: product.status || '',
+                _productId: product.productId,
+                _urls: skuData.urls || [],
+                _manufacturer: skuData.manufacturer || {}
+            });
+        }
+        
+        // Replace WF_CATALOG with API data
+        WF_CATALOG = apiCatalog;
+        wfCatalogMode = 'api';
+        
+        // Rebuild lookup
+        for (const key in WF_BY_PN) delete WF_BY_PN[key];
+        WF_CATALOG.forEach(w => { WF_BY_PN[w.pn] = w; });
+        
+        document.getElementById('wfProxyDot').classList.add('connected');
+        document.getElementById('wfProxyStatus').textContent = `${apiCatalog.length} products from API`;
+        document.getElementById('wfCatalogSource').textContent = `(API — ${apiCatalog.length} products, live)`;
+        
+        log(`[WF API] Catalog loaded: ${apiCatalog.length} products via API`, 'ok');
+        return true;
+        
+    } catch (e) {
+        log(`[WF API] Fetch failed: ${e.message}`, 'err');
+        document.getElementById('wfProxyStatus').textContent = 'Fetch failed';
+        return false;
+    }
+}
 
 let wfCatMatched = [];
 let wfCatMismatched = [];
@@ -1013,7 +1131,8 @@ function runCatalogValidation() {
         if (wfEntry) {
             wfMatched.add(item.wayfair_sku);
             wfCatMatched.push({ db: item, wf: wfEntry });
-            if ((item.wayfair_qty || 0) !== wfEntry.qty) {
+            // Skip qty comparison in API mode — catalog API doesn't return inventory quantities
+            if (wfCatalogMode !== 'api' && (item.wayfair_qty || 0) !== wfEntry.qty) {
                 wfCatQtyOff.push({ db: item, wf: wfEntry });
             }
         } else {
@@ -1130,13 +1249,20 @@ function renderCatalogResults() {
     // Matched
     if (wfCatMatched.length > 0) {
         document.getElementById('wfMatchedDetails').style.display = 'block';
+        const qtyHeader = wfCatalogMode === 'api' ? 'Product Name' : 'WF Qty';
+        document.getElementById('wfMatchedBody').closest('table').querySelector('thead').innerHTML = `<tr>
+            <th>Our SKU</th><th>WF Part#</th><th>Our Qty</th><th>${qtyHeader}</th><th>WF Price</th>
+        </tr>`;
         document.getElementById('wfMatchedBody').innerHTML = wfCatMatched.map(m => {
-            const qOk = (m.db.wayfair_qty || 0) === m.wf.qty;
+            const qOk = wfCatalogMode === 'api' || (m.db.wayfair_qty || 0) === m.wf.qty;
+            const col4 = wfCatalogMode === 'api' 
+                ? `<span style="font-family:'DM Sans',sans-serif;font-size:11px;">${esc((m.wf._productName || '').substring(0, 40))}</span>`
+                : String(m.wf.qty);
             return `<tr style="${qOk ? 'opacity:0.6' : ''}">
                 <td>${esc(m.db.sku)}</td>
                 <td>${esc(m.wf.pn)}</td>
                 <td>${m.db.wayfair_qty || 0}</td>
-                <td>${m.wf.qty}</td>
+                <td>${col4}</td>
                 <td>$${m.wf.price.toFixed(2)}</td>
             </tr>`;
         }).join('');
