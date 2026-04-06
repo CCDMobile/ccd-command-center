@@ -4483,15 +4483,19 @@ async function saveItem() {
     updates.wix_price = updates.etsy_price;
     updates.wix_qty = updates.etsy_qty;
 
-    // Allocation validation: online channels share the same warehouse pool.
-    // TM physically removes items, so it reduces the available pool.
-    // Each online channel can list up to (warehouse - TM) independently.
-    const warehouseQty = updates.qty || 0;
-    const tmQty = updates.treasuremarts_qty || 0;
-    const availableOnline = warehouseQty - tmQty;
-    const etsyQty = updates.etsy_qty || 0;
-    const wayfairQty = updates.wayfair_qty || 0;
+    // ── ALLOCATION VALIDATION + AUTO-CORRECT (v2.8.5 — closes G1) ──
+    // Shared inventory model: online channels all show the same pool.
+    // Each channel can list up to (warehouse − TM). They are NOT additive.
+    // TM is a separate physical location that reduces the available online pool.
+    const warehouseQty = updates.qty ?? 0;
+    const tmQty = updates.treasuremarts_qty ?? 0;
+    const availableOnline = Math.max(0, warehouseQty - tmQty);
+    let etsyQty = updates.etsy_qty ?? 0;
+    let wixQty = updates.wix_qty ?? 0;
+    let wayfairQty = updates.wayfair_qty ?? 0;
+    let allocationCorrected = false;
 
+    // Hard block: TM can never exceed warehouse (physically impossible)
     if (tmQty > warehouseQty) {
       state.saving = false;
       statusEl.className = 'inline-status show error';
@@ -4499,19 +4503,28 @@ async function saveItem() {
       statusEl.style.display = 'block';
       return;
     }
+
+    // Auto-correct: cap each online channel at available online pool
+    const corrections = [];
     if (etsyQty > availableOnline) {
-      state.saving = false;
-      statusEl.className = 'inline-status show error';
-      statusEl.textContent = `Allocation error: Etsy qty (${etsyQty}) exceeds available online pool (${availableOnline} = ${warehouseQty} warehouse − ${tmQty} TM).`;
-      statusEl.style.display = 'block';
-      return;
+      corrections.push(`Etsy ${etsyQty}→${availableOnline}`);
+      etsyQty = availableOnline;
+      wixQty = availableOnline; // Mirror
     }
     if (wayfairQty > availableOnline) {
-      state.saving = false;
-      statusEl.className = 'inline-status show error';
-      statusEl.textContent = `Allocation error: Wayfair qty (${wayfairQty}) exceeds available online pool (${availableOnline} = ${warehouseQty} warehouse − ${tmQty} TM).`;
-      statusEl.style.display = 'block';
-      return;
+      corrections.push(`Wayfair ${wayfairQty}→${availableOnline}`);
+      wayfairQty = availableOnline;
+    }
+    if (corrections.length > 0) {
+      updates.etsy_qty = etsyQty;
+      updates.wix_qty = wixQty;
+      updates.wayfair_qty = wayfairQty;
+      allocationCorrected = true;
+      console.log(`[Save Allocation Guard] Auto-corrected (available online=${availableOnline}): ${corrections.join(', ')}`);
+      // Update DOM inputs so user sees corrected values
+      if (ge('f_etsy_qty')) $('f_etsy_qty').value = etsyQty;
+      if (ge('f_wix_qty')) $('f_wix_qty').value = wixQty;
+      if (ge('f_wayfair_qty')) $('f_wayfair_qty').value = wayfairQty;
     }
 
     // ── REACTIVATION GUARD: Check if etsy_qty going from 0 to >0 ──
@@ -4659,7 +4672,9 @@ async function saveItem() {
     statusEl.className = 'inline-status show ok';
     statusEl.textContent = skuChanged
       ? `✅ Saved — SKU changed: ${oldSku} → ${newSku}`
-      : `✅ Saved ${item.sku} successfully`;
+      : allocationCorrected
+        ? `✅ Saved ${item.sku} — allocations auto-corrected (oversale guard: etsy/wix=${etsyQty}, wayfair=${wayfairQty})`
+        : `✅ Saved ${item.sku} successfully`;
     statusEl.style.display = 'block';
     logActivity('INVENTORY','ITEM_SAVED',null,`Saved ${item.sku}`,{},item.sku);
     clearUnsavedMark();
@@ -5081,37 +5096,23 @@ async function confirmSell() {
       qtyUpdates.etsy_qty = Math.max(0, pi(item.etsy_qty) - qty);
     }
 
-    // v2.8.4 OVERSALE GUARD: max(etsy, wix) + wayfair ≤ warehouse
-    // TM is separate physical location — not counted in online total.
+    // v2.8.5 ALLOCATION GUARD: shared inventory — each online channel ≤ (warehouse − TM)
+    // After sale deduction + Etsy/Wix mirror, cap any channel that exceeds available pool.
     const newWarehouse = qtyUpdates.qty;
+    const currentTm = pi(item.treasuremarts_qty);
+    const saleAvailOnline = Math.max(0, newWarehouse - (channel === 'treasuremarts' ? Math.max(0, currentTm - qty) : currentTm));
     const newEtsy = qtyUpdates.etsy_qty ?? pi(item.etsy_qty);
     const newWix  = qtyUpdates.wix_qty ?? pi(item.wix_qty);
     const newWf   = qtyUpdates.wayfair_qty ?? pi(item.wayfair_qty);
-    const onlineEW = Math.max(newEtsy, newWix);
-    const onlineTotal = onlineEW + newWf;
 
-    if (onlineTotal > newWarehouse) {
-      const excess = onlineTotal - newWarehouse;
-      if (channel === 'etsy' || channel === 'wix') {
-        // Source is Etsy/Wix — reduce Wayfair
-        qtyUpdates.wayfair_qty = Math.max(0, newWf - excess);
-        console.log(`[Oversale Guard] Wayfair ${newWf}→${qtyUpdates.wayfair_qty} (warehouse=${newWarehouse}, etsy/wix=${onlineEW})`);
-      } else if (channel === 'wayfair') {
-        // Source is Wayfair — reduce Etsy/Wix
-        const maxEW = Math.max(0, newWarehouse - newWf);
-        if (newEtsy > maxEW) qtyUpdates.etsy_qty = maxEW;
-        if (newWix > maxEW)  qtyUpdates.wix_qty = maxEW;
-        console.log(`[Oversale Guard] Etsy/Wix ${onlineEW}→${maxEW} (warehouse=${newWarehouse}, wayfair=${newWf})`);
-      } else {
-        // Source is TM or other — reduce the larger pool
-        if (newWf >= onlineEW) {
-          qtyUpdates.wayfair_qty = Math.max(0, newWf - excess);
-        } else {
-          const maxEW = Math.max(0, newWarehouse - newWf);
-          qtyUpdates.etsy_qty = Math.min(newEtsy, maxEW);
-          qtyUpdates.wix_qty = Math.min(newWix, maxEW);
-        }
-      }
+    if (newEtsy > saleAvailOnline) {
+      qtyUpdates.etsy_qty = saleAvailOnline;
+      qtyUpdates.wix_qty = saleAvailOnline; // Mirror
+      console.log(`[Allocation Guard] Etsy/Wix capped: ${newEtsy}→${saleAvailOnline} (available online=${saleAvailOnline})`);
+    }
+    if (newWf > saleAvailOnline) {
+      qtyUpdates.wayfair_qty = saleAvailOnline;
+      console.log(`[Allocation Guard] Wayfair capped: ${newWf}→${saleAvailOnline} (available online=${saleAvailOnline})`);
     }
 
     qtyUpdates.last_sold_date = saleDate;
@@ -5332,14 +5333,82 @@ async function recordWriteoff() {
 
     // Deduct qty from items
     const newQty = Math.max(0, pi(item.qty) - qty);
-    const { error: qtyErr } = await sb.from('items').update({ qty: newQty }).eq('id', item.id);
-    if (qtyErr) throw new Error(`Qty deduction failed (write-off WAS recorded): ${qtyErr.message}`);
-    item.qty = newQty;
+    const woItemUpdates = { qty: newQty };
 
-    logActivity('INVENTORY','WRITE_OFF',null,`Write-off: ${item.sku} x${qty} — ${reason} ($${(landed*qty).toFixed(2)})`,{},item.sku);
+    // ── v2.8.5 WRITE-OFF CASCADE (closes G4): enforce oversale guard and push to channels ──
+    // Fetch fresh channel data in case it changed since item card loaded
+    const { data: freshWo } = await sb.from('items')
+      .select('id,sku,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku')
+      .eq('id', item.id).single();
+
+    let woSyncRows = [];
+    let woCascadeMsg = '';
+
+    if (freshWo) {
+      let woEtsy = pi(freshWo.etsy_qty);
+      let woWix = pi(freshWo.wix_qty);
+      let woWf = pi(freshWo.wayfair_qty);
+      const woTm = pi(item.treasuremarts_qty);
+      const woAvailOnline = Math.max(0, newQty - woTm);
+
+      // Shared inventory: cap each online channel at available pool
+      const woCorrections = [];
+      if (woEtsy > woAvailOnline) {
+        woCorrections.push(`Etsy ${woEtsy}→${woAvailOnline}`);
+        woEtsy = woAvailOnline;
+        woWix = woAvailOnline; // Mirror
+      }
+      if (woWf > woAvailOnline) {
+        woCorrections.push(`Wayfair ${woWf}→${woAvailOnline}`);
+        woWf = woAvailOnline;
+      }
+      if (woCorrections.length > 0) {
+        woItemUpdates.etsy_qty = woEtsy;
+        woItemUpdates.wix_qty = woWix;
+        woItemUpdates.wayfair_qty = woWf;
+        console.log(`[Write-off Cascade] Allocations corrected (available online=${woAvailOnline}): ${woCorrections.join(', ')}`);
+      }
+
+      // Build sync_queue rows for channels that changed
+      if (woItemUpdates.etsy_qty !== undefined && freshWo.etsy_listing_id) {
+        woSyncRows.push({ item_id: freshWo.id, channel:'etsy', operation:'update', fields: {
+          sku: freshWo.sku, quantity: woItemUpdates.etsy_qty, listingId: freshWo.etsy_listing_id,
+          etsyVariantId: freshWo.etsy_variant_id || null, fieldTypes:['quantity'], trigger:'write_off_cascade'
+        }});
+      }
+      if (woItemUpdates.wix_qty !== undefined && freshWo.wix_product_id) {
+        woSyncRows.push({ item_id: freshWo.id, channel:'wix', operation:'update', fields: {
+          sku: freshWo.sku, quantity: woItemUpdates.wix_qty, productId: freshWo.wix_product_id,
+          wixVariantId: freshWo.wix_variant_id || null, fieldTypes:['quantity'], trigger:'write_off_cascade'
+        }});
+      }
+      if (woItemUpdates.wayfair_qty !== undefined && freshWo.wayfair_sku) {
+        woSyncRows.push({ item_id: freshWo.id, channel:'wayfair', operation:'update', fields: {
+          sku: freshWo.sku, quantity: woItemUpdates.wayfair_qty, wayfairSku: freshWo.wayfair_sku,
+          fieldTypes:['quantity'], trigger:'write_off_cascade'
+        }});
+      }
+
+      if (woSyncRows.length > 0) {
+        const { error: woSyncErr } = await sb.from('sync_queue').insert(woSyncRows);
+        if (woSyncErr) console.warn('[Write-off Cascade] Sync queue insert failed:', woSyncErr.message);
+        else woCascadeMsg = ` · ${woSyncRows.length} channel sync(s) queued`;
+        console.log(`[Write-off Cascade] ${woSyncRows.length} sync rows queued`);
+      }
+    }
+
+    const { error: qtyErr } = await sb.from('items').update(woItemUpdates).eq('id', item.id);
+    if (qtyErr) throw new Error(`Qty deduction failed (write-off WAS recorded): ${qtyErr.message}`);
+    // Update local state
+    item.qty = newQty;
+    if (woItemUpdates.etsy_qty !== undefined) item.etsy_qty = woItemUpdates.etsy_qty;
+    if (woItemUpdates.wix_qty !== undefined) item.wix_qty = woItemUpdates.wix_qty;
+    if (woItemUpdates.wayfair_qty !== undefined) item.wayfair_qty = woItemUpdates.wayfair_qty;
+
+    logActivity('INVENTORY','WRITE_OFF',null,`Write-off: ${item.sku} x${qty} — ${reason} ($${(landed*qty).toFixed(2)})${woCascadeMsg}`,{},item.sku);
     state.cardDirty = true;
     state.saving = false;
-    showCardStatus(`Write-off recorded: ${item.sku} x${qty} · $${(landed * qty).toFixed(2)} loss`, 'ok');
+    showCardStatus(`Write-off recorded: ${item.sku} x${qty} · $${(landed * qty).toFixed(2)} loss${woCascadeMsg}`, 'ok');
 
     // Refresh the write-off tab
     renderWriteoff(item);
