@@ -1101,6 +1101,17 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
             <div class="setting-row"><div class="setting-label">Overhead %</div><div class="setting-value"><input class="setting-input" id="fee_tm_oh" type="number" step="0.5" style="width:70px;"></div></div>
             <div class="setting-row"><div class="setting-label">Commission %</div><div class="setting-value"><input class="setting-input" id="fee_tm_comm" type="number" step="0.5" style="width:70px;"></div></div>
           </div>
+          <!-- Data Maintenance -->
+          <div class="settings-section">
+            <div class="settings-section-title">🔧 Data Maintenance</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">One-time tools for data cleanup. These read all items and fix allocation violations.</div>
+            <div class="setting-row" style="flex-direction:column;align-items:flex-start;gap:8px;">
+              <button class="btn-card btn-save" onclick="fixAllocations()" id="btnFixAlloc" style="font-size:13px;padding:8px 16px;">🔧 Fix Channel Allocations</button>
+              <div style="font-size:11px;color:var(--muted);">Caps each online channel at warehouse − TM for all active items. Writes sync_queue for any corrections. Does not change warehouse qty, TM, or prices.</div>
+            </div>
+            <div id="fixAllocStatus" style="margin-top:10px;font-size:12px;display:none;"></div>
+            <div id="fixAllocDetail" style="margin-top:8px;display:none;max-height:300px;overflow-y:auto;"></div>
+          </div>
         </div>
       </div>
     </div><!-- end settingsView -->
@@ -7806,8 +7817,151 @@ async function saveSettingsToDb() {
 
 
 // ═══════════════════════════════════════════════════════════
-// STARTUP
+// FIX ALLOCATIONS — one-time bulk correction (v2.8.5)
 // ═══════════════════════════════════════════════════════════
+async function fixAllocations() {
+  if (!sb) { alert('Not connected to Supabase'); return; }
+  if (!confirm(
+    '🔧 Fix Channel Allocations\n\n' +
+    'This will scan all active items and cap each online channel at (warehouse − TM).\n\n' +
+    '• Does NOT change warehouse qty, TM, or prices\n' +
+    '• Only reduces channels that exceed the available pool\n' +
+    '• Writes sync_queue rows for any corrections\n\n' +
+    'Continue?'
+  )) return;
+
+  const btn = $('btnFixAlloc');
+  const statusEl = $('fixAllocStatus');
+  const detailEl = $('fixAllocDetail');
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  statusEl.style.display = 'block';
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Loading all items...';
+  detailEl.style.display = 'none';
+  detailEl.innerHTML = '';
+
+  try {
+    // Load all active items
+    const { data: items, error } = await sb.from('items')
+      .select('id,sku,qty,treasuremarts_qty,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,is_active')
+      .order('sku').limit(5000);
+    if (error) throw error;
+
+    const active = (items || []).filter(i => i.is_active !== false);
+    statusEl.textContent = `Scanning ${active.length} active items...`;
+
+    let fixedItems = 0;
+    let channelCorrections = 0;
+    let syncRowsTotal = 0;
+    const details = [];
+
+    for (const item of active) {
+      const wh = pi(item.qty);
+      const tm = pi(item.treasuremarts_qty);
+      const avail = Math.max(0, wh - tm);
+      let etsy = pi(item.etsy_qty);
+      let wix = pi(item.wix_qty);
+      let wf = pi(item.wayfair_qty);
+      const corrections = [];
+      const updates = {};
+      const syncRows = [];
+
+      // Check and cap each online channel
+      if (etsy > avail) {
+        corrections.push('Etsy ' + etsy + '→' + avail);
+        etsy = avail;
+        wix = avail; // Mirror
+        updates.etsy_qty = avail;
+        updates.wix_qty = avail;
+      }
+      if (wf > avail) {
+        corrections.push('Wayfair ' + wf + '→' + avail);
+        wf = avail;
+        updates.wayfair_qty = avail;
+      }
+      // Also fix Wix mirror if it doesn't match Etsy (even if both under cap)
+      if (pi(item.etsy_qty) !== pi(item.wix_qty) && updates.etsy_qty === undefined) {
+        // Wix should mirror Etsy — set wix = etsy
+        corrections.push('Wix mirror ' + pi(item.wix_qty) + '→' + etsy);
+        updates.wix_qty = etsy;
+      }
+
+      if (Object.keys(updates).length === 0) continue;
+
+      // Write corrected allocations to DB
+      updates.updated_at = new Date().toISOString();
+      const { error: updateErr } = await sb.from('items').update(updates).eq('id', item.id);
+      if (updateErr) {
+        details.push({ sku: item.sku, status: 'ERROR', msg: updateErr.message });
+        continue;
+      }
+
+      // Build sync_queue rows for channels that changed
+      if (updates.etsy_qty !== undefined && item.etsy_listing_id) {
+        syncRows.push({ item_id: item.id, channel: 'etsy', operation: 'update', fields: {
+          sku: item.sku, quantity: updates.etsy_qty, listingId: item.etsy_listing_id,
+          etsyVariantId: item.etsy_variant_id || null, fieldTypes: ['quantity'], trigger: 'allocation_fix'
+        }});
+      }
+      if (updates.wix_qty !== undefined && item.wix_product_id) {
+        syncRows.push({ item_id: item.id, channel: 'wix', operation: 'update', fields: {
+          sku: item.sku, quantity: updates.wix_qty, productId: item.wix_product_id,
+          wixVariantId: item.wix_variant_id || null, fieldTypes: ['quantity'], trigger: 'allocation_fix'
+        }});
+      }
+      if (updates.wayfair_qty !== undefined && item.wayfair_sku) {
+        syncRows.push({ item_id: item.id, channel: 'wayfair', operation: 'update', fields: {
+          sku: item.sku, quantity: updates.wayfair_qty, wayfairSku: item.wayfair_sku,
+          fieldTypes: ['quantity'], trigger: 'allocation_fix'
+        }});
+      }
+
+      if (syncRows.length > 0) {
+        const { error: syncErr } = await sb.from('sync_queue').insert(syncRows);
+        if (syncErr) console.warn('[Fix Alloc] Sync queue error for ' + item.sku + ':', syncErr.message);
+        syncRowsTotal += syncRows.length;
+      }
+
+      fixedItems++;
+      channelCorrections += corrections.length;
+      details.push({ sku: item.sku, wh: wh, tm: tm, avail: avail, corrections: corrections.join(', '), syncs: syncRows.length });
+
+      // Progress update every 20 items
+      if (fixedItems % 20 === 0) {
+        statusEl.textContent = `Fixed ${fixedItems} items so far... (scanning ${active.length})`;
+      }
+    }
+
+    // Done — show results
+    statusEl.style.color = fixedItems > 0 ? 'var(--green)' : 'var(--muted)';
+    statusEl.textContent = fixedItems > 0
+      ? `✅ Fixed ${fixedItems} items — ${channelCorrections} channel corrections — ${syncRowsTotal} sync rows queued`
+      : '✅ No allocation violations found — all items clean';
+
+    if (details.length > 0) {
+      detailEl.style.display = 'block';
+      const rows = details.map(d => {
+        if (d.status === 'ERROR') return `<tr style="color:var(--red);"><td>${d.sku}</td><td colspan="4">${d.msg}</td></tr>`;
+        return `<tr><td>${d.sku}</td><td>${d.wh}</td><td>${d.tm}</td><td>${d.avail}</td><td>${d.corrections}</td><td>${d.syncs}</td></tr>`;
+      }).join('');
+      detailEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px;font-family:monospace;">
+        <thead><tr style="color:var(--gold);text-align:left;"><th style="padding:4px 8px;">SKU</th><th style="padding:4px 8px;">Wh</th><th style="padding:4px 8px;">TM</th><th style="padding:4px 8px;">Avail</th><th style="padding:4px 8px;">Corrections</th><th style="padding:4px 8px;">Syncs</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
+    logActivity('SYSTEM', 'ALLOCATION_FIX', null,
+      `Bulk allocation fix: ${fixedItems} items, ${channelCorrections} corrections, ${syncRowsTotal} syncs`,
+      { fixedItems, channelCorrections, syncRowsTotal });
+
+  } catch(e) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '❌ Fix failed: ' + e.message;
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔧 Fix Channel Allocations';
+}
 document.addEventListener('DOMContentLoaded', () => {
   autoConnect();
 });
