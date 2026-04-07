@@ -138,7 +138,11 @@
   <div class="safety-bar" id="safetyBar">
     <input type="checkbox" id="logOnlyMode" checked onchange="updateSafetyBar()">
     <label for="logOnlyMode" style="cursor:pointer;"><strong>Log-Only Mode</strong> — orders are visible but accept/register buttons are disabled</label>
-    <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;" id="lastFetch">Last fetch: never</span>
+    <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+      <label style="font-size:10px;font-weight:600;color:inherit;">GO-LIVE DATE</label>
+      <input type="date" id="goLiveDate" style="padding:3px 6px;background:var(--bg);border:1px solid var(--border);border-radius:4px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:10px;" title="Only fetch orders after this date (required for first production query)">
+    </div>
+    <span style="font-family:'JetBrains Mono',monospace;font-size:10px;" id="lastFetch">Last fetch: never</span>
   </div>
 
   <div class="tabs">
@@ -321,6 +325,13 @@ async function fetchOrders(hasResponse) {
   const params = { limit: '100' };
   if (hasResponse !== undefined) params.hasResponse = hasResponse;
 
+  // Go-live date guard — only fetch orders after this date
+  const goLiveDate = document.getElementById('goLiveDate')?.value;
+  if (goLiveDate) {
+    params.fromDate = goLiveDate + ' 00:00:00.000000 +00:00';
+    log(`Filtering orders from go-live date: ${goLiveDate}`, 'info');
+  }
+
   const r = await proxyPost('getOrders', params);
   if (!r.success) { log('Fetch failed: ' + r.error, 'err'); toast('Fetch failed', 'err'); return; }
 
@@ -365,6 +376,8 @@ function selectOrder(idx) {
   renderOrderDetail();
   switchTab('detail', document.querySelectorAll('.tab')[1]);
   log(`Selected PO ${currentOrder.poNumber}`, 'info');
+  // Auto-check cancellations in background
+  setTimeout(() => checkCancellations(), 500);
 }
 
 // =========================================================================
@@ -417,6 +430,8 @@ function renderOrderDetail() {
       </tbody>
     </table>
 
+    <div id="cancellationAlert" style="display:none;padding:12px 16px;background:var(--fail-bg);border:1px solid rgba(244,112,104,0.3);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--fail);"></div>
+
     <div class="action-row">
       <div class="field" style="margin-bottom:0;">
         <label>Ship Speed</label>
@@ -427,7 +442,11 @@ function renderOrderDetail() {
         </select>
       </div>
       <button class="btn btn-success btn-sm" onclick="acceptCurrentOrder()" id="btnAccept">Accept Order</button>
-      <div class="push-status" id="acceptStatus"></div>
+      <button class="btn btn-warn btn-sm" onclick="backorderCurrentOrder()" id="btnBackorder">Backorder</button>
+      <button class="btn btn-danger btn-sm" onclick="rejectCurrentOrder()" id="btnReject">Reject</button>
+      <button class="btn btn-outline btn-sm" onclick="checkCancellations()">Check Cancellations</button>
+    </div>
+    <div class="push-status" id="acceptStatus"></div>
     </div>
   `;
   document.getElementById('detailContent').innerHTML = html;
@@ -439,11 +458,13 @@ function dc(lbl, val, cls) {
 }
 
 function updateAcceptButton() {
+  const lo = isLogOnly();
   const btn = document.getElementById('btnAccept');
-  if (!btn) return;
-  btn.disabled = isLogOnly();
-  if (isLogOnly()) btn.textContent = '🔒 Accept Order (Log-Only)';
-  else btn.textContent = 'Accept Order';
+  const btnBo = document.getElementById('btnBackorder');
+  const btnRej = document.getElementById('btnReject');
+  if (btn) { btn.disabled = lo; btn.textContent = lo ? '🔒 Accept (Log-Only)' : 'Accept Order'; }
+  if (btnBo) { btnBo.disabled = lo; btnBo.textContent = lo ? '🔒 Backorder' : 'Backorder'; }
+  if (btnRej) { btnRej.disabled = lo; btnRej.textContent = lo ? '🔒 Reject' : 'Reject'; }
 }
 
 async function acceptCurrentOrder() {
@@ -483,8 +504,211 @@ async function acceptCurrentOrder() {
 
   showStatus('acceptStatus', `✓ Accepted — handle: ${(r.handle||'').substring(0,12)}…, errors: ${r.errorCount}`, r.errorCount > 0 ? 'warn' : 'ok');
   log(`PO ${o.poNumber} accepted — handle: ${r.handle}, status: ${r.status}`, 'ok');
+
+  // Record to sales_history
+  await recordSale(o);
+
   renderShipTab();
   toast('Order accepted!', 'ok');
+}
+
+async function backorderCurrentOrder() {
+  if (!currentOrder) return;
+  if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
+  if (!confirm('Backorder this PO? This tells Wayfair items will ship later.')) return;
+
+  const o = currentOrder;
+  const products = o.products || [];
+  const shipSpeed = document.getElementById('shipSpeed').value;
+
+  const laterDate = new Date();
+  laterDate.setDate(laterDate.getDate() + 14); // 2 weeks out
+  const shipDate = laterDate.toISOString().replace('T', ' ').replace('Z', ' +00:00');
+
+  const lineItems = products.map(p => ({
+    partNumber: p.partNumber, quantity: p.quantity || 1,
+    unitPrice: p.price || 0, estimatedShipDate: shipDate
+  }));
+
+  log(`Backordering PO ${o.poNumber} — ${lineItems.length} items, ship by ${shipDate.substring(0,10)}`, 'info');
+  showStatus('acceptStatus', '<span class="spinner"></span> Backordering…');
+
+  const r = await proxyPost('backorderOrder', {
+    poNumber: o.poNumber, shipSpeed: shipSpeed, lineItems: JSON.stringify(lineItems)
+  });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('acceptStatus', '✗ Backorder failed: ' + r.error + (gql ? ' — ' + gql : ''), 'err');
+    log(`Backorder failed: ${r.error}`, 'err');
+    return;
+  }
+
+  showStatus('acceptStatus', `✓ Backordered — handle: ${(r.handle||'').substring(0,12)}…`, 'ok');
+  log(`PO ${o.poNumber} backordered — ship by ${shipDate.substring(0,10)}`, 'ok');
+  toast('Order backordered', 'ok');
+}
+
+async function rejectCurrentOrder() {
+  if (!currentOrder) return;
+  if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
+  if (!confirm('REJECT this PO? This tells Wayfair you CANNOT fulfill these items. This cannot be undone.')) return;
+
+  const o = currentOrder;
+  const products = o.products || [];
+
+  const lineItems = products.map(p => ({
+    partNumber: p.partNumber, quantity: p.quantity || 1,
+    unitPrice: p.price || 0, estimatedShipDate: new Date().toISOString().replace('T', ' ').replace('Z', ' +00:00')
+  }));
+
+  log(`Rejecting PO ${o.poNumber} — ${lineItems.length} items`, 'warn');
+  showStatus('acceptStatus', '<span class="spinner"></span> Rejecting…');
+
+  const r = await proxyPost('rejectOrder', {
+    poNumber: o.poNumber, lineItems: JSON.stringify(lineItems)
+  });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('acceptStatus', '✗ Reject failed: ' + r.error + (gql ? ' — ' + gql : ''), 'err');
+    log(`Reject failed: ${r.error}`, 'err');
+    return;
+  }
+
+  showStatus('acceptStatus', `✓ Rejected — handle: ${(r.handle||'').substring(0,12)}…`, 'ok');
+  log(`PO ${o.poNumber} REJECTED`, 'warn');
+  toast('Order rejected', 'err');
+}
+
+async function checkCancellations() {
+  if (!currentOrder) return;
+  log(`Checking cancellations for PO ${currentOrder.poNumber}`, 'info');
+
+  const alert = document.getElementById('cancellationAlert');
+
+  const r = await proxyPost('getCancellations', { poNumbers: currentOrder.poNumber });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    log(`Cancellation check failed: ${r.error}${gql ? ' — ' + gql : ''}`, 'err');
+    if (alert) { alert.style.display = 'none'; }
+    return;
+  }
+
+  if (r.count === 0) {
+    log(`No cancellations for PO ${currentOrder.poNumber}`, 'ok');
+    if (alert) { alert.style.display = 'none'; }
+    return;
+  }
+
+  // Build prominent cancellation alert
+  let html = `<strong>⚠ ${r.count} CANCELLATION REQUEST(S)</strong><br><br>`;
+  (r.cancellations || []).forEach(req => {
+    const po = req.purchaseOrder ? req.purchaseOrder.poNumber : '?';
+    const part = req.cancelledProduct ? req.cancelledProduct.partNumber : '?';
+    const cancelled = req.cancelledProduct?.cancellationQuantity?.cancelledQuantity || '?';
+    const original = req.cancelledProduct?.cancellationQuantity?.originalQuantity || '?';
+    const reason = req.cancellationReason ? req.cancellationReason.reason : 'no reason given';
+    const status = req.status || '?';
+    const date = (req.requestedAt || '').substring(0, 10);
+    const reqId = req.requestId || '?';
+
+    html += `<div style="padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:6px;">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:11px;">
+        <strong>${part}</strong> — cancelled ${cancelled} of ${original} — <span style="color:var(--warn)">${status}</span><br>
+        PO: ${po} | Reason: ${reason || 'none'} | Requested: ${date}<br>
+        <span style="color:var(--text-muted)">Request ID: ${reqId}</span>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:6px;">
+        <button class="btn btn-outline btn-sm" onclick="handleConfirmCancellation('${reqId}')" style="font-size:10px;padding:3px 10px;">✓ Confirm Cancel</button>
+        <button class="btn btn-outline btn-sm" onclick="handleRejectCancellation('${reqId}')" style="font-size:10px;padding:3px 10px;color:var(--fail);border-color:var(--fail);">✗ Reject (Already Shipped)</button>
+      </div>
+    </div>`;
+  });
+
+  if (alert) {
+    alert.innerHTML = html;
+    alert.style.display = 'block';
+  }
+  log(`Found ${r.count} cancellation(s) for PO ${currentOrder.poNumber}`, 'warn');
+}
+
+async function handleConfirmCancellation(requestId) {
+  if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
+  if (!confirm('Confirm this cancellation? The item will not be shipped.')) return;
+
+  log(`Confirming cancellation ${requestId}`, 'info');
+  const r = await proxyPost('confirmCancellation', { requestId: requestId });
+
+  if (!r.success) {
+    log(`Confirm failed: ${r.error}`, 'err');
+    toast('Confirm failed: ' + r.error, 'err');
+    return;
+  }
+
+  log(`Cancellation ${requestId} confirmed — status: ${r.status}`, 'ok');
+  toast('Cancellation confirmed', 'ok');
+  checkCancellations(); // Refresh
+}
+
+async function handleRejectCancellation(requestId) {
+  if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
+  const reason = prompt('Reason for rejecting cancellation:', 'Already shipped');
+  if (!reason) return;
+
+  log(`Rejecting cancellation ${requestId} — reason: ${reason}`, 'info');
+  const r = await proxyPost('rejectCancellation', { requestId: requestId, reason: reason });
+
+  if (!r.success) {
+    log(`Reject failed: ${r.error}`, 'err');
+    toast('Reject failed: ' + r.error, 'err');
+    return;
+  }
+
+  log(`Cancellation ${requestId} rejected — status: ${r.status}`, 'ok');
+  toast('Cancellation rejected', 'ok');
+  checkCancellations(); // Refresh
+}
+
+async function recordSale(order) {
+  if (!sb) { log('Supabase not connected — sale not recorded', 'warn'); return; }
+
+  const products = order.products || [];
+  for (const p of products) {
+    const dbMatch = dbItems.find(d => d.wayfair_sku === p.partNumber);
+    const sku = dbMatch ? dbMatch.sku : p.partNumber;
+    const wholesale = dbMatch ? (dbMatch.wholesale_price || 0) : 0;
+    const revenue = (p.price || 0) * (p.quantity || 1);
+
+    const saleRow = {
+      order_id: 'WF-' + order.poNumber,
+      sku: sku,
+      product_name: p.name || (dbMatch ? dbMatch.product_name : ''),
+      qty_sold: p.quantity || 1,
+      sale_channel: 'wayfair',
+      sale_date: new Date().toISOString().substring(0, 10),
+      sale_price: p.price || 0,
+      total_revenue: revenue,
+      wholesale_price: wholesale,
+      total_cost: wholesale * (p.quantity || 1),
+      accounting_category: 'wayfair_sales',
+      notes: 'Recorded by Order Manager v1.1',
+      status: 'active'
+    };
+
+    const { error } = await sb.from('sales_history').insert(saleRow);
+    if (error) {
+      // Check for duplicate
+      if (error.message && error.message.includes('duplicate')) {
+        log(`Sale already recorded: WF-${order.poNumber} / ${sku}`, 'warn');
+      } else {
+        log(`Failed to record sale: ${error.message}`, 'err');
+      }
+    } else {
+      log(`Sale recorded: WF-${order.poNumber} / ${sku} — $${revenue.toFixed(2)}`, 'ok');
+    }
+  }
 }
 
 // =========================================================================
