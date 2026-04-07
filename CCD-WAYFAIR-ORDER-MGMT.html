@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Wayfair Order Manager v1.1</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0f1117; --surface: #181b24; --surface-raised: #1e2230;
+    --border: #2a2f3e; --border-focus: #3d4460;
+    --text: #e2e4ea; --text-dim: #8b90a0; --text-muted: #5c6175;
+    --pass: #2dd4a0; --pass-bg: rgba(45,212,160,0.08);
+    --fail: #f47068; --fail-bg: rgba(244,112,104,0.08);
+    --warn: #f0b44a; --warn-bg: rgba(240,180,74,0.08);
+    --running: #60a5fa; --running-bg: rgba(96,165,250,0.08);
+    --accent: #818cf8; --accent-hover: #6366f1;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 20px; line-height: 1.5; }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-wrap: wrap; gap: 10px; }
+  h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+  .env-badge { padding: 4px 12px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(240,180,74,0.2); }
+
+  .config-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: flex-end; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .cfg-field { flex: 1; min-width: 150px; }
+  .cfg-field label { display: block; font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+  .cfg-field input { width: 100%; padding: 6px 9px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; outline: none; }
+
+  .btn { padding: 7px 16px; border-radius: 7px; border: none; font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 5px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-sm { padding: 5px 12px; font-size: 11px; border-radius: 6px; }
+  .btn-success { background: var(--pass); color: #000; }
+  .btn-success:hover:not(:disabled) { background: #24b888; }
+  .btn-warn { background: var(--warn); color: #000; }
+  .btn-outline { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+  .btn-danger { background: var(--fail); color: #fff; }
+
+  .safety-bar { display: flex; gap: 14px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; padding: 10px 14px; background: var(--warn-bg); border: 1px solid rgba(240,180,74,0.2); border-radius: 8px; font-size: 12px; color: var(--warn); }
+  .safety-bar input[type=checkbox] { accent-color: var(--warn); width: 16px; height: 16px; }
+  .safety-bar.live-mode { background: var(--pass-bg); border-color: rgba(45,212,160,0.2); color: var(--pass); }
+
+  .tabs { display: flex; gap: 2px; margin-top: 4px; }
+  .tab { padding: 9px 18px; background: var(--surface); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
+  .tab.active { background: var(--surface-raised); color: var(--text); border-color: var(--border-focus); }
+  .tab:hover:not(.active) { color: var(--text-dim); }
+  .tab-panel { display: none; background: var(--surface-raised); border: 1px solid var(--border-focus); border-radius: 0 8px 8px 8px; padding: 16px; }
+  .tab-panel.active { display: block; }
+
+  /* Orders table */
+  .orders-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  .orders-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .orders-table th { background: var(--surface); padding: 8px 10px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); position: sticky; top: 0; }
+  .orders-table td { padding: 7px 10px; border-top: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer; }
+  .orders-table tr:hover td { background: var(--surface); }
+  .orders-table tr.selected td { background: var(--running-bg); }
+  .orders-table .po-overdue { color: var(--fail); }
+  .orders-table .po-today { color: var(--warn); }
+  .orders-table .po-upcoming { color: var(--pass); }
+  .orders-empty { padding: 30px; text-align: center; color: var(--text-muted); font-size: 13px; }
+
+  /* Order detail */
+  .detail-header { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; margin-bottom: 14px; }
+  .detail-card { background: var(--surface); border: 1px solid var(--border); border-radius: 7px; padding: 10px 12px; }
+  .detail-card .lbl { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+  .detail-card .val { font-size: 13px; font-weight: 600; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+  .detail-card .val-sm { font-size: 11px; }
+
+  .items-table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 12px 0; }
+  .items-table th { background: var(--surface); padding: 7px 10px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--text-muted); }
+  .items-table td { padding: 6px 10px; border-top: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .items-table .match-ok { color: var(--pass); }
+  .items-table .match-warn { color: var(--warn); }
+  .items-table .match-fail { color: var(--fail); }
+
+  .action-row { display: flex; gap: 10px; align-items: center; margin-top: 14px; flex-wrap: wrap; }
+  .push-status { margin-top: 10px; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); display: none; }
+  .push-status.visible { display: block; }
+
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; }
+  .field select, .field input { padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 12px; outline: none; font-family: 'DM Sans', sans-serif; }
+  .field select { min-width: 160px; }
+
+  /* Documents */
+  .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 12px 0; }
+  .doc-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; text-align: center; }
+  .doc-card .doc-icon { font-size: 28px; margin-bottom: 6px; }
+  .doc-card .doc-name { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+  .doc-card .btn { width: 100%; justify-content: center; }
+  .doc-card.available { border-color: var(--pass); }
+  .doc-card.unavailable { opacity: 0.4; }
+
+  /* Log */
+  .log-panel { margin-top: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .log-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; background: var(--surface-raised); border-bottom: 1px solid var(--border); }
+  .log-header h3 { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+  .log-body { max-height: 220px; overflow-y: auto; padding: 6px 0; }
+  .log-line { padding: 3px 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); }
+  .log-line .ts { color: var(--text-muted); margin-right: 6px; }
+  .log-ok { color: var(--pass); } .log-err { color: var(--fail); } .log-warn { color: var(--warn); } .log-info { color: var(--running); }
+  .log-empty { padding: 14px; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--border); border-top-color: var(--running); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 999; display: none; animation: fadeIn 0.3s; max-width: 400px; }
+  .toast-ok { background: var(--pass); color: #000; } .toast-err { background: var(--fail); color: #fff; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; } }
+
+  .scroll-wrap { max-height: 400px; overflow-y: auto; }
+
+  @media (max-width: 700px) { .config-bar { flex-direction: column; } .detail-header { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.1</span></h1>
+    <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
+  </header>
+
+  <div class="config-bar">
+    <div class="cfg-field"><label>Supabase URL</label><input type="text" id="sbUrl"></div>
+    <div class="cfg-field"><label>Supabase Key</label><input type="password" id="sbKey"></div>
+    <div class="cfg-field"><label>Order Proxy URL</label><input type="text" id="proxyUrl"></div>
+    <div class="cfg-field" style="max-width:240px;"><label>CCD API Key</label><input type="password" id="apiKey" value="ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF"></div>
+    <button class="btn btn-primary btn-sm" onclick="connectAll()">Connect</button>
+  </div>
+
+  <div class="safety-bar" id="safetyBar">
+    <input type="checkbox" id="logOnlyMode" checked onchange="updateSafetyBar()">
+    <label for="logOnlyMode" style="cursor:pointer;"><strong>Log-Only Mode</strong> — orders are visible but accept/register buttons are disabled</label>
+    <span style="margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:10px;" id="lastFetch">Last fetch: never</span>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('queue',this)">Orders Queue</div>
+    <div class="tab" onclick="switchTab('detail',this)">Order Detail</div>
+    <div class="tab" onclick="switchTab('ship',this)">Ship & Labels</div>
+    <div class="tab" onclick="switchTab('history',this)">History & Log</div>
+  </div>
+
+  <!-- TAB 1: Orders Queue -->
+  <div class="tab-panel active" id="tab-queue">
+    <div class="orders-toolbar">
+      <button class="btn btn-primary btn-sm" onclick="fetchOrders('false')">Fetch Open Orders</button>
+      <button class="btn btn-outline btn-sm" onclick="fetchOrders('true')">Show Accepted</button>
+      <button class="btn btn-outline btn-sm" onclick="fetchOrders()">Show All</button>
+      <span id="orderCount" style="font-size:12px;color:var(--text-dim);margin-left:auto;">—</span>
+    </div>
+    <div class="scroll-wrap">
+      <table class="orders-table" id="ordersTable">
+        <thead><tr><th>PO Number</th><th>Date</th><th>Customer</th><th>Items</th><th>Ship By</th><th>Status</th></tr></thead>
+        <tbody id="ordersBody"><tr><td colspan="6" class="orders-empty">Click "Fetch Open Orders" to load</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB 2: Order Detail -->
+  <div class="tab-panel" id="tab-detail">
+    <div id="detailContent">
+      <div class="orders-empty">Select an order from the queue to view details</div>
+    </div>
+  </div>
+
+  <!-- TAB 3: Ship & Labels -->
+  <div class="tab-panel" id="tab-ship">
+    <div id="shipContent">
+      <div class="orders-empty">Accept an order first, then use this tab to register for pickup and download labels</div>
+    </div>
+  </div>
+
+  <!-- TAB 4: History & Log -->
+  <div class="tab-panel" id="tab-history">
+    <div class="orders-toolbar">
+      <button class="btn btn-primary btn-sm" onclick="loadHistory()">Load Sales History</button>
+      <button class="btn btn-outline btn-sm" onclick="loadProxyLog()">Load Proxy Request Log</button>
+      <button class="btn btn-outline btn-sm" onclick="testProxyDirect()">Test Proxy Direct</button>
+    </div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:10px 0 6px;">Wayfair Sales History (WF- orders)</h4>
+    <div id="historyContent">
+      <div class="orders-empty">Click "Load Sales History" to view</div>
+    </div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 6px;">Proxy Request Log</h4>
+    <div id="proxyLogContent">
+      <div class="orders-empty">Click "Load Proxy Request Log" to view recent proxy activity</div>
+    </div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 6px;">Debug Console</h4>
+    <div style="background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:10px;max-height:200px;overflow-y:auto;">
+      <pre id="debugConsole" style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--text-dim);white-space:pre-wrap;margin:0;">Run a test or click an action to see raw responses here</pre>
+    </div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="log-panel">
+    <div class="log-header">
+      <h3>Activity Log</h3>
+      <button class="btn btn-outline btn-sm" onclick="clearLog()" style="padding:3px 8px;font-size:10px;">Clear</button>
+    </div>
+    <div class="log-body" id="logBody"><div class="log-empty">No activity yet</div></div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// =========================================================================
+// STATE
+// =========================================================================
+let sb = null;
+let orders = [];
+let dbItems = [];
+let currentOrder = null;
+let currentShipInfo = null;
+let currentFetchFilter = 'false'; // tracks which filter was used: 'true', 'false', or undefined
+
+// =========================================================================
+// LOG + TOAST
+// =========================================================================
+function log(msg, cls) {
+  const body = document.getElementById('logBody');
+  const empty = body.querySelector('.log-empty');
+  if (empty) empty.remove();
+  const ts = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  line.className = `log-line ${cls ? 'log-' + cls : ''}`;
+  line.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+  body.insertBefore(line, body.firstChild);
+  while (body.children.length > 300) body.removeChild(body.lastChild);
+}
+function clearLog() { document.getElementById('logBody').innerHTML = '<div class="log-empty">No activity yet</div>'; }
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = 'toast toast-' + (type || 'ok');
+  t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000);
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function isLogOnly() { return document.getElementById('logOnlyMode').checked; }
+
+function updateSafetyBar() {
+  const bar = document.getElementById('safetyBar');
+  bar.className = isLogOnly() ? 'safety-bar' : 'safety-bar live-mode';
+  bar.querySelector('label').innerHTML = isLogOnly()
+    ? '<strong>Log-Only Mode</strong> — orders are visible but accept/register buttons are disabled'
+    : '<strong>Live Mode</strong> — accept and register operations are ENABLED';
+}
+
+// =========================================================================
+// CONNECTIONS
+// =========================================================================
+function proxyUrl() { return document.getElementById('proxyUrl').value.trim(); }
+function apiKey() { return document.getElementById('apiKey').value.trim(); }
+
+async function proxyGet(action, params = {}) {
+  const qs = new URLSearchParams({ action, key: apiKey(), ...params });
+  const r = await fetch(`${proxyUrl()}?${qs}`);
+  return r.json();
+}
+async function proxyPost(action, body = {}) {
+  const payload = { action, key: apiKey(), ...body };
+  const r = await fetch(proxyUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+  return r.json();
+}
+
+function connectAll() {
+  const sbUrl = document.getElementById('sbUrl').value.trim();
+  const sbKey = document.getElementById('sbKey').value.trim();
+  if (sbUrl && sbKey) {
+    sb = supabase.createClient(sbUrl, sbKey);
+    localStorage.setItem('ccdSupabaseUrl', sbUrl);
+    localStorage.setItem('ccdSupabaseKey', sbKey);
+    log('Supabase connected', 'ok');
+    loadDbItems();
+  }
+  const px = proxyUrl();
+  if (px) localStorage.setItem('ccdWayfairOrderProxy', px);
+  toast('Connected', 'ok');
+  log('Connected — ready to fetch orders', 'info');
+}
+
+function autoConnect() {
+  const sbUrl = localStorage.getItem('ccdSupabaseUrl');
+  const sbKey = localStorage.getItem('ccdSupabaseKey');
+  const px = localStorage.getItem('ccdWayfairOrderProxy');
+  if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
+  if (sbKey) document.getElementById('sbKey').value = sbKey;
+  if (px) document.getElementById('proxyUrl').value = px;
+  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); loadDbItems(); }
+}
+
+async function loadDbItems() {
+  if (!sb) return;
+  const { data, error } = await sb.from('items')
+    .select('id, sku, product_name, wayfair_sku, qty, wayfair_qty, wholesale_price')
+    .not('wayfair_sku', 'is', null)
+    .order('sku').limit(5000);
+  if (error) { log('DB error: ' + error.message, 'err'); return; }
+  dbItems = data || [];
+  log(`Loaded ${dbItems.length} items with wayfair_sku from DB`, 'ok');
+}
+
+// =========================================================================
+// TAB 1: ORDERS QUEUE
+// =========================================================================
+async function fetchOrders(hasResponse) {
+  if (!proxyUrl()) { toast('Enter proxy URL first', 'err'); return; }
+  log(`Fetching orders (filter: ${hasResponse === 'false' ? 'open' : hasResponse === 'true' ? 'accepted' : 'all'})…`, 'info');
+
+  const params = { limit: '100' };
+  if (hasResponse !== undefined) params.hasResponse = hasResponse;
+
+  const r = await proxyPost('getOrders', params);
+  if (!r.success) { log('Fetch failed: ' + r.error, 'err'); toast('Fetch failed', 'err'); return; }
+
+  orders = r.orders || [];
+  currentFetchFilter = hasResponse;
+  document.getElementById('orderCount').textContent = `${orders.length} orders`;
+  document.getElementById('lastFetch').textContent = `Last fetch: ${new Date().toLocaleTimeString()}`;
+  log(`Fetched ${orders.length} orders`, 'ok');
+  renderOrdersTable();
+}
+
+function renderOrdersTable() {
+  const tbody = document.getElementById('ordersBody');
+  if (orders.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="orders-empty">No orders found</td></tr>';
+    return;
+  }
+  const today = new Date().toISOString().substring(0, 10);
+  tbody.innerHTML = orders.map((o, i) => {
+    const shipBy = (o.estimatedShipDate || '').substring(0, 10);
+    let shipClass = 'po-upcoming';
+    if (shipBy && shipBy < today) shipClass = 'po-overdue';
+    else if (shipBy === today) shipClass = 'po-today';
+    const items = (o.products || []).reduce((s, p) => s + (p.quantity || 1), 0);
+    const hasResp = currentFetchFilter === 'true'; // Based on which filter was used to fetch
+    return `<tr onclick="selectOrder(${i})" id="order-row-${i}">
+      <td>${o.poNumber || '—'}</td>
+      <td>${(o.poDate || '').substring(0, 10)}</td>
+      <td style="font-family:'DM Sans',sans-serif;font-size:12px;">${o.customerName || '—'}</td>
+      <td>${items}</td>
+      <td class="${shipClass}">${shipBy || '—'}</td>
+      <td>${hasResp ? '<span style="color:var(--pass)">Accepted</span>' : '<span style="color:var(--warn)">Open</span>'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function selectOrder(idx) {
+  currentOrder = orders[idx];
+  document.querySelectorAll('.orders-table tr').forEach(r => r.classList.remove('selected'));
+  const row = document.getElementById('order-row-' + idx);
+  if (row) row.classList.add('selected');
+  renderOrderDetail();
+  switchTab('detail', document.querySelectorAll('.tab')[1]);
+  log(`Selected PO ${currentOrder.poNumber}`, 'info');
+}
+
+// =========================================================================
+// TAB 2: ORDER DETAIL
+// =========================================================================
+function renderOrderDetail() {
+  if (!currentOrder) return;
+  const o = currentOrder;
+  const products = o.products || [];
+
+  // Match products to DB items
+  const matchedProducts = products.map(p => {
+    const partNum = p.partNumber || '';
+    const dbMatch = dbItems.find(d => d.wayfair_sku === partNum);
+    return { ...p, dbMatch };
+  });
+
+  const totalRevenue = products.reduce((s, p) => s + (p.totalCost || p.price * (p.quantity || 1) || 0), 0);
+
+  const html = `
+    <div class="detail-header">
+      ${dc('PO Number', o.poNumber || '—')}
+      ${dc('Order Date', (o.poDate || '').substring(0, 10))}
+      ${dc('Ship By', (o.estimatedShipDate || '').substring(0, 10))}
+      ${dc('Delivery', o.deliveryMethodCode || '—')}
+      ${dc('Customer', o.customerName || '—', 'val-sm')}
+      ${dc('Address', [o.customerAddress1, o.customerCity, o.customerState, o.customerPostalCode].filter(Boolean).join(', '), 'val-sm')}
+      ${dc('Items', products.length.toString())}
+      ${dc('Total', '$' + totalRevenue.toFixed(2))}
+    </div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin-bottom:6px;">Line Items</h4>
+    <table class="items-table">
+      <thead><tr><th>Part #</th><th>Name</th><th>Qty</th><th>Price</th><th>Master SKU</th><th>DB Qty</th><th>Match</th></tr></thead>
+      <tbody>
+        ${matchedProducts.map(p => {
+          const match = p.dbMatch;
+          const matchCls = match ? 'match-ok' : 'match-fail';
+          const matchTxt = match ? '✓' : '✗ Not found';
+          return `<tr>
+            <td>${p.partNumber || '—'}</td>
+            <td style="font-family:'DM Sans',sans-serif;font-size:12px;">${p.name || '—'}</td>
+            <td>${p.quantity || 1}</td>
+            <td>$${(p.price || 0).toFixed(2)}</td>
+            <td>${match ? match.sku : '—'}</td>
+            <td>${match ? match.qty : '—'}</td>
+            <td class="${matchCls}">${matchTxt}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+
+    <div class="action-row">
+      <div class="field" style="margin-bottom:0;">
+        <label>Ship Speed</label>
+        <select id="shipSpeed">
+          <option value="GROUND">Ground</option>
+          <option value="SECOND_DAY_AIR">2nd Day Air</option>
+          <option value="NEXT_DAY_AIR">Next Day Air</option>
+        </select>
+      </div>
+      <button class="btn btn-success btn-sm" onclick="acceptCurrentOrder()" id="btnAccept">Accept Order</button>
+      <div class="push-status" id="acceptStatus"></div>
+    </div>
+  `;
+  document.getElementById('detailContent').innerHTML = html;
+  updateAcceptButton();
+}
+
+function dc(lbl, val, cls) {
+  return `<div class="detail-card"><div class="lbl">${lbl}</div><div class="val ${cls || ''}">${val}</div></div>`;
+}
+
+function updateAcceptButton() {
+  const btn = document.getElementById('btnAccept');
+  if (!btn) return;
+  btn.disabled = isLogOnly();
+  if (isLogOnly()) btn.textContent = '🔒 Accept Order (Log-Only)';
+  else btn.textContent = 'Accept Order';
+}
+
+async function acceptCurrentOrder() {
+  if (!currentOrder) return;
+  if (isLogOnly()) { toast('Log-only mode — accepting disabled', 'err'); return; }
+
+  const o = currentOrder;
+  const products = o.products || [];
+  const shipSpeed = document.getElementById('shipSpeed').value;
+
+  const now = new Date();
+  now.setDate(now.getDate() + 2);
+  const shipDate = now.toISOString().replace('T', ' ').replace('Z', ' +00:00');
+
+  const lineItems = products.map(p => ({
+    partNumber: p.partNumber,
+    quantity: p.quantity || 1,
+    unitPrice: p.price || 0,
+    estimatedShipDate: shipDate
+  }));
+
+  log(`Accepting PO ${o.poNumber} — ${lineItems.length} items, speed: ${shipSpeed}`, 'info');
+  showStatus('acceptStatus', '<span class="spinner"></span> Accepting…');
+
+  const r = await proxyPost('acceptOrder', {
+    poNumber: o.poNumber,
+    shipSpeed: shipSpeed,
+    lineItems: JSON.stringify(lineItems)
+  });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('acceptStatus', '✗ Failed: ' + r.error + (gql ? ' — ' + gql : ''), 'err');
+    log(`Accept failed: ${r.error}${gql ? ' | ' + gql : ''}`, 'err');
+    return;
+  }
+
+  showStatus('acceptStatus', `✓ Accepted — handle: ${(r.handle||'').substring(0,12)}…, errors: ${r.errorCount}`, r.errorCount > 0 ? 'warn' : 'ok');
+  log(`PO ${o.poNumber} accepted — handle: ${r.handle}, status: ${r.status}`, 'ok');
+  renderShipTab();
+  toast('Order accepted!', 'ok');
+}
+
+// =========================================================================
+// TAB 3: SHIP & LABELS
+// =========================================================================
+function renderShipTab() {
+  if (!currentOrder) {
+    document.getElementById('shipContent').innerHTML = '<div class="orders-empty">Select and accept an order first</div>';
+    return;
+  }
+  const o = currentOrder;
+
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const defaultPickup = tomorrow.toISOString().substring(0, 10);
+
+  document.getElementById('shipContent').innerHTML = `
+    <div class="detail-header">
+      ${dc('PO Number', o.poNumber || '—')}
+      ${dc('Customer', o.customerName || '—')}
+      ${dc('Ship By', (o.estimatedShipDate || '').substring(0, 10))}
+    </div>
+
+    <div class="field">
+      <label>Pickup Date</label>
+      <input type="date" id="pickupDate" value="${defaultPickup}" style="font-family:'JetBrains Mono',monospace;">
+    </div>
+
+    <div class="action-row">
+      <button class="btn btn-success btn-sm" onclick="registerCurrentOrder()" id="btnRegister">Register for Pickup</button>
+      <button class="btn btn-outline btn-sm" onclick="fetchShippingInfo()">Refresh Shipping Info</button>
+      <div class="push-status" id="registerStatus"></div>
+    </div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 8px;">Documents</h4>
+    <div class="doc-grid" id="docGrid">
+      <div class="doc-card unavailable"><div class="doc-icon">📄</div><div class="doc-name">Shipping Label</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+      <div class="doc-card unavailable"><div class="doc-icon">📋</div><div class="doc-name">Packing Slip</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+      <div class="doc-card unavailable"><div class="doc-icon">📦</div><div class="doc-name">Bill of Lading</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+    </div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:12px 0 6px;">Tracking</h4>
+    <div id="trackingInfo" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);">No tracking info yet</div>
+  `;
+  updateRegisterButton();
+}
+
+function updateRegisterButton() {
+  const btn = document.getElementById('btnRegister');
+  if (!btn) return;
+  btn.disabled = isLogOnly();
+  if (isLogOnly()) btn.textContent = '🔒 Register (Log-Only)';
+  else btn.textContent = 'Register for Pickup';
+}
+
+async function registerCurrentOrder() {
+  if (!currentOrder) return;
+  if (isLogOnly()) { toast('Log-only mode — registration disabled', 'err'); return; }
+
+  const pickupDate = document.getElementById('pickupDate').value;
+  if (!pickupDate) { toast('Select a pickup date', 'err'); return; }
+
+  const pickupDateTime = pickupDate + ' 00:00:00.0000 +00:00';
+
+  log(`Registering PO ${currentOrder.poNumber} for pickup on ${pickupDate}`, 'info');
+  showStatus('registerStatus', '<span class="spinner"></span> Registering…');
+
+  const r = await proxyPost('registerShipment', {
+    poNumber: currentOrder.poNumber,
+    requestForPickupDate: pickupDateTime
+  });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('registerStatus', '✗ Failed: ' + r.error + (gql ? ' — ' + gql : ''), 'err');
+    log(`Register failed: ${r.error}`, 'err');
+    return;
+  }
+
+  currentShipInfo = r;
+  showStatus('registerStatus', '✓ Registered — documents generated', 'ok');
+  log(`PO ${currentOrder.poNumber} registered — pickup: ${r.pickupDate}`, 'ok');
+  if (r.documents) {
+    log(`Label URL: ${r.documents.shippingLabel || 'none'}`, 'info');
+    log(`Slip URL: ${r.documents.packingSlip || 'none'}`, 'info');
+    log(`BOL URL: ${r.documents.billOfLading || 'none'}`, 'info');
+  }
+  if (r.trackingInfo && r.trackingInfo.length > 0) {
+    r.trackingInfo.forEach(t => log(`Tracking: ${t.carrierCode} — ${t.trackingNumber}`, 'info'));
+  }
+  renderDocuments(r.documents, r.trackingInfo);
+  toast('Registration complete — labels ready!', 'ok');
+}
+
+async function fetchShippingInfo() {
+  if (!currentOrder) return;
+  log(`Fetching shipping info for PO ${currentOrder.poNumber}`, 'info');
+  const r = await proxyPost('getShippingInfo', { poNumber: currentOrder.poNumber, limit: '5' });
+  if (!r.success) { log('Fetch shipping info failed: ' + r.error, 'err'); return; }
+  if (r.events && r.events.length > 0) {
+    const evt = r.events[0];
+    renderDocuments(evt.documents, evt.trackingInfo);
+    log(`Shipping info loaded — ${(evt.trackingInfo||[]).length} tracking entries`, 'ok');
+  } else {
+    log('No shipping events found for this PO', 'warn');
+  }
+}
+
+let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
+
+function renderDocuments(docs, tracking) {
+  if (!docs) return;
+  const grid = document.getElementById('docGrid');
+  if (!grid) return;
+
+  // Store URLs in variable instead of encoding in onclick attributes
+  currentDocUrls = {
+    label: docs.shippingLabel || null,
+    slip: docs.packingSlip || null,
+    bol: docs.billOfLading || null
+  };
+
+  log(`Document URLs — label: ${currentDocUrls.label ? 'YES' : 'no'}, slip: ${currentDocUrls.slip ? 'YES' : 'no'}, BOL: ${currentDocUrls.bol ? 'YES' : 'no'}`, 'info');
+
+  grid.innerHTML = [
+    docCard('📄', 'Shipping Label', 'label', currentDocUrls.label),
+    docCard('📋', 'Packing Slip', 'slip', currentDocUrls.slip),
+    docCard('📦', 'Bill of Lading', 'bol', currentDocUrls.bol),
+  ].join('');
+
+  const trackEl = document.getElementById('trackingInfo');
+  if (trackEl && tracking && tracking.length > 0) {
+    trackEl.innerHTML = tracking.map(t => `<div style="margin-bottom:4px;">Carrier: <strong>${t.carrierCode || '—'}</strong> | Tracking: <strong>${t.trackingNumber || '—'}</strong></div>`).join('');
+  } else if (trackEl) {
+    trackEl.textContent = 'No tracking info available (sandbox may return static data)';
+  }
+}
+
+function docCard(icon, name, key, url) {
+  if (url) {
+    return `<div class="doc-card available">
+      <div class="doc-icon">${icon}</div>
+      <div class="doc-name">${name}</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;word-break:break-all;">${url.substring(0, 60)}…</div>
+      <button class="btn btn-primary btn-sm" onclick="downloadDoc('${key}', '${name}')">Download</button>
+    </div>`;
+  }
+  return `<div class="doc-card unavailable">
+    <div class="doc-icon">${icon}</div>
+    <div class="doc-name">${name}</div>
+    <div style="font-size:11px;color:var(--text-muted)">Not available</div>
+  </div>`;
+}
+
+async function downloadDoc(key, name) {
+  const url = currentDocUrls[key];
+  if (!url) { log(`No URL stored for ${name}`, 'err'); toast('No URL available', 'err'); return; }
+
+  log(`Downloading ${name} from: ${url}`, 'info');
+  const r = await proxyPost('downloadDocument', { url: url });
+
+  if (!r.success) {
+    log(`Download failed: ${r.error}${r.details ? ' — ' + r.details : ''}`, 'err');
+    toast('Download failed: ' + (r.error || 'unknown'), 'err');
+    return;
+  }
+
+  // Convert base64 to blob and trigger download
+  const byteChars = atob(r.base64);
+  const byteNums = new Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i++) byteNums[i] = byteChars.charCodeAt(i);
+  const blob = new Blob([new Uint8Array(byteNums)], { type: r.contentType });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (currentOrder ? currentOrder.poNumber + '-' : '') + name.toLowerCase().replace(/\s+/g, '-') + (r.fileName?.endsWith('.pdf') ? '.pdf' : '.bin');
+  a.click();
+  URL.revokeObjectURL(a.href);
+  log(`${name} downloaded — ${r.sizeBytes} bytes`, 'ok');
+}
+
+// =========================================================================
+// TAB 4: HISTORY + DEBUG
+// =========================================================================
+function debugLog(msg) {
+  const el = document.getElementById('debugConsole');
+  if (el) {
+    const ts = new Date().toLocaleTimeString();
+    el.textContent = `[${ts}] ${msg}\n\n` + el.textContent;
+    if (el.textContent.length > 20000) el.textContent = el.textContent.substring(0, 20000);
+  }
+}
+
+let historyRows = [];
+let proxyLogEntries = [];
+
+async function loadHistory() {
+  if (!sb) { log('Connect to Supabase to view history', 'warn'); return; }
+  const { data, error } = await sb.from('sales_history')
+    .select('*')
+    .like('order_id', 'WF-%')
+    .order('sale_date', { ascending: false })
+    .limit(50);
+
+  if (error) { log('History error: ' + error.message, 'err'); return; }
+  historyRows = data || [];
+
+  if (historyRows.length === 0) {
+    document.getElementById('historyContent').innerHTML = '<div class="orders-empty">No Wayfair orders in sales_history yet</div>';
+    return;
+  }
+
+  document.getElementById('historyContent').innerHTML = `
+    <div class="scroll-wrap">
+    <table class="items-table">
+      <thead><tr><th>Date</th><th>Order ID</th><th>SKU</th><th>Product</th><th>Qty</th><th>Revenue</th><th>Cost</th><th>Profit</th><th>Channel</th></tr></thead>
+      <tbody>${historyRows.map((r, i) => `<tr onclick="drillDown('history',${i})" style="cursor:pointer;">
+        <td>${(r.sale_date || '').substring(0, 10)}</td>
+        <td>${r.order_id || '—'}</td>
+        <td>${r.sku || '—'}</td>
+        <td style="font-family:'DM Sans',sans-serif;font-size:11px;">${(r.product_name || '—').substring(0, 30)}</td>
+        <td>${r.qty_sold || 0}</td>
+        <td>$${(r.total_revenue || 0).toFixed(2)}</td>
+        <td>$${(r.total_cost || 0).toFixed(2)}</td>
+        <td style="color:${(r.net_profit || 0) >= 0 ? 'var(--pass)' : 'var(--fail)'}">$${(r.net_profit || 0).toFixed(2)}</td>
+        <td>${r.channel || '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Click a row to see full details in the Debug Console below</div>
+  `;
+  log(`Loaded ${historyRows.length} Wayfair orders from sales_history`, 'ok');
+}
+
+function drillDown(source, idx) {
+  const record = source === 'history' ? historyRows[idx] : proxyLogEntries[idx];
+  if (record) debugLog(JSON.stringify(record, null, 2));
+}
+
+async function loadProxyLog() {
+  if (!proxyUrl()) { toast('Enter proxy URL', 'err'); return; }
+  log('Loading proxy request log…', 'info');
+
+  const r = await proxyGet('getRequestLog', { limit: '50' });
+  if (!r.success) { log('Proxy log failed: ' + r.error, 'err'); return; }
+
+  proxyLogEntries = r.log || [];
+  if (proxyLogEntries.length === 0) {
+    document.getElementById('proxyLogContent').innerHTML = '<div class="orders-empty">No proxy requests logged yet</div>';
+    return;
+  }
+
+  document.getElementById('proxyLogContent').innerHTML = `
+    <div class="scroll-wrap" style="max-height:250px;">
+    <table class="items-table">
+      <thead><tr><th>Time</th><th>Action</th><th>Success</th><th>Details</th></tr></thead>
+      <tbody>${proxyLogEntries.map((e, i) => `<tr onclick="drillDown('proxy',${i})" style="cursor:pointer;">
+        <td>${(e.timestamp || '').substring(11, 19)}</td>
+        <td>${e.action || '—'}</td>
+        <td style="color:${e.success ? 'var(--pass)' : 'var(--fail)'}">${e.success ? '✓' : '✗'}</td>
+        <td style="font-size:10px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${JSON.stringify(e.details || {}).substring(0, 80)}</td>
+      </tr>`).join('')}</tbody>
+    </table>
+    </div>
+    <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">Click a row to see full details in the Debug Console below</div>
+  `;
+  log(`Loaded ${proxyLogEntries.length} proxy log entries`, 'ok');
+}
+
+async function testProxyDirect() {
+  if (!proxyUrl()) { toast('Enter proxy URL', 'err'); return; }
+  log('Testing direct proxy call — health check…', 'info');
+
+  const r = await proxyGet('health');
+  debugLog('HEALTH RESPONSE:\n' + JSON.stringify(r, null, 2));
+  log('Health response logged to Debug Console', r.success ? 'ok' : 'err');
+
+  // Also test a getOrders call and log the raw response
+  log('Testing getOrders (limit 1)…', 'info');
+  const r2 = await proxyPost('getOrders', { hasResponse: 'false', limit: '1' });
+  debugLog('GET ORDERS RESPONSE:\n' + JSON.stringify(r2, null, 2));
+  log('getOrders response logged to Debug Console', r2.success ? 'ok' : 'err');
+
+  // Test getShippingInfo and log raw response
+  log('Testing getShippingInfo (no filter, limit 2)…', 'info');
+  const r3 = await proxyPost('getShippingInfo', { limit: '2' });
+  debugLog('GET SHIPPING INFO RESPONSE:\n' + JSON.stringify(r3, null, 2));
+  log('getShippingInfo response logged to Debug Console', r3.success ? 'ok' : 'err');
+}
+
+// =========================================================================
+// UI HELPERS
+// =========================================================================
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+
+  // Only render Ship tab if not already showing registered content
+  if (name === 'ship' && !document.getElementById('shipContent').querySelector('.doc-card.available')) {
+    renderShipTab();
+  }
+  if (name === 'detail') updateAcceptButton();
+  // History loads on explicit button click only, not on tab switch
+}
+
+function showStatus(id, msg, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.add('visible');
+  el.innerHTML = msg;
+  el.style.color = cls === 'ok' ? 'var(--pass)' : cls === 'err' ? 'var(--fail)' : 'var(--warn)';
+}
+
+// =========================================================================
+// INIT
+// =========================================================================
+autoConnect();
+</script>
+</body>
+</html>

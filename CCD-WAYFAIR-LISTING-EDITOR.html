@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Wayfair Listing Editor v1.1</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0f1117; --surface: #181b24; --surface-raised: #1e2230;
+    --border: #2a2f3e; --border-focus: #3d4460;
+    --text: #e2e4ea; --text-dim: #8b90a0; --text-muted: #5c6175;
+    --pass: #2dd4a0; --pass-bg: rgba(45,212,160,0.08);
+    --fail: #f47068; --fail-bg: rgba(244,112,104,0.08);
+    --warn: #f0b44a; --warn-bg: rgba(240,180,74,0.08);
+    --running: #60a5fa; --running-bg: rgba(96,165,250,0.08);
+    --accent: #818cf8; --accent-hover: #6366f1;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 20px; line-height: 1.5;
+  }
+
+  .container { max-width: 1060px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+  h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+  .env-badge { padding: 4px 12px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(240,180,74,0.2); }
+
+  .config-bar {
+    display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: flex-end;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px;
+  }
+  .cfg-field { flex: 1; min-width: 180px; }
+  .cfg-field label { display: block; font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+  .cfg-field input { width: 100%; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; outline: none; }
+
+  .btn { padding: 8px 18px; border-radius: 7px; border: none; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-sm { padding: 6px 14px; font-size: 12px; border-radius: 6px; }
+  .btn-success { background: var(--pass); color: #000; }
+  .btn-success:hover:not(:disabled) { background: #24b888; }
+  .btn-outline { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+
+  .selector-row { display: flex; gap: 10px; margin-bottom: 20px; align-items: flex-end; }
+  .selector-row select { flex: 1; padding: 9px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 13px; outline: none; font-family: 'DM Sans', sans-serif; }
+  .validate-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .validate-toggle input[type=checkbox] { accent-color: var(--warn); width: 16px; height: 16px; }
+
+  .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 999; display: none; animation: fadeIn 0.3s; max-width: 400px; }
+  .toast-ok { background: var(--pass); color: #000; }
+  .toast-err { background: var(--fail); color: #fff; }
+  .toast-warn { background: var(--warn); color: #000; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; } }
+
+  .editor { display: none; }
+  .editor.visible { display: block; }
+
+  .info-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .info-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .info-card .lbl { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+  .info-card .val { font-size: 14px; font-weight: 600; margin-top: 2px; font-family: 'JetBrains Mono', monospace; }
+  .info-card .val-sm { font-size: 12px; }
+
+  .tabs { display: flex; gap: 2px; }
+  .tab { padding: 10px 20px; background: var(--surface); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
+  .tab.active { background: var(--surface-raised); color: var(--text); border-color: var(--border-focus); }
+  .tab:hover:not(.active) { color: var(--text-dim); }
+  .tab-panel { display: none; background: var(--surface-raised); border: 1px solid var(--border-focus); border-radius: 0 8px 8px 8px; padding: 20px; }
+  .tab-panel.active { display: block; }
+
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 5px; }
+  .field input, .field textarea { width: 100%; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; resize: vertical; }
+  .field input:focus, .field textarea:focus { border-color: var(--accent); }
+  .field textarea { min-height: 100px; line-height: 1.6; }
+  .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+  .field-ro { padding: 9px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; white-space: pre-wrap; word-break: break-word; max-height: 150px; overflow-y: auto; }
+
+  .bullets-list { display: flex; flex-direction: column; gap: 6px; }
+  .bullet-row { display: flex; gap: 8px; align-items: center; }
+  .bullet-row input { flex: 1; }
+  .bullet-row .btn-rm { width: 30px; height: 30px; border-radius: 5px; border: 1px solid var(--border); background: transparent; color: var(--fail); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+  .bullet-row .btn-rm:hover { background: var(--fail-bg); }
+
+  .img-section h4 { font-size: 13px; font-weight: 600; color: var(--text-dim); margin-bottom: 10px; }
+  .img-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .img-card { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; cursor: pointer; transition: border-color 0.2s; }
+  .img-card:hover { border-color: var(--accent); }
+  .img-card.selected { border-color: var(--pass); border-width: 2px; }
+  .img-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+  .img-card .img-rank { position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #fff; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; }
+  .img-card .img-check { position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; background: var(--pass); color: #000; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+  .img-card.selected .img-check { display: flex; }
+  .img-empty { color: var(--text-muted); font-size: 13px; padding: 20px; text-align: center; }
+
+  .push-status { margin-top: 14px; padding: 12px 16px; background: var(--bg); border: 1px solid var(--border); border-radius: 7px; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-dim); display: none; }
+  .push-status.visible { display: block; }
+  .action-row { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+
+  /* Attributes table */
+  .attr-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 10px; }
+  .attr-table th { background: var(--surface); padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); }
+  .attr-table td { padding: 7px 12px; border-top: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+  .attr-table tr:hover { background: var(--surface-raised); }
+  .attr-input { width: 100%; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; outline: none; }
+  .attr-input:focus { border-color: var(--accent); }
+  .attr-current { color: var(--text-muted); font-size: 11px; }
+
+  /* Activity Log */
+  .log-panel {
+    margin-top: 24px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  .log-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--border);
+  }
+  .log-header h3 { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+  .log-body {
+    max-height: 250px; overflow-y: auto; padding: 8px 0;
+  }
+  .log-line {
+    padding: 4px 16px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+    color: var(--text-dim); border-bottom: 1px solid rgba(42,47,62,0.3);
+  }
+  .log-line:last-child { border-bottom: none; }
+  .log-line .ts { color: var(--text-muted); margin-right: 8px; }
+  .log-ok { color: var(--pass); }
+  .log-err { color: var(--fail); }
+  .log-warn { color: var(--warn); }
+  .log-info { color: var(--running); }
+  .log-empty { padding: 16px; text-align: center; color: var(--text-muted); font-size: 12px; }
+
+  .spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--border); border-top-color: var(--running); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    .config-bar { flex-direction: column; }
+    .info-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Wayfair Listing Editor <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.1</span></h1>
+    <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
+  </header>
+
+  <div class="config-bar">
+    <div class="cfg-field"><label>Supabase URL</label><input type="text" id="sbUrl"></div>
+    <div class="cfg-field"><label>Supabase Key</label><input type="password" id="sbKey"></div>
+    <div class="cfg-field"><label>Wayfair Proxy URL</label><input type="text" id="wfProxy"></div>
+    <div class="cfg-field"><label>CCD API Key</label><input type="password" id="apiKey" value="ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF"></div>
+    <button class="btn btn-primary btn-sm" onclick="connectAll()">Connect</button>
+  </div>
+
+  <div class="selector-row">
+    <select id="productSelect" onchange="loadProduct()">
+      <option value="">— Select a product —</option>
+    </select>
+    <button class="btn btn-outline btn-sm" onclick="refreshCatalog()">Refresh Catalog</button>
+    <div class="validate-toggle">
+      <input type="checkbox" id="validateOnly" checked>
+      <label for="validateOnly">Validate only (dry run)</label>
+    </div>
+  </div>
+
+  <div class="editor" id="editor">
+    <div class="info-strip" id="infoStrip"></div>
+
+    <div class="tabs">
+      <div class="tab active" data-tab="content" onclick="switchTab('content', this)">Content</div>
+      <div class="tab" data-tab="images" onclick="switchTab('images', this)">Images</div>
+      <div class="tab" data-tab="attributes" onclick="switchTab('attributes', this)">Attributes</div>
+      <div class="tab" data-tab="details" onclick="switchTab('details', this)">Details</div>
+    </div>
+
+    <!-- Content Tab -->
+    <div class="tab-panel active" id="tab-content">
+      <div class="field">
+        <label>Item Group Name (customer-facing title on Wayfair)</label>
+        <input type="text" id="fItemGroupName" placeholder="e.g., Rustic Farmhouse Vase">
+        <div class="hint">Pushed via updateDescriptions → itemGroupName</div>
+      </div>
+      <div class="field">
+        <label>Item Name (part-level name)</label>
+        <input type="text" id="fItemName" placeholder="e.g., CCD Rustic Farmhouse Vase - Large">
+        <div class="hint">Pushed via updateItemName → itemName</div>
+      </div>
+      <div class="field">
+        <label>Marketing Copy (main description)</label>
+        <textarea id="fMarketingCopy" rows="5" placeholder="Product description..."></textarea>
+        <div class="hint">Pushed via updateDescriptions → marketingCopy</div>
+      </div>
+      <div class="field">
+        <label>Feature Bullets <button class="btn btn-outline btn-sm" onclick="addBullet()" style="margin-left:8px;padding:3px 10px;font-size:11px;">+ Add</button></label>
+        <div class="bullets-list" id="bulletsList"></div>
+        <div class="hint">Full replacement — all bullets sent as a complete set</div>
+      </div>
+      <div class="field">
+        <label>Current Wayfair Descriptions (read-only)</label>
+        <div class="field-ro" id="currentDescs">Load a product to see current descriptions</div>
+      </div>
+      <div class="action-row">
+        <button class="btn btn-success btn-sm" onclick="pushContent()">Push Content to Wayfair</button>
+        <button class="btn btn-outline btn-sm" onclick="pushItemName()">Push Item Name Only</button>
+        <div class="push-status" id="contentStatus"></div>
+      </div>
+    </div>
+
+    <!-- Images Tab -->
+    <div class="tab-panel" id="tab-images">
+      <div class="img-section">
+        <h4>Current Wayfair Images</h4>
+        <div class="img-grid" id="wfImages"></div>
+      </div>
+      <div class="img-section">
+        <h4>Available Etsy Images (from DB) — click to select for push</h4>
+        <div class="img-grid" id="etsyImages"></div>
+      </div>
+      <div class="action-row">
+        <button class="btn btn-success btn-sm" onclick="pushSelectedImages()">Push Selected Images</button>
+        <button class="btn btn-outline btn-sm" onclick="selectAllEtsy()">Select All</button>
+        <button class="btn btn-outline btn-sm" onclick="deselectAllEtsy()">Deselect All</button>
+        <div class="push-status" id="imageStatus"></div>
+      </div>
+    </div>
+
+    <!-- Attributes Tab -->
+    <div class="tab-panel" id="tab-attributes">
+      <div class="field">
+        <label>Product Taxonomy Attributes</label>
+        <div class="hint" style="margin-bottom:12px;">These are the attributes Wayfair associates with this product's class. Editable fields can be pushed via updateItemName → attributes. This is experimental — Wayfair may accept or reject depending on the attribute.</div>
+        <div id="attrTableWrap">
+          <div class="img-empty">Load a product to explore attributes</div>
+        </div>
+      </div>
+      <div class="action-row">
+        <button class="btn btn-success btn-sm" onclick="pushAttributes()">Push Modified Attributes</button>
+        <div class="push-status" id="attrStatus"></div>
+      </div>
+    </div>
+
+    <!-- Details Tab -->
+    <div class="tab-panel" id="tab-details">
+      <div class="field">
+        <label>Raw Product Details (from Wayfair catalog)</label>
+        <div class="field-ro" id="productDetails" style="max-height:200px;">Load a product to see details</div>
+      </div>
+      <div class="field">
+        <label>Dimensions</label>
+        <div class="field-ro" id="productDims">—</div>
+      </div>
+      <div class="field">
+        <label>Manufacturer</label>
+        <div class="field-ro" id="productMfr">—</div>
+      </div>
+      <div class="field">
+        <label>Full Catalog Response (raw JSON)</label>
+        <div class="field-ro" id="rawJson" style="max-height:300px;font-size:11px;">—</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Activity Log -->
+  <div class="log-panel">
+    <div class="log-header">
+      <h3>Activity Log</h3>
+      <button class="btn btn-outline btn-sm" onclick="clearLog()" style="padding:4px 10px;font-size:11px;">Clear</button>
+    </div>
+    <div class="log-body" id="logBody">
+      <div class="log-empty">No activity yet</div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// =========================================================================
+// STATE
+// =========================================================================
+
+let sb = null;
+let dbItems = [];
+let catalogProducts = [];
+let currentProduct = null;
+let selectedEtsyImages = new Set();
+
+// =========================================================================
+// ACTIVITY LOG
+// =========================================================================
+
+function log(msg, cls) {
+  const body = document.getElementById('logBody');
+  // Remove "no activity" placeholder
+  const empty = body.querySelector('.log-empty');
+  if (empty) empty.remove();
+
+  const ts = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  line.className = `log-line ${cls ? 'log-' + cls : ''}`;
+  line.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+  body.insertBefore(line, body.firstChild);
+
+  // Cap at 200 lines
+  while (body.children.length > 200) body.removeChild(body.lastChild);
+}
+
+function clearLog() {
+  document.getElementById('logBody').innerHTML = '<div class="log-empty">No activity yet</div>';
+}
+
+// =========================================================================
+// CONNECTIONS
+// =========================================================================
+
+function connectAll() {
+  const sbUrl = document.getElementById('sbUrl').value.trim();
+  const sbKey = document.getElementById('sbKey').value.trim();
+  if (sbUrl && sbKey) {
+    sb = supabase.createClient(sbUrl, sbKey);
+    localStorage.setItem('ccdSupabaseUrl', sbUrl);
+    localStorage.setItem('ccdSupabaseKey', sbKey);
+    log('Supabase connected', 'ok');
+  }
+
+  const wfProxy = document.getElementById('wfProxy').value.trim();
+  if (wfProxy) localStorage.setItem('ccdWayfairCatalogProxy', wfProxy);
+
+  log('Loading catalog…', 'info');
+  toast('Connected — loading catalog…', 'ok');
+  refreshCatalog();
+}
+
+function autoConnect() {
+  const sbUrl = localStorage.getItem('ccdSupabaseUrl');
+  const sbKey = localStorage.getItem('ccdSupabaseKey');
+  const wfProxy = localStorage.getItem('ccdWayfairCatalogProxy');
+
+  if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
+  if (sbKey) document.getElementById('sbKey').value = sbKey;
+  if (wfProxy) document.getElementById('wfProxy').value = wfProxy;
+  if (sbUrl && sbKey) sb = supabase.createClient(sbUrl, sbKey);
+}
+
+// =========================================================================
+// PROXY HELPERS
+// =========================================================================
+
+function proxyUrl() { return document.getElementById('wfProxy').value.trim(); }
+function apiKey() { return document.getElementById('apiKey').value.trim(); }
+function isValidateOnly() { return document.getElementById('validateOnly').checked; }
+
+async function proxyGet(action, params = {}) {
+  const qs = new URLSearchParams({ action, key: apiKey(), ...params });
+  const r = await fetch(`${proxyUrl()}?${qs}`);
+  return r.json();
+}
+
+async function proxyPost(action, body = {}) {
+  const payload = { action, key: apiKey(), ...body };
+  const r = await fetch(proxyUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+  return r.json();
+}
+
+async function pollStatus(requestId, statusEl) {
+  const delays = [2000, 4000, 6000, 8000];
+  for (const d of delays) {
+    await sleep(d);
+    const s = await proxyGet('checkUpdateStatus', { requestId });
+    if (s.status === 'COMPLETED') {
+      showStatus(statusEl, `✓ COMPLETED — ${s.problems?.length || 0} problems, ${s.successfulUpdates?.length || 0} updates`, 'ok');
+      log(`Status COMPLETED — requestId: ${requestId.substring(0,8)}… | ${s.successfulUpdates?.length || 0} updates, ${s.problems?.length || 0} problems`, 'ok');
+      return s;
+    }
+    if (s.status === 'FAILED') {
+      const probDetail = (s.problems || []).map(p => p.title + ': ' + p.detail).join('; ');
+      showStatus(statusEl, `✗ FAILED — ${probDetail || 'unknown'}`, 'err');
+      log(`Status FAILED — requestId: ${requestId.substring(0,8)}… | ${probDetail}`, 'err');
+      return s;
+    }
+  }
+  showStatus(statusEl, '⏳ Still processing — check back later', 'warn');
+  log(`Status still IN_PROGRESS after polling — requestId: ${requestId.substring(0,8)}…`, 'warn');
+  return null;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// =========================================================================
+// CATALOG + DB LOADING
+// =========================================================================
+
+async function refreshCatalog() {
+  if (!sb) { toast('Connect to Supabase first', 'err'); return; }
+
+  const { data: items, error } = await sb
+    .from('items')
+    .select('id, sku, product_name, wayfair_sku, wayfair_qty, wayfair_price, etsy_listing_id, image_urls')
+    .not('wayfair_sku', 'is', null)
+    .order('sku')
+    .limit(5000);
+
+  if (error) { toast('DB error: ' + error.message, 'err'); log('DB error: ' + error.message, 'err'); return; }
+  dbItems = items || [];
+
+  const catResult = await proxyGet('catalogReadAll', { pageSize: 25 });
+  if (!catResult.success) { toast('Catalog error: ' + catResult.error, 'err'); log('Catalog error: ' + catResult.error, 'err'); return; }
+  catalogProducts = catResult.products || [];
+
+  const select = document.getElementById('productSelect');
+  select.innerHTML = '<option value="">— Select a product (' + dbItems.length + ' in DB, ' + catalogProducts.length + ' in WF) —</option>';
+
+  for (const item of dbItems) {
+    const wfProd = catalogProducts.find(p => p.supplierPartNumber === item.wayfair_sku);
+    const wfName = wfProd?.skus?.[0]?.productName || '';
+    const label = `${item.sku} → ${item.wayfair_sku} | ${wfName || item.product_name || '(no name)'}`;
+    const opt = document.createElement('option');
+    opt.value = item.wayfair_sku;
+    opt.textContent = label;
+    if (!wfProd) opt.style.color = '#f47068';
+    select.appendChild(opt);
+  }
+
+  log(`Catalog loaded — ${dbItems.length} DB items, ${catalogProducts.length} WF products`, 'ok');
+  toast(`Loaded ${dbItems.length} DB items, ${catalogProducts.length} catalog products`, 'ok');
+}
+
+// =========================================================================
+// LOAD PRODUCT
+// =========================================================================
+
+function loadProduct() {
+  const partNumber = document.getElementById('productSelect').value;
+  if (!partNumber) { document.getElementById('editor').classList.remove('visible'); return; }
+
+  const dbItem = dbItems.find(i => i.wayfair_sku === partNumber);
+  const wfProd = catalogProducts.find(p => p.supplierPartNumber === partNumber);
+
+  if (!wfProd) {
+    toast('Product not found in Wayfair catalog — may be inactive', 'warn');
+    log(`Loaded ${partNumber} — NOT in Wayfair catalog`, 'warn');
+  } else {
+    log(`Loaded ${partNumber} — ${wfProd.skus?.[0]?.productName || '(no name)'}`, 'info');
+  }
+
+  const sku0 = wfProd?.skus?.[0] || {};
+  currentProduct = { dbItem, wfProd, sku0, partNumber };
+
+  // Info strip
+  const price = sku0.retailPrice?.item?.amount ? ('$' + parseFloat(sku0.retailPrice.item.amount).toFixed(2)) : '—';
+  const dims = sku0.productDimensions;
+  const dimStr = dims ? `${dims.width || '?'} × ${dims.depth || '?'} × ${dims.height || '?'} ${dims.lengthUnit || 'in'} | ${dims.weight || '?'} ${dims.weightUnit || 'lb'}` : '—';
+
+  document.getElementById('infoStrip').innerHTML = [
+    infoCard('Master SKU', dbItem?.sku || '—'),
+    infoCard('WF Part #', partNumber),
+    infoCard('WF SKU', sku0.sku || '—', 'val-sm'),
+    infoCard('Price', price),
+    infoCard('Status', sku0.isLive ? '🟢 Live' : '⚪ Not Live'),
+    infoCard('Class', sku0.className || '—', 'val-sm'),
+    infoCard('Dimensions', dimStr, 'val-sm'),
+    infoCard('WF Images', (wfProd?.images?.length || 0).toString()),
+    infoCard('DB Images', (dbItem?.image_urls?.length || 0).toString()),
+  ].join('');
+
+  // Content fields
+  document.getElementById('fItemGroupName').value = sku0.productName || '';
+  document.getElementById('fItemName').value = sku0.productName || '';
+
+  const descs = sku0.productDescriptions?.descriptions || [];
+  let marketingCopy = '';
+  const bullets = [];
+  let descDisplay = '';
+
+  for (const d of descs) {
+    descDisplay += `[${d.descriptionType}] rank:${d.rank} active:${d.isActive}\n${d.value || '(empty)'}\n\n`;
+    if (d.descriptionType === 'MARKETING_COPY' && d.isActive) marketingCopy = d.value || '';
+    if (d.descriptionType === 'FEATURE_BULLET_POINT' && d.isActive) bullets.push(d.value || '');
+  }
+
+  document.getElementById('fMarketingCopy').value = marketingCopy;
+  document.getElementById('currentDescs').textContent = descDisplay || 'No descriptions found';
+
+  const bulletsList = document.getElementById('bulletsList');
+  bulletsList.innerHTML = '';
+  if (bullets.length > 0) { bullets.forEach(b => addBullet(b)); } else { addBullet(''); }
+
+  // Images — Wayfair
+  const wfImgsEl = document.getElementById('wfImages');
+  const wfImages = wfProd?.images || [];
+  wfImgsEl.innerHTML = wfImages.length > 0
+    ? wfImages.map((img, i) => `<div class="img-card"><img src="${img.url}" loading="lazy" onerror="this.style.opacity=0.2"><span class="img-rank">${i+1}</span></div>`).join('')
+    : '<div class="img-empty">No images in Wayfair catalog</div>';
+
+  // Images — Etsy from DB
+  selectedEtsyImages = new Set();
+  const etsyImgsEl = document.getElementById('etsyImages');
+  const etsyImages = dbItem?.image_urls || [];
+  etsyImgsEl.innerHTML = etsyImages.length > 0
+    ? etsyImages.map((img, i) => `<div class="img-card" id="etsy-img-${i}" onclick="toggleEtsyImage(${i})"><img src="${img.url}" loading="lazy"><span class="img-rank">${img.rank ?? (i+1)}</span><span class="img-check">✓</span></div>`).join('')
+    : '<div class="img-empty">No images in DB — run Etsy Image Pull first</div>';
+
+  // Attributes tab
+  buildAttributesTable(sku0);
+
+  // Details tab
+  const details = sku0.productDetails || [];
+  document.getElementById('productDetails').textContent = details.length > 0
+    ? details.map(d => `${d.title}: ${d.value || '—'}${d.childProductDetails ? '\n  ' + d.childProductDetails.map(c => c.title + ': ' + (c.value || '—')).join('\n  ') : ''}`).join('\n')
+    : 'No product details';
+
+  document.getElementById('productDims').textContent = dims
+    ? `Width: ${dims.width} | Depth: ${dims.depth} | Height: ${dims.height} (${dims.lengthUnit})\nWeight: ${dims.weight} (${dims.weightUnit})`
+    : 'No dimensions';
+
+  const mfr = sku0.manufacturer;
+  document.getElementById('productMfr').textContent = mfr
+    ? `Name: ${mfr.name} | Brand Type: ${mfr.brandType} | White Label: ${mfr.isWhiteLabel}`
+    : 'No manufacturer info';
+
+  document.getElementById('rawJson').textContent = JSON.stringify(wfProd || {}, null, 2);
+
+  document.getElementById('editor').classList.add('visible');
+  switchTab('content', document.querySelector('.tab[data-tab="content"]'));
+}
+
+// =========================================================================
+// ATTRIBUTES TABLE
+// =========================================================================
+
+function buildAttributesTable(sku0) {
+  const details = sku0.productDetails || [];
+  const wrap = document.getElementById('attrTableWrap');
+
+  if (details.length === 0) {
+    wrap.innerHTML = '<div class="img-empty">No taxonomy attributes found for this product class</div>';
+    return;
+  }
+
+  // Flatten: parent details + child details
+  const attrs = [];
+  for (const d of details) {
+    attrs.push({
+      questionId: d.questionId,
+      title: d.title,
+      currentValue: d.value || '',
+      description: d.description || '',
+      isParent: true,
+      children: d.childProductDetails || []
+    });
+    if (d.childProductDetails) {
+      for (const c of d.childProductDetails) {
+        attrs.push({
+          questionId: c.questionId,
+          title: '  └ ' + c.title,
+          currentValue: c.value || '',
+          description: c.description || '',
+          isParent: false,
+          parentTitle: d.title
+        });
+      }
+    }
+  }
+
+  wrap.innerHTML = `
+    <table class="attr-table">
+      <thead><tr><th>Attribute</th><th>Current Value</th><th>New Value</th><th>Question ID</th></tr></thead>
+      <tbody>
+        ${attrs.map((a, i) => `
+          <tr>
+            <td style="${a.isParent ? 'font-weight:600;' : 'color:var(--text-dim);'}">${a.title}</td>
+            <td class="attr-current">${a.currentValue || '<span style="color:var(--text-muted)">—</span>'}</td>
+            <td><input class="attr-input" data-qid="${a.questionId}" data-title="${a.title.replace(/"/g, '&quot;')}" value="" placeholder="${a.currentValue || 'empty'}"></td>
+            <td style="color:var(--text-muted);font-size:10px;">${a.questionId || '—'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div class="hint" style="margin-top:8px;">Only fill in values you want to change. Empty fields are skipped. Wayfair may reject attributes that aren't editable for this product class.</div>
+  `;
+}
+
+async function pushAttributes() {
+  if (!currentProduct) return;
+  const vo = isValidateOnly();
+
+  // Collect modified attributes
+  const inputs = document.querySelectorAll('.attr-input');
+  const modified = [];
+  inputs.forEach(inp => {
+    const val = inp.value.trim();
+    if (val) {
+      const qid = inp.getAttribute('data-qid');
+      // value is [String!]! — always send as array
+      // Split on semicolons for multi-value attributes (e.g., "Country/Farmhouse; Classic Farmhouse")
+      const values = val.includes(';') ? val.split(';').map(v => v.trim()).filter(Boolean) : [val];
+      modified.push({ attributeId: String(qid), value: values });
+    }
+  });
+
+  if (modified.length === 0) {
+    toast('No attributes modified — fill in at least one new value', 'warn');
+    return;
+  }
+
+  // Get taxonomyCategoryId from classId
+  const classId = currentProduct.sku0.classId;
+  if (!classId) {
+    toast('No classId found for this product — cannot push attributes', 'err');
+    log('Attribute push failed: no classId in catalog data', 'err');
+    return;
+  }
+
+  // Build the correct schema structure
+  const attributes = {
+    taxonomyCategoryId: String(classId),
+    updates: modified,
+    ignoreWarnings: true
+  };
+
+  log(`Pushing ${modified.length} attribute(s) for ${currentProduct.partNumber} (classId: ${classId})${vo ? ' [VALIDATE ONLY]' : ''}`, 'info');
+  log(`Attributes payload: ${JSON.stringify(attributes)}`, 'info');
+  showStatus('attrStatus', `<span class="spinner"></span> Pushing ${modified.length} attribute(s)…`, 'warn');
+
+  const result = await proxyPost('updateItemName', {
+    supplierPartNumber: currentProduct.partNumber,
+    attributes: JSON.stringify(attributes),
+    validateOnly: vo ? 'true' : 'false'
+  });
+
+  if (!result.success) {
+    const gqlDetail = result.graphqlErrors
+      ? result.graphqlErrors.map(e => `${e.message}${e.path ? ' @ ' + e.path.join('.') : ''}`).join('\n')
+      : '';
+    const fullErr = result.error + (gqlDetail ? '\n' + gqlDetail : '') + (result.details ? '\n' + result.details : '');
+    showStatus('attrStatus', '✗ Failed: ' + result.error, 'err');
+    log(`Attribute push failed: ${fullErr}`, 'err');
+    return;
+  }
+
+  log(`Attribute push sent — requestId: ${result.requestId}${vo ? ' [VALIDATE ONLY]' : ''}`, 'info');
+  showStatus('attrStatus', `requestId: ${result.requestId} — polling…`, 'warn');
+  await pollStatus(result.requestId, 'attrStatus');
+}
+
+// =========================================================================
+// UI HELPERS
+// =========================================================================
+
+function infoCard(lbl, val, cls) {
+  return `<div class="info-card"><div class="lbl">${lbl}</div><div class="val ${cls || ''}">${val}</div></div>`;
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+function addBullet(text) {
+  const list = document.getElementById('bulletsList');
+  const row = document.createElement('div');
+  row.className = 'bullet-row';
+  row.innerHTML = `<input type="text" value="${(text || '').replace(/"/g, '&quot;')}" placeholder="Feature bullet…"><button class="btn-rm" onclick="this.parentElement.remove()">×</button>`;
+  list.appendChild(row);
+}
+
+function getBullets() {
+  return Array.from(document.querySelectorAll('#bulletsList input')).map(i => i.value.trim()).filter(Boolean);
+}
+
+function toggleEtsyImage(idx) {
+  const card = document.getElementById('etsy-img-' + idx);
+  if (selectedEtsyImages.has(idx)) { selectedEtsyImages.delete(idx); card.classList.remove('selected'); }
+  else { selectedEtsyImages.add(idx); card.classList.add('selected'); }
+}
+
+function selectAllEtsy() {
+  (currentProduct?.dbItem?.image_urls || []).forEach((_, i) => {
+    selectedEtsyImages.add(i);
+    document.getElementById('etsy-img-' + i)?.classList.add('selected');
+  });
+}
+
+function deselectAllEtsy() {
+  selectedEtsyImages.clear();
+  document.querySelectorAll('#etsyImages .img-card').forEach(c => c.classList.remove('selected'));
+}
+
+function showStatus(elId, msg, cls) {
+  const el = document.getElementById(elId);
+  el.classList.add('visible');
+  el.innerHTML = msg;
+  el.style.color = cls === 'ok' ? 'var(--pass)' : cls === 'err' ? 'var(--fail)' : 'var(--warn)';
+}
+
+function toast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast toast-' + (type || 'ok');
+  t.style.display = 'block';
+  setTimeout(() => { t.style.display = 'none'; }, 4000);
+}
+
+// =========================================================================
+// PUSH CONTENT
+// =========================================================================
+
+async function pushContent() {
+  if (!currentProduct) return;
+
+  const itemGroupId = currentProduct.sku0.sku;
+  if (!itemGroupId) { toast('No itemGroupId — cannot update descriptions', 'err'); return; }
+
+  const marketingCopy = document.getElementById('fMarketingCopy').value.trim();
+  const bullets = getBullets();
+  const groupName = document.getElementById('fItemGroupName').value.trim();
+  const vo = isValidateOnly();
+
+  if (!marketingCopy && bullets.length === 0 && !groupName) {
+    toast('Nothing to push — fill in at least one field', 'warn'); return;
+  }
+
+  const parts = [];
+  if (groupName) parts.push('groupName');
+  if (marketingCopy) parts.push('marketingCopy');
+  if (bullets.length > 0) parts.push(`${bullets.length} bullets`);
+
+  log(`Pushing content [${parts.join(', ')}] for ${itemGroupId}${vo ? ' [VALIDATE ONLY]' : ''}`, 'info');
+  showStatus('contentStatus', '<span class="spinner"></span> Pushing descriptions…', 'warn');
+
+  const payload = { itemGroupId, validateOnly: vo ? 'true' : 'false' };
+  if (marketingCopy) payload.marketingCopy = marketingCopy;
+  if (bullets.length > 0) payload.featureBullets = JSON.stringify(bullets);
+  if (groupName) payload.itemGroupName = groupName;
+
+  const result = await proxyPost('updateDescriptions', payload);
+  if (!result.success) {
+    const gqlDetail = result.graphqlErrors ? result.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('contentStatus', '✗ Failed: ' + result.error + (gqlDetail ? ' — ' + gqlDetail : ''), 'err');
+    log(`Content push failed: ${result.error}${gqlDetail ? ' | ' + gqlDetail : ''}${result.details ? ' | ' + result.details : ''}`, 'err');
+    return;
+  }
+
+  log(`Content push sent — requestId: ${result.requestId}`, 'info');
+  showStatus('contentStatus', `requestId: ${result.requestId} — polling…${vo ? ' [VALIDATE ONLY]' : ''}`, 'warn');
+  await pollStatus(result.requestId, 'contentStatus');
+}
+
+// =========================================================================
+// PUSH ITEM NAME
+// =========================================================================
+
+async function pushItemName() {
+  if (!currentProduct) return;
+
+  const itemName = document.getElementById('fItemName').value.trim();
+  if (!itemName) { toast('Item name is empty', 'warn'); return; }
+
+  const vo = isValidateOnly();
+  log(`Pushing item name "${itemName}" for ${currentProduct.partNumber}${vo ? ' [VALIDATE ONLY]' : ''}`, 'info');
+  showStatus('contentStatus', '<span class="spinner"></span> Pushing item name…', 'warn');
+
+  const result = await proxyPost('updateItemName', {
+    supplierPartNumber: currentProduct.partNumber,
+    itemName,
+    validateOnly: vo ? 'true' : 'false'
+  });
+
+  if (!result.success) {
+    const gqlDetail = result.graphqlErrors ? result.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('contentStatus', '✗ Failed: ' + result.error + (gqlDetail ? ' — ' + gqlDetail : ''), 'err');
+    log(`Item name push failed: ${result.error}${gqlDetail ? ' | ' + gqlDetail : ''}${result.details ? ' | ' + result.details : ''}`, 'err');
+    return;
+  }
+
+  log(`Item name push sent — requestId: ${result.requestId}`, 'info');
+  showStatus('contentStatus', `requestId: ${result.requestId} — polling…${vo ? ' [VALIDATE ONLY]' : ''}`, 'warn');
+  await pollStatus(result.requestId, 'contentStatus');
+}
+
+// =========================================================================
+// PUSH IMAGES
+// =========================================================================
+
+async function pushSelectedImages() {
+  if (!currentProduct) return;
+  if (selectedEtsyImages.size === 0) { toast('No images selected', 'warn'); return; }
+
+  const etsyImages = currentProduct.dbItem?.image_urls || [];
+  const vo = isValidateOnly();
+  const statusEl = 'imageStatus';
+  const toSend = Array.from(selectedEtsyImages).sort((a, b) => a - b);
+
+  log(`Pushing ${toSend.length} image(s) for ${currentProduct.partNumber}${vo ? ' [VALIDATE ONLY]' : ''}`, 'info');
+  showStatus(statusEl, `<span class="spinner"></span> Pushing ${toSend.length} image(s)…`, 'warn');
+
+  let success = 0, failed = 0;
+
+  for (let i = 0; i < toSend.length; i++) {
+    const img = etsyImages[toSend[i]];
+    if (!img?.url) continue;
+
+    const isLead = (i === 0);
+    const result = await proxyPost('updateMedia', {
+      supplierPartNumber: currentProduct.partNumber,
+      mediaUrl: img.url,
+      mediaType: 'IMAGE',
+      leadImageOverride: isLead ? 'true' : 'false',
+      validateOnly: vo ? 'true' : 'false'
+    });
+
+    if (result.success && result.requestId) {
+      await sleep(2000);
+      const s = await proxyGet('checkUpdateStatus', { requestId: result.requestId });
+      if (s.status === 'COMPLETED' && (!s.problems || s.problems.length === 0)) {
+        success++;
+        log(`Image ${i+1}/${toSend.length} COMPLETED${isLead ? ' [LEAD]' : ''}`, 'ok');
+      } else {
+        failed++;
+        log(`Image ${i+1}/${toSend.length} FAILED — ${(s.problems || []).map(p=>p.detail).join('; ')}`, 'err');
+      }
+    } else {
+      failed++;
+      log(`Image ${i+1}/${toSend.length} request failed — ${result.error || 'unknown'}`, 'err');
+    }
+
+    showStatus(statusEl, `<span class="spinner"></span> ${success + failed}/${toSend.length} (${success} ok, ${failed} failed)…`, 'warn');
+    if (i < toSend.length - 1) await sleep(1000);
+  }
+
+  const msg = `Done: ${success} pushed, ${failed} failed out of ${toSend.length}${vo ? ' [VALIDATE ONLY]' : ''}`;
+  showStatus(statusEl, (failed === 0 ? '✓ ' : '⚠ ') + msg, failed === 0 ? 'ok' : 'warn');
+  log(`Image push complete — ${success}/${toSend.length} succeeded`, success === toSend.length ? 'ok' : 'warn');
+}
+
+// =========================================================================
+// INIT
+// =========================================================================
+
+autoConnect();
+</script>
+</body>
+</html>
