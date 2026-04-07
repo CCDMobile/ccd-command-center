@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.9</title>
+    <title>CCD Sync Hub v4.4.0</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.3.9 — Clean Build Styles
+           CCD SYNC HUB v4.4.0 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.9 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.0 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -703,11 +703,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.3.9 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.0 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.9';
+    const SH_VERSION = 'v4.4.0';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1474,7 +1474,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.3.9-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.0-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1698,7 +1698,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.3.9',
+                processedBy: 'Sync Hub v4.4.0',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -3454,6 +3454,8 @@
                 
                 // v4.3.9: Capture original Etsy qty for reactivation guard
                 const originalEtsyQty = parseInt(product.channels?.etsy) || 0;
+                // v4.4.0: Also capture original Wix qty for reactivation guard
+                const originalWixQty = parseInt(product.channels?.wix) || 0;
                 
                 // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
                 if (enableDeduction) {
@@ -3694,6 +3696,10 @@
                         const oldCompQty = compProduct.qty || compProduct.warehouseQty || 0;
                         const newCompQty = Math.max(0, oldCompQty - deductQty);
                         
+                        // v4.4.0: Capture original Etsy/Wix qty for reactivation guard (G6)
+                        compProduct._originalEtsyQty = parseInt(compProduct.channels?.etsy) || 0;
+                        compProduct._originalWixQty = parseInt(compProduct.channels?.wix) || 0;
+                        
                         // Update component in-memory
                         compProduct.qty = newCompQty;
                         compProduct.warehouseQty = newCompQty;
@@ -3792,24 +3798,30 @@
                 // Wix cascade
                 if ((product.wixProductId || product.wixId) && sourceChannel !== 'wix') {
                     const wixQty = parseInt(channels.wix) || 0;
-                    try {
-                        await sbClient.from('sync_queue').insert({
-                            item_id: sbId,
-                            channel: 'wix',
-                            operation: 'update',
-                            status: 'pending',
-                            fields: {
-                                sku: lookupSku,
-                                quantity: wixQty,
-                                productId: product.wixProductId || product.wixId,
-                                wixVariantId: product.wixVariantId || product.wix_variant_id || null,
-                                fieldTypes: ['quantity'],
-                                _source: 'cascade'
-                            }
-                        });
-                        cascadeCount++;
-                        console.log(`[Cascade] Wix sync_queue row: ${lookupSku} qty=${wixQty}, variantId=${product.wixVariantId || 'none'}`);
-                    } catch (e) { console.error(`[Cascade] Wix insert failed for ${lookupSku}:`, e.message); }
+                    // v4.4.0: Reactivation guard for Wix (same protection as Etsy)
+                    if (wixQty > 0 && originalWixQty === 0) {
+                        addLog(`⚠️ REACTIVATION BLOCKED: ${lookupSku} — Wix was sold out (0), cascade would push ${wixQty}. Skipped to prevent unwanted listing reactivation.`, 'warning');
+                        console.warn(`[Reactivation Guard] Blocked Wix cascade for ${lookupSku}: was 0, would push ${wixQty}`);
+                    } else {
+                        try {
+                            await sbClient.from('sync_queue').insert({
+                                item_id: sbId,
+                                channel: 'wix',
+                                operation: 'update',
+                                status: 'pending',
+                                fields: {
+                                    sku: lookupSku,
+                                    quantity: wixQty,
+                                    productId: product.wixProductId || product.wixId,
+                                    wixVariantId: product.wixVariantId || product.wix_variant_id || null,
+                                    fieldTypes: ['quantity'],
+                                    _source: 'cascade'
+                                }
+                            });
+                            cascadeCount++;
+                            console.log(`[Cascade] Wix sync_queue row: ${lookupSku} qty=${wixQty}, variantId=${product.wixVariantId || 'none'}`);
+                        } catch (e) { console.error(`[Cascade] Wix insert failed for ${lookupSku}:`, e.message); }
+                    }
                 }
                 
                 // Wayfair cascade (always — Wayfair doesn't auto-reduce)
@@ -3845,23 +3857,33 @@
                 
                 if (comp.etsyListingId || comp.etsyListing) {
                     const etsyQty = parseInt(compChannels.etsy) ?? 0;
-                    try {
-                        await sbClient.from('sync_queue').insert({
-                            item_id: compSbId, channel: 'etsy', operation: 'update', status: 'pending',
-                            fields: { sku: comp.sku, quantity: etsyQty, listingId: comp.etsyListingId || comp.etsyListing, fieldTypes: ['quantity'], _source: 'cascade' }
-                        });
-                        cascadeCount++;
-                    } catch (e) { console.error(`[Bundle Cascade] Etsy failed for ${comp.sku}:`, e.message); }
+                    // v4.4.0 G6: Reactivation guard for bundle components
+                    if (etsyQty > 0 && comp._originalEtsyQty === 0) {
+                        addLog(`⚠️ REACTIVATION BLOCKED (bundle component): ${comp.sku} — Etsy was sold out (0), cascade would push ${etsyQty}. Skipped.`, 'warning');
+                    } else {
+                        try {
+                            await sbClient.from('sync_queue').insert({
+                                item_id: compSbId, channel: 'etsy', operation: 'update', status: 'pending',
+                                fields: { sku: comp.sku, quantity: etsyQty, listingId: comp.etsyListingId || comp.etsyListing, fieldTypes: ['quantity'], _source: 'cascade' }
+                            });
+                            cascadeCount++;
+                        } catch (e) { console.error(`[Bundle Cascade] Etsy failed for ${comp.sku}:`, e.message); }
+                    }
                 }
                 if (comp.wixProductId || comp.wixId) {
                     const wixQty = parseInt(compChannels.wix) ?? 0;
-                    try {
-                        await sbClient.from('sync_queue').insert({
-                            item_id: compSbId, channel: 'wix', operation: 'update', status: 'pending',
-                            fields: { sku: comp.sku, quantity: wixQty, productId: comp.wixProductId || comp.wixId, wixVariantId: comp.wixVariantId || null, fieldTypes: ['quantity'], _source: 'cascade' }
-                        });
-                        cascadeCount++;
-                    } catch (e) { console.error(`[Bundle Cascade] Wix failed for ${comp.sku}:`, e.message); }
+                    // v4.4.0 G6: Reactivation guard for bundle components
+                    if (wixQty > 0 && comp._originalWixQty === 0) {
+                        addLog(`⚠️ REACTIVATION BLOCKED (bundle component): ${comp.sku} — Wix was sold out (0), cascade would push ${wixQty}. Skipped.`, 'warning');
+                    } else {
+                        try {
+                            await sbClient.from('sync_queue').insert({
+                                item_id: compSbId, channel: 'wix', operation: 'update', status: 'pending',
+                                fields: { sku: comp.sku, quantity: wixQty, productId: comp.wixProductId || comp.wixId, wixVariantId: comp.wixVariantId || null, fieldTypes: ['quantity'], _source: 'cascade' }
+                            });
+                            cascadeCount++;
+                        } catch (e) { console.error(`[Bundle Cascade] Wix failed for ${comp.sku}:`, e.message); }
+                    }
                 }
                 if (comp.wayfairSku || comp.supplierPartNumber) {
                     const wayfairQty = parseInt(compChannels.wayfair) ?? 0;
