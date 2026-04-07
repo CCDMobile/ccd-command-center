@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.3.8</title>
+    <title>CCD Sync Hub v4.3.9</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.3.8 — Clean Build Styles
+           CCD SYNC HUB v4.3.9 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.3.8 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.3.9 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -703,11 +703,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.3.8 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.3.9 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.3.8';
+    const SH_VERSION = 'v4.3.9';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1474,7 +1474,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.3.8-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.3.9-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1698,7 +1698,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.3.8',
+                processedBy: 'Sync Hub v4.3.9',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2776,12 +2776,12 @@
 
     // === autoAdjustChannelAllocations ===
     // ============================================================================
-    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v3.3.5.11 - ENHANCED DEBUG LOGGING)
+    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.3.9 - SHARED INVENTORY MODEL)
     // Ensures channel allocations stay valid after order processing
     // Rules:
     // - Etsy = Wix always (they sync together)
-    // - Online channels (Etsy, Wix, Wayfair) cannot exceed Warehouse Qty
-    // - TreasureMarts is physical location, separate from warehouse
+    // - Each online channel ≤ (Warehouse Qty − TM Qty)
+    // - TreasureMarts is physical location, reduces available online pool
     // ============================================================================
     function autoAdjustChannelAllocations(product, sourceChannel = null) {
         if (!product) return { adjusted: false, changes: [], parAlerts: [] };
@@ -2833,8 +2833,10 @@
         const warehouseQty = product.warehouseQty || product.qty || product.quantity || 0;
         const channels = product.channels;
         
-        // Available for online = warehouse qty (TM is separate physical location)
-        const availableForOnline = warehouseQty;
+        // Available for online = warehouse qty minus TM (physical location)
+        // v4.3.9: Shared inventory model — online channels show the same pool
+        const tmQty = parseInt(channels.treasuremarts) || 0;
+        const availableForOnline = Math.max(0, warehouseQty - tmQty);
         
         // ==========================================================================
         // VALIDATION v3.3.5.11 - Snapshot physical location allocations
@@ -2914,54 +2916,11 @@
             adjustments.adjusted = true;
         }
         
-        // Rule 3: OVERSALE GUARD — online total must not exceed warehouse
-        // v4.3.8: max(etsy, wix) + wayfair ≤ warehouse
-        // Etsy/Wix mirror so count once. TM is separate physical location.
-        const onlineEtsyWix = Math.max(parseInt(channels.etsy) || 0, parseInt(channels.wix) || 0);
-        const onlineTotal = onlineEtsyWix + wayfairQty;
-        
-        if (onlineTotal > availableForOnline) {
-            const excess = onlineTotal - availableForOnline;
-            
-            if (sourceChannel === 'etsy' || sourceChannel === 'wix') {
-                // Source is Etsy/Wix — reduce Wayfair to fit
-                const newWf = Math.max(0, wayfairQty - excess);
-                if (newWf !== wayfairQty) {
-                    adjustments.changes.push({ channel: 'wayfair', from: wayfairQty, to: newWf, reason: 'oversale guard: online total exceeds warehouse' });
-                    channels.wayfair = newWf;
-                    adjustments.adjusted = true;
-                    console.log(`[Oversale Guard] Wayfair ${wayfairQty}→${newWf} (warehouse=${availableForOnline}, etsy/wix=${onlineEtsyWix})`);
-                }
-            } else if (sourceChannel === 'wayfair') {
-                // Source is Wayfair — reduce Etsy/Wix to fit
-                const maxEW = Math.max(0, availableForOnline - wayfairQty);
-                const currEW = onlineEtsyWix;
-                if (currEW > maxEW) {
-                    if (hasEtsyId) {
-                        adjustments.changes.push({ channel: 'etsy', from: parseInt(channels.etsy) || 0, to: maxEW, reason: 'oversale guard: online total exceeds warehouse' });
-                        channels.etsy = maxEW;
-                    }
-                    if (hasWixId) {
-                        adjustments.changes.push({ channel: 'wix', from: parseInt(channels.wix) || 0, to: maxEW, reason: 'oversale guard: online total exceeds warehouse' });
-                        channels.wix = maxEW;
-                    }
-                    adjustments.adjusted = true;
-                    console.log(`[Oversale Guard] Etsy/Wix ${currEW}→${maxEW} (warehouse=${availableForOnline}, wayfair=${wayfairQty})`);
-                }
-            } else {
-                // Source is TM or other — reduce the larger non-source pool
-                if (wayfairQty >= onlineEtsyWix) {
-                    const newWf = Math.max(0, wayfairQty - excess);
-                    adjustments.changes.push({ channel: 'wayfair', from: wayfairQty, to: newWf, reason: 'oversale guard: online total exceeds warehouse' });
-                    channels.wayfair = newWf;
-                } else {
-                    const maxEW = Math.max(0, availableForOnline - wayfairQty);
-                    if (hasEtsyId) { adjustments.changes.push({ channel: 'etsy', from: parseInt(channels.etsy) || 0, to: maxEW, reason: 'oversale guard' }); channels.etsy = maxEW; }
-                    if (hasWixId) { adjustments.changes.push({ channel: 'wix', from: parseInt(channels.wix) || 0, to: maxEW, reason: 'oversale guard' }); channels.wix = maxEW; }
-                }
-                adjustments.adjusted = true;
-            }
-        }
+        // Rule 3: REMOVED in v4.3.9
+        // The old additive formula (max(etsy,wix) + wayfair ≤ warehouse) was wrong.
+        // Shared inventory model: online channels overlap, not additive.
+        // Rule 2 with corrected availableForOnline (warehouse − TM) now handles
+        // all allocation capping correctly — each channel ≤ available pool.
         
         // v4.3.4 FIX: Do NOT delete zero-value channels. Deleting causes
         // itemToSbRow fallback to stale flat properties (etsyQty/wixQty/wayfairQty),
@@ -3493,7 +3452,7 @@
                 let newQty = currentQty;
                 let adjustResult = { adjusted: false, changes: [], parAlerts: [] };
                 
-                // v4.3.8: Capture original Etsy qty for reactivation guard
+                // v4.3.9: Capture original Etsy qty for reactivation guard
                 const originalEtsyQty = parseInt(product.channels?.etsy) || 0;
                 
                 // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
@@ -3805,7 +3764,7 @@
                 if ((product.etsyListingId || product.etsyListing) && sourceChannel !== 'etsy') {
                     const etsyQty = parseInt(channels.etsy) || 0;
                     
-                    // v4.3.8 REACTIVATION GUARD: Don't push qty > 0 if Etsy was at 0
+                    // v4.3.9 REACTIVATION GUARD: Don't push qty > 0 if Etsy was at 0
                     if (etsyQty > 0 && originalEtsyQty === 0) {
                         addLog(`⚠️ REACTIVATION BLOCKED: ${lookupSku} — Etsy was sold out (0), cascade would push ${etsyQty}. Skipped to prevent unwanted listing reactivation.`, 'warning');
                         console.warn(`[Reactivation Guard] Blocked Etsy cascade for ${lookupSku}: was 0, would push ${etsyQty}`);
