@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.4</title>
+<title>CCD Inventory System v2.8.6</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -609,7 +609,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.4 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.6 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -621,7 +621,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.4</div>
+      <div class="topbar-version">v2.8.6</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1373,7 +1373,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.8.4';
+const TOOL_VERSION = '2.8.6';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1557,6 +1557,11 @@ async function showApp() {
 
   // Load stats
   await loadStats();
+
+  // v2.8.6 H-S1: Auto-sync Shippo on load (fire-and-forget, silent if no proxy)
+  if (localStorage.getItem('ccdShippoProxy')) {
+    syncShippoGlobal().catch(e => console.log('[Shippo Auto-Sync] Skipped:', e.message));
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2884,7 +2889,7 @@ function toggleFeeDetail(btn, idx) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// REVERSE SALE — v2.8.4
+// REVERSE SALE — v2.8.6
 // ═══════════════════════════════════════════════════════════
 async function reverseSale(idx) {
   const sale = state.salesRows && state.salesRows[idx];
@@ -3354,6 +3359,7 @@ async function buyLabel(rateIndex) {
         status: result.status || 'SUCCESS',
         label_cost: pf(result.amount || rate.amount),
         recipient_name: addr.name || null,
+        recipient_street: addr.street || null,
         recipient_city: addr.city || null,
         recipient_state: addr.st || null,
         recipient_zip: addr.zip || null,
@@ -3546,12 +3552,20 @@ async function loadShippingHistory(sku) {
           <div style="padding:12px 16px;background:var(--bg3);border-left:3px solid var(--gold);">
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 20px;font-size:12px;">
               <div><span style="color:var(--muted2);">Recipient:</span> ${escHtml(r.recipient_name || '—')}</div>
+              <div><span style="color:var(--muted2);">Address:</span> ${escHtml(r.recipient_street || '—')}</div>
               <div><span style="color:var(--muted2);">Location:</span> ${escHtml([r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ') || '—')}</div>
               <div><span style="color:var(--muted2);">Weight:</span> ${r.parcel_weight ? pf(r.parcel_weight) + ' lb' : '—'}</div>
               <div><span style="color:var(--muted2);">Dims:</span> ${r.parcel_length ? pf(r.parcel_length) + '×' + pf(r.parcel_width) + '×' + pf(r.parcel_height) + '"' : '—'}</div>
               <div><span style="color:var(--muted2);">Order:</span> ${escHtml(r.order_id || r.order_number_raw || '—')}</div>
               ${r.tracking_number ? `<div style="grid-column:1/-1;margin-top:4px;"><a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);font-size:12px;">🔗 Track Package →</a></div>` : ''}
             </div>
+            <div style="display:flex;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+              <button class="btn-card" onclick="duplicateShipment(${idx})" style="padding:4px 12px;font-size:11px;">📋 Reship to Same Address</button>
+              <button class="btn-card" onclick="getReturnRates(${idx})" style="padding:4px 12px;font-size:11px;">🔄 Return Label</button>
+              ${r.tracking_number ? `<button class="btn-card" onclick="sendShipNotification(${idx})" style="padding:4px 12px;font-size:11px;">📧 Send Notification</button>` : ''}
+              ${r.label_url ? `<a href="${escAttr(r.label_url)}" target="_blank" class="btn-card" style="padding:4px 12px;font-size:11px;text-decoration:none;display:inline-block;">📄 Download Label</a>` : ''}
+            </div>
+            <div id="shipAction_${idx}" style="margin-top:8px;"></div>
           </div>
         </td>
       </tr>`;
@@ -3624,6 +3638,245 @@ async function refreshTrackingStatuses() {
     } catch(e) { console.log(`Tracking fetch failed for ${r.tracking_number}:`, e.message); }
   }
   if (btn) { btn.disabled = false; btn.textContent = `🔄 Refresh Tracking${updated > 0 ? ` (${updated} updated)` : ''}`; }
+}
+
+// v2.8.6 H-S4: Duplicate Order — pre-fill ship-to form from shipment history
+function duplicateShipment(idx) {
+  const rows = state.shippingRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+  if ($('shipToName')) $('shipToName').value = r.recipient_name || '';
+  if ($('shipToStreet')) $('shipToStreet').value = r.recipient_street || '';
+  if ($('shipToCity')) $('shipToCity').value = r.recipient_city || '';
+  if ($('shipToState')) $('shipToState').value = r.recipient_state || '';
+  if ($('shipToZip')) $('shipToZip').value = r.recipient_zip || '';
+  // Restore parcel dimensions if available
+  if (r.parcel_weight && $('shipWeight')) $('shipWeight').value = pf(r.parcel_weight);
+  if (r.parcel_length && $('shipLength')) $('shipLength').value = pf(r.parcel_length);
+  if (r.parcel_width && $('shipWidth')) $('shipWidth').value = pf(r.parcel_width);
+  if (r.parcel_height && $('shipHeight')) $('shipHeight').value = pf(r.parcel_height);
+  // Save to state
+  state.lastShipTo = { name: r.recipient_name||'', street: r.recipient_street||'', city: r.recipient_city||'', st: r.recipient_state||'', zip: r.recipient_zip||'' };
+  // Scroll to address form
+  $('shipToName')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  showCardStatus(`Address pre-filled from ${(r.recipient_name||'shipment')} — click Get Quotes to proceed`, 'ok');
+}
+
+// v2.8.6 H-S2: Return Label — get rates with customer as sender, CCD as recipient
+async function getReturnRates(idx) {
+  const rows = state.shippingRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+  const item = state.currentItem;
+  const container = $(`shipAction_${idx}`);
+  if (!container) return;
+
+  if (!r.recipient_zip) {
+    container.innerHTML = '<span style="color:var(--red);font-size:12px;">Cannot create return — no ZIP on file for this shipment.</span>';
+    return;
+  }
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { container.innerHTML = '<span style="color:var(--red);font-size:12px;">Shippo proxy not configured.</span>'; return; }
+
+  container.innerHTML = '<span style="color:var(--muted);font-size:12px;">⏳ Fetching return rates...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'getRates',
+      key: apiKey,
+      // Customer is the SENDER for returns
+      fromName: r.recipient_name || 'Customer',
+      fromStreet: r.recipient_street || '',
+      fromCity: r.recipient_city || '',
+      fromState: r.recipient_state || '',
+      fromZip: r.recipient_zip,
+      // CCD warehouse is the RECIPIENT for returns
+      toName: 'CCD Inventory',
+      toStreet: '2300 SE 157th Lane Rd',
+      toCity: 'Summerfield',
+      toState: 'FL',
+      toZip: '34491',
+      weight: String(r.parcel_weight || (item ? pf(item.shipping_weight) : 1) || 1),
+      length: String(r.parcel_length || (item ? pf(item.box_length) : 10) || 10),
+      width: String(r.parcel_width || (item ? pf(item.box_width) : 10) || 10),
+      height: String(r.parcel_height || (item ? pf(item.box_height) : 5) || 5)
+    });
+
+    if (!result.success) {
+      container.innerHTML = `<span style="color:var(--red);font-size:12px;">Error: ${escHtml(result.error || 'Unknown')}</span>`;
+      return;
+    }
+
+    // Store return rates separately and mark as return context
+    const rates = filterRates(result.rates || [], getShipToFilterIds());
+    state.returnRates = rates;
+    state.returnShipmentId = result.shipmentId || '';
+    state.returnContext = { shipmentIdx: idx, sku: item?.sku };
+
+    if (rates.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted);font-size:12px;">No return rates available.</span>';
+      return;
+    }
+
+    container.innerHTML = `<div style="margin-top:8px;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);">
+      <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:8px;">🔄 Return Label Rates — ${escHtml(r.recipient_name || 'Customer')} → CCD</div>
+      <div class="table-wrapper"><table>
+        <thead><tr><th>Carrier</th><th>Service</th><th>Est. Days</th><th>Cost</th><th></th></tr></thead>
+        <tbody>${rates.map((rt, i) => `<tr>
+          <td>${escHtml(rt.provider || '—')}</td>
+          <td>${escHtml(rt.service || '—')}</td>
+          <td class="mono">${rt.estimatedDays || '—'}</td>
+          <td class="mono" style="font-weight:700;color:var(--gold);">$${pf(rt.amount).toFixed(2)}</td>
+          <td><button class="markup-btn" style="background:var(--green-bg);color:var(--green);border-color:rgba(45,212,160,0.3);padding:4px 12px;font-size:11px;" onclick="buyReturnLabel(${i})">🏷 Buy</button></td>
+        </tr>`).join('')}</tbody></table></div>
+      <div style="font-size:10px;color:var(--muted2);margin-top:4px;">${rates.length} rates · This creates a label FROM the customer TO your warehouse.</div>
+    </div>`;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--red);font-size:12px;">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// Buy a return label from return rates
+async function buyReturnLabel(rateIndex) {
+  const rates = state.returnRates || [];
+  const rate = rates[rateIndex];
+  if (!rate || !rate.objectId) { showCardStatus('No rate selected.', 'error'); return; }
+  const ctx = state.returnContext || {};
+  const item = state.currentItem;
+
+  if (!confirm(`Buy RETURN shipping label?\n\n${rate.provider} — ${rate.service}\nCost: $${pf(rate.amount).toFixed(2)}\nItem: ${item?.sku || '—'}\nDirection: Customer → CCD Warehouse\n\nThis will charge your Shippo account.`)) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { showCardStatus('Shippo proxy not configured.', 'error'); return; }
+
+  showCardStatus('Purchasing return label...', '');
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'purchaseLabel',
+      key: apiKey,
+      rateId: rate.objectId,
+      labelType: 'PDF',
+      metadata: `RETURN-${item?.sku || 'unknown'}`
+    });
+
+    if (!result.success) {
+      showCardStatus(`Return label failed: ${result.error || 'Unknown error'}`, 'error');
+      return;
+    }
+
+    showCardStatus(`Return label purchased — tracking: ${result.trackingNumber || 'pending'}`, 'ok');
+
+    // Save to shippo_transactions
+    try {
+      const origRow = state.shippingRows[ctx.shipmentIdx] || {};
+      await sb.from('shippo_transactions').insert({
+        sku: item?.sku || null,
+        transaction_id: result.transactionId || null,
+        carrier: result.carrier || rate.provider,
+        service_name: result.service || rate.service,
+        tracking_number: result.trackingNumber || null,
+        label_url: result.labelUrl || null,
+        label_status: 'RETURN',
+        status: 'RETURN',
+        label_cost: pf(result.amount || rate.amount),
+        recipient_name: 'CCD Inventory',
+        recipient_street: '2300 SE 157th Lane Rd',
+        recipient_city: 'Summerfield',
+        recipient_state: 'FL',
+        recipient_zip: '34491',
+        parcel_weight: origRow.parcel_weight || null,
+        parcel_length: origRow.parcel_length || null,
+        parcel_width: origRow.parcel_width || null,
+        parcel_height: origRow.parcel_height || null,
+        shippo_created_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+        raw_metadata: `RETURN-${item?.sku || ''}`,
+        matched_to_sale: false
+      });
+    } catch(dbErr) {
+      console.warn('Failed to save return label:', dbErr.message);
+    }
+
+    logActivity('SHIPPING','RETURN_LABEL_PURCHASED',null,`Return label: ${item?.sku || '—'} via ${rate.provider} $${pf(rate.amount).toFixed(2)}`,{},item?.sku);
+
+    // Show download link
+    if (ctx.shipmentIdx !== undefined) {
+      const container = $(`shipAction_${ctx.shipmentIdx}`);
+      if (container && result.labelUrl) {
+        container.innerHTML = `<div style="padding:10px;background:rgba(45,212,160,0.06);border:1px solid rgba(45,212,160,0.2);border-radius:var(--radius);font-size:12px;">
+          ✅ Return label purchased — <a href="${escAttr(result.labelUrl)}" target="_blank" style="color:var(--gold);font-weight:600;">📄 Download Return Label</a>
+          ${result.trackingNumber ? ` · Tracking: <span class="mono">${escHtml(result.trackingNumber)}</span>` : ''}
+        </div>`;
+      }
+    }
+
+    // Refresh history
+    if (item?.sku) loadShippingHistory(item.sku);
+
+  } catch(e) {
+    showCardStatus(`Return label failed: ${e.message}`, 'error');
+  }
+}
+
+// v2.8.6 H-S3: Send Shipping Notification Email
+async function sendShipNotification(idx) {
+  const rows = state.shippingRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+  const item = state.currentItem;
+  const container = $(`shipAction_${idx}`);
+
+  if (!r.tracking_number) {
+    if (container) container.innerHTML = '<span style="color:var(--red);font-size:12px;">No tracking number on this shipment.</span>';
+    return;
+  }
+
+  // Try to find buyer email from sales_history
+  let buyerEmail = '';
+  if (r.order_id || r.order_number_raw) {
+    try {
+      const orderId = r.order_id || r.order_number_raw;
+      const { data } = await sb.from('sales_history').select('buyer_email').or(`order_id.eq.${orderId},order_number.eq.${orderId}`).not('buyer_email','is',null).limit(1);
+      if (data && data[0]?.buyer_email) buyerEmail = data[0].buyer_email;
+    } catch(e) { console.log('Email lookup skipped:', e.message); }
+  }
+
+  const email = prompt(`Send shipping notification to customer.\n\nTracking: ${r.tracking_number}\nCarrier: ${r.carrier || '—'}\n\nEnter customer email:`, buyerEmail);
+  if (!email || !email.includes('@')) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { showCardStatus('Shippo proxy not configured.', 'error'); return; }
+
+  if (container) container.innerHTML = '<span style="color:var(--muted);font-size:12px;">⏳ Sending notification...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'sendNotification',
+      key: apiKey,
+      email: email,
+      recipientName: r.recipient_name || 'Customer',
+      trackingNumber: r.tracking_number,
+      carrier: r.carrier || '',
+      serviceName: r.service_name || '',
+      sku: item?.sku || r.sku || '',
+      productName: item?.product_name || ''
+    });
+
+    if (result.success) {
+      if (container) container.innerHTML = `<span style="color:var(--green);font-size:12px;">✅ Notification sent to ${escHtml(email)}</span>`;
+      showCardStatus(`Notification sent to ${email}`, 'ok');
+      logActivity('SHIPPING','NOTIFICATION_SENT',null,`Tracking notification: ${r.tracking_number} → ${email}`,{},item?.sku || r.sku);
+    } else {
+      if (container) container.innerHTML = `<span style="color:var(--red);font-size:12px;">Failed: ${escHtml(result.error || 'Unknown')}</span>`;
+    }
+  } catch(e) {
+    if (container) container.innerHTML = `<span style="color:var(--red);font-size:12px;">Error: ${escHtml(e.message)}</span>`;
+  }
 }
 
 async function syncShippoToDb() {
@@ -6803,6 +7056,7 @@ async function syncShippoGlobal() {
         shippo_created_at: tx.createdAt || tx.shipDate || tx.ship_date || null,
         synced_at: new Date().toISOString(),
         recipient_name: tx.recipientName || tx.recipient_name || null,
+        recipient_street: tx.recipientStreet || tx.recipient_street || null,
         recipient_city: tx.recipientCity || tx.city || null,
         recipient_state: tx.recipientState || tx.state || null,
         recipient_zip: tx.recipientZip || tx.zip || null,
