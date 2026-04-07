@@ -1077,6 +1077,30 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
             </div>
             <div style="margin-top:12px;font-size:11px;color:var(--muted);">Security levels 2 and 3 can be enabled via the security_config row in the settings table.</div>
           </div>
+          <!-- Email Template Editor -->
+          <div class="settings-section">
+            <div class="settings-section-title">📧 Shipping Notification Email</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">HTML template with {{variables}}. Sent to customers after label purchase.</div>
+            <div style="font-size:10px;color:var(--gold);margin-bottom:6px;font-family:monospace;">
+              Variables: {{recipientName}} {{trackingNumber}} {{trackingUrl}} {{carrier}} {{serviceName}} {{productName}} {{sku}}
+            </div>
+            <div class="setting-row" style="flex-direction:column;align-items:stretch;">
+              <div class="setting-label" style="margin-bottom:4px;">Subject Line</div>
+              <input class="form-input" id="emailSubject" style="width:100%;text-align:left;font-size:12px;" value="Your order has shipped! — Country Charm Decor">
+            </div>
+            <div style="margin-top:8px;">
+              <div class="setting-label" style="margin-bottom:4px;">HTML Template</div>
+              <textarea class="form-input" id="emailTemplateHtml" style="width:100%;min-height:200px;font-family:monospace;font-size:11px;line-height:1.4;white-space:pre-wrap;"></textarea>
+            </div>
+            <div style="display:flex;gap:10px;margin-top:8px;">
+              <button class="btn-card btn-push" onclick="saveEmailTemplate()" style="padding:6px 16px;font-size:12px;">💾 Save Template</button>
+              <button class="btn-card" onclick="previewEmailTemplate()" style="padding:6px 16px;font-size:12px;">👁 Preview</button>
+              <button class="btn-card" onclick="resetEmailTemplate()" style="padding:6px 16px;font-size:12px;border-color:rgba(240,92,92,0.4);color:var(--red);">↩ Reset to Default</button>
+              <button class="btn-card" onclick="sendTestEmail()" style="padding:6px 16px;font-size:12px;background:rgba(45,212,160,0.1);border-color:rgba(45,212,160,0.3);color:var(--green);">📧 Send Test to Me</button>
+            </div>
+            <div id="emailPreviewFrame" style="display:none;margin-top:12px;border:1px solid var(--border);border-radius:var(--radius);background:#fff;padding:0;overflow:hidden;"></div>
+            <div id="emailTemplateStatus" class="inline-status" style="margin-top:8px;"></div>
+          </div>
           <!-- Channel Fees -->
           <div class="settings-section">
             <div class="settings-section-title">💰 Channel Fees</div>
@@ -1120,9 +1144,38 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
         <h2 style="color:var(--gold);margin:0;font-size:18px;">🚚 Shipping History</h2>
         <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn-card" onclick="toggleNewLabelForm()" style="padding:6px 14px;font-size:12px;background:rgba(45,212,160,0.1);border-color:rgba(45,212,160,0.3);color:var(--green);">📦 New Label</button>
           <button class="btn-card" onclick="syncShippoGlobal()" id="btnSyncShippoGlobal" style="padding:6px 14px;font-size:12px;">📦 Sync from Shippo</button>
           <button class="btn-card" onclick="refreshAllTracking()" id="btnRefreshAllTracking" style="padding:6px 14px;font-size:12px;">🔄 Refresh Tracking</button>
         </div>
+      </div>
+      <!-- v2.8.6: Standalone New Label form -->
+      <div id="newLabelForm" style="display:none;margin-bottom:16px;padding:16px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <div style="font-size:14px;font-weight:600;color:var(--gold);">📦 Create Standalone Label</div>
+          <button class="btn-card" onclick="toggleNewLabelForm()" style="padding:2px 10px;font-size:11px;">✕ Close</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px 14px;margin-bottom:10px;">
+          <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Recipient Name</div><input class="form-input" id="nlName" style="width:100%;text-align:left;" placeholder="Customer name"></div>
+          <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Street Address</div><input class="form-input" id="nlStreet" style="width:100%;text-align:left;" placeholder="123 Main St"></div>
+          <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">City</div><input class="form-input" id="nlCity" style="width:100%;text-align:left;" placeholder="City"></div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">State</div><input class="form-input" id="nlState" style="width:100%;text-align:center;" placeholder="FL" maxlength="2"></div>
+            <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">ZIP</div><input class="form-input" id="nlZip" style="width:100%;text-align:center;" placeholder="12345"></div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:10px;">
+          <div><div style="font-size:10px;color:var(--gold);text-transform:uppercase;margin-bottom:4px;">Weight (lb)</div><input class="form-input" id="nlWeight" style="width:100%;text-align:center;" placeholder="1" value="1"></div>
+          <div><div style="font-size:10px;color:var(--gold);text-transform:uppercase;margin-bottom:4px;">Length (in)</div><input class="form-input" id="nlLength" style="width:100%;text-align:center;" placeholder="12" value="12"></div>
+          <div><div style="font-size:10px;color:var(--gold);text-transform:uppercase;margin-bottom:4px;">Width (in)</div><input class="form-input" id="nlWidth" style="width:100%;text-align:center;" placeholder="9" value="9"></div>
+          <div><div style="font-size:10px;color:var(--gold);text-transform:uppercase;margin-bottom:4px;">Height (in)</div><input class="form-input" id="nlHeight" style="width:100%;text-align:center;" placeholder="4" value="4"></div>
+          <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">SKU / Ref</div><input class="form-input" id="nlSku" style="width:100%;text-align:center;" placeholder="Optional"></div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button class="btn-card btn-push" onclick="getNewLabelRates()" style="padding:8px 20px;">📦 Get Quotes</button>
+          <span style="font-size:12px;color:var(--muted2);">No item card needed — standalone label</span>
+        </div>
+        <div id="nlRateResults" style="margin-top:10px;font-size:13px;color:var(--muted);"></div>
       </div>
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
         <select class="filter-select" id="shipFilterCarrier" onchange="renderShippingTab()">
@@ -1137,6 +1190,8 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
           <option value="TRANSIT">In Transit</option>
           <option value="PRE_TRANSIT">Pre-Transit</option>
           <option value="SUCCESS">Label Created</option>
+          <option value="VOIDED">Voided</option>
+          <option value="UNSHIPPED">⚠ Unshipped Orders</option>
         </select>
         <input type="date" class="date-input" id="shipFilterFrom" onchange="renderShippingTab()" style="width:140px;">
         <span style="color:var(--muted);">to</span>
@@ -3347,7 +3402,7 @@ async function buyLabel(rateIndex) {
     // Save to shippo_transactions
     try {
       const addr = state.lastShipTo || {};
-      await sb.from('shippo_transactions').insert({
+      const { data: insertedRows } = await sb.from('shippo_transactions').insert({
         sku: item.sku,
         transaction_id: result.transactionId || null,
         order_id: null,
@@ -3371,7 +3426,11 @@ async function buyLabel(rateIndex) {
         synced_at: new Date().toISOString(),
         raw_metadata: item.sku,
         matched_to_sale: false
-      });
+      }).select('id');
+      // v2.8.6: Try to link to a sale
+      if (insertedRows?.[0]?.id) {
+        tryLinkLabelToSale(insertedRows[0].id, item.sku, addr.name);
+      }
     } catch(dbErr) {
       console.warn('Failed to save label to shippo_transactions:', dbErr.message);
     }
@@ -3388,6 +3447,38 @@ async function buyLabel(rateIndex) {
 
     // Refresh shipping history
     loadShippingHistory(item.sku);
+
+    // v2.8.6: Auto-prompt to send notification
+    if (result.trackingNumber) {
+      const addr = state.lastShipTo || {};
+      setTimeout(async () => {
+        if (confirm(`Label purchased! Send tracking notification to customer?\n\nTracking: ${result.trackingNumber}`)) {
+          let buyerEmail = '';
+          try {
+            const { data } = await sb.from('sales_history').select('buyer_email').eq('sku', item.sku).not('buyer_email','is',null).order('sale_date',{ascending:false}).limit(1);
+            if (data?.[0]?.buyer_email) buyerEmail = data[0].buyer_email;
+          } catch(e) {}
+          const email = prompt('Customer email:', buyerEmail);
+          if (email && email.includes('@')) {
+            try {
+              const payload = buildNotificationPayload(
+                { tracking_number: result.trackingNumber, carrier: result.carrier || rate.provider, service_name: result.service || rate.service, recipient_name: addr.name || 'Customer' },
+                item
+              );
+              await postToProxy(shippoUrl, {
+                action: 'sendNotification', key: apiKey,
+                email, recipientName: addr.name || 'Customer',
+                trackingNumber: result.trackingNumber, carrier: result.carrier || rate.provider,
+                serviceName: result.service || rate.service, sku: item.sku,
+                productName: item.product_name || '',
+                htmlBody: payload.htmlBody, subject: payload.subject
+              });
+              showCardStatus(`Notification sent to ${email}`, 'ok');
+            } catch(ne) { console.log('Notification send failed:', ne.message); }
+          }
+        }
+      }, 500);
+    }
 
   } catch(e) {
     showCardStatus(`Label purchase failed: ${e.message}`, 'error');
@@ -3564,6 +3655,7 @@ async function loadShippingHistory(sku) {
               <button class="btn-card" onclick="getReturnRates(${idx})" style="padding:4px 12px;font-size:11px;">🔄 Return Label</button>
               ${r.tracking_number ? `<button class="btn-card" onclick="sendShipNotification(${idx})" style="padding:4px 12px;font-size:11px;">📧 Send Notification</button>` : ''}
               ${r.label_url ? `<a href="${escAttr(r.label_url)}" target="_blank" class="btn-card" style="padding:4px 12px;font-size:11px;text-decoration:none;display:inline-block;">📄 Download Label</a>` : ''}
+              ${r.transaction_id && r.label_status !== 'VOIDED' && r.label_status !== 'RETURN' ? `<button class="btn-card" onclick="voidLabel(${idx},'item')" style="padding:4px 12px;font-size:11px;border-color:rgba(240,92,92,0.4);color:var(--red);">🚫 Void Label</button>` : ''}
             </div>
             <div id="shipAction_${idx}" style="margin-top:8px;"></div>
           </div>
@@ -3805,7 +3897,8 @@ async function buyReturnLabel(rateIndex) {
 
     // Show download link
     if (ctx.shipmentIdx !== undefined) {
-      const container = $(`shipAction_${ctx.shipmentIdx}`);
+      const prefix = ctx.source === 'global' ? 'gShipAction_' : 'shipAction_';
+      const container = $(prefix + ctx.shipmentIdx);
       if (container && result.labelUrl) {
         container.innerHTML = `<div style="padding:10px;background:rgba(45,212,160,0.06);border:1px solid rgba(45,212,160,0.2);border-radius:var(--radius);font-size:12px;">
           ✅ Return label purchased — <a href="${escAttr(result.labelUrl)}" target="_blank" style="color:var(--gold);font-weight:600;">📄 Download Return Label</a>
@@ -3855,7 +3948,7 @@ async function sendShipNotification(idx) {
   if (container) container.innerHTML = '<span style="color:var(--muted);font-size:12px;">⏳ Sending notification...</span>';
 
   try {
-    const result = await fetchOrJsonp(shippoUrl, {
+    const result = await postToProxy(shippoUrl, {
       action: 'sendNotification',
       key: apiKey,
       email: email,
@@ -3864,7 +3957,9 @@ async function sendShipNotification(idx) {
       carrier: r.carrier || '',
       serviceName: r.service_name || '',
       sku: item?.sku || r.sku || '',
-      productName: item?.product_name || ''
+      productName: item?.product_name || '',
+      htmlBody: buildNotificationPayload(r, item).htmlBody,
+      subject: buildNotificationPayload(r, item).subject
     });
 
     if (result.success) {
@@ -6070,6 +6165,25 @@ async function fetchOrJsonp(url, params = {}) {
     return await jsonpRequest(url, params);
   }
 }
+
+// v2.8.6: POST for large payloads (email templates, etc.) — avoids URL length limits
+async function postToProxy(url, data = {}) {
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      redirect: 'follow'
+    });
+    return await resp.json();
+  } catch(e) {
+    // POST failed (CORS/redirect issue) — fallback to GET without htmlBody
+    console.warn('[postToProxy] POST failed, falling back to GET:', e.message);
+    const fallback = { ...data };
+    delete fallback.htmlBody;
+    delete fallback.plainBody;
+    return await fetchOrJsonp(url, fallback);
+  }
+}
 function jsonpRequest(url, params = {}) {
   return new Promise((resolve, reject) => {
     const cbName = '_jsonp_' + Date.now() + '_' + Math.random().toString(36).substr(2,6);
@@ -6647,14 +6761,24 @@ document.addEventListener('keydown', e => {
 // SHIPPING TAB (top-level — all items)
 // ═══════════════════════════════════════════════════════════
 let shipTabData = [];
+let shipProductNames = {}; // SKU → product_name lookup
+let shipSortCol = 'date';
+let shipSortDir = 'desc';
 
 async function loadShippingTab() {
   const container = $('shippingTabContent');
   container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">Loading shipping data...</div>';
   try {
-    const { data, error } = await sb.from('shippo_transactions').select('*').order('shippo_created_at', { ascending: false }).limit(500);
+    const [{ data, error }, { data: itemRows }] = await Promise.all([
+      sb.from('shippo_transactions').select('*').order('shippo_created_at', { ascending: false }).limit(500),
+      sb.from('items').select('sku,product_name').limit(5000)
+    ]);
     if (error) throw error;
     shipTabData = data || [];
+
+    // Build product name lookup
+    shipProductNames = {};
+    (itemRows || []).forEach(i => { if (i.sku) shipProductNames[i.sku] = i.product_name || ''; });
     
     // Enrich missing SKUs from sales_history by matching order_id or recipient+date
     const needsSku = shipTabData.filter(r => !r.sku && (r.order_id || r.recipient_name));
@@ -6725,6 +6849,12 @@ function renderShippingTab() {
   const fromDate = $('shipFilterFrom').value;
   const toDate = $('shipFilterTo').value;
 
+  // v2.8.6: Unshipped orders — special view
+  if (status === 'UNSHIPPED') {
+    renderUnshippedOrders(container, fromDate, toDate);
+    return;
+  }
+
   let rows = shipTabData;
   if (carrier !== 'all') rows = rows.filter(r => (r.carrier || '').toUpperCase().includes(carrier.toUpperCase()));
   if (status !== 'all') {
@@ -6735,11 +6865,28 @@ function renderShippingTab() {
   }
   if (fromDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) >= fromDate);
   if (toDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) <= toDate);
-  // Hide hidden orders unless toggle is checked
   const showHidden = $('shipShowHidden') && $('shipShowHidden').checked;
   if (!showHidden) rows = rows.filter(r => !r.is_hidden);
 
-  state.filteredShipRows = rows; // store for drill-down
+  // v2.8.6: Sort
+  rows = [...rows].sort((a, b) => {
+    let va, vb;
+    switch (shipSortCol) {
+      case 'date': va = a.shippo_created_at || ''; vb = b.shippo_created_at || ''; break;
+      case 'sku': va = a.sku || ''; vb = b.sku || ''; break;
+      case 'product': va = shipProductNames[a.sku] || ''; vb = shipProductNames[b.sku] || ''; break;
+      case 'carrier': va = a.carrier || ''; vb = b.carrier || ''; break;
+      case 'service': va = a.service_name || ''; vb = b.service_name || ''; break;
+      case 'status': va = a.tracking_status || a.label_status || ''; vb = b.tracking_status || b.label_status || ''; break;
+      case 'recipient': va = a.recipient_name || ''; vb = b.recipient_name || ''; break;
+      case 'cost': va = pf(a.label_cost); vb = pf(b.label_cost); break;
+      default: va = a.shippo_created_at || ''; vb = b.shippo_created_at || '';
+    }
+    if (typeof va === 'number') return shipSortDir === 'asc' ? va - vb : vb - va;
+    return shipSortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+  });
+
+  state.filteredShipRows = rows;
   $('shipResultCount').textContent = `${rows.length} shipments`;
 
   if (rows.length === 0) {
@@ -6747,12 +6894,13 @@ function renderShippingTab() {
     return;
   }
 
-  // Summary stats
   const costs = rows.filter(r => pf(r.label_cost) > 0).map(r => pf(r.label_cost));
   const totalCost = costs.reduce((a,b) => a+b, 0);
   const avgCost = costs.length > 0 ? totalCost / costs.length : 0;
   const delivered = rows.filter(r => (r.tracking_status || '') === 'DELIVERED').length;
   const inTransit = rows.filter(r => ['TRANSIT','IN_TRANSIT'].includes(r.tracking_status || '')).length;
+
+  const sortIcon = (col) => shipSortCol === col ? (shipSortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
   let html = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
     <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Total Shipments</div><div style="font-size:22px;font-weight:700;color:var(--text);">${rows.length}</div></div>
@@ -6762,8 +6910,18 @@ function renderShippingTab() {
   </div>`;
 
   html += `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
-    <colgroup><col style="width:90px"><col style="width:100px"><col style="width:60px"><col style="width:130px"><col style="width:90px"><col style="width:180px"><col style="width:auto"><col style="width:70px"></colgroup>
-    <thead><tr><th>Date</th><th>SKU</th><th>Carrier</th><th>Service</th><th>Status</th><th>Recipient</th><th>Tracking</th><th style="text-align:right;">Cost</th></tr></thead>
+    <colgroup><col style="width:85px"><col style="width:80px"><col style="width:160px"><col style="width:55px"><col style="width:110px"><col style="width:80px"><col style="width:130px"><col style="width:auto"><col style="width:65px"></colgroup>
+    <thead><tr>
+      <th style="cursor:pointer;" onclick="shipSortBy('date')">Date${sortIcon('date')}</th>
+      <th style="cursor:pointer;" onclick="shipSortBy('sku')">SKU${sortIcon('sku')}</th>
+      <th style="cursor:pointer;" onclick="shipSortBy('product')">Product${sortIcon('product')}</th>
+      <th style="cursor:pointer;" onclick="shipSortBy('carrier')">Carrier${sortIcon('carrier')}</th>
+      <th style="cursor:pointer;" onclick="shipSortBy('service')">Service${sortIcon('service')}</th>
+      <th style="cursor:pointer;" onclick="shipSortBy('status')">Status${sortIcon('status')}</th>
+      <th style="cursor:pointer;" onclick="shipSortBy('recipient')">Recipient${sortIcon('recipient')}</th>
+      <th>Tracking</th>
+      <th style="text-align:right;cursor:pointer;" onclick="shipSortBy('cost')">Cost${sortIcon('cost')}</th>
+    </tr></thead>
     <tbody>${rows.map((r, idx) => {
       const date = (r.shippo_created_at || '').substring(0,10);
       const cost = pf(r.label_cost);
@@ -6771,12 +6929,14 @@ function renderShippingTab() {
       const tsColor = ts === 'DELIVERED' ? 'var(--green)' : ts === 'TRANSIT' || ts === 'IN_TRANSIT' ? 'var(--yellow)' : ts === 'PRE_TRANSIT' ? 'var(--muted)' : ts === 'SUCCESS' ? 'var(--blue)' : 'var(--muted)';
       const sku = escHtml(r.sku || '—');
       const skuLink = r.sku ? `<a href="#" onclick="openItemFromShipping('${escAttr(r.sku)}');return false;" style="color:var(--gold);">${sku}</a>` : `<span style="color:var(--muted2);">${sku}</span>`;
+      const prodName = escHtml((r.sku && shipProductNames[r.sku]) ? shipProductNames[r.sku].substring(0,35) : '—');
       const recipientName = escHtml(r.recipient_name || '—');
       const recipientLoc = [r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ');
       const trackNum = r.tracking_number ? escHtml(r.tracking_number) : '—';
       return `<tr style="cursor:pointer;${r.is_hidden ? 'opacity:0.4;' : ''}" onclick="toggleGlobalShipDetail(${idx})" title="Click for details">
         <td class="mono" style="font-size:12px;">${date}</td>
         <td style="font-size:12px;" onclick="event.stopPropagation();">${skuLink}</td>
+        <td style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(shipProductNames[r.sku] || '')}">${prodName}</td>
         <td style="font-size:12px;">${escHtml(r.carrier || '—')}</td>
         <td style="font-size:11px;">${escHtml(r.service_name || '—')}</td>
         <td id="gShipStatus_${idx}" style="font-size:11px;font-weight:600;color:${tsColor};">${escHtml(ts)}</td>
@@ -6785,27 +6945,31 @@ function renderShippingTab() {
         <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
       </tr>
       <tr id="gShipDetail_${idx}" style="display:none;">
-        <td colspan="8" style="padding:0;">
+        <td colspan="9" style="padding:0;">
           <div style="padding:14px 18px;background:var(--bg3);border-left:3px solid var(--gold);">
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px 24px;font-size:12px;">
               <div><span style="color:var(--muted2);">Recipient:</span> <strong>${recipientName}</strong></div>
+              <div><span style="color:var(--muted2);">Address:</span> ${escHtml(r.recipient_street || '—')}</div>
               <div><span style="color:var(--muted2);">Location:</span> ${escHtml(recipientLoc || '—')}</div>
-              <div><span style="color:var(--muted2);">Cost:</span> <strong style="color:var(--gold);">$${cost.toFixed(2)}</strong></div>
               <div><span style="color:var(--muted2);">Weight:</span> ${r.parcel_weight ? pf(r.parcel_weight) + ' lb' : '—'}</div>
               <div><span style="color:var(--muted2);">Dimensions:</span> ${r.parcel_length ? pf(r.parcel_length) + '×' + pf(r.parcel_width) + '×' + pf(r.parcel_height) + '"' : '—'}</div>
+              <div><span style="color:var(--muted2);">Cost:</span> <strong style="color:var(--gold);">$${cost.toFixed(2)}</strong></div>
               <div><span style="color:var(--muted2);">Order:</span> ${escHtml(r.order_id || r.order_number_raw || '—')}</div>
               <div><span style="color:var(--muted2);">Metadata:</span> ${escHtml(r.raw_metadata || r.item_description || '—')}</div>
-              <div><span style="color:var(--muted2);">Transaction ID:</span> <span class="mono" style="font-size:10px;">${escHtml(r.transaction_id || '—')}</span></div>
               <div><span style="color:var(--muted2);">Synced:</span> ${(r.synced_at || '').substring(0,10)}</div>
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
-              ${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);color:var(--blue);">🔗 Track Package</a>` : ''}
-              ${r.label_url ? `<a href="${escAttr(r.label_url)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(212,168,83,0.15);border-color:rgba(212,168,83,0.4);color:var(--gold);">📄 Download Label</a>` : ''}
+              <button class="btn-card" onclick="event.stopPropagation();gDuplicateShipment(${idx})" style="padding:6px 16px;font-size:12px;">📋 Reship to Same Address</button>
+              <button class="btn-card" onclick="event.stopPropagation();gGetReturnRates(${idx})" style="padding:6px 16px;font-size:12px;">🔄 Return Label</button>
+              ${r.tracking_number ? `<button class="btn-card" onclick="event.stopPropagation();gSendShipNotification(${idx})" style="padding:6px 16px;font-size:12px;">📧 Send Notification</button>` : ''}
+              ${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(59,130,246,0.15);border-color:rgba(59,130,246,0.4);color:var(--blue);" onclick="event.stopPropagation();">🔗 Track Package</a>` : ''}
+              ${r.label_url ? `<a href="${escAttr(r.label_url)}" target="_blank" class="btn-card" style="padding:6px 16px;font-size:12px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;background:rgba(212,168,83,0.15);border-color:rgba(212,168,83,0.4);color:var(--gold);" onclick="event.stopPropagation();">📄 Download Label</a>` : ''}
               <button class="btn-card" onclick="event.stopPropagation();openItemFromShipping('${escAttr(r.sku || '')}')" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>📦 Open Item</button>
-              <button class="btn-card" onclick="event.stopPropagation();openItemShippingTab('${escAttr(r.sku || '')}', ${idx})" style="padding:6px 16px;font-size:12px;" ${!r.sku ? 'disabled title="No SKU linked"' : ''}>🏷 Buy Another Label</button>
               <button class="btn-card" onclick="event.stopPropagation();openSlipFromShipping(${idx})" style="padding:6px 16px;font-size:12px;">🧾 Packing Slip</button>
               <button class="btn-card" onclick="event.stopPropagation();hideShipment(${idx})" style="padding:6px 16px;font-size:12px;border-color:rgba(90,110,148,0.4);color:var(--muted);">${r.is_hidden ? '👁 Unhide' : '👁‍🗨 Hide'}</button>
+              ${r.transaction_id && (r.label_status||'') !== 'VOIDED' && (r.label_status||'') !== 'RETURN' ? `<button class="btn-card" onclick="event.stopPropagation();voidLabel(${idx},'global')" style="padding:6px 16px;font-size:12px;border-color:rgba(240,92,92,0.4);color:var(--red);">🚫 Void Label</button>` : ''}
             </div>
+            <div id="gShipAction_${idx}" style="margin-top:8px;"></div>
           </div>
         </td>
       </tr>`;
@@ -6817,6 +6981,365 @@ function renderShippingTab() {
 function toggleGlobalShipDetail(idx) {
   const el = $(`gShipDetail_${idx}`);
   if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+
+// v2.8.6: Column sorting for Shipping History tab
+function shipSortBy(col) {
+  if (shipSortCol === col) {
+    shipSortDir = shipSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    shipSortCol = col;
+    shipSortDir = col === 'cost' ? 'desc' : 'asc';
+  }
+  renderShippingTab();
+}
+
+// v2.8.6: Standalone New Label form
+function toggleNewLabelForm() {
+  const form = $('newLabelForm');
+  if (form) form.style.display = form.style.display === 'none' ? '' : 'none';
+}
+
+async function getNewLabelRates() {
+  const container = $('nlRateResults');
+  if (!container) return;
+  const zip = ($('nlZip') || {}).value || '';
+  if (!zip || zip.trim().length < 5) {
+    container.innerHTML = '<span style="color:var(--red);">Please enter at least a valid ZIP code.</span>';
+    return;
+  }
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { container.innerHTML = '<span style="color:var(--red);">Shippo proxy not configured.</span>'; return; }
+
+  container.innerHTML = '<span style="color:var(--muted);">⏳ Fetching rates...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'getRates', key: apiKey,
+      weight: String(pf($('nlWeight')?.value) || 1),
+      length: String(pf($('nlLength')?.value) || 12),
+      width: String(pf($('nlWidth')?.value) || 9),
+      height: String(pf($('nlHeight')?.value) || 4),
+      toName: ($('nlName')?.value) || 'Customer',
+      toStreet: ($('nlStreet')?.value) || '',
+      toCity: ($('nlCity')?.value) || '',
+      toState: ($('nlState')?.value) || '',
+      toZip: zip.trim()
+    });
+
+    if (!result.success) {
+      container.innerHTML = `<span style="color:var(--red);">Error: ${escHtml(result.error)}</span>`;
+      return;
+    }
+
+    state.newLabelRates = filterRates(result.rates || [], getShipToFilterIds());
+    if (state.newLabelRates.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted);">No rates returned.</span>';
+      return;
+    }
+
+    container.innerHTML = `<div class="table-wrapper"><table>
+      <thead><tr><th>Carrier</th><th>Service</th><th>Est. Days</th><th>Cost</th><th></th></tr></thead>
+      <tbody>${state.newLabelRates.map((r, i) => `<tr>
+        <td>${escHtml(r.provider || '—')}</td>
+        <td>${escHtml(r.service || '—')}</td>
+        <td class="mono">${r.estimatedDays || '—'}</td>
+        <td class="mono" style="font-weight:700;color:var(--gold);">$${pf(r.amount).toFixed(2)}</td>
+        <td><button class="markup-btn" style="background:var(--green-bg);color:var(--green);border-color:rgba(45,212,160,0.3);padding:4px 12px;font-size:11px;" onclick="buyNewLabel(${i})">🏷 Buy</button></td>
+      </tr>`).join('')}</tbody></table></div>`;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--red);">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+async function buyNewLabel(rateIndex) {
+  const rate = (state.newLabelRates || [])[rateIndex];
+  if (!rate || !rate.objectId) return;
+  const sku = ($('nlSku')?.value || '').trim();
+  const name = ($('nlName')?.value || '');
+
+  if (!confirm(`Buy shipping label?\n\n${rate.provider} — ${rate.service}\nCost: $${pf(rate.amount).toFixed(2)}${sku ? '\nRef: ' + sku : ''}\n\nThis will charge your Shippo account.`)) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  const container = $('nlRateResults');
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'purchaseLabel', key: apiKey,
+      rateId: rate.objectId, labelType: 'PDF',
+      metadata: sku || 'STANDALONE'
+    });
+
+    if (!result.success) {
+      if (container) container.innerHTML = `<span style="color:var(--red);">Label failed: ${escHtml(result.error)}</span>`;
+      return;
+    }
+
+    // Save to DB
+    try {
+      await sb.from('shippo_transactions').insert({
+        sku: sku || null,
+        transaction_id: result.transactionId || null,
+        carrier: result.carrier || rate.provider,
+        service_name: result.service || rate.service,
+        tracking_number: result.trackingNumber || null,
+        label_url: result.labelUrl || null,
+        label_status: result.status || 'SUCCESS',
+        status: result.status || 'SUCCESS',
+        label_cost: pf(result.amount || rate.amount),
+        recipient_name: name || null,
+        recipient_street: ($('nlStreet')?.value) || null,
+        recipient_city: ($('nlCity')?.value) || null,
+        recipient_state: ($('nlState')?.value) || null,
+        recipient_zip: ($('nlZip')?.value) || null,
+        parcel_weight: pf($('nlWeight')?.value) || null,
+        parcel_length: pf($('nlLength')?.value) || null,
+        parcel_width: pf($('nlWidth')?.value) || null,
+        parcel_height: pf($('nlHeight')?.value) || null,
+        shippo_created_at: new Date().toISOString(),
+        synced_at: new Date().toISOString(),
+        raw_metadata: sku || 'STANDALONE',
+        matched_to_sale: false
+      });
+    } catch(dbErr) { console.warn('DB save failed:', dbErr.message); }
+
+    if (container) container.innerHTML = `<div style="padding:12px;background:rgba(45,212,160,0.06);border:1px solid rgba(45,212,160,0.2);border-radius:var(--radius);font-size:12px;">
+      ✅ Label purchased — ${result.trackingNumber ? `Tracking: <span class="mono" style="font-weight:700;">${escHtml(result.trackingNumber)}</span>` : 'Processing...'}
+      ${result.labelUrl ? ` · <a href="${escAttr(result.labelUrl)}" target="_blank" style="color:var(--gold);font-weight:600;">📄 Download Label</a>` : ''}
+    </div>`;
+
+    logActivity('SHIPPING','LABEL_PURCHASED',null,`Standalone label: ${sku || 'no SKU'} via ${rate.provider} $${pf(rate.amount).toFixed(2)}`,{},sku || null);
+
+    // Reload shipping data to show the new label
+    setTimeout(() => loadShippingTab(), 1000);
+
+  } catch(e) {
+    if (container) container.innerHTML = `<span style="color:var(--red);">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// v2.8.6: Global Shipping tab wrappers — use filteredShipRows instead of shippingRows
+function gDuplicateShipment(idx) {
+  const rows = state.filteredShipRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+  // Open the item card and switch to shipping tab, pre-filling the address
+  if (r.sku) {
+    // Store address for pre-fill after item loads
+    state.lastShipTo = { name: r.recipient_name||'', street: r.recipient_street||'', city: r.recipient_city||'', st: r.recipient_state||'', zip: r.recipient_zip||'' };
+    openItemShippingTab(r.sku, idx);
+    // After a short delay to let the tab render, pre-fill
+    setTimeout(() => {
+      if ($('shipToName')) $('shipToName').value = r.recipient_name || '';
+      if ($('shipToStreet')) $('shipToStreet').value = r.recipient_street || '';
+      if ($('shipToCity')) $('shipToCity').value = r.recipient_city || '';
+      if ($('shipToState')) $('shipToState').value = r.recipient_state || '';
+      if ($('shipToZip')) $('shipToZip').value = r.recipient_zip || '';
+      if (r.parcel_weight && $('shipWeight')) $('shipWeight').value = pf(r.parcel_weight);
+      if (r.parcel_length && $('shipLength')) $('shipLength').value = pf(r.parcel_length);
+      if (r.parcel_width && $('shipWidth')) $('shipWidth').value = pf(r.parcel_width);
+      if (r.parcel_height && $('shipHeight')) $('shipHeight').value = pf(r.parcel_height);
+    }, 500);
+  } else {
+    alert('No SKU linked to this shipment — cannot open item card.');
+  }
+}
+
+async function gGetReturnRates(idx) {
+  const rows = state.filteredShipRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+  const container = $(`gShipAction_${idx}`);
+  if (!container) return;
+
+  if (!r.recipient_zip) {
+    container.innerHTML = '<span style="color:var(--red);font-size:12px;">Cannot create return — no ZIP on file.</span>';
+    return;
+  }
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { container.innerHTML = '<span style="color:var(--red);font-size:12px;">Shippo proxy not configured.</span>'; return; }
+
+  container.innerHTML = '<span style="color:var(--muted);font-size:12px;">⏳ Fetching return rates...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'getRates', key: apiKey,
+      fromName: r.recipient_name || 'Customer', fromStreet: r.recipient_street || '',
+      fromCity: r.recipient_city || '', fromState: r.recipient_state || '', fromZip: r.recipient_zip,
+      toName: 'CCD Inventory', toStreet: '2300 SE 157th Lane Rd',
+      toCity: 'Summerfield', toState: 'FL', toZip: '34491',
+      weight: String(r.parcel_weight || 1), length: String(r.parcel_length || 10),
+      width: String(r.parcel_width || 10), height: String(r.parcel_height || 5)
+    });
+
+    if (!result.success) {
+      container.innerHTML = `<span style="color:var(--red);font-size:12px;">Error: ${escHtml(result.error || 'Unknown')}</span>`;
+      return;
+    }
+
+    const rates = filterRates(result.rates || [], getShipToFilterIds());
+    state.returnRates = rates;
+    state.returnShipmentId = result.shipmentId || '';
+    state.returnContext = { shipmentIdx: idx, sku: r.sku, source: 'global' };
+
+    if (rates.length === 0) {
+      container.innerHTML = '<span style="color:var(--muted);font-size:12px;">No return rates available.</span>';
+      return;
+    }
+
+    container.innerHTML = `<div style="margin-top:8px;padding:10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);">
+      <div style="font-size:12px;font-weight:600;color:var(--gold);margin-bottom:8px;">🔄 Return Label Rates — ${escHtml(r.recipient_name || 'Customer')} → CCD</div>
+      <div class="table-wrapper"><table>
+        <thead><tr><th>Carrier</th><th>Service</th><th>Est. Days</th><th>Cost</th><th></th></tr></thead>
+        <tbody>${rates.map((rt, i) => `<tr>
+          <td>${escHtml(rt.provider || '—')}</td><td>${escHtml(rt.service || '—')}</td>
+          <td class="mono">${rt.estimatedDays || '—'}</td>
+          <td class="mono" style="font-weight:700;color:var(--gold);">$${pf(rt.amount).toFixed(2)}</td>
+          <td><button class="markup-btn" style="background:var(--green-bg);color:var(--green);border-color:rgba(45,212,160,0.3);padding:4px 12px;font-size:11px;" onclick="event.stopPropagation();buyReturnLabel(${i})">🏷 Buy</button></td>
+        </tr>`).join('')}</tbody></table></div>
+    </div>`;
+  } catch(e) {
+    container.innerHTML = `<span style="color:var(--red);font-size:12px;">Failed: ${escHtml(e.message)}</span>`;
+  }
+}
+
+async function gSendShipNotification(idx) {
+  const rows = state.filteredShipRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+  const container = $(`gShipAction_${idx}`);
+
+  if (!r.tracking_number) {
+    if (container) container.innerHTML = '<span style="color:var(--red);font-size:12px;">No tracking number.</span>';
+    return;
+  }
+
+  let buyerEmail = '';
+  if (r.order_id || r.order_number_raw) {
+    try {
+      const orderId = r.order_id || r.order_number_raw;
+      const { data } = await sb.from('sales_history').select('buyer_email').or(`order_id.eq.${orderId},order_number.eq.${orderId}`).not('buyer_email','is',null).limit(1);
+      if (data && data[0]?.buyer_email) buyerEmail = data[0].buyer_email;
+    } catch(e) {}
+  }
+
+  const email = prompt(`Send shipping notification.\n\nTracking: ${r.tracking_number}\nCarrier: ${r.carrier || '—'}\n\nEnter customer email:`, buyerEmail);
+  if (!email || !email.includes('@')) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) return;
+
+  if (container) container.innerHTML = '<span style="color:var(--muted);font-size:12px;">⏳ Sending...</span>';
+
+  try {
+    const result = await postToProxy(shippoUrl, {
+      action: 'sendNotification', key: apiKey,
+      email, recipientName: r.recipient_name || 'Customer',
+      trackingNumber: r.tracking_number, carrier: r.carrier || '',
+      serviceName: r.service_name || '', sku: r.sku || '', productName: shipProductNames[r.sku] || '',
+      htmlBody: buildNotificationPayload(r, { sku: r.sku, product_name: shipProductNames[r.sku] || '' }).htmlBody,
+      subject: buildNotificationPayload(r, { sku: r.sku }).subject
+    });
+
+    if (result.success) {
+      if (container) container.innerHTML = `<span style="color:var(--green);font-size:12px;">✅ Notification sent to ${escHtml(email)}</span>`;
+      logActivity('SHIPPING','NOTIFICATION_SENT',null,`Tracking notification: ${r.tracking_number} → ${email}`,{},r.sku);
+    } else {
+      if (container) container.innerHTML = `<span style="color:var(--red);font-size:12px;">Failed: ${escHtml(result.error || 'Unknown')}</span>`;
+    }
+  } catch(e) {
+    if (container) container.innerHTML = `<span style="color:var(--red);font-size:12px;">Error: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// v2.8.6: Void / Refund a shipping label
+async function voidLabel(idx, source) {
+  const rows = source === 'global' ? state.filteredShipRows : state.shippingRows;
+  if (!rows || !rows[idx]) return;
+  const r = rows[idx];
+
+  if (!r.transaction_id) {
+    alert('No Shippo transaction ID on this record — cannot void.');
+    return;
+  }
+
+  if (!confirm(`Void this shipping label?\n\nCarrier: ${r.carrier || '—'}\nTracking: ${r.tracking_number || '—'}\nCost: $${pf(r.label_cost).toFixed(2)}\n\nShippo will process a refund if eligible.`)) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { alert('Shippo proxy not configured.'); return; }
+
+  const prefix = source === 'global' ? 'gShipAction_' : 'shipAction_';
+  const container = $(prefix + idx);
+  if (container) container.innerHTML = '<span style="color:var(--muted);font-size:12px;">⏳ Voiding label...</span>';
+
+  try {
+    const result = await fetchOrJsonp(shippoUrl, {
+      action: 'voidLabel', key: apiKey,
+      transactionId: r.transaction_id
+    });
+
+    if (result.success) {
+      // Update DB
+      try {
+        await sb.from('shippo_transactions').update({
+          label_status: 'VOIDED', status: 'VOIDED'
+        }).eq('id', r.id);
+        r.label_status = 'VOIDED';
+        r.status = 'VOIDED';
+      } catch(e) { console.warn('DB update failed:', e.message); }
+
+      if (container) container.innerHTML = `<span style="color:var(--green);font-size:12px;">✅ Label voided — refund status: ${escHtml(result.status || 'processing')}</span>`;
+      logActivity('SHIPPING','LABEL_VOIDED',null,`Voided label: ${r.tracking_number || r.transaction_id}`,{},r.sku);
+
+      // Re-render after short delay
+      if (source === 'global') {
+        setTimeout(() => renderShippingTab(), 500);
+      } else if (state.currentItem?.sku) {
+        setTimeout(() => loadShippingHistory(state.currentItem.sku), 500);
+      }
+    } else {
+      if (container) container.innerHTML = `<span style="color:var(--red);font-size:12px;">Void failed: ${escHtml(result.error || 'Unknown')}</span>`;
+    }
+  } catch(e) {
+    if (container) container.innerHTML = `<span style="color:var(--red);font-size:12px;">Error: ${escHtml(e.message)}</span>`;
+  }
+}
+
+// v2.8.6: Try to link a shippo_transaction to a sales_history record
+async function tryLinkLabelToSale(shippoRowId, sku, recipientName) {
+  if (!sku || !sb) return;
+  try {
+    // Find most recent unlinked sale for this SKU
+    let query = sb.from('sales_history')
+      .select('id, order_id, ship_to_name')
+      .eq('sku', sku)
+      .order('sale_date', { ascending: false })
+      .limit(5);
+    const { data: sales } = await query;
+    if (!sales || sales.length === 0) return;
+
+    // Prefer name match if we have it
+    let match = null;
+    if (recipientName) {
+      const rn = (recipientName || '').toLowerCase().trim();
+      match = sales.find(s => (s.ship_to_name || '').toLowerCase().trim() === rn);
+    }
+    if (!match) match = sales[0]; // fallback to most recent
+
+    if (match?.order_id) {
+      await sb.from('shippo_transactions').update({
+        matched_to_sale: true,
+        order_id: match.order_id
+      }).eq('id', shippoRowId);
+      console.log(`[Shipping] Linked label ${shippoRowId} to order ${match.order_id}`);
+    }
+  } catch(e) { console.log('[Shipping] Sale linking skipped:', e.message); }
 }
 
 async function hideShipment(idx) {
@@ -6832,6 +7355,81 @@ async function hideShipment(idx) {
     renderShippingTab();
   } catch(e) {
     alert('Failed to update: ' + e.message);
+  }
+}
+
+// v2.8.6: Unshipped orders view — sales without matching labels
+async function renderUnshippedOrders(container, fromDate, toDate) {
+  container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">⏳ Checking for unshipped orders...</div>';
+  try {
+    // Fetch recent online sales (Etsy, Wix, Wayfair — not TM)
+    let query = sb.from('sales_history')
+      .select('id,sku,product_name,order_id,order_number,sale_date,sale_channel,ship_to_name,ship_to_address,buyer_email,qty_sold,sale_price,total_revenue')
+      .in('sale_channel', ['etsy','wix','wayfair'])
+      .neq('status', 'reversed')
+      .order('sale_date', { ascending: false })
+      .limit(500);
+    if (fromDate) query = query.gte('sale_date', fromDate);
+    if (toDate) query = query.lte('sale_date', toDate);
+    const { data: sales } = await query;
+    if (!sales || sales.length === 0) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">No online sales in this date range.</div>';
+      $('shipResultCount').textContent = '0 unshipped';
+      return;
+    }
+
+    // Build set of order_ids that have shippo labels
+    const shippedOrderIds = new Set();
+    const shippedSkuDates = new Set();
+    shipTabData.forEach(r => {
+      if (r.order_id) shippedOrderIds.add(r.order_id);
+      if (r.sku && r.shippo_created_at) shippedSkuDates.add(r.sku + '|' + (r.shippo_created_at||'').substring(0,10));
+    });
+
+    // Filter to unshipped: no matching order_id AND no matching sku+date
+    const unshipped = sales.filter(s => {
+      if (s.order_id && shippedOrderIds.has(s.order_id)) return false;
+      // Also check SKU + sale_date approximate match
+      if (s.sku && s.sale_date) {
+        const key = s.sku + '|' + s.sale_date.substring(0,10);
+        if (shippedSkuDates.has(key)) return false;
+      }
+      return true;
+    });
+
+    $('shipResultCount').textContent = `${unshipped.length} unshipped`;
+
+    if (unshipped.length === 0) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--green);">✅ All orders in this date range have labels!</div>';
+      return;
+    }
+
+    const chColor = { etsy:'var(--etsy,#f97316)', wix:'var(--wix,#3b82f6)', wayfair:'var(--wayfair,#a855f7)' };
+
+    let html = `<div style="padding:10px 14px;background:rgba(234,179,8,0.08);border:1px solid rgba(234,179,8,0.3);border-radius:var(--radius);margin-bottom:16px;font-size:13px;color:var(--yellow);">
+      ⚠ <strong>${unshipped.length} order${unshipped.length !== 1 ? 's' : ''}</strong> without shipping labels in this date range.
+    </div>`;
+
+    html += `<div class="table-wrapper"><table style="width:100%;">
+      <thead><tr><th>Sale Date</th><th>Channel</th><th>SKU</th><th>Product</th><th>Recipient</th><th>Order #</th><th style="text-align:right;">Revenue</th><th></th></tr></thead>
+      <tbody>${unshipped.map(s => {
+        const ch = s.sale_channel || '—';
+        const color = chColor[ch] || 'var(--muted)';
+        return `<tr>
+          <td class="mono" style="font-size:12px;">${(s.sale_date||'').substring(0,10)}</td>
+          <td style="font-size:11px;font-weight:600;color:${color};text-transform:uppercase;">${escHtml(ch)}</td>
+          <td style="font-size:12px;">${s.sku ? `<a href="#" onclick="openItemFromShipping('${escAttr(s.sku)}');return false;" style="color:var(--gold);">${escHtml(s.sku)}</a>` : '—'}</td>
+          <td style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">${escHtml(s.product_name || '—')}</td>
+          <td style="font-size:12px;">${escHtml(s.ship_to_name || '—')}</td>
+          <td class="mono" style="font-size:11px;">${escHtml(s.order_id || s.order_number || '—')}</td>
+          <td class="mono" style="text-align:right;font-weight:600;">$${pf(s.total_revenue).toFixed(2)}</td>
+          <td>${s.sku ? `<button class="btn-card" onclick="openItemShippingTab('${escAttr(s.sku)}')" style="padding:4px 12px;font-size:11px;">🏷 Ship</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
+
+    container.innerHTML = html;
+  } catch(e) {
+    container.innerHTML = `<div style="color:var(--red);text-align:center;padding:40px;">Error: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -7979,6 +8577,25 @@ async function loadSettings() {
       <input type="checkbox" class="shiptoFilterCb" value="${s.id}" ${shiptoIds.includes(s.id) ? 'checked' : ''}> ${escHtml(s.label)}
     </label>`
   ).join('');
+
+  // v2.8.6: Load email template
+  try {
+    const { data } = await sb.from('settings').select('value').eq('key', 'email_template_shipping').limit(1);
+    if (data && data[0] && data[0].value) {
+      const tmpl = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+      state.emailTemplate = tmpl.html || DEFAULT_EMAIL_TEMPLATE;
+      state.emailSubject = tmpl.subject || 'Your order has shipped! — Country Charm Decor';
+      if ($('emailTemplateHtml')) $('emailTemplateHtml').value = state.emailTemplate;
+      if ($('emailSubject')) $('emailSubject').value = state.emailSubject;
+    } else {
+      state.emailTemplate = DEFAULT_EMAIL_TEMPLATE;
+      state.emailSubject = 'Your order has shipped! — Country Charm Decor';
+      if ($('emailTemplateHtml')) $('emailTemplateHtml').value = DEFAULT_EMAIL_TEMPLATE;
+    }
+  } catch(e) {
+    state.emailTemplate = DEFAULT_EMAIL_TEMPLATE;
+    console.log('Email template load skipped:', e.message);
+  }
 }
 
 async function saveSettingsToDb() {
@@ -8066,6 +8683,174 @@ async function saveSettingsToDb() {
     alert('Settings saved successfully');
   } catch(e) {
     alert('Save failed: ' + e.message);
+  }
+}
+
+// v2.8.6: Email Template System
+const DEFAULT_EMAIL_TEMPLATE = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333;">
+<div style="text-align:center;padding:20px 0;border-bottom:2px solid #d4a853;">
+  <h1 style="color:#d4a853;margin:0;font-size:24px;">Country Charm Decor</h1>
+</div>
+<div style="padding:20px 0;">
+  <p>Hi {{recipientName}},</p>
+  <p>Great news! Your order has shipped and is on its way to you.</p>
+  <div style="background:#f8f5f0;border:1px solid #e8e0d4;border-radius:8px;padding:16px;margin:16px 0;">
+    <table style="width:100%;border-collapse:collapse;">
+      <tr><td style="padding:6px 0;color:#888;font-size:13px;">Carrier:</td><td style="padding:6px 0;font-weight:bold;">{{carrier}} {{serviceName}}</td></tr>
+      <tr><td style="padding:6px 0;color:#888;font-size:13px;">Tracking #:</td><td style="padding:6px 0;font-weight:bold;font-family:monospace;">{{trackingNumber}}</td></tr>
+      <tr><td style="padding:6px 0;color:#888;font-size:13px;">Item:</td><td style="padding:6px 0;">{{productName}} ({{sku}})</td></tr>
+    </table>
+  </div>
+  <div style="text-align:center;margin:20px 0;">
+    <a href="{{trackingUrl}}" style="display:inline-block;background:#d4a853;color:#fff;text-decoration:none;padding:12px 30px;border-radius:6px;font-weight:bold;font-size:14px;">Track Your Package</a>
+  </div>
+  <p style="font-size:13px;color:#666;">If you have any questions about your order, please don't hesitate to reach out.</p>
+  <p>Thank you for shopping with us!</p>
+  <p style="color:#d4a853;font-weight:bold;">— Country Charm Decor</p>
+</div>
+<div style="border-top:1px solid #e8e0d4;padding-top:12px;font-size:11px;color:#999;text-align:center;">
+  Country Charm Decor · Summerfield, FL
+</div>
+</body></html>`;
+
+function buildTrackingUrl(trackingNumber, carrier) {
+  const c = (carrier || '').toUpperCase();
+  if (c === 'UPS') return 'https://www.ups.com/track?tracknum=' + encodeURIComponent(trackingNumber);
+  if (c === 'USPS') return 'https://tools.usps.com/go/TrackConfirmAction?tLabels=' + encodeURIComponent(trackingNumber);
+  if (c === 'FEDEX') return 'https://www.fedex.com/fedextrack/?trknbr=' + encodeURIComponent(trackingNumber);
+  return 'https://parcelsapp.com/en/tracking/' + encodeURIComponent(trackingNumber);
+}
+
+function renderEmailTemplate(vars) {
+  let html = state.emailTemplate || DEFAULT_EMAIL_TEMPLATE;
+  const replacements = {
+    '{{recipientName}}': vars.recipientName || 'Customer',
+    '{{trackingNumber}}': vars.trackingNumber || '',
+    '{{trackingUrl}}': vars.trackingUrl || '',
+    '{{carrier}}': vars.carrier || '',
+    '{{serviceName}}': vars.serviceName || '',
+    '{{productName}}': vars.productName || '',
+    '{{sku}}': vars.sku || ''
+  };
+  for (const [key, val] of Object.entries(replacements)) {
+    html = html.split(key).join(val);
+  }
+  return html;
+}
+
+function buildNotificationPayload(shipRow, item) {
+  const trackingUrl = buildTrackingUrl(shipRow.tracking_number, shipRow.carrier);
+  const htmlBody = renderEmailTemplate({
+    recipientName: shipRow.recipient_name || 'Customer',
+    trackingNumber: shipRow.tracking_number || '',
+    trackingUrl,
+    carrier: shipRow.carrier || '',
+    serviceName: shipRow.service_name || '',
+    productName: item?.product_name || '',
+    sku: item?.sku || shipRow.sku || ''
+  });
+  const subject = (state.emailSubject || 'Your order has shipped! — Country Charm Decor');
+  return { htmlBody, subject, trackingUrl };
+}
+
+async function saveEmailTemplate() {
+  if (!sb) { alert('Not connected'); return; }
+  const html = ($('emailTemplateHtml') || {}).value || '';
+  const subject = ($('emailSubject') || {}).value || '';
+  if (!html.trim()) { alert('Template cannot be empty'); return; }
+
+  const statusEl = $('emailTemplateStatus');
+  try {
+    const value = { html, subject };
+    const { data: existing } = await sb.from('settings').select('key').eq('key', 'email_template_shipping').limit(1);
+    const now = new Date().toISOString();
+    if (existing && existing.length > 0) {
+      await sb.from('settings').update({ value, updated_at: now, updated_by: 'inventory_v2' }).eq('key', 'email_template_shipping');
+    } else {
+      await sb.from('settings').insert({ key: 'email_template_shipping', value, updated_at: now, updated_by: 'inventory_v2' });
+    }
+    state.emailTemplate = html;
+    state.emailSubject = subject;
+    if (statusEl) { statusEl.className = 'inline-status show ok'; statusEl.textContent = '✓ Template saved'; }
+    logActivity('SYSTEM','EMAIL_TEMPLATE_SAVED',null,'Email template updated');
+  } catch(e) {
+    if (statusEl) { statusEl.className = 'inline-status show error'; statusEl.textContent = 'Save failed: ' + e.message; }
+  }
+}
+
+function previewEmailTemplate() {
+  const html = ($('emailTemplateHtml') || {}).value || DEFAULT_EMAIL_TEMPLATE;
+  // Temporarily set for rendering
+  const saved = state.emailTemplate;
+  state.emailTemplate = html;
+  const rendered = renderEmailTemplate({
+    recipientName: 'Jane Smith',
+    trackingNumber: '1Z999AA10123456784',
+    trackingUrl: 'https://www.ups.com/track?tracknum=1Z999AA10123456784',
+    carrier: 'UPS',
+    serviceName: 'Ground',
+    productName: 'Vintage Farmhouse Candle Holder',
+    sku: '12345A'
+  });
+  state.emailTemplate = saved;
+
+  const frame = $('emailPreviewFrame');
+  if (frame) {
+    frame.style.display = '';
+    frame.innerHTML = `<iframe srcdoc="${rendered.replace(/"/g, '&quot;')}" style="width:100%;min-height:400px;border:none;border-radius:var(--radius);"></iframe>`;
+  }
+}
+
+function resetEmailTemplate() {
+  if (!confirm('Reset email template to the default? Your current edits will be lost.')) return;
+  if ($('emailTemplateHtml')) $('emailTemplateHtml').value = DEFAULT_EMAIL_TEMPLATE;
+  if ($('emailSubject')) $('emailSubject').value = 'Your order has shipped! — Country Charm Decor';
+  state.emailTemplate = DEFAULT_EMAIL_TEMPLATE;
+  state.emailSubject = 'Your order has shipped! — Country Charm Decor';
+  const frame = $('emailPreviewFrame');
+  if (frame) frame.style.display = 'none';
+}
+
+async function sendTestEmail() {
+  const email = prompt('Send a test notification to your email:', '');
+  if (!email || !email.includes('@')) return;
+
+  const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
+  const apiKey = localStorage.getItem('ccdApiKey') || '';
+  if (!shippoUrl) { alert('Shippo proxy not configured.'); return; }
+
+  // Use current template from editor (not saved yet — live preview)
+  const editorHtml = ($('emailTemplateHtml') || {}).value || DEFAULT_EMAIL_TEMPLATE;
+  const editorSubject = ($('emailSubject') || {}).value || 'Your order has shipped! — Country Charm Decor';
+  const saved = state.emailTemplate;
+  state.emailTemplate = editorHtml;
+  const rendered = renderEmailTemplate({
+    recipientName: 'Test Customer',
+    trackingNumber: '1Z999AA10123456784',
+    trackingUrl: 'https://www.ups.com/track?tracknum=1Z999AA10123456784',
+    carrier: 'UPS', serviceName: 'Ground',
+    productName: 'Vintage Farmhouse Candle Holder', sku: '12345A'
+  });
+  state.emailTemplate = saved;
+
+  const statusEl = $('emailTemplateStatus');
+  if (statusEl) { statusEl.className = 'inline-status show'; statusEl.textContent = '⏳ Sending test...'; }
+
+  try {
+    const result = await postToProxy(shippoUrl, {
+      action: 'sendNotification', key: apiKey,
+      email, recipientName: 'Test Customer',
+      trackingNumber: '1Z999AA10123456784', carrier: 'UPS', serviceName: 'Ground',
+      sku: '12345A', productName: 'Vintage Farmhouse Candle Holder',
+      htmlBody: rendered, subject: editorSubject
+    });
+    if (result.success) {
+      if (statusEl) { statusEl.className = 'inline-status show ok'; statusEl.textContent = `✓ Test sent to ${email}`; }
+    } else {
+      if (statusEl) { statusEl.className = 'inline-status show error'; statusEl.textContent = 'Failed: ' + (result.error || 'Unknown'); }
+    }
+  } catch(e) {
+    if (statusEl) { statusEl.className = 'inline-status show error'; statusEl.textContent = 'Error: ' + e.message; }
   }
 }
 
