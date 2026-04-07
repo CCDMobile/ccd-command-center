@@ -528,6 +528,16 @@ function renderShipTab() {
 
     <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:12px 0 6px;">Tracking</h4>
     <div id="trackingInfo" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);">No tracking info yet</div>
+
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 8px;">Daily Manifest (Consolidated BOL)</h4>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+      <div class="field" style="margin-bottom:0;">
+        <label>Manifest Date</label>
+        <input type="date" id="manifestDate" value="${defaultPickup}" style="font-family:'JetBrains Mono',monospace;">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="fetchManifest()">Get Manifest</button>
+    </div>
+    <div id="manifestResult" style="margin-top:10px;"></div>
   `;
   updateRegisterButton();
 }
@@ -591,6 +601,43 @@ async function fetchShippingInfo() {
   } else {
     log('No shipping events found for this PO', 'warn');
   }
+}
+
+async function fetchManifest() {
+  const date = document.getElementById('manifestDate')?.value;
+  if (!date) { toast('Select a manifest date', 'err'); return; }
+
+  log(`Fetching consolidated manifest for ${date}`, 'info');
+  const r = await proxyPost('getManifest', { date: date });
+
+  const el = document.getElementById('manifestResult');
+  if (!el) return;
+
+  if (!r.success) {
+    el.innerHTML = `<div style="padding:10px;background:var(--fail-bg);border:1px solid rgba(244,112,104,0.2);border-radius:7px;font-size:12px;color:var(--fail);">Failed: ${r.error}${r.graphqlErrors ? ' — ' + r.graphqlErrors.map(e => e.message).join('; ') : ''}</div>`;
+    log(`Manifest failed: ${r.error}`, 'err');
+    return;
+  }
+
+  if (r.availability === 'NOT_AVAILABLE' || !r.url) {
+    el.innerHTML = `<div style="padding:10px;background:var(--warn-bg);border:1px solid rgba(240,180,74,0.2);border-radius:7px;font-size:12px;color:var(--warn);">No manifest available for ${date}. Status: ${r.availability || 'unknown'}. Register orders for this date first.</div>`;
+    log(`Manifest not available for ${date}: ${r.availability}`, 'warn');
+    return;
+  }
+
+  // Store URL for download
+  currentDocUrls.manifest = r.url;
+
+  el.innerHTML = `
+    <div class="doc-card available" style="display:inline-block;min-width:220px;">
+      <div class="doc-icon">📜</div>
+      <div class="doc-name">Manifest — ${date}</div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">BOL #${r.bolNumber || '—'} | ${(r.shipmentReferences || []).length} shipments</div>
+      ${r.expiry ? `<div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">Expires: ${r.expiry.substring(0, 19)}</div>` : ''}
+      <button class="btn btn-primary btn-sm" onclick="downloadDoc('manifest', 'Manifest-${date}')" style="width:100%;justify-content:center;">Download Manifest</button>
+    </div>
+  `;
+  log(`Manifest ready — BOL #${r.bolNumber}, ${(r.shipmentReferences || []).length} shipments, expires: ${r.expiry || 'unknown'}`, 'ok');
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
