@@ -61,9 +61,13 @@
   .orders-table td { padding: 7px 10px; border-top: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 11px; cursor: pointer; }
   .orders-table tr:hover td { background: var(--surface); }
   .orders-table tr.selected td { background: var(--running-bg); }
+  .orders-table tr.cancelled td { background: rgba(244,112,104,0.1); }
+  .orders-table tr.cancelled:hover td { background: rgba(244,112,104,0.18); }
   .orders-table .po-overdue { color: var(--fail); }
   .orders-table .po-today { color: var(--warn); }
   .orders-table .po-upcoming { color: var(--pass); }
+  .cancel-badge { background: var(--fail); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; font-family: 'JetBrains Mono', monospace; animation: cancelPulse 2s ease-in-out infinite; }
+  @keyframes cancelPulse { 0%,100% { opacity: 1; } 50% { opacity: 0.7; } }
   .orders-empty { padding: 30px; text-align: center; color: var(--text-muted); font-size: 13px; }
 
   /* Order detail */
@@ -158,6 +162,7 @@
       <button class="btn btn-primary btn-sm" onclick="fetchOrders('false')">Fetch Open Orders</button>
       <button class="btn btn-outline btn-sm" onclick="fetchOrders('true')">Show Accepted</button>
       <button class="btn btn-outline btn-sm" onclick="fetchOrders()">Show All</button>
+      <button class="btn btn-outline btn-sm" style="color:var(--fail);border-color:rgba(244,112,104,0.3);" onclick="checkAllCancellations()">Check Cancellations</button>
       <span id="orderCount" style="font-size:12px;color:var(--text-dim);margin-left:auto;">—</span>
     </div>
     <div class="scroll-wrap">
@@ -337,11 +342,17 @@ async function fetchOrders(hasResponse) {
 
   orders = r.orders || [];
   currentFetchFilter = hasResponse;
+  cancellationFlags = {}; // Reset on fresh fetch
   document.getElementById('orderCount').textContent = `${orders.length} orders`;
   document.getElementById('lastFetch').textContent = `Last fetch: ${new Date().toLocaleTimeString()}`;
   log(`Fetched ${orders.length} orders`, 'ok');
   renderOrdersTable();
+
+  // Auto-check cancellations in background
+  if (orders.length > 0) checkAllCancellations();
 }
+
+let cancellationFlags = {}; // { poNumber: count } — tracks which POs have cancellations
 
 function renderOrdersTable() {
   const tbody = document.getElementById('ordersBody');
@@ -356,16 +367,55 @@ function renderOrdersTable() {
     if (shipBy && shipBy < today) shipClass = 'po-overdue';
     else if (shipBy === today) shipClass = 'po-today';
     const items = (o.products || []).reduce((s, p) => s + (p.quantity || 1), 0);
-    const hasResp = currentFetchFilter === 'true'; // Based on which filter was used to fetch
-    return `<tr onclick="selectOrder(${i})" id="order-row-${i}">
+    const hasResp = currentFetchFilter === 'true';
+    const cancelCount = cancellationFlags[o.poNumber] || 0;
+    const rowClass = cancelCount > 0 ? 'cancelled' : '';
+    let statusHtml = hasResp ? '<span style="color:var(--pass)">Accepted</span>' : '<span style="color:var(--warn)">Open</span>';
+    if (cancelCount > 0) {
+      statusHtml = `<span class="cancel-badge">⚠ CANCELLED</span>`;
+    }
+    return `<tr onclick="selectOrder(${i})" id="order-row-${i}" class="${rowClass}">
       <td>${o.poNumber || '—'}</td>
       <td>${(o.poDate || '').substring(0, 10)}</td>
       <td style="font-family:'DM Sans',sans-serif;font-size:12px;">${o.customerName || '—'}</td>
       <td>${items}</td>
       <td class="${shipClass}">${shipBy || '—'}</td>
-      <td>${hasResp ? '<span style="color:var(--pass)">Accepted</span>' : '<span style="color:var(--warn)">Open</span>'}</td>
+      <td id="status-${i}">${statusHtml}</td>
     </tr>`;
   }).join('');
+}
+
+async function checkAllCancellations() {
+  if (orders.length === 0) { toast('Fetch orders first', 'err'); return; }
+  const poNumbers = orders.map(o => o.poNumber);
+  log(`Checking cancellations for ${poNumbers.length} PO(s)…`, 'info');
+
+  const r = await proxyPost('getCancellations', { poNumbers: JSON.stringify(poNumbers) });
+
+  if (!r.success) {
+    log(`Cancellation check failed: ${r.error}`, 'err');
+    toast('Cancellation check failed', 'err');
+    return;
+  }
+
+  // Build flags: count cancellations per PO
+  cancellationFlags = {};
+  (r.cancellations || []).forEach(req => {
+    const po = req.purchaseOrder ? req.purchaseOrder.poNumber : null;
+    if (po) {
+      // PO number from cancellation may be numeric — try matching with CS prefix too
+      const poStr = String(po);
+      cancellationFlags[poStr] = (cancellationFlags[poStr] || 0) + 1;
+      cancellationFlags['CS' + poStr] = (cancellationFlags['CS' + poStr] || 0) + 1;
+    }
+  });
+
+  const flaggedCount = Object.keys(cancellationFlags).length / 2; // Divided by 2 since we store both formats
+  log(`Cancellation check complete — ${r.count} request(s) across ${flaggedCount} PO(s)`, r.count > 0 ? 'warn' : 'ok');
+  if (r.count > 0) toast(`${r.count} cancellation(s) found!`, 'err');
+  else toast('No cancellations found', 'ok');
+
+  renderOrdersTable(); // Re-render with badges
 }
 
 function selectOrder(idx) {
@@ -753,6 +803,29 @@ function renderShipTab() {
     <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:12px 0 6px;">Tracking</h4>
     <div id="trackingInfo" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);">No tracking info yet</div>
 
+    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 8px;">Step 3: Send ASN (Advance Shipment Notification)</h4>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">After physically shipping with Wayfair's label, send the ASN to confirm shipment. Carrier code and tracking auto-fill from registration.</div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+      <div class="field" style="margin-bottom:0;min-width:120px;">
+        <label>Carrier Code</label>
+        <input type="text" id="asnCarrierCode" placeholder="e.g., FDEG, UPSN" style="font-family:'JetBrains Mono',monospace;">
+      </div>
+      <div class="field" style="margin-bottom:0;min-width:200px;">
+        <label>Tracking Number</label>
+        <input type="text" id="asnTrackingNumber" placeholder="From registration" style="font-family:'JetBrains Mono',monospace;">
+      </div>
+      <div class="field" style="margin-bottom:0;">
+        <label>Ship Speed</label>
+        <select id="asnShipSpeed" style="font-family:'DM Sans',sans-serif;">
+          <option value="GROUND">Ground</option>
+          <option value="SECOND_DAY_AIR">2nd Day Air</option>
+          <option value="NEXT_DAY_AIR">Next Day Air</option>
+        </select>
+      </div>
+      <button class="btn btn-success btn-sm" onclick="sendASNForCurrentOrder()" id="btnASN">Send ASN</button>
+    </div>
+    <div class="push-status" id="asnStatus"></div>
+
     <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 8px;">Daily Manifest (Consolidated BOL)</h4>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
       <div class="field" style="margin-bottom:0;">
@@ -767,11 +840,11 @@ function renderShipTab() {
 }
 
 function updateRegisterButton() {
+  const lo = isLogOnly();
   const btn = document.getElementById('btnRegister');
-  if (!btn) return;
-  btn.disabled = isLogOnly();
-  if (isLogOnly()) btn.textContent = '🔒 Register (Log-Only)';
-  else btn.textContent = 'Register for Pickup';
+  const btnASN = document.getElementById('btnASN');
+  if (btn) { btn.disabled = lo; btn.textContent = lo ? '🔒 Register (Log-Only)' : 'Register for Pickup'; }
+  if (btnASN) { btnASN.disabled = lo; btnASN.textContent = lo ? '🔒 Send ASN (Log-Only)' : 'Send ASN'; }
 }
 
 async function registerCurrentOrder() {
@@ -808,9 +881,58 @@ async function registerCurrentOrder() {
   }
   if (r.trackingInfo && r.trackingInfo.length > 0) {
     r.trackingInfo.forEach(t => log(`Tracking: ${t.carrierCode} — ${t.trackingNumber}`, 'info'));
+    // Auto-fill ASN fields from register response
+    const firstTrack = r.trackingInfo[0];
+    const carrierEl = document.getElementById('asnCarrierCode');
+    const trackEl = document.getElementById('asnTrackingNumber');
+    if (carrierEl && firstTrack.carrierCode) carrierEl.value = firstTrack.carrierCode;
+    if (trackEl && firstTrack.trackingNumber) trackEl.value = firstTrack.trackingNumber;
   }
   renderDocuments(r.documents, r.trackingInfo);
-  toast('Registration complete — labels ready!', 'ok');
+  toast('Registration complete — labels ready! Send ASN after shipping.', 'ok');
+}
+
+async function sendASNForCurrentOrder() {
+  if (!currentOrder) return;
+  if (isLogOnly()) { toast('Log-only mode — ASN disabled', 'err'); return; }
+
+  const o = currentOrder;
+  const carrierCode = document.getElementById('asnCarrierCode')?.value?.trim();
+  const trackingNumber = document.getElementById('asnTrackingNumber')?.value?.trim();
+  const shipSpeed = document.getElementById('asnShipSpeed')?.value || 'GROUND';
+
+  if (!carrierCode) { toast('Enter carrier code (e.g., FDEG, UPSN)', 'err'); return; }
+  if (!trackingNumber) { toast('Enter tracking number', 'err'); return; }
+
+  const products = o.products || [];
+  if (products.length === 0) { toast('No items in this PO', 'err'); return; }
+
+  const items = products.map(p => ({
+    partNumber: p.partNumber,
+    quantity: p.quantity || 1
+  }));
+
+  log(`Sending ASN for PO ${o.poNumber} — carrier: ${carrierCode}, tracking: ${trackingNumber}`, 'info');
+  showStatus('asnStatus', '<span class="spinner"></span> Sending ASN…');
+
+  const r = await proxyPost('sendASN', {
+    poNumber: o.poNumber,
+    carrierCode: carrierCode,
+    trackingNumber: trackingNumber,
+    shipSpeed: shipSpeed,
+    items: JSON.stringify(items)
+  });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    showStatus('asnStatus', '✗ ASN failed: ' + r.error + (gql ? ' — ' + gql : ''), 'err');
+    log(`ASN failed: ${r.error}${gql ? ' | ' + gql : ''}`, 'err');
+    return;
+  }
+
+  showStatus('asnStatus', `✓ ASN sent — handle: ${(r.handle||'').substring(0,12)}…, status: ${r.status}, errors: ${r.errorCount}`, r.errorCount > 0 ? 'warn' : 'ok');
+  log(`ASN sent for PO ${o.poNumber} — handle: ${r.handle}, tracking: ${trackingNumber}`, 'ok');
+  toast('ASN sent successfully!', 'ok');
 }
 
 async function fetchShippingInfo() {
