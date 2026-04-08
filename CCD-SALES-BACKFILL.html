@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Sales Backfill v1.7.1</title>
+<title>CCD Sales Backfill v1.6</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     :root {
@@ -144,7 +144,7 @@
 
 <div class="header">
     <h1><span class="logo">📦</span> CCD Sales Backfill</h1>
-    <span class="version">v1.7.1 — NaN Safety Fix</span>
+    <span class="version">v1.6 — Duplicate Prevention</span>
 </div>
 
 <div class="sb-bar">
@@ -225,6 +225,8 @@
                     </div>
                 </div>
                 <button class="btn btn-etsy" id="etsy-btnFetch" onclick="fetchEtsyOrders()">📥 Fetch Etsy Orders</button>
+                <button class="btn" id="etsy-btnDiscount" onclick="refetchEtsyDiscounts()" style="background:#d4a853;color:#000;margin-left:8px;font-size:12px;">💰 Re-fetch Discounts</button>
+                <div id="discountStatus" style="margin-top:8px;font-size:12px;display:none;"></div>
             </div>
             <div class="config-box">
                 <h3>ℹ️ How It Works</h3>
@@ -337,33 +339,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
 // ═══════════════════════════════════════
-// VERSION REGISTRATION
-// ═══════════════════════════════════════
-const BF_VERSION = 'v1.7.1';
-const BF_VERSION_KEY = 'backfill';
-
-async function registerToolVersion(client, toolKey, toolVersion) {
-    if (!client) return;
-    try {
-        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
-        let versions = {};
-        const exists = data && data.length > 0;
-        if (exists && data[0].value) {
-            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
-        }
-        if (versions[toolKey] === toolVersion) return;
-        versions[toolKey] = toolVersion;
-        const now = new Date().toISOString();
-        if (exists) {
-            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
-        } else {
-            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
-        }
-        console.log(`Registered ${toolKey} ${toolVersion}`);
-    } catch(e) { console.log('Version register skipped:', e.message); }
-}
-
-// ═══════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════
 let sbClient = null;
@@ -438,23 +413,6 @@ async function connectSupabase() {
         document.getElementById('sbStatus').textContent = 'Connected';
         document.getElementById('btnImport').disabled = false;
         document.getElementById('btnImportUnmatched').disabled = false;
-        registerToolVersion(sbClient, BF_VERSION_KEY, BF_VERSION);
-        
-        // Load proxy URLs from Supabase settings (single source of truth)
-        try {
-            const { data: settingsRows } = await sbClient.from('settings').select('key,value').in('key', ['proxy_urls']);
-            if (settingsRows) {
-                settingsRows.forEach(row => {
-                    if (row.key === 'proxy_urls' && row.value) {
-                        const urls = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
-                        if (urls.etsy) { document.getElementById('etsy-proxyUrl').value = urls.etsy; localStorage.setItem('ccd_etsy_proxy_url', urls.etsy); }
-                        if (urls.wix) { document.getElementById('wix-proxyUrl').value = urls.wix; localStorage.setItem('ccd_wix_proxy_url', urls.wix); }
-                        if (urls.wayfair) { document.getElementById('wf-proxyUrl').value = urls.wayfair; localStorage.setItem('ccd_wayfair_proxy_url', urls.wayfair); }
-                        log('Proxy URLs loaded from Supabase settings', 'ok');
-                    }
-                });
-            }
-        } catch (e) { console.warn('[Backfill] Could not load proxy URLs from settings:', e.message); }
         
         // Build set of order_id for quick existence check
         existingOrderIds = new Set(allOrderIds.map(r => r.order_id));
@@ -784,6 +742,7 @@ async function fetchEtsyOrders() {
                 const total = receipt.grandtotal
                     ? (receipt.grandtotal.amount || 0) / (receipt.grandtotal.divisor || 100)
                     : 0;
+                const discount = (receipt.discount_amt?.amount || 0) / (receipt.discount_amt?.divisor || 100);
                 fetchedLines.push({
                     orderNumber: receiptId,
                     orderId: orderId,
@@ -791,6 +750,7 @@ async function fetchEtsyOrders() {
                     channelSku: '(no SKU)',
                     quantity: 1,
                     price: total,
+                    discount: discount,
                     productName: receipt.name || 'Etsy Order',
                     matchedSku: null, itemId: null,
                     wholesale: 0, ibShipping: 0, tariff: 0, obShipping: 0,
@@ -802,6 +762,11 @@ async function fetchEtsyOrders() {
                 totalTxns++;
                 continue;
             }
+            
+            // v1.5: Capture receipt-level discount and pro-rate across transactions
+            const receiptDiscount = (receipt.discount_amt?.amount || 0) / (receipt.discount_amt?.divisor || 100);
+            const txnCount = transactions.length || 1;
+            const perTxnDiscount = receiptDiscount > 0 ? receiptDiscount / txnCount : 0;
             
             for (const txn of transactions) {
                 const sku = txn.sku || '';
@@ -824,6 +789,7 @@ async function fetchEtsyOrders() {
                     channelSku: sku,
                     quantity: txn.quantity || 1,
                     price: txnPrice,
+                    discount: perTxnDiscount,
                     productName: txn.title || '',
                     matchedSku: match ? match.sku : null,
                     itemId: match ? match.id : null,
@@ -853,6 +819,154 @@ async function fetchEtsyOrders() {
     btn.disabled = false;
     btn.innerHTML = '📥 Fetch Etsy Orders';
     renderResults();
+}
+
+// ═══════════════════════════════════════
+// RE-FETCH ETSY DISCOUNTS (v1.5)
+// Pulls receipts and updates discount_amount on existing sales
+// ═══════════════════════════════════════
+async function refetchEtsyDiscounts() {
+    if (!sbConnected) { toast('Connect to Supabase first', 'error'); return; }
+    const proxyUrl = document.getElementById('etsy-proxyUrl').value.trim();
+    if (!proxyUrl) { toast('Enter Etsy proxy URL', 'error'); return; }
+    
+    const fromDate = document.getElementById('etsy-fromDate').value;
+    const toDate = document.getElementById('etsy-toDate').value;
+    if (!fromDate || !toDate) { toast('Set date range', 'error'); return; }
+    
+    const statusEl = document.getElementById('discountStatus');
+    const btn = document.getElementById('etsy-btnDiscount');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Fetching...';
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#5a6e94';
+    statusEl.textContent = 'Fetching Etsy receipts for discount data...';
+    
+    document.getElementById('logArea').style.display = 'block';
+    log('[Discounts] Re-fetching Etsy receipts for discount backfill...', 'info');
+    
+    try {
+        const minCreated = fromDate + 'T00:00:00Z';
+        const maxCreated = toDate + 'T23:59:59Z';
+        
+        const url = `${proxyUrl}?action=getOrders&key=${CCD_KEY}&limit=5000&min_created=${encodeURIComponent(minCreated)}&max_created=${encodeURIComponent(maxCreated)}`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'API returned failure');
+        }
+        
+        const receipts = data.orders || data.receipts || [];
+        log(`[Discounts] Received ${receipts.length} receipts`, 'ok');
+        statusEl.textContent = `Processing ${receipts.length} receipts...`;
+        
+        // Extract discount data per receipt
+        let receiptsWithDiscount = 0;
+        let salesUpdated = 0;
+        let salesAlreadyHadDiscount = 0;
+        let noMatchInDb = 0;
+        let errors = 0;
+        const details = [];
+        
+        for (const receipt of receipts) {
+            const receiptId = String(receipt.receipt_id || receipt.id);
+            const orderId = 'ETSY-' + receiptId;
+            const discountAmt = (receipt.discount_amt?.amount || 0) / (receipt.discount_amt?.divisor || 100);
+            
+            if (discountAmt <= 0) continue;
+            receiptsWithDiscount++;
+            
+            const transactions = receipt.transactions || [];
+            const txnCount = transactions.length || 1;
+            const perTxnDiscount = discountAmt / txnCount;
+            
+            // Find matching sales_history rows for this order
+            try {
+                const { data: existingRows, error: fetchErr } = await sbClient
+                    .from('sales_history')
+                    .select('id,sku,sale_price,qty_sold,total_revenue,discount_amount,total_cost,total_fees,net_profit')
+                    .eq('order_id', orderId)
+                    .neq('status', 'reversed');
+                
+                if (fetchErr) { errors++; continue; }
+                if (!existingRows || existingRows.length === 0) { noMatchInDb++; continue; }
+                
+                // Pro-rate discount across line items in this order
+                const perItemDiscount = discountAmt / existingRows.length;
+                
+                for (const row of existingRows) {
+                    // Skip if discount already recorded
+                    if (row.discount_amount && parseFloat(row.discount_amount) > 0) {
+                        salesAlreadyHadDiscount++;
+                        continue;
+                    }
+                    
+                    // Recalculate revenue and profit with discount
+                    const origRevenue = parseFloat(row.total_revenue) || 0;
+                    const newRevenue = Math.max(0, (parseFloat(row.sale_price) || 0) * (parseInt(row.qty_sold) || 1) - perItemDiscount);
+                    const totalCost = parseFloat(row.total_cost) || 0;
+                    const totalFees = parseFloat(row.total_fees) || 0;
+                    const newProfit = newRevenue - totalCost - totalFees;
+                    const newMargin = newRevenue > 0 ? newProfit / newRevenue : 0;
+                    
+                    const { error: updateErr } = await sbClient
+                        .from('sales_history')
+                        .update({
+                            discount_amount: parseFloat(perItemDiscount.toFixed(2)),
+                            total_revenue: parseFloat(newRevenue.toFixed(2)),
+                            net_profit: parseFloat(newProfit.toFixed(2)),
+                            profit_margin: parseFloat(newMargin.toFixed(4))
+                        })
+                        .eq('id', row.id);
+                    
+                    if (updateErr) {
+                        errors++;
+                        log(`[Discounts] Update error for ${row.sku}: ${updateErr.message}`, 'err');
+                    } else {
+                        salesUpdated++;
+                        details.push({
+                            sku: row.sku,
+                            orderId: orderId,
+                            discount: perItemDiscount.toFixed(2),
+                            oldRevenue: origRevenue.toFixed(2),
+                            newRevenue: newRevenue.toFixed(2)
+                        });
+                    }
+                }
+            } catch (e) {
+                errors++;
+                log(`[Discounts] Error processing ${orderId}: ${e.message}`, 'err');
+            }
+            
+            // Progress update
+            if (receiptsWithDiscount % 20 === 0) {
+                statusEl.textContent = `Processing... ${receiptsWithDiscount} discounted receipts found, ${salesUpdated} sales updated`;
+            }
+        }
+        
+        // Summary
+        const msg = `✅ Done: ${receipts.length} receipts scanned, ${receiptsWithDiscount} had discounts, ${salesUpdated} sales updated, ${salesAlreadyHadDiscount} already had discount, ${noMatchInDb} not in DB${errors ? `, ${errors} errors` : ''}`;
+        statusEl.style.color = salesUpdated > 0 ? '#2dd4a0' : '#5a6e94';
+        statusEl.textContent = msg;
+        log(`[Discounts] ${msg}`, 'ok');
+        
+        if (details.length > 0) {
+            log(`[Discounts] Updated sales:`, 'info');
+            for (const d of details.slice(0, 30)) {
+                log(`  ${d.sku} (${d.orderId}): -$${d.discount} discount, revenue $${d.oldRevenue}→$${d.newRevenue}`, 'info');
+            }
+            if (details.length > 30) log(`  ... and ${details.length - 30} more`, 'info');
+        }
+        
+    } catch (e) {
+        statusEl.style.color = '#f05c5c';
+        statusEl.textContent = '❌ Failed: ' + e.message;
+        log(`[Discounts] Error: ${e.message}`, 'err');
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = '💰 Re-fetch Discounts';
 }
 
 // ═══════════════════════════════════════
@@ -1297,14 +1411,14 @@ async function importToSalesHistory() {
         const batch = fresh.slice(i, i + batchSize);
         
         const rows = batch.map(l => {
-            const qty = parseInt(l.quantity) || 1;
-            const price = parseFloat(l.price) || 0;
-            const rev = price * qty;
-            const ws = parseFloat(l.wholesale) || 0;
-            const ib = parseFloat(l.ibShipping) || 0;
-            const tar = parseFloat(l.tariff) || 0;
-            const ob = parseFloat(l.obShipping) || 0;
-            const cost = (ws * (1 + ib / 100) + tar + ob) * qty;
+            const discount = parseFloat(l.discount) || 0;
+            const rev = (l.price * l.quantity) - discount;
+            const ws = l.wholesale || 0;
+            const ib = l.ibShipping || 0;
+            const tar = l.tariff || 0;
+            const ob = l.obShipping || 0;
+            // v1.5: tariff is a percentage (aligned with V2/SH formula)
+            const cost = (ws * (1 + ib / 100 + tar / 100) + ob) * l.quantity;
             const profit = rev - cost;
             const margin = rev > 0 ? profit / rev : 0;
             
@@ -1312,19 +1426,20 @@ async function importToSalesHistory() {
                 item_id: l.itemId,
                 sku: l.matchedSku,
                 product_name: l.productName || '',
-                qty_sold: qty,
+                qty_sold: l.quantity,
                 sale_channel: l.channel || activeChannel,
                 sale_date: l.orderDate || null,
-                sale_price: safeNum(price),
-                total_revenue: safeNum(rev),
-                total_cost: safeNum(cost),
-                net_profit: safeNum(profit),
-                profit_margin: safeNum(margin),
-                wholesale_price: safeNum(ws),
-                ib_shipping: safeNum(ib),
-                tariff: safeNum(tar),
-                ob_shipping: safeNum(ob),
+                sale_price: l.price,
+                total_revenue: parseFloat(rev.toFixed(2)),
+                total_cost: parseFloat(cost.toFixed(2)),
+                net_profit: parseFloat(profit.toFixed(2)),
+                profit_margin: parseFloat(margin.toFixed(4)),
+                wholesale_price: ws,
+                ib_shipping: ib,
+                tariff: tar,
+                ob_shipping: ob,
                 order_id: l.orderId,
+                discount_amount: discount > 0 ? parseFloat(discount.toFixed(2)) : null,
                 notes: `Backfill from ${ch} API`
             };
         });
@@ -1390,7 +1505,8 @@ async function importUnmatchedToSalesHistory() {
         const batch = fresh.slice(i, i + batchSize);
         
         const rows = batch.map(l => {
-            const rev = l.price * l.quantity;
+            const discount = parseFloat(l.discount) || 0;
+            const rev = (l.price * l.quantity) - discount;
             
             // Build row WITHOUT item_id — omitting it lets Supabase use column default (NULL)
             // Sending explicit null on a FK column can cause 400 errors
@@ -1409,6 +1525,7 @@ async function importUnmatchedToSalesHistory() {
                 tariff: 0,
                 ob_shipping: 0,
                 order_id: l.orderId,
+                discount_amount: discount > 0 ? parseFloat(discount.toFixed(2)) : null,
                 notes: `Backfill from ${ch} API (unmatched - discontinued)`
             };
             
@@ -1471,7 +1588,6 @@ function exportCSV() {
 // ═══════════════════════════════════════
 // UTILITIES
 // ═══════════════════════════════════════
-function safeNum(v) { const n = parseFloat(v); return isFinite(n) ? Math.round(n * 10000) / 10000 : 0; }
 function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : ''; }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
