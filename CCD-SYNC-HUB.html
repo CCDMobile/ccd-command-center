@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.0</title>
+    <title>CCD Sync Hub v4.4.1</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.0 — Clean Build Styles
+           CCD SYNC HUB v4.4.1 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.0 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.1 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -713,11 +713,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.0 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.1 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.0';
+    const SH_VERSION = 'v4.4.1';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -777,8 +777,6 @@
         skuMappings: { mappings: {}, totalMappings: 0 },
         inventorySnapshot: {},
         _batchProcessing: false,
-        autoPushEnabled: false,
-        autoPushWatchInterval: null,
         autoProcessInterval: null,
     };
     
@@ -918,7 +916,7 @@
     }
     
     async function loadFromSupabase() {
-        const { data, error } = await sbClient.from('items').select('*').order('sku');
+        const { data, error } = await sbClient.from('items').select('*').order('sku').limit(5000);
         if (error) throw error;
         
         const items = (data || []).map(sbRowToItem);
@@ -977,7 +975,7 @@
     }
     
     async function loadProcessedOrdersFromDb() {
-        const { data, error } = await sbClient.from('processed_orders').select('order_id');
+        const { data, error } = await sbClient.from('processed_orders').select('order_id').limit(10000);
         if (error) { console.warn('[Supabase] Processed orders load error:', error); return; }
         
         for (const row of (data || [])) {
@@ -996,7 +994,7 @@
     
     async function saveSkuMappingsToDb() {
         if (!sbConnected) return;
-        await sbClient.from('settings').upsert({ key: 'sku_mappings', value: state.skuMappings, updated_by: 'sync_hub' }, { onConflict: 'key' });
+        await sbClient.from('settings').upsert({ key: 'sku_mappings', value: state.skuMappings, updated_at: new Date().toISOString(), updated_by: 'sync_hub' }, { onConflict: 'key' });
     }
     
     // === SUPABASE SAVE OPERATIONS ===
@@ -1484,7 +1482,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.0-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.1-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1708,7 +1706,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.0',
+                processedBy: 'Sync Hub v4.4.1',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2208,8 +2206,9 @@
             wayfair: { orders: 0, items: 0, error: null, rawOrders: [] }
         };
         
-        // Pull from each enabled channel
-        if (state.settings.enableEtsySync && state.settings.etsyProxyUrl) {
+        // Pull from each channel with a configured proxy URL
+        // v4.4.1: Pull is NOT gated by enableSync toggles (those control pushing only)
+        if (state.settings.etsyProxyUrl) {
             try {
                 const r = await pullEtsyOrders(startDate, endDate);
                 results.etsy = r;
@@ -2218,9 +2217,11 @@
                 results.etsy.error = e.message;
                 addLog(`Etsy pull failed: ${e.message}`, 'error');
             }
+        } else if (!isAuto) {
+            addLog('Etsy: skipped (no proxy URL)', 'info');
         }
         
-        if (state.settings.enableWixSync && state.settings.wixProxyUrl) {
+        if (state.settings.wixProxyUrl) {
             try {
                 const r = await pullWixOrders(startDate, endDate);
                 results.wix = r;
@@ -2229,9 +2230,11 @@
                 results.wix.error = e.message;
                 addLog(`Wix pull failed: ${e.message}`, 'error');
             }
+        } else if (!isAuto) {
+            addLog('Wix: skipped (no proxy URL)', 'info');
         }
         
-        if (state.settings.enableWayfairSync && state.settings.wayfairProxyUrl) {
+        if (state.settings.wayfairProxyUrl) {
             try {
                 const r = await pullWayfairOrders(startDate, endDate);
                 results.wayfair = r;
@@ -2240,6 +2243,8 @@
                 results.wayfair.error = e.message;
                 addLog(`Wayfair pull failed: ${e.message}`, 'error');
             }
+        } else if (!isAuto) {
+            addLog('Wayfair: skipped (no proxy URL)', 'info');
         }
         
         // Totals (v4.2.4: orders may be an array or 0)
@@ -3866,7 +3871,7 @@
                 const compChannels = comp.channels || {};
                 
                 if (comp.etsyListingId || comp.etsyListing) {
-                    const etsyQty = parseInt(compChannels.etsy) ?? 0;
+                    const etsyQty = parseInt(compChannels.etsy) || 0;
                     // v4.4.0 G6: Reactivation guard for bundle components
                     if (etsyQty > 0 && comp._originalEtsyQty === 0) {
                         addLog(`⚠️ REACTIVATION BLOCKED (bundle component): ${comp.sku} — Etsy was sold out (0), cascade would push ${etsyQty}. Skipped.`, 'warning');
@@ -3881,7 +3886,7 @@
                     }
                 }
                 if (comp.wixProductId || comp.wixId) {
-                    const wixQty = parseInt(compChannels.wix) ?? 0;
+                    const wixQty = parseInt(compChannels.wix) || 0;
                     // v4.4.0 G6: Reactivation guard for bundle components
                     if (wixQty > 0 && comp._originalWixQty === 0) {
                         addLog(`⚠️ REACTIVATION BLOCKED (bundle component): ${comp.sku} — Wix was sold out (0), cascade would push ${wixQty}. Skipped.`, 'warning');
@@ -3896,7 +3901,7 @@
                     }
                 }
                 if (comp.wayfairSku || comp.supplierPartNumber) {
-                    const wayfairQty = parseInt(compChannels.wayfair) ?? 0;
+                    const wayfairQty = parseInt(compChannels.wayfair) || 0;
                     try {
                         await sbClient.from('sync_queue').insert({
                             item_id: compSbId, channel: 'wayfair', operation: 'update', status: 'pending',
@@ -4018,9 +4023,9 @@
                 isAutoProcess: isAutoProcess,
                 featureFlags: {
                     inventoryDeduction: isFeatureEnabled('inventoryDeduction'),
-                    autoPushEtsy: state.settings.autoPushEtsy || state.settings.enableEtsySync,
-                    autoPushWix: state.settings.autoPushWix || state.settings.enableWixSync,
-                    autoPushWayfair: state.settings.autoPushWayfair || state.settings.enableWayfairSync
+                    etsySyncEnabled: state.settings.enableEtsySync,
+                    wixSyncEnabled: state.settings.enableWixSync,
+                    wayfairSyncEnabled: state.settings.enableWayfairSync
                 }
             }
         );
@@ -5095,7 +5100,7 @@
             const { count: total } = await sbClient.from('shippo_transactions').select('*', { count: 'exact', head: true });
             const { count: matched } = await sbClient.from('shippo_transactions').select('*', { count: 'exact', head: true }).eq('matched_to_sale', true);
             const { count: unmatchedCount } = await sbClient.from('shippo_transactions').select('*', { count: 'exact', head: true }).eq('matched_to_sale', false);
-            const { data: costData } = await sbClient.from('shippo_transactions').select('label_cost');
+            const { data: costData } = await sbClient.from('shippo_transactions').select('label_cost').limit(5000);
 
             const totalCost = (costData || []).reduce((sum, r) => sum + (parseFloat(r.label_cost) || 0), 0);
 
@@ -5755,24 +5760,25 @@
         // Save to Supabase
         if (sbConnected && sbClient) {
             try {
+                const _now = new Date().toISOString();
                 await sbClient.from('settings').upsert({ key: 'proxy_urls', value: {
                     etsy: state.settings.etsyProxyUrl,
                     wix: state.settings.wixProxyUrl,
                     wayfair: state.settings.wayfairProxyUrl,
                     syncHub: state.settings.syncHubProxyUrl,
                     shippo: state.settings.shippoProxyUrl
-                }, updated_by: 'sync_hub' }, { onConflict: 'key' });
+                }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
                 await sbClient.from('settings').upsert({ key: 'api_keys', value: {
                     ccdApiKey: state.settings.ccdApiKey,
                     etsyApiKey: state.settings.etsyApiKey
-                }, updated_by: 'sync_hub' }, { onConflict: 'key' });
+                }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
                 await sbClient.from('settings').upsert({ key: 'sync_settings', value: {
                     autoProcessEnabled: state.settings.autoProcessEnabled,
                     retryFailedEnabled: state.settings.retryFailedEnabled,
                     enableEtsySync: state.settings.enableEtsySync,
                     enableWixSync: state.settings.enableWixSync,
                     enableWayfairSync: state.settings.enableWayfairSync,
-                }, updated_by: 'sync_hub' }, { onConflict: 'key' });
+                }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
             } catch (e) { console.error('[Settings] Supabase save error:', e); }
         }
         
@@ -5915,9 +5921,13 @@
             );
 
             if (action) {
-                // Process one-time
+                // Process one-time — temporarily enable auto-process so pollSyncQueue doesn't bail
                 addLog(`▶️ Processing ${count} pending queue rows (one-time)...`, 'info');
+                _syncQueueProcessing = false;
+                const savedAutoProcess = state.settings.autoProcessEnabled;
+                state.settings.autoProcessEnabled = true;
                 await pollSyncQueue();
+                state.settings.autoProcessEnabled = savedAutoProcess;
                 addLog('✅ One-time queue processing complete', 'success');
             } else {
                 // Cancel all pending
@@ -6047,6 +6057,21 @@
         _syncQueueProcessing = true;
         
         try {
+            // v4.4.1: Mark stale rows (older than 4 hours) so they don't process
+            const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+            const { count: staleCount } = await sbClient
+                .from('sync_queue')
+                .update({
+                    status: 'stale',
+                    error_message: 'Auto-skipped: row older than 4 hours',
+                    processed_at: new Date().toISOString()
+                })
+                .eq('status', 'pending')
+                .lt('created_at', fourHoursAgo);
+            if (staleCount > 0) {
+                addLog(`⏭️ Skipped ${staleCount} stale queue row(s) (>4 hours old)`, 'warning');
+            }
+            
             // Fetch pending items (max 20 per poll to avoid overload)
             const { data: pending, error } = await sbClient
                 .from('sync_queue')
@@ -6118,13 +6143,13 @@
         
         console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
         
-        // Check per-channel auto-push toggle — respect Sync Hub's settings
+        // Check per-channel push toggle — respect Sync Hub's settings
         // v4.2.0: forceProcess=true bypasses this check (used by "Process & Push" button)
         if (!forceProcess) {
             const channelEnabled = 
-                (channel === 'etsy' && (state.settings.autoPushEtsy || state.settings.enableEtsySync)) ||
-                (channel === 'wix' && (state.settings.autoPushWix || state.settings.enableWixSync)) ||
-                (channel === 'wayfair' && (state.settings.autoPushWayfair || state.settings.enableWayfairSync));
+                (channel === 'etsy' && state.settings.enableEtsySync) ||
+                (channel === 'wix' && state.settings.enableWixSync) ||
+                (channel === 'wayfair' && state.settings.enableWayfairSync);
         
         if (!channelEnabled) {
             console.log(`[Sync Queue] ⏭️ ${channel} auto-push is OFF — skipping (id=${row.id})`);
@@ -6696,7 +6721,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.3.5 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.4.1 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -6768,11 +6793,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.3.5 initialized successfully');
-            addLog('CCD Sync Hub v4.3.5 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.4.1 initialized successfully');
+            addLog('CCD Sync Hub v4.4.1 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.3.5 started (Supabase-Native Push)',
+                'Sync Hub v4.4.1 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
