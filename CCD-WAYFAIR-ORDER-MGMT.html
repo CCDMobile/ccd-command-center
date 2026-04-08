@@ -258,6 +258,29 @@ function toast(msg, type) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function isLogOnly() { return document.getElementById('logOnlyMode').checked; }
 
+/**
+ * Write to Supabase activity_log — permanent audit trail.
+ * Matches Sync Hub's logActivityToSupabase format exactly.
+ * Fields: category, action, channel, summary, details (JSONB), device, user_name, sku
+ */
+async function auditLog(action, summary, details = {}, sku = null) {
+  if (!sb) return;
+  try {
+    await sb.from('activity_log').insert({
+      category: 'order',
+      action: action,
+      channel: 'wayfair',
+      summary: summary,
+      details: typeof details === 'object' ? details : {},
+      device: 'WF-OrderMgr-v1.1',
+      user_name: localStorage.getItem('ccdUsername') || 'Paul',
+      sku: sku || details?.sku || null
+    });
+  } catch (e) {
+    console.warn('[AuditLog] Write failed:', e.message);
+  }
+}
+
 function updateSafetyBar() {
   const bar = document.getElementById('safetyBar');
   bar.className = isLogOnly() ? 'safety-bar' : 'safety-bar live-mode';
@@ -554,9 +577,11 @@ async function acceptCurrentOrder() {
 
   showStatus('acceptStatus', `✓ Accepted — handle: ${(r.handle||'').substring(0,12)}…, errors: ${r.errorCount}`, r.errorCount > 0 ? 'warn' : 'ok');
   log(`PO ${o.poNumber} accepted — handle: ${r.handle}, status: ${r.status}`, 'ok');
-
-  // Record to sales_history
-  await recordSale(o);
+  log('Sales recording + inventory deduction handled by Sync Hub', 'info');
+  await auditLog('order_accepted', `PO ${o.poNumber} accepted — ${products.length} items, speed: ${shipSpeed}`, {
+    poNumber: o.poNumber, handle: r.handle, shipSpeed: shipSpeed,
+    itemCount: products.length, items: products.map(p => ({ partNumber: p.partNumber, qty: p.quantity, price: p.price }))
+  });
 
   renderShipTab();
   toast('Order accepted!', 'ok');
@@ -596,6 +621,9 @@ async function backorderCurrentOrder() {
 
   showStatus('acceptStatus', `✓ Backordered — handle: ${(r.handle||'').substring(0,12)}…`, 'ok');
   log(`PO ${o.poNumber} backordered — ship by ${shipDate.substring(0,10)}`, 'ok');
+  await auditLog('order_backordered', `PO ${o.poNumber} backordered — ${lineItems.length} items, ship by ${shipDate.substring(0,10)}`, {
+    poNumber: o.poNumber, handle: r.handle, estimatedShipDate: shipDate.substring(0,10)
+  });
   toast('Order backordered', 'ok');
 }
 
@@ -628,6 +656,9 @@ async function rejectCurrentOrder() {
 
   showStatus('acceptStatus', `✓ Rejected — handle: ${(r.handle||'').substring(0,12)}…`, 'ok');
   log(`PO ${o.poNumber} REJECTED`, 'warn');
+  await auditLog('order_rejected', `PO ${o.poNumber} REJECTED — ${lineItems.length} items`, {
+    poNumber: o.poNumber, handle: r.handle, itemCount: lineItems.length
+  });
   toast('Order rejected', 'err');
 }
 
@@ -698,6 +729,9 @@ async function handleConfirmCancellation(requestId) {
   }
 
   log(`Cancellation ${requestId} confirmed — status: ${r.status}`, 'ok');
+  await auditLog('cancellation_confirmed', `Cancellation ${requestId} confirmed for PO ${currentOrder?.poNumber || '?'}`, {
+    requestId: requestId, status: r.status, poNumber: currentOrder?.poNumber
+  });
   toast('Cancellation confirmed', 'ok');
   checkCancellations(); // Refresh
 }
@@ -717,49 +751,17 @@ async function handleRejectCancellation(requestId) {
   }
 
   log(`Cancellation ${requestId} rejected — status: ${r.status}`, 'ok');
+  await auditLog('cancellation_rejected', `Cancellation ${requestId} rejected — reason: ${reason}`, {
+    requestId: requestId, status: r.status, reason: reason, poNumber: currentOrder?.poNumber
+  });
   toast('Cancellation rejected', 'ok');
   checkCancellations(); // Refresh
 }
 
-async function recordSale(order) {
-  if (!sb) { log('Supabase not connected — sale not recorded', 'warn'); return; }
-
-  const products = order.products || [];
-  for (const p of products) {
-    const dbMatch = dbItems.find(d => d.wayfair_sku === p.partNumber);
-    const sku = dbMatch ? dbMatch.sku : p.partNumber;
-    const wholesale = dbMatch ? (dbMatch.wholesale_price || 0) : 0;
-    const revenue = (p.price || 0) * (p.quantity || 1);
-
-    const saleRow = {
-      order_id: 'WF-' + order.poNumber,
-      sku: sku,
-      product_name: p.name || (dbMatch ? dbMatch.product_name : ''),
-      qty_sold: p.quantity || 1,
-      sale_channel: 'wayfair',
-      sale_date: new Date().toISOString().substring(0, 10),
-      sale_price: p.price || 0,
-      total_revenue: revenue,
-      wholesale_price: wholesale,
-      total_cost: wholesale * (p.quantity || 1),
-      accounting_category: 'wayfair_sales',
-      notes: 'Recorded by Order Manager v1.1',
-      status: 'active'
-    };
-
-    const { error } = await sb.from('sales_history').insert(saleRow);
-    if (error) {
-      // Check for duplicate
-      if (error.message && error.message.includes('duplicate')) {
-        log(`Sale already recorded: WF-${order.poNumber} / ${sku}`, 'warn');
-      } else {
-        log(`Failed to record sale: ${error.message}`, 'err');
-      }
-    } else {
-      log(`Sale recorded: WF-${order.poNumber} / ${sku} — $${revenue.toFixed(2)}`, 'ok');
-    }
-  }
-}
+// NOTE: Sales recording + inventory deduction are handled by Sync Hub.
+// Order Manager is operations only: accept, register, labels, ASN, cancellations.
+// Sync Hub's processOrder does full fee calculation via calculate_sale_profit()
+// and cascades inventory changes to Etsy/Wix via sync_queue.
 
 // =========================================================================
 // TAB 3: SHIP & LABELS
@@ -889,6 +891,11 @@ async function registerCurrentOrder() {
     if (trackEl && firstTrack.trackingNumber) trackEl.value = firstTrack.trackingNumber;
   }
   renderDocuments(r.documents, r.trackingInfo);
+  await auditLog('order_registered', `PO ${currentOrder.poNumber} registered for pickup — ${(r.trackingInfo||[]).length} tracking`, {
+    poNumber: currentOrder.poNumber, pickupDate: r.pickupDate, registrationId: r.registrationId,
+    hasLabel: !!r.documents?.shippingLabel, hasSlip: !!r.documents?.packingSlip, hasBOL: !!r.documents?.billOfLading,
+    tracking: r.trackingInfo || []
+  });
   toast('Registration complete — labels ready! Send ASN after shipping.', 'ok');
 }
 
@@ -920,7 +927,13 @@ async function sendASNForCurrentOrder() {
     carrierCode: carrierCode,
     trackingNumber: trackingNumber,
     shipSpeed: shipSpeed,
-    items: JSON.stringify(items)
+    items: JSON.stringify(items),
+    customerName: o.customerName || '',
+    customerAddress1: o.customerAddress1 || '',
+    customerAddress2: o.customerAddress2 || '',
+    customerCity: o.customerCity || '',
+    customerState: o.customerState || '',
+    customerPostalCode: o.customerPostalCode || ''
   });
 
   if (!r.success) {
@@ -932,6 +945,10 @@ async function sendASNForCurrentOrder() {
 
   showStatus('asnStatus', `✓ ASN sent — handle: ${(r.handle||'').substring(0,12)}…, status: ${r.status}, errors: ${r.errorCount}`, r.errorCount > 0 ? 'warn' : 'ok');
   log(`ASN sent for PO ${o.poNumber} — handle: ${r.handle}, tracking: ${trackingNumber}`, 'ok');
+  await auditLog('asn_sent', `PO ${o.poNumber} ASN sent — carrier: ${carrierCode}, tracking: ${trackingNumber}`, {
+    poNumber: o.poNumber, handle: r.handle, carrierCode: carrierCode,
+    trackingNumber: trackingNumber, shipSpeed: shipSpeed, errorCount: r.errorCount
+  });
   toast('ASN sent successfully!', 'ok');
 }
 
