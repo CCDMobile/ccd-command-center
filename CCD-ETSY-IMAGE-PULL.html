@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Etsy Image Pull v1.0</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0f1117; --surface: #181b24; --surface-raised: #1e2230;
+    --border: #2a2f3e; --text: #e2e4ea; --text-dim: #8b90a0; --text-muted: #5c6175;
+    --pass: #2dd4a0; --pass-bg: rgba(45,212,160,0.08);
+    --fail: #f47068; --fail-bg: rgba(244,112,104,0.08);
+    --warn: #f0b44a; --warn-bg: rgba(240,180,74,0.08);
+    --running: #60a5fa; --running-bg: rgba(96,165,250,0.08);
+    --accent: #818cf8; --accent-hover: #6366f1;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; padding: 24px; line-height: 1.5;
+  }
+
+  .container { max-width: 900px; margin: 0 auto; }
+
+  h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 4px; }
+  .subtitle { color: var(--text-dim); font-size: 13px; margin-bottom: 28px; }
+
+  .config-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 16px; margin-bottom: 24px;
+  }
+
+  .config-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px;
+  }
+
+  .config-card h3 {
+    font-size: 12px; font-weight: 600; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;
+  }
+
+  .config-card label {
+    display: block; font-size: 11px; color: var(--text-muted);
+    margin-bottom: 4px; margin-top: 10px;
+  }
+
+  .config-card label:first-of-type { margin-top: 0; }
+
+  .config-card input {
+    width: 100%; padding: 8px 12px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; color: var(--text);
+    font-family: 'JetBrains Mono', monospace; font-size: 12px; outline: none;
+  }
+
+  .config-card input:focus { border-color: var(--accent); }
+
+  .conn-status {
+    font-size: 12px; color: var(--text-dim); margin-top: 10px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .dot-off { background: var(--text-muted); }
+  .dot-on { background: var(--pass); }
+
+  .btn-row { display: flex; gap: 10px; margin-bottom: 28px; flex-wrap: wrap; }
+
+  .btn {
+    padding: 11px 24px; border-radius: 8px; border: none;
+    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
+    cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 8px;
+  }
+
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-secondary { background: var(--surface-raised); color: var(--text); border: 1px solid var(--border); }
+
+  /* Summary cards */
+  .summary-strip {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 10px; margin-bottom: 24px; display: none;
+  }
+
+  .summary-strip.visible { display: grid; }
+
+  .summary-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 9px; padding: 14px; text-align: center;
+  }
+
+  .summary-card .val {
+    font-size: 26px; font-weight: 700;
+    font-family: 'JetBrains Mono', monospace; line-height: 1.1;
+  }
+
+  .summary-card .lbl {
+    font-size: 10px; font-weight: 600; color: var(--text-dim);
+    text-transform: uppercase; letter-spacing: 0.5px; margin-top: 4px;
+  }
+
+  .c-text { color: var(--text); }
+  .c-pass { color: var(--pass); }
+  .c-fail { color: var(--fail); }
+  .c-warn { color: var(--warn); }
+  .c-accent { color: var(--accent); }
+
+  /* Log area */
+  .log-area {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px; margin-bottom: 20px;
+    max-height: 300px; overflow-y: auto; display: none;
+  }
+
+  .log-area.visible { display: block; }
+
+  .log-line {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--text-dim); padding: 3px 0; border-bottom: 1px solid rgba(42,47,62,0.4);
+  }
+
+  .log-line:last-child { border-bottom: none; }
+  .log-line .ts { color: var(--text-muted); margin-right: 8px; }
+  .log-ok { color: var(--pass); }
+  .log-err { color: var(--fail); }
+  .log-warn { color: var(--warn); }
+  .log-info { color: var(--running); }
+
+  /* Progress bar */
+  .progress-wrap {
+    background: var(--bg); border-radius: 6px; height: 8px;
+    margin-bottom: 20px; overflow: hidden; display: none;
+  }
+
+  .progress-wrap.visible { display: block; }
+
+  .progress-bar {
+    height: 100%; background: var(--accent); border-radius: 6px;
+    transition: width 0.3s ease; width: 0%;
+  }
+
+  /* Results table */
+  .results-section { display: none; }
+  .results-section.visible { display: block; }
+
+  .results-section h3 {
+    font-size: 15px; font-weight: 600; color: var(--text-dim); margin-bottom: 10px;
+  }
+
+  .tbl-wrap {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+
+  .tbl-scroll { max-height: 500px; overflow-y: auto; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+
+  thead th {
+    background: var(--surface-raised); padding: 10px 14px;
+    text-align: left; font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.4px;
+    color: var(--text-dim); position: sticky; top: 0; z-index: 1;
+  }
+
+  tbody td {
+    padding: 8px 14px; border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace; font-size: 11.5px;
+  }
+
+  tbody tr:hover { background: var(--surface-raised); }
+
+  .img-thumb {
+    width: 40px; height: 40px; border-radius: 4px;
+    object-fit: cover; border: 1px solid var(--border); vertical-align: middle;
+  }
+
+  .badge-sm {
+    display: inline-block; padding: 2px 8px; border-radius: 4px;
+    font-size: 10px; font-weight: 600;
+  }
+
+  .b-updated { background: var(--pass-bg); color: var(--pass); }
+  .b-skipped { background: var(--warn-bg); color: var(--warn); }
+  .b-noimg { background: var(--fail-bg); color: var(--fail); }
+  .b-nomatch { color: var(--text-muted); }
+
+  .filter-row {
+    padding: 10px 14px; display: flex; gap: 10px; align-items: center;
+  }
+
+  .filter-row select {
+    padding: 6px 10px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 5px; color: var(--text); font-size: 12px; outline: none;
+  }
+
+  .filter-row .count { font-size: 12px; color: var(--text-dim); margin-left: auto; }
+
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--border); border-top-color: var(--running);
+    border-radius: 50%; animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    body { padding: 14px; }
+    .config-grid { grid-template-columns: 1fr; }
+    .summary-strip { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <h1>CCD Etsy Image Pull</h1>
+  <div class="subtitle">Fetch listing images from Etsy → match by etsy_listing_id → write image_urls to items table</div>
+
+  <div class="config-grid">
+    <div class="config-card">
+      <h3>Supabase</h3>
+      <label>Project URL</label>
+      <input type="text" id="sbUrl" placeholder="https://xxxxx.supabase.co">
+      <label>Anon Key</label>
+      <input type="password" id="sbKey" placeholder="eyJhbG...">
+      <div class="conn-status" id="sbStatus"><span class="dot dot-off"></span>Not connected</div>
+    </div>
+    <div class="config-card">
+      <h3>Etsy Proxy</h3>
+      <label>Proxy URL</label>
+      <input type="text" id="etsyProxy" placeholder="https://script.google.com/macros/s/.../exec">
+      <label>CCD API Key</label>
+      <input type="password" id="apiKey" value="ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF">
+      <div class="conn-status" id="etsyStatus"><span class="dot dot-off"></span>Not connected</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-primary" id="btnPull" onclick="runPull()">▶ Pull Etsy Images</button>
+    <button class="btn btn-secondary" onclick="previewOnly()">Preview (no write)</button>
+    <div style="display:flex;gap:14px;align-items:center;margin-left:12px;">
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-dim);cursor:pointer;">
+        <input type="checkbox" id="chkInactive" style="accent-color:var(--warn);width:15px;height:15px;"> Inactive
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-dim);cursor:pointer;">
+        <input type="checkbox" id="chkExpired" style="accent-color:var(--warn);width:15px;height:15px;"> Expired
+      </label>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-dim);cursor:pointer;">
+        <input type="checkbox" id="chkDraft" style="accent-color:var(--warn);width:15px;height:15px;"> Draft
+      </label>
+    </div>
+  </div>
+
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar" id="progressBar"></div>
+  </div>
+
+  <div class="log-area" id="logArea"></div>
+
+  <div class="summary-strip" id="summaryStrip">
+    <div class="summary-card"><div class="val c-text" id="sumListings">—</div><div class="lbl">Etsy Listings</div></div>
+    <div class="summary-card"><div class="val c-accent" id="sumMatched">—</div><div class="lbl">Matched</div></div>
+    <div class="summary-card"><div class="val c-pass" id="sumUpdated">—</div><div class="lbl">Updated</div></div>
+    <div class="summary-card"><div class="val c-warn" id="sumSkipped">—</div><div class="lbl">No Images</div></div>
+    <div class="summary-card"><div class="val c-fail" id="sumUnmatched">—</div><div class="lbl">Unmatched</div></div>
+  </div>
+
+  <div class="results-section" id="resultsSection">
+    <h3>Results</h3>
+    <div class="tbl-wrap">
+      <div class="filter-row">
+        <select id="resultFilter" onchange="renderResults()">
+          <option value="all">All</option>
+          <option value="updated">Updated</option>
+          <option value="no_images">No Images</option>
+          <option value="unmatched">Unmatched</option>
+        </select>
+        <span class="count" id="filterCount"></span>
+      </div>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr>
+            <th>Thumb</th><th>SKU</th><th>Listing ID</th><th>Title</th><th>Images</th><th>Status</th>
+          </tr></thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// =========================================================================
+// STATE
+// =========================================================================
+
+let sb = null;
+let allResults = [];
+let writeMode = true; // false = preview only
+
+// =========================================================================
+// LOGGING
+// =========================================================================
+
+function log(msg, cls) {
+  const area = document.getElementById('logArea');
+  area.classList.add('visible');
+  const ts = new Date().toLocaleTimeString();
+  area.innerHTML += `<div class="log-line ${cls ? 'log-' + cls : ''}"><span class="ts">${ts}</span>${msg}</div>`;
+  area.scrollTop = area.scrollHeight;
+}
+
+function setProgress(pct) {
+  const wrap = document.getElementById('progressWrap');
+  wrap.classList.add('visible');
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+
+// =========================================================================
+// CONNECTIONS
+// =========================================================================
+
+function connectSupabase() {
+  const url = document.getElementById('sbUrl').value.trim();
+  const key = document.getElementById('sbKey').value.trim();
+  if (!url || !key) return null;
+  try {
+    sb = supabase.createClient(url, key);
+    document.getElementById('sbStatus').innerHTML = '<span class="dot dot-on"></span>Connected';
+    localStorage.setItem('ccdSupabaseUrl', url);
+    localStorage.setItem('ccdSupabaseKey', key);
+    return sb;
+  } catch (e) {
+    document.getElementById('sbStatus').innerHTML = '<span class="dot dot-off"></span>Error';
+    return null;
+  }
+}
+
+async function testEtsyProxy() {
+  const url = document.getElementById('etsyProxy').value.trim();
+  const key = document.getElementById('apiKey').value.trim();
+  if (!url || !key) return false;
+  try {
+    const resp = await fetch(`${url}?action=status&key=${key}`);
+    const data = await resp.json();
+    if (data.success) {
+      document.getElementById('etsyStatus').innerHTML = `<span class="dot dot-on"></span>v${data.version || '?'}`;
+      localStorage.setItem('ccdEtsyProxy', url);
+      return true;
+    }
+  } catch (e) {}
+  document.getElementById('etsyStatus').innerHTML = '<span class="dot dot-off"></span>Error';
+  return false;
+}
+
+function autoConnect() {
+  const sbUrl = localStorage.getItem('ccdSupabaseUrl');
+  const sbKey = localStorage.getItem('ccdSupabaseKey');
+  const etsyProxy = localStorage.getItem('ccdEtsyProxy');
+
+  if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
+  if (sbKey) document.getElementById('sbKey').value = sbKey;
+  if (etsyProxy) document.getElementById('etsyProxy').value = etsyProxy;
+  if (sbUrl && sbKey) connectSupabase();
+}
+
+// =========================================================================
+// ETSY PROXY CALLS
+// =========================================================================
+
+async function fetchEtsyListings() {
+  const url = document.getElementById('etsyProxy').value.trim();
+  const key = document.getElementById('apiKey').value.trim();
+
+  // Always fetch active listings
+  const states = ['active'];
+  if (document.getElementById('chkInactive').checked) states.push('inactive');
+  if (document.getElementById('chkExpired').checked) states.push('expired');
+  if (document.getElementById('chkDraft').checked) states.push('draft');
+
+  let allListings = [];
+
+  for (const state of states) {
+    log(`Fetching ${state} listings…`, 'info');
+    const resp = await fetch(`${url}?action=getListings&key=${key}&limit=2000&state=${state}`);
+    const data = await resp.json();
+    if (!data.success) {
+      log(`Warning: ${state} fetch failed — ${data.error || 'unknown'}`, 'warn');
+      continue;
+    }
+    const listings = data.listings || [];
+    log(`  → ${listings.length} ${state} listings`, 'ok');
+    allListings = allListings.concat(listings);
+  }
+
+  // Deduplicate by listing_id (shouldn't happen, but safe)
+  const seen = new Set();
+  allListings = allListings.filter(l => {
+    const id = String(l.listing_id);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+
+  return allListings;
+}
+
+// =========================================================================
+// MAIN PULL
+// =========================================================================
+
+async function previewOnly() {
+  writeMode = false;
+  await runPull();
+}
+
+async function runPull() {
+  const btn = document.getElementById('btnPull');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Pulling…';
+
+  document.getElementById('logArea').innerHTML = '';
+  document.getElementById('logArea').classList.remove('visible');
+  document.getElementById('summaryStrip').classList.remove('visible');
+  document.getElementById('resultsSection').classList.remove('visible');
+  allResults = [];
+
+  try {
+    // Step 1: Connect
+    if (!sb) connectSupabase();
+    if (!sb) throw new Error('Supabase not connected');
+    const etsyOk = await testEtsyProxy();
+    if (!etsyOk) throw new Error('Etsy proxy not reachable');
+
+    setProgress(5);
+    log('Connections verified', 'ok');
+
+    // Step 2: Fetch items with etsy_listing_id from Supabase
+    log('Fetching items from Supabase…', 'info');
+    const { data: items, error: itemsErr } = await sb
+      .from('items')
+      .select('id, sku, etsy_listing_id, etsy_sku, image_urls, product_name, wayfair_sku')
+      .not('etsy_listing_id', 'is', null)
+      .limit(5000);
+
+    if (itemsErr) throw new Error('Supabase query failed: ' + itemsErr.message);
+
+    // Build lookup: etsy_listing_id → array of items (variants share listing IDs)
+    const itemsByListingId = {};
+    for (const item of items) {
+      if (item.etsy_listing_id) {
+        const lid = String(item.etsy_listing_id);
+        if (!itemsByListingId[lid]) itemsByListingId[lid] = [];
+        itemsByListingId[lid].push(item);
+      }
+    }
+
+    log(`Found ${items.length} items with etsy_listing_id`, 'ok');
+    setProgress(15);
+
+    // Step 3: Fetch Etsy listings with images
+    log('Fetching listings from Etsy proxy (with images)…', 'info');
+    const listings = await fetchEtsyListings();
+    log(`Fetched ${listings.length} total listings from Etsy`, 'ok');
+    setProgress(40);
+
+    // Step 4: Match and build updates
+    log('Matching listings to items…', 'info');
+    let matched = 0, updated = 0, noImages = 0, unmatched = 0, errors = 0;
+    const updates = [];
+
+    for (let i = 0; i < listings.length; i++) {
+      const listing = listings[i];
+      const listingId = String(listing.listing_id);
+      const matchedItems = itemsByListingId[listingId];
+
+      if (!matchedItems || matchedItems.length === 0) {
+        allResults.push({
+          listing, item: null, status: 'unmatched',
+          sku: listing.sku || '', imageCount: listing.image_count || 0
+        });
+        unmatched++;
+        continue;
+      }
+
+      if (!listing.images || listing.images.length === 0) {
+        for (const item of matchedItems) {
+          matched++;
+          allResults.push({
+            listing, item, status: 'no_images',
+            sku: item.sku, imageCount: 0
+          });
+          noImages++;
+        }
+        continue;
+      }
+
+      // Build image_urls array sorted by rank
+      const imageUrls = listing.images
+        .sort((a, b) => (a.rank || 0) - (b.rank || 0))
+        .map(img => ({
+          url: img.url,
+          rank: img.rank,
+          image_id: img.image_id,
+          alt_text: img.alt_text || ''
+        }));
+
+      // Update ALL items that share this listing (variants)
+      for (const item of matchedItems) {
+        matched++;
+        updates.push({ itemId: item.id, imageUrls, sku: item.sku });
+        allResults.push({
+          listing, item, status: 'updated',
+          sku: item.sku, imageCount: imageUrls.length,
+          firstImage: imageUrls[0]?.url
+        });
+      }
+
+      // Update progress
+      if (i % 50 === 0) setProgress(40 + (i / listings.length) * 30);
+    }
+
+    setProgress(75);
+    log(`Matched: ${matched} | With images: ${updates.length} | No images: ${noImages} | Unmatched: ${unmatched}`, 'info');
+
+    // Step 5: Write to Supabase (unless preview mode)
+    if (writeMode && updates.length > 0) {
+      log(`Writing ${updates.length} image_urls updates to Supabase…`, 'info');
+
+      // Batch in groups of 50 to avoid timeouts
+      const batchSize = 50;
+      for (let b = 0; b < updates.length; b += batchSize) {
+        const batch = updates.slice(b, b + batchSize);
+
+        for (const u of batch) {
+          const { error: upErr } = await sb
+            .from('items')
+            .update({ image_urls: u.imageUrls })
+            .eq('id', u.itemId);
+
+          if (upErr) {
+            log(`Error updating ${u.sku}: ${upErr.message}`, 'err');
+            errors++;
+            // Mark as error in results
+            const r = allResults.find(r => r.sku === u.sku && r.status === 'updated');
+            if (r) r.status = 'error';
+          } else {
+            updated++;
+          }
+        }
+
+        setProgress(75 + ((b + batch.length) / updates.length) * 20);
+        log(`Updated ${Math.min(b + batchSize, updates.length)}/${updates.length}…`, 'info');
+      }
+
+      log(`Done! ${updated} items updated, ${errors} errors`, updated > 0 ? 'ok' : 'warn');
+    } else if (!writeMode) {
+      updated = updates.length;
+      log(`Preview mode — ${updates.length} items would be updated (no writes made)`, 'warn');
+    }
+
+    setProgress(100);
+
+    // Summary
+    document.getElementById('sumListings').textContent = listings.length;
+    document.getElementById('sumMatched').textContent = matched;
+    document.getElementById('sumUpdated').textContent = updated;
+    document.getElementById('sumSkipped').textContent = noImages;
+    document.getElementById('sumUnmatched').textContent = unmatched;
+    document.getElementById('summaryStrip').classList.add('visible');
+
+    renderResults();
+    document.getElementById('resultsSection').classList.add('visible');
+
+  } catch (err) {
+    log('Error: ' + err.message, 'err');
+  }
+
+  writeMode = true; // Reset for next run
+  btn.disabled = false;
+  btn.innerHTML = '▶ Pull Etsy Images';
+}
+
+// =========================================================================
+// RESULTS TABLE
+// =========================================================================
+
+function renderResults() {
+  const filter = document.getElementById('resultFilter').value;
+  let rows = allResults;
+  if (filter !== 'all') rows = rows.filter(r => r.status === filter);
+
+  document.getElementById('filterCount').textContent = `${rows.length} of ${allResults.length}`;
+
+  document.getElementById('resultsBody').innerHTML = rows.map(r => {
+    const thumb = r.firstImage
+      ? `<img class="img-thumb" src="${r.firstImage}" loading="lazy" onerror="this.style.display='none'">`
+      : '<span style="color:var(--text-muted)">—</span>';
+
+    const statusBadge = r.status === 'updated' ? '<span class="badge-sm b-updated">Updated</span>' :
+      r.status === 'no_images' ? '<span class="badge-sm b-noimg">No Images</span>' :
+      r.status === 'unmatched' ? '<span class="badge-sm b-nomatch">Unmatched</span>' :
+      r.status === 'error' ? '<span class="badge-sm b-noimg">Error</span>' :
+      '<span class="badge-sm b-skipped">Skipped</span>';
+
+    const title = (r.listing?.title || r.item?.product_name || '').substring(0, 45);
+    const listingId = r.listing?.listing_id || '';
+    const sku = r.sku || '';
+
+    return `<tr>
+      <td>${thumb}</td>
+      <td>${sku}</td>
+      <td>${listingId}</td>
+      <td style="font-family:'DM Sans',sans-serif;font-size:12px;color:var(--text-dim)">${title}</td>
+      <td>${r.imageCount}</td>
+      <td>${statusBadge}</td>
+    </tr>`;
+  }).join('');
+}
+
+// =========================================================================
+// INIT
+// =========================================================================
+
+autoConnect();
+</script>
+</body>
+</html>
