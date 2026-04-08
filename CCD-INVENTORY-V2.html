@@ -1178,6 +1178,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
         <div id="nlRateResults" style="margin-top:10px;font-size:13px;color:var(--muted);"></div>
       </div>
       <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <input type="text" class="form-input" id="shipFilterSearch" oninput="shipSearchDebounce()" placeholder="Search SKU, name, recipient, tracking..." style="width:260px;font-size:12px;text-align:left;padding:6px 10px;">
         <select class="filter-select" id="shipFilterCarrier" onchange="renderShippingTab()">
           <option value="all">All Carriers</option>
           <option value="UPS">UPS</option>
@@ -6848,6 +6849,7 @@ function renderShippingTab() {
   const status = $('shipFilterStatus').value;
   const fromDate = $('shipFilterFrom').value;
   const toDate = $('shipFilterTo').value;
+  const searchTerm = ($('shipFilterSearch')?.value || '').toLowerCase().trim();
 
   // v2.8.6: Unshipped orders — special view
   if (status === 'UNSHIPPED') {
@@ -6867,6 +6869,18 @@ function renderShippingTab() {
   if (toDate) rows = rows.filter(r => (r.shippo_created_at || '').substring(0,10) <= toDate);
   const showHidden = $('shipShowHidden') && $('shipShowHidden').checked;
   if (!showHidden) rows = rows.filter(r => !r.is_hidden);
+
+  // v2.8.6: Text search across key fields
+  if (searchTerm) {
+    rows = rows.filter(r => {
+      const haystack = [
+        r.sku, shipProductNames[r.sku], r.recipient_name, r.recipient_city,
+        r.recipient_state, r.tracking_number, r.carrier, r.service_name,
+        r.order_id, r.order_number_raw, r.raw_metadata, r.recipient_street
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(searchTerm);
+    });
+  }
 
   // v2.8.6: Sort
   rows = [...rows].sort((a, b) => {
@@ -6992,6 +7006,12 @@ function shipSortBy(col) {
     shipSortDir = col === 'cost' ? 'desc' : 'asc';
   }
   renderShippingTab();
+}
+
+let _shipSearchTimer = null;
+function shipSearchDebounce() {
+  if (_shipSearchTimer) clearTimeout(_shipSearchTimer);
+  _shipSearchTimer = setTimeout(renderShippingTab, 300);
 }
 
 // v2.8.6: Standalone New Label form
