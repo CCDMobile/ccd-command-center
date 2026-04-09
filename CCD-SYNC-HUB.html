@@ -2798,7 +2798,7 @@
     // - Each online channel ≤ (Warehouse Qty − TM Qty)
     // - TreasureMarts is physical location, reduces available online pool
     // ============================================================================
-    function autoAdjustChannelAllocations(product, sourceChannel = null) {
+    function autoAdjustChannelAllocations(product, sourceChannel = null, deductedQty = 0) {
         if (!product) return { adjusted: false, changes: [], parAlerts: [] };
         
         // ==========================================================================
@@ -2873,6 +2873,28 @@
         const hasWixId = !!(product.wixProductId || product.wixId || product.wix_product_id);
         let etsyQty = parseInt(channels.etsy) || 0;
         let wixQty = parseInt(channels.wix) || 0;
+        
+        // Rule 0 (v4.4.2): Shared warehouse — reduce non-source online channels by sold qty.
+        // When any online channel sells, ALL online channels lose stock from the same pool.
+        // Source channel is already reduced by processOrder's source deduction step.
+        // For bundles (sourceChannel=null), all online channels get reduced.
+        if (deductedQty > 0) {
+            ['etsy', 'wix', 'wayfair'].forEach(ch => {
+                if (ch === sourceChannel) return; // Source already deducted
+                const oldVal = parseInt(channels[ch]) || 0;
+                if (oldVal > 0) {
+                    const newVal = Math.max(0, oldVal - deductedQty);
+                    if (newVal !== oldVal) {
+                        adjustments.changes.push({ channel: ch, from: oldVal, to: newVal, reason: 'shared warehouse deduction' });
+                        channels[ch] = newVal;
+                        adjustments.adjusted = true;
+                    }
+                }
+            });
+            // Refresh local variables after Rule 0 modifications
+            etsyQty = parseInt(channels.etsy) || 0;
+            wixQty = parseInt(channels.wix) || 0;
+        }
         
         if (sourceChannel === 'etsy') {
             // Sale from Etsy - sync Wix to match (only if item has Wix listing)
@@ -3534,7 +3556,8 @@
                     }
                     
                     // v2.1.0: Auto-adjust channel allocations after order
-                    adjustResult = autoAdjustChannelAllocations(product, order.channel);
+                    // v4.4.2: Pass deductedQty so all online channels reduce together
+                    adjustResult = autoAdjustChannelAllocations(product, order.channel, item.qty);
                     
                     // v4.3.4 FIX: Sync flat qty properties with channels object.
                     // itemToSbRow falls back to these if channels.* is undefined.
@@ -3725,7 +3748,8 @@
                         compProduct.quantity = newCompQty;
                         
                         // Auto-adjust component channel allocations
-                        const compAdjust = autoAdjustChannelAllocations(compProduct, null);
+                        // v4.4.2: Pass deductQty so all online channels reduce together
+                        const compAdjust = autoAdjustChannelAllocations(compProduct, null, deductQty);
                         
                         // Sync flat properties
                         compProduct.etsyQty = parseInt(compProduct.channels?.etsy ?? 0);
