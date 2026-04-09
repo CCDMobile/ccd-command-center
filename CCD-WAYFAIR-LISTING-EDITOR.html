@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Listing Editor v1.1</title>
+<title>CCD Wayfair Listing Editor v1.2</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -31,6 +31,8 @@
   header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
   h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
   .env-badge { padding: 4px 12px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(240,180,74,0.2); }
+  .env-badge.production { background: rgba(45,212,160,0.08); color: #2dd4a0; border: 1px solid rgba(45,212,160,0.2); }
+  .env-badge.error { background: rgba(244,112,104,0.08); color: #f47068; border: 1px solid rgba(244,112,104,0.2); }
 
   .config-bar {
     display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: flex-end;
@@ -153,7 +155,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Listing Editor <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.1</span></h1>
+    <h1>Wayfair Listing Editor <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.2</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
@@ -171,7 +173,7 @@
     </select>
     <button class="btn btn-outline btn-sm" onclick="refreshCatalog()">Refresh Catalog</button>
     <div class="validate-toggle">
-      <input type="checkbox" id="validateOnly" checked>
+      <input type="checkbox" id="validateOnly">
       <label for="validateOnly">Validate only (dry run)</label>
     </div>
   </div>
@@ -344,6 +346,7 @@ function connectAll() {
   log('Loading catalog…', 'info');
   toast('Connected — loading catalog…', 'ok');
   refreshCatalog();
+  checkProxyEnvironment();
 }
 
 function autoConnect() {
@@ -855,6 +858,30 @@ async function pushSelectedImages() {
 // =========================================================================
 
 autoConnect();
+checkProxyEnvironment();
+
+async function checkProxyEnvironment() {
+  const proxy = proxyUrl();
+  const key = apiKey();
+  if (!proxy) return;
+  try {
+    const r = await fetch(`${proxy}?action=health&key=${key}`).then(res => res.json());
+    const env = (r.wayfair?.environment || r.environment || '').toLowerCase();
+    const badge = document.getElementById('envBadge');
+    if (env === 'production') {
+      badge.textContent = '● PRODUCTION';
+      badge.className = 'env-badge production';
+    } else if (env === 'sandbox') {
+      badge.textContent = '⬡ SANDBOX';
+      badge.className = 'env-badge';
+    } else {
+      badge.textContent = '? UNKNOWN';
+      badge.className = 'env-badge error';
+    }
+  } catch (e) {
+    // Silent fail — badge stays as default
+  }
+}
 </script>
 </body>
 </html>
