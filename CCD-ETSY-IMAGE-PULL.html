@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Etsy Image Pull v1.0</title>
+<title>CCD Etsy Image Pull v1.1</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -220,7 +220,7 @@
 <body>
 <div class="container">
 
-  <h1>CCD Etsy Image Pull</h1>
+  <h1>CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.1</span></h1>
   <div class="subtitle">Fetch listing images from Etsy → match by etsy_listing_id → write image_urls to items table</div>
 
   <div class="config-grid">
@@ -245,6 +245,7 @@
   <div class="btn-row">
     <button class="btn btn-primary" id="btnPull" onclick="runPull()">▶ Pull Etsy Images</button>
     <button class="btn btn-secondary" onclick="previewOnly()">Preview (no write)</button>
+    <button class="btn btn-secondary" onclick="openPurgePanel()" style="color:var(--fail);border-color:rgba(244,112,104,0.3);">🗑 Purge Images</button>
     <div style="display:flex;gap:14px;align-items:center;margin-left:12px;">
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-dim);cursor:pointer;">
         <input type="checkbox" id="chkInactive" style="accent-color:var(--warn);width:15px;height:15px;"> Inactive
@@ -256,6 +257,28 @@
         <input type="checkbox" id="chkDraft" style="accent-color:var(--warn);width:15px;height:15px;"> Draft
       </label>
     </div>
+  </div>
+
+  <!-- SKU Filter -->
+  <div style="margin-bottom:20px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+    <label style="font-size:12px;color:var(--text-dim);font-weight:600;white-space:nowrap;">SKU Filter:</label>
+    <input type="text" id="skuFilter" placeholder="Leave blank for all — or enter SKUs separated by commas (e.g. 93107, CCDPBK121147)" 
+           style="flex:1;min-width:300px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;">
+    <span id="skuFilterCount" style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;"></span>
+  </div>
+
+  <!-- Purge Panel (hidden by default) -->
+  <div id="purgePanel" style="display:none;background:var(--surface);border:1px solid rgba(244,112,104,0.3);border-radius:10px;padding:18px;margin-bottom:20px;">
+    <h3 style="font-size:13px;font-weight:600;color:var(--fail);margin-bottom:12px;">🗑 Purge Image URLs from Database</h3>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      <button class="btn btn-secondary" onclick="purgeBySkus()" style="font-size:12px;padding:8px 16px;color:var(--fail);border-color:rgba(244,112,104,0.3);">Purge SKUs Below</button>
+      <button class="btn btn-secondary" onclick="purgeOutOfStock()" style="font-size:12px;padding:8px 16px;color:var(--fail);border-color:rgba(244,112,104,0.3);">Purge Out-of-Stock</button>
+      <button class="btn btn-secondary" onclick="purgeAll()" style="font-size:12px;padding:8px 16px;color:var(--fail);border-color:rgba(244,112,104,0.3);">Purge ALL Images</button>
+      <button class="btn btn-secondary" onclick="closePurgePanel()" style="font-size:12px;padding:8px 16px;">Cancel</button>
+    </div>
+    <input type="text" id="purgeSkus" placeholder="Enter SKUs to purge, separated by commas"
+           style="width:100%;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:12px;outline:none;margin-bottom:8px;">
+    <div id="purgeStatus" style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--text-dim);"></div>
   </div>
 
   <div class="progress-wrap" id="progressWrap">
@@ -446,11 +469,22 @@ async function runPull() {
 
     // Step 2: Fetch items with etsy_listing_id from Supabase
     log('Fetching items from Supabase…', 'info');
-    const { data: items, error: itemsErr } = await sb
+
+    // Check for SKU filter
+    const skuFilterRaw = document.getElementById('skuFilter').value.trim();
+    const skuFilterList = skuFilterRaw ? skuFilterRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+
+    let itemsQuery = sb
       .from('items')
       .select('id, sku, etsy_listing_id, etsy_sku, image_urls, product_name, wayfair_sku')
-      .not('etsy_listing_id', 'is', null)
-      .limit(5000);
+      .not('etsy_listing_id', 'is', null);
+
+    if (skuFilterList.length > 0) {
+      itemsQuery = itemsQuery.in('sku', skuFilterList);
+      log(`SKU filter active: ${skuFilterList.length} SKU(s)`, 'info');
+    }
+
+    const { data: items, error: itemsErr } = await itemsQuery.limit(5000);
 
     if (itemsErr) throw new Error('Supabase query failed: ' + itemsErr.message);
 
@@ -464,7 +498,12 @@ async function runPull() {
       }
     }
 
-    log(`Found ${items.length} items with etsy_listing_id`, 'ok');
+    log(`Found ${items.length} items with etsy_listing_id${skuFilterList.length > 0 ? ` (filtered to ${skuFilterList.length} SKU(s))` : ''}`, 'ok');
+    if (skuFilterList.length > 0) {
+      document.getElementById('skuFilterCount').textContent = `${items.length} items matched`;
+    } else {
+      document.getElementById('skuFilterCount').textContent = '';
+    }
     setProgress(15);
 
     // Step 3: Fetch Etsy listings with images
@@ -625,6 +664,108 @@ function renderResults() {
       <td>${statusBadge}</td>
     </tr>`;
   }).join('');
+}
+
+// =========================================================================
+// PURGE FUNCTIONS
+// =========================================================================
+
+function openPurgePanel() {
+  document.getElementById('purgePanel').style.display = 'block';
+  document.getElementById('purgeStatus').textContent = '';
+}
+
+function closePurgePanel() {
+  document.getElementById('purgePanel').style.display = 'none';
+}
+
+async function purgeBySkus() {
+  if (!sb) { connectSupabase(); if (!sb) { alert('Connect to Supabase first'); return; } }
+  const raw = document.getElementById('purgeSkus').value.trim();
+  if (!raw) { document.getElementById('purgeStatus').innerHTML = '<span style="color:var(--warn)">Enter SKUs to purge</span>'; return; }
+
+  const skus = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (!confirm(`Purge image_urls for ${skus.length} SKU(s)?\n\n${skus.join(', ')}\n\nThis sets image_urls to NULL for these items.`)) return;
+
+  document.getElementById('purgeStatus').innerHTML = '<span class="spinner"></span> Purging…';
+  let purged = 0, errors = 0;
+
+  for (const sku of skus) {
+    const { error } = await sb.from('items').update({ image_urls: null }).eq('sku', sku);
+    if (error) { errors++; log(`Purge error for ${sku}: ${error.message}`, 'err'); }
+    else { purged++; }
+  }
+
+  const msg = `Purged ${purged} item(s), ${errors} error(s)`;
+  document.getElementById('purgeStatus').innerHTML = `<span style="color:${errors ? 'var(--warn)' : 'var(--pass)'}">${msg}</span>`;
+  log(msg, errors ? 'warn' : 'ok');
+}
+
+async function purgeOutOfStock() {
+  if (!sb) { connectSupabase(); if (!sb) { alert('Connect to Supabase first'); return; } }
+
+  // Count first
+  const { count } = await sb.from('items')
+    .select('*', { count: 'exact', head: true })
+    .not('image_urls', 'is', null)
+    .or('qty.eq.0,qty.is.null');
+
+  if (!count || count === 0) {
+    document.getElementById('purgeStatus').innerHTML = '<span style="color:var(--pass)">No out-of-stock items with images to purge</span>';
+    return;
+  }
+
+  if (!confirm(`Purge image_urls for ${count} out-of-stock item(s)?\n\nThis sets image_urls to NULL for items where qty = 0 or NULL.`)) return;
+
+  document.getElementById('purgeStatus').innerHTML = '<span class="spinner"></span> Purging…';
+
+  const { error } = await sb.from('items')
+    .update({ image_urls: null })
+    .not('image_urls', 'is', null)
+    .or('qty.eq.0,qty.is.null');
+
+  if (error) {
+    document.getElementById('purgeStatus').innerHTML = `<span style="color:var(--fail)">Error: ${error.message}</span>`;
+    log('Purge out-of-stock failed: ' + error.message, 'err');
+  } else {
+    document.getElementById('purgeStatus').innerHTML = `<span style="color:var(--pass)">Purged ${count} out-of-stock item(s)</span>`;
+    log(`Purged image_urls for ${count} out-of-stock items`, 'ok');
+  }
+}
+
+async function purgeAll() {
+  if (!sb) { connectSupabase(); if (!sb) { alert('Connect to Supabase first'); return; } }
+
+  const { count } = await sb.from('items')
+    .select('*', { count: 'exact', head: true })
+    .not('image_urls', 'is', null);
+
+  if (!count || count === 0) {
+    document.getElementById('purgeStatus').innerHTML = '<span style="color:var(--pass)">No items with images to purge</span>';
+    return;
+  }
+
+  if (!confirm(`⚠️ PURGE ALL image_urls for ${count} item(s)?\n\nThis clears ALL stored image URLs. You will need to re-run Image Pull to restore them.\n\nAre you sure?`)) return;
+
+  document.getElementById('purgeStatus').innerHTML = '<span class="spinner"></span> Purging all…';
+
+  // Batch in groups since Supabase update has row limits
+  const { data: allItems } = await sb.from('items')
+    .select('id')
+    .not('image_urls', 'is', null)
+    .limit(5000);
+
+  let purged = 0;
+  const batchSize = 100;
+  for (let i = 0; i < allItems.length; i += batchSize) {
+    const ids = allItems.slice(i, i + batchSize).map(r => r.id);
+    const { error } = await sb.from('items').update({ image_urls: null }).in('id', ids);
+    if (!error) purged += ids.length;
+    document.getElementById('purgeStatus').innerHTML = `<span class="spinner"></span> Purged ${purged}/${allItems.length}…`;
+  }
+
+  document.getElementById('purgeStatus').innerHTML = `<span style="color:var(--pass)">Purged all ${purged} item(s)</span>`;
+  log(`Purged ALL image_urls — ${purged} items cleared`, 'ok');
 }
 
 // =========================================================================
