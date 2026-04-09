@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.1</title>
+    <title>CCD Sync Hub v4.4.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.1 — Clean Build Styles
+           CCD SYNC HUB v4.4.2 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.1 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.2 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -713,11 +713,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.1 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.2 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.1';
+    const SH_VERSION = 'v4.4.2';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1482,7 +1482,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.1-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.2-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1706,7 +1706,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.1',
+                processedBy: 'Sync Hub v4.4.2',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2207,7 +2207,7 @@
         };
         
         // Pull from each channel with a configured proxy URL
-        // v4.4.1: Pull is NOT gated by enableSync toggles (those control pushing only)
+        // v4.4.2: Pull is NOT gated by enableSync toggles (those control pushing only)
         if (state.settings.etsyProxyUrl) {
             try {
                 const r = await pullEtsyOrders(startDate, endDate);
@@ -3472,6 +3472,10 @@
                 // v4.4.0: Also capture original Wix qty for reactivation guard
                 const originalWixQty = parseInt(product.channels?.wix) || 0;
                 
+                // v4.4.2: Store on item for cascade loop (separate scope)
+                item._originalEtsyQty = originalEtsyQty;
+                item._originalWixQty = originalWixQty;
+                
                 // ===== INVENTORY DEDUCTION (CONDITIONAL - GAP 3) =====
                 if (enableDeduction) {
                     // Calculate new quantity
@@ -3786,7 +3790,8 @@
                     const etsyQty = parseInt(channels.etsy) || 0;
                     
                     // v4.3.9 REACTIVATION GUARD: Don't push qty > 0 if Etsy was at 0
-                    if (etsyQty > 0 && originalEtsyQty === 0) {
+                    // v4.4.2: Read from item._originalEtsyQty (stored during deduction loop)
+                    if (etsyQty > 0 && (item._originalEtsyQty ?? 0) === 0) {
                         addLog(`⚠️ REACTIVATION BLOCKED: ${lookupSku} — Etsy was sold out (0), cascade would push ${etsyQty}. Skipped to prevent unwanted listing reactivation.`, 'warning');
                         console.warn(`[Reactivation Guard] Blocked Etsy cascade for ${lookupSku}: was 0, would push ${etsyQty}`);
                     } else {
@@ -3814,7 +3819,8 @@
                 if ((product.wixProductId || product.wixId) && sourceChannel !== 'wix') {
                     const wixQty = parseInt(channels.wix) || 0;
                     // v4.4.0: Reactivation guard for Wix (same protection as Etsy)
-                    if (wixQty > 0 && originalWixQty === 0) {
+                    // v4.4.2: Read from item._originalWixQty (stored during deduction loop)
+                    if (wixQty > 0 && (item._originalWixQty ?? 0) === 0) {
                         addLog(`⚠️ REACTIVATION BLOCKED: ${lookupSku} — Wix was sold out (0), cascade would push ${wixQty}. Skipped to prevent unwanted listing reactivation.`, 'warning');
                         console.warn(`[Reactivation Guard] Blocked Wix cascade for ${lookupSku}: was 0, would push ${wixQty}`);
                     } else {
@@ -6057,7 +6063,7 @@
         _syncQueueProcessing = true;
         
         try {
-            // v4.4.1: Mark stale rows (older than 4 hours) so they don't process
+            // v4.4.2: Mark stale rows (older than 4 hours) so they don't process
             const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
             const { count: staleCount } = await sbClient
                 .from('sync_queue')
@@ -6721,7 +6727,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.4.1 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.4.2 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
@@ -6793,11 +6799,11 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.4.1 initialized successfully');
-            addLog('CCD Sync Hub v4.4.1 initialized (Supabase-Native Push)', 'success');
+            console.log('[Init] CCD Sync Hub v4.4.2 initialized successfully');
+            addLog('CCD Sync Hub v4.4.2 initialized (Supabase-Native Push)', 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.4.1 started (Supabase-Native Push)',
+                'Sync Hub v4.4.2 started (Supabase-Native Push)',
                 { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
             );
             
