@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Remittance Import v1.2</title>
+<title>CCD Wayfair Remittance Import v1.3.2</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
@@ -590,7 +590,7 @@
 // ═══════════════════════════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════════════════════════
-const REM_VERSION = 'v1.3.1';
+const REM_VERSION = 'v1.3.2';
 const REM_VERSION_KEY = 'remittance';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -684,8 +684,8 @@ async function checkReturnsSchema() {
 
 async function loadExistingRemittances() {
     if (!sbClient) return;
-    const { data } = await sbClient.from('wayfair_remittances').select('remittance_number');
-    existingRemittances = new Set((data || []).map(r => r.remittance_number));
+    const { data } = await sbClient.from('wayfair_remittances').select('remittance_number').limit(5000);
+    existingRemittances = new Set((data || []).map(r => String(r.remittance_number)));
     // Re-check parsed files for duplicates
     parsedFiles.forEach(pf => {
         pf.isDuplicate = existingRemittances.has(pf.header.remittanceNumber);
@@ -1103,6 +1103,19 @@ async function importToSupabase() {
     
     for (const pf of newFiles) {
         try {
+            // 0. Server-side duplicate check (safety net for type mismatches)
+            const { data: dupCheck } = await sbClient
+                .from('wayfair_remittances')
+                .select('id')
+                .eq('remittance_number', pf.header.remittanceNumber)
+                .limit(1);
+            if (dupCheck && dupCheck.length > 0) {
+                toast(`Skipped ${pf.fileName} — Rem# ${pf.header.remittanceNumber} already in DB`, 'warning');
+                pf.isDuplicate = true;
+                existingRemittances.add(String(pf.header.remittanceNumber));
+                continue;
+            }
+
             // 1. Insert remittance header
             const { data: remData, error: remErr } = await sbClient
                 .from('wayfair_remittances')
@@ -1157,7 +1170,7 @@ async function importToSupabase() {
                 if (chargeErr) throw chargeErr;
             }
             
-            existingRemittances.add(pf.header.remittanceNumber);
+            existingRemittances.add(String(pf.header.remittanceNumber));
             pf.isDuplicate = true;
             pf.justImported = true;
             imported++;
@@ -2196,7 +2209,7 @@ async function processReturn(parsed, today) {
             qty_restocked: im ? item.qty : 0,
             reason:        item.reason || null,
             notes:         item.raNumber ? `RA# ${item.raNumber}` : null,
-            created_by:    'WayfairRemittance-v1.2'
+            created_by:    'WayfairRemittance-v1.3.2'
         };
 
         const { data: returnData, error: rErr } = await sbClient
