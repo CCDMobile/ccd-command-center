@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.9</title>
+<title>CCD Inventory System v2.8.10</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -609,7 +609,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.9 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.10 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -621,7 +621,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.9</div>
+      <div class="topbar-version">v2.8.10</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -4862,9 +4862,9 @@ async function saveItem() {
       updated_at: new Date().toISOString(),
     };
 
-    // Etsy ↔ Wix always mirror: ensure save writes matching values
-    updates.wix_price = updates.etsy_price;
-    updates.wix_qty = updates.etsy_qty;
+    // v2.8.10: Forced wix_price = etsy_price + wix_qty = etsy_qty REMOVED.
+    // Etsy and Wix are now fully independent. What the user typed is what gets saved.
+    // Use the "← Copy from Etsy" button on the Wix pricing tab for explicit one-time sync.
 
     // ── ALLOCATION VALIDATION + AUTO-CORRECT (v2.8.5 — closes G1) ──
     // Shared inventory model: online channels all show the same pool.
@@ -4888,11 +4888,15 @@ async function saveItem() {
     }
 
     // Auto-correct: cap each online channel at available online pool
+    // v2.8.10: Etsy and Wix now capped independently — capping etsy no longer drags wix.
     const corrections = [];
     if (etsyQty > availableOnline) {
       corrections.push(`Etsy ${etsyQty}→${availableOnline}`);
       etsyQty = availableOnline;
-      wixQty = availableOnline; // Mirror
+    }
+    if (wixQty > availableOnline) {
+      corrections.push(`Wix ${wixQty}→${availableOnline}`);
+      wixQty = availableOnline;
     }
     if (wayfairQty > availableOnline) {
       corrections.push(`Wayfair ${wayfairQty}→${availableOnline}`);
@@ -4922,9 +4926,8 @@ async function saveItem() {
       );
       if (!proceed) {
         updates.etsy_qty = 0;
-        updates.wix_qty = 0; // Mirror rule
+        // v2.8.10: No longer mirrors wix to 0 — wix is independent
         if (ge('f_etsy_qty')) $('f_etsy_qty').value = '0';
-        if (ge('f_wix_qty')) $('f_wix_qty').value = '0';
       }
     }
 
@@ -5472,12 +5475,10 @@ async function confirmSell() {
       qtyUpdates[chQtyMap[channel]] = Math.max(0, pi(item[chQtyMap[channel]]) - qty);
     }
 
-    // Etsy/Wix cross-deduct: selling on one reduces the other
-    if (channel === 'etsy' && pi(item.wix_qty) > 0) {
-      qtyUpdates.wix_qty = Math.max(0, pi(item.wix_qty) - qty);
-    } else if (channel === 'wix' && pi(item.etsy_qty) > 0) {
-      qtyUpdates.etsy_qty = Math.max(0, pi(item.etsy_qty) - qty);
-    }
+    // v2.8.10: Etsy/Wix cross-deduct REMOVED. Under independent channels, a sale on one
+    // channel only reduces THAT channel's allocation. The shared inventory cap below
+    // (lines further down) handles any other channel that ends up exceeding the new
+    // available pool — that's the cascade-through-defined-logic behavior.
 
     // v2.8.5 ALLOCATION GUARD: shared inventory — each online channel ≤ (warehouse − TM)
     // After sale deduction + Etsy/Wix mirror, cap any channel that exceeds available pool.
@@ -5488,10 +5489,14 @@ async function confirmSell() {
     const newWix  = qtyUpdates.wix_qty ?? pi(item.wix_qty);
     const newWf   = qtyUpdates.wayfair_qty ?? pi(item.wayfair_qty);
 
+    // v2.8.10: Independent caps — etsy and wix capped separately
     if (newEtsy > saleAvailOnline) {
       qtyUpdates.etsy_qty = saleAvailOnline;
-      qtyUpdates.wix_qty = saleAvailOnline; // Mirror
-      console.log(`[Allocation Guard] Etsy/Wix capped: ${newEtsy}→${saleAvailOnline} (available online=${saleAvailOnline})`);
+      console.log(`[Allocation Guard] Etsy capped: ${newEtsy}→${saleAvailOnline} (available online=${saleAvailOnline})`);
+    }
+    if (newWix > saleAvailOnline) {
+      qtyUpdates.wix_qty = saleAvailOnline;
+      console.log(`[Allocation Guard] Wix capped: ${newWix}→${saleAvailOnline} (available online=${saleAvailOnline})`);
     }
     if (newWf > saleAvailOnline) {
       qtyUpdates.wayfair_qty = saleAvailOnline;
@@ -5528,12 +5533,11 @@ async function confirmSell() {
         if (chQtyMap[channel] && pi(freshComp[chQtyMap[channel]]) > 0) {
           compUpdates[chQtyMap[channel]] = Math.max(0, pi(freshComp[chQtyMap[channel]]) - deductQty);
         }
-        // Etsy/Wix cross-deduct on component
-        if (channel === 'etsy' && pi(freshComp.wix_qty) > 0) {
-          compUpdates.wix_qty = Math.max(0, pi(freshComp.wix_qty) - deductQty);
-        } else if (channel === 'wix' && pi(freshComp.etsy_qty) > 0) {
-          compUpdates.etsy_qty = Math.max(0, pi(freshComp.etsy_qty) - deductQty);
-        }
+        // v2.8.10: Etsy/Wix cross-deduct REMOVED on bundle components too.
+        // A bundle sale on etsy only deducts the component's etsy allocation.
+        // Wix component allocation is unchanged unless it now exceeds cap (not enforced
+        // here for components — cap enforcement happens via SH's autoAdjust during the
+        // cascade push, or via the Bulk Allocation Fix utility).
 
         const { error: compErr } = await sb.from('items').update(compUpdates).eq('id', freshComp.id);
         if (compErr) console.warn(`[Bundle Cascade] Failed to deduct from ${freshComp.sku}:`, compErr.message);
@@ -5735,11 +5739,15 @@ async function recordWriteoff() {
       const woAvailOnline = Math.max(0, newQty - woTm);
 
       // Shared inventory: cap each online channel at available pool
+      // v2.8.10: Independent caps — etsy and wix capped separately
       const woCorrections = [];
       if (woEtsy > woAvailOnline) {
         woCorrections.push(`Etsy ${woEtsy}→${woAvailOnline}`);
         woEtsy = woAvailOnline;
-        woWix = woAvailOnline; // Mirror
+      }
+      if (woWix > woAvailOnline) {
+        woCorrections.push(`Wix ${woWix}→${woAvailOnline}`);
+        woWix = woAvailOnline;
       }
       if (woWf > woAvailOnline) {
         woCorrections.push(`Wayfair ${woWf}→${woAvailOnline}`);
@@ -9001,23 +9009,24 @@ async function fixAllocations() {
       const syncRows = [];
 
       // Check and cap each online channel
+      // v2.8.10: Etsy and Wix capped independently. The force-mirror block that used to
+      // ensure wix_qty == etsy_qty even when both under cap has been REMOVED — channels
+      // are now independent. This utility only caps over-cap channels; it no longer
+      // synchronizes them.
       if (etsy > avail) {
         corrections.push('Etsy ' + etsy + '→' + avail);
         etsy = avail;
-        wix = avail; // Mirror
         updates.etsy_qty = avail;
+      }
+      if (wix > avail) {
+        corrections.push('Wix ' + wix + '→' + avail);
+        wix = avail;
         updates.wix_qty = avail;
       }
       if (wf > avail) {
         corrections.push('Wayfair ' + wf + '→' + avail);
         wf = avail;
         updates.wayfair_qty = avail;
-      }
-      // Also fix Wix mirror if it doesn't match Etsy (even if both under cap)
-      if (pi(item.etsy_qty) !== pi(item.wix_qty) && updates.etsy_qty === undefined) {
-        // Wix should mirror Etsy — set wix = etsy
-        corrections.push('Wix mirror ' + pi(item.wix_qty) + '→' + etsy);
-        updates.wix_qty = etsy;
       }
 
       if (Object.keys(updates).length === 0) continue;
