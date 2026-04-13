@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.5</title>
+    <title>CCD Sync Hub v4.4.6</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.5 — Clean Build Styles
+           CCD SYNC HUB v4.4.6 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.5 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.6 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -713,11 +713,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.5 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.6 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.5';
+    const SH_VERSION = 'v4.4.6';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1482,7 +1482,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.5-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.6-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1706,7 +1706,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.5',
+                processedBy: 'Sync Hub v4.4.6',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2791,12 +2791,13 @@
 
     // === autoAdjustChannelAllocations ===
     // ============================================================================
-    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.3.9 - SHARED INVENTORY MODEL)
-    // Ensures channel allocations stay valid after order processing
-    // Rules:
-    // - Etsy = Wix always (they sync together)
+    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.4.6 - INDEPENDENT CHANNELS)
+    // Ensures channel allocations stay valid after order processing.
+    // Rules (shared inventory model):
+    // - Each online channel (etsy, wix, wayfair) is INDEPENDENT
     // - Each online channel ≤ (Warehouse Qty − TM Qty)
     // - TreasureMarts is physical location, reduces available online pool
+    // - Source channel is deducted externally by processOrder; this function only CAPS
     // ============================================================================
     function autoAdjustChannelAllocations(product, sourceChannel = null, deductedQty = 0) {
         if (!product) return { adjusted: false, changes: [], parAlerts: [] };
@@ -2882,53 +2883,30 @@
         // warehouse 8→7) to be wrongly decremented, producing incorrect cascade pushes.
         // See: S17 bug report, orders ETSY-4029158469 (380-623) and ETSY-4025622968 (93112).
         
-        if (sourceChannel === 'etsy') {
-            // Sale from Etsy - sync Wix to match (only if item has Wix listing)
-            if (hasWixId && wixQty !== etsyQty && wixQty > 0) {
-                adjustments.changes.push({ channel: 'wix', from: wixQty, to: etsyQty, reason: 'sync with etsy sale' });
-                channels.wix = etsyQty;
-                wixQty = etsyQty;
-                adjustments.adjusted = true;
-            }
-        } else if (sourceChannel === 'wix') {
-            // Sale from Wix - sync Etsy to match (only if item has Etsy listing)
-            if (hasEtsyId && etsyQty !== wixQty && etsyQty > 0) {
-                adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: wixQty, reason: 'sync with wix sale' });
-                channels.etsy = wixQty;
-                etsyQty = wixQty;
-                adjustments.adjusted = true;
-            }
-        } else {
-            // Sale from Wayfair or other - ensure Etsy = Wix (use lower value)
-            // v4.3.4: Only sync channels that have listing IDs
-            const syncedQty = Math.min(etsyQty, wixQty);
-            if (hasEtsyId && etsyQty > 0 && etsyQty !== syncedQty) {
-                adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: syncedQty, reason: 'sync etsy=wix' });
-                channels.etsy = syncedQty;
-                adjustments.adjusted = true;
-            }
-            if (hasWixId && wixQty > 0 && wixQty !== syncedQty) {
-                adjustments.changes.push({ channel: 'wix', from: wixQty, to: syncedQty, reason: 'sync etsy=wix' });
-                channels.wix = syncedQty;
-                adjustments.adjusted = true;
-            }
-            etsyQty = wixQty = syncedQty;
-        }
+        // Rule 1: REMOVED in v4.4.6
+        // Previously forced etsy === wix on every sale (and on Wayfair sales, forced both
+        // down to min(etsy,wix)). This was legacy from the pre-S12 additive formula where
+        // etsy+wix were treated as a single logical channel. Under the true shared inventory
+        // model, etsy and wix are INDEPENDENT — each has its own allocation capped at
+        // (warehouse − TM). Rule 2 below handles the capping per-channel.
+        // Business impact: allows holding back stock on one channel vs the other, and
+        // stops unnecessary cascade pushes when a non-source channel was already under cap.
+        // See: S17 bug report — wix was being dragged down on every etsy sale.
         
-        // Rule 2: Cap each channel at warehouse qty (basic ceiling)
-        // v4.3.4: Only cap channels that have listing IDs
-        let currentEtsyWix = parseInt(channels.etsy) || 0;
-        if (currentEtsyWix > availableForOnline) {
-            if (hasEtsyId) {
-                adjustments.changes.push({ channel: 'etsy', from: currentEtsyWix, to: availableForOnline, reason: 'exceeds warehouse' });
-                channels.etsy = availableForOnline;
-            }
-            if (hasWixId) {
-                adjustments.changes.push({ channel: 'wix', from: parseInt(channels.wix) || 0, to: availableForOnline, reason: 'exceeds warehouse' });
-                channels.wix = availableForOnline;
-            }
+        // Rule 2: Cap each online channel independently at (warehouse − TM).
+        // v4.4.6: etsy and wix are now independent — each checked separately against the cap.
+        // v4.3.4: Only cap channels that have listing IDs.
+        if (hasEtsyId && etsyQty > availableForOnline) {
+            adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: availableForOnline, reason: 'exceeds warehouse' });
+            channels.etsy = availableForOnline;
+            etsyQty = availableForOnline;
             adjustments.adjusted = true;
-            currentEtsyWix = availableForOnline;
+        }
+        if (hasWixId && wixQty > availableForOnline) {
+            adjustments.changes.push({ channel: 'wix', from: wixQty, to: availableForOnline, reason: 'exceeds warehouse' });
+            channels.wix = availableForOnline;
+            wixQty = availableForOnline;
+            adjustments.adjusted = true;
         }
         
         let wayfairQty = parseInt(channels.wayfair) || 0;
@@ -2950,12 +2928,16 @@
         // writing pre-deduction values back to the DB. Keep zeros explicit.
         
         // Rule 4: Check Channel PAR (Etsy/Wix)
-        const finalEtsyWix = parseInt(channels.etsy) || 0;
+        // v4.4.6: Etsy and Wix are independent — alert if EITHER is at/below minimum.
+        // We use min(etsy, wix) so the first channel to dip below threshold triggers the alert.
+        const finalEtsy = parseInt(channels.etsy) || 0;
+        const finalWix = parseInt(channels.wix) || 0;
+        const finalEtsyWix = Math.min(finalEtsy, finalWix);
         if (product.channelParEnabled && product.channelParMin > 0) {
             if (finalEtsyWix <= product.channelParMin) {
                 adjustments.parAlerts.push({
                     type: 'channelPar',
-                    message: `Channel PAR Alert: ${product.sku || 'Item'} - Etsy/Wix at ${finalEtsyWix} (min: ${product.channelParMin})`,
+                    message: `Channel PAR Alert: ${product.sku || 'Item'} - Etsy=${finalEtsy}, Wix=${finalWix} (min: ${product.channelParMin})`,
                     current: finalEtsyWix,
                     min: product.channelParMin
                 });
