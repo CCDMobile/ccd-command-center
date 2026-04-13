@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.8</title>
+    <title>CCD Sync Hub v4.4.9</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.8 — Clean Build Styles
+           CCD SYNC HUB v4.4.9 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.8 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.9 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -600,7 +600,13 @@
                     <div class="setting-row">
                         <label class="checkbox-label">
                             <input type="checkbox" id="autoProcessEnabled" />
-                            Enable auto-processing (every 5 minutes)
+                            Enable order auto-pull (every 5 minutes)
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="pushQueueEnabled" />
+                            Enable channel push queue (every 15 seconds)
                         </label>
                     </div>
                     <div class="setting-row">
@@ -713,11 +719,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.8 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.9 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.8';
+    const SH_VERSION = 'v4.4.9';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -761,6 +767,7 @@
             syncHubProxyUrl: '',
             shippoProxyUrl: '',
             autoProcessEnabled: false,
+            pushQueueEnabled: true,
             retryFailedEnabled: true,
             enableEtsySync: true,
             enableWixSync: true,
@@ -1514,7 +1521,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.8-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.9-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1738,7 +1745,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.8',
+                processedBy: 'Sync Hub v4.4.9',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -5859,6 +5866,7 @@
         document.getElementById('syncHubProxyUrl').value = state.settings.syncHubProxyUrl || '';
         document.getElementById('shippoProxyUrl').value = state.settings.shippoProxyUrl || '';
         document.getElementById('autoProcessEnabled').checked = state.settings.autoProcessEnabled;
+        document.getElementById('pushQueueEnabled').checked = state.settings.pushQueueEnabled !== false;
         document.getElementById('retryFailedEnabled').checked = state.settings.retryFailedEnabled;
         document.getElementById('enableEtsySync').checked = state.settings.enableEtsySync;
         document.getElementById('enableWixSync').checked = state.settings.enableWixSync;
@@ -5876,6 +5884,7 @@
         state.settings.syncHubProxyUrl = document.getElementById('syncHubProxyUrl').value;
         state.settings.shippoProxyUrl = document.getElementById('shippoProxyUrl').value;
         state.settings.autoProcessEnabled = document.getElementById('autoProcessEnabled').checked;
+        state.settings.pushQueueEnabled = document.getElementById('pushQueueEnabled').checked;
         state.settings.retryFailedEnabled = document.getElementById('retryFailedEnabled').checked;
         state.settings.enableEtsySync = document.getElementById('enableEtsySync').checked;
         state.settings.enableWixSync = document.getElementById('enableWixSync').checked;
@@ -5900,6 +5909,7 @@
                 }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
                 await sbClient.from('settings').upsert({ key: 'sync_settings', value: {
                     autoProcessEnabled: state.settings.autoProcessEnabled,
+                    pushQueueEnabled: state.settings.pushQueueEnabled,
                     retryFailedEnabled: state.settings.retryFailedEnabled,
                     enableEtsySync: state.settings.enableEtsySync,
                     enableWixSync: state.settings.enableWixSync,
@@ -5911,9 +5921,13 @@
         // Also save to localStorage as backup
         localStorage.setItem('ccd_sync_hub_settings', JSON.stringify(state.settings));
         
-        // Handle auto-process toggle
-        if (state.settings.autoProcessEnabled) { startAutoProcess(); startSyncQueuePolling(); }
-        else { stopAutoProcess(); stopSyncQueuePolling(); }
+        // v4.4.9: Order auto-pull and channel push queue are now independent.
+        // autoProcessEnabled controls the 5-min order pull from Etsy/Wix/Wayfair.
+        // pushQueueEnabled controls the 15-sec sync_queue poll that pushes to channels.
+        if (state.settings.autoProcessEnabled) startAutoProcess();
+        else stopAutoProcess();
+        if (state.settings.pushQueueEnabled) startSyncQueuePolling();
+        else stopSyncQueuePolling();
         
         toast('Settings saved', 'success');
         
@@ -6047,13 +6061,13 @@
             );
 
             if (action) {
-                // Process one-time — temporarily enable auto-process so pollSyncQueue doesn't bail
+                // Process one-time — temporarily enable push queue so pollSyncQueue doesn't bail
                 addLog(`▶️ Processing ${count} pending queue rows (one-time)...`, 'info');
                 _syncQueueProcessing = false;
-                const savedAutoProcess = state.settings.autoProcessEnabled;
-                state.settings.autoProcessEnabled = true;
+                const savedPushQueue = state.settings.pushQueueEnabled;
+                state.settings.pushQueueEnabled = true;
                 await pollSyncQueue();
-                state.settings.autoProcessEnabled = savedAutoProcess;
+                state.settings.pushQueueEnabled = savedPushQueue;
                 addLog('✅ One-time queue processing complete', 'success');
             } else {
                 // Cancel all pending
@@ -6164,10 +6178,10 @@
 
         // Temporarily allow polling for one cycle
         _syncQueueProcessing = false;
-        const savedAutoProcess = state.settings.autoProcessEnabled;
-        state.settings.autoProcessEnabled = true;
+        const savedPushQueue = state.settings.pushQueueEnabled;
+        state.settings.pushQueueEnabled = true;
         await pollSyncQueue();
-        state.settings.autoProcessEnabled = savedAutoProcess;
+        state.settings.pushQueueEnabled = savedPushQueue;
 
         if (panel) panel.innerHTML = '<span style="color:var(--success);">✅ Queue processing complete. Click Check Queue to verify.</span>';
         addLog('✅ One-time queue processing complete', 'success');
@@ -6175,8 +6189,9 @@
     
     async function pollSyncQueue() {
         if (!sbClient || !sbConnected || _syncQueueProcessing) return;
-        // v4.4.0: Respect auto-process toggle
-        if (!state.settings.autoProcessEnabled) {
+        // v4.4.9: Gate on pushQueueEnabled (decoupled from order auto-pull).
+        // Default is TRUE so V2 pushes flow without manual intervention.
+        if (state.settings.pushQueueEnabled === false) {
             stopSyncQueuePolling();
             return;
         }
@@ -6898,16 +6913,18 @@
                 startHealthHeartbeat();
             }
             
-            // Start auto-process if enabled
+            // Start order auto-pull if enabled
             if (state.settings.autoProcessEnabled) {
                 startAutoProcess();
             }
             
-            // Start sync_queue polling — ONLY if auto-process enabled (v4.4.0 fix)
-            if (sbConnected && state.settings.autoProcessEnabled) {
+            // v4.4.9: Start sync_queue polling independently of order auto-pull.
+            // Default is ON so V2/CM pushes flow without manual intervention.
+            // Only fall through to the safety-net "pending rows on load" check if BOTH off.
+            if (sbConnected && state.settings.pushQueueEnabled !== false) {
                 startSyncQueuePolling();
             } else if (sbConnected) {
-                // v4.4.0: Check for stale queue rows and prompt
+                // Both pollers are off — surface any pending rows so they don't rot
                 setTimeout(() => checkPendingQueueOnLoad(), 3000);
             }
             
@@ -6925,12 +6942,12 @@
                 startShippoAutoSync();
             }
             
-            console.log('[Init] CCD Sync Hub v4.4.4 initialized successfully');
-            addLog('CCD Sync Hub v4.4.4 initialized (Supabase-Native Push)', 'success');
+            console.log(`[Init] CCD Sync Hub ${SH_VERSION} initialized successfully`);
+            addLog(`CCD Sync Hub ${SH_VERSION} initialized (Supabase-Native Push)`, 'success');
             
             logActivity('system', 'sync_hub_started', 'system',
-                'Sync Hub v4.4.4 started (Supabase-Native Push)',
-                { autoProcess: state.settings.autoProcessEnabled, supabase: sbConnected }
+                `Sync Hub ${SH_VERSION} started (Supabase-Native Push)`,
+                { autoProcess: state.settings.autoProcessEnabled, pushQueue: state.settings.pushQueueEnabled, supabase: sbConnected }
             );
             
         } catch (error) {
