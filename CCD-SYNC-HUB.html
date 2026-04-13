@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.4</title>
+    <title>CCD Sync Hub v4.4.5</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.4 — Clean Build Styles
+           CCD SYNC HUB v4.4.5 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.4 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.5 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -713,11 +713,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.4 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.5 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.4';
+    const SH_VERSION = 'v4.4.5';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1482,7 +1482,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.4-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.5-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1706,7 +1706,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.4',
+                processedBy: 'Sync Hub v4.4.5',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2874,27 +2874,13 @@
         let etsyQty = parseInt(channels.etsy) || 0;
         let wixQty = parseInt(channels.wix) || 0;
         
-        // Rule 0 (v4.4.4): Shared warehouse — reduce non-source online channels by sold qty.
-        // When any online channel sells, ALL online channels lose stock from the same pool.
-        // Source channel is already reduced by processOrder's source deduction step.
-        // For bundles (sourceChannel=null), all online channels get reduced.
-        if (deductedQty > 0) {
-            ['etsy', 'wix', 'wayfair'].forEach(ch => {
-                if (ch === sourceChannel) return; // Source already deducted
-                const oldVal = parseInt(channels[ch]) || 0;
-                if (oldVal > 0) {
-                    const newVal = Math.max(0, oldVal - deductedQty);
-                    if (newVal !== oldVal) {
-                        adjustments.changes.push({ channel: ch, from: oldVal, to: newVal, reason: 'shared warehouse deduction' });
-                        channels[ch] = newVal;
-                        adjustments.adjusted = true;
-                    }
-                }
-            });
-            // Refresh local variables after Rule 0 modifications
-            etsyQty = parseInt(channels.etsy) || 0;
-            wixQty = parseInt(channels.wix) || 0;
-        }
+        // Rule 0: REMOVED in v4.4.5
+        // v4.4.4 briefly introduced an additive "reduce non-source online channels by sold qty"
+        // block here. It directly contradicted the shared inventory model (S12 architecture):
+        // online channels do NOT subtract per-sale — they are CAPPED at (warehouse − TM) by
+        // Rule 2 below. Rule 0 caused channels that were already under cap (e.g. wix=2 with
+        // warehouse 8→7) to be wrongly decremented, producing incorrect cascade pushes.
+        // See: S17 bug report, orders ETSY-4029158469 (380-623) and ETSY-4025622968 (93112).
         
         if (sourceChannel === 'etsy') {
             // Sale from Etsy - sync Wix to match (only if item has Wix listing)
