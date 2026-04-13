@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.8</title>
+<title>CCD Inventory System v2.8.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -609,7 +609,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.8 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.9 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -621,7 +621,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.8</div>
+      <div class="topbar-version">v2.8.9</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -2361,21 +2361,35 @@ function captureEdits() {
     const col = notesColMap[state.activePricingChannel];
     if (col) item[col] = $('f_pricing_notes').value || '';
   }
-  // Etsy ↔ Wix always mirror each other
-  syncEtsyWix(item);
+  // v2.8.9: syncEtsyWix() removed — Etsy and Wix are now fully independent.
+  // Use the "← Copy from Etsy" button on the Wix pricing tab for explicit sync.
 }
 
-// Business rule: Etsy and Wix always share the same price and qty.
-// If one was just changed, the other follows.
-function syncEtsyWix(item, sourceChannel) {
+// v2.8.9: syncEtsyWix REMOVED.
+// Previously forced item.etsy_qty = item.wix_qty (or vice versa) on every save and on
+// every pricing edit. This was a vestige of the pre-S12 additive allocation model.
+// Etsy and Wix are now fully INDEPENDENT in V2 — what you type is what gets saved.
+// Use the "← Copy from Etsy" button on the Wix pricing tab for explicit one-click sync.
+// See: S17 bug report — wix qty was being silently dragged to match etsy on every save.
+
+// v2.8.9: One-click convenience copy from Etsy to Wix (price + qty).
+// Replaces the auto-mirror that used to fire on every save. User-initiated only.
+function copyEtsyToWix() {
+  const item = state.currentItem;
   if (!item) return;
-  if (sourceChannel === 'wix') {
-    item.etsy_price = item.wix_price;
-    item.etsy_qty = item.wix_qty;
-  } else {
-    // Default: Etsy is primary → Wix follows
-    item.wix_price = item.etsy_price;
-    item.wix_qty = item.etsy_qty;
+  captureEdits(); // pull any pending DOM edits into state first
+  const oldWixPrice = pf(item.wix_price);
+  const oldWixQty = pi(item.wix_qty);
+  item.wix_price = pf(item.etsy_price);
+  item.wix_qty = pi(item.etsy_qty);
+  showCardStatus(`✅ Copied from Etsy → Wix: price $${item.wix_price.toFixed(2)} (was $${oldWixPrice.toFixed(2)}), qty ${item.wix_qty} (was ${oldWixQty})`, 'ok');
+  renderPricing(item);
+  // Also refresh the allocation view if it's mounted, so wix_qty there reflects the copy
+  if (state.activeTab === 'overview' || ge('f_wix_qty')) {
+    const wixQtyEl = ge('f_wix_qty');
+    if (wixQtyEl) wixQtyEl.value = item.wix_qty;
+    const wixPriceEl = ge('f_wix_price');
+    if (wixPriceEl) wixPriceEl.value = item.wix_price;
   }
 }
 
@@ -2699,7 +2713,10 @@ function renderPricing(item) {
   <div class="section">
     <div class="flex-between" style="margin-bottom:16px;">
       <div class="channel-sub-tabs">${tabsHtml}</div>
-      <button class="push-btn" onclick="pushSingleChannel('${activeCh.key}')">↻ Push to ${activeCh.label}</button>
+      <div style="display:flex;gap:8px;align-items:center;">
+        ${activeCh.key === 'wix' ? `<button class="push-btn" style="background:rgba(99,102,241,0.15);color:var(--blue);border-color:rgba(99,102,241,0.3);" onclick="copyEtsyToWix()" title="Copy Etsy price and quantity to Wix (one-time, no automation)">← Copy from Etsy</button>` : ''}
+        <button class="push-btn" onclick="pushSingleChannel('${activeCh.key}')">↻ Push to ${activeCh.label}</button>
+      </div>
     </div>
     <div class="section-title" style="color:${activeCh.color};">${activeCh.label.toUpperCase()} PRICING</div>
     <div class="pricing-kpis">
@@ -2789,7 +2806,7 @@ function applyMarkup(chKey, pct) {
   const newPrice = calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct);
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
-  syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
+  // v2.8.9: syncEtsyWix removed — channels independent
   renderPricing(item);
 }
 
@@ -2810,7 +2827,7 @@ function onMarkupSlide(chKey, pctVal) {
   const newPrice = calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct);
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
-  syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
+  // v2.8.9: syncEtsyWix removed — channels independent
   clearTimeout(state._sliderTimer);
   state._sliderTimer = setTimeout(() => renderPricing(item), 150);
 }
@@ -2821,7 +2838,7 @@ function onPriceAdjust(chKey, val) {
   const item = state.currentItem;
   const priceMap = { etsy:'etsy_price', wix:'wix_price', wayfair:'wayfair_price', tm:'treasuremarts_price' };
   item[priceMap[chKey]] = newPrice;
-  syncEtsyWix(item, chKey === 'wix' ? 'wix' : (chKey === 'etsy' ? 'etsy' : null));
+  // v2.8.9: syncEtsyWix removed — channels independent
   renderPricing(item);
 }
 
