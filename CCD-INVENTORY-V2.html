@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.7</title>
+<title>CCD Inventory System v2.8.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -609,7 +609,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.7 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.8 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -621,7 +621,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.7</div>
+      <div class="topbar-version">v2.8.8</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -978,8 +978,14 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
         <div class="table-wrapper">
           <table>
             <thead><tr>
-              <th style="cursor:pointer;" onclick="toggleAnalyticsSort()">Date <span id="analyticsSortArrow">▼</span></th>
-              <th>SKU</th><th>Product</th><th>Channel</th><th>Units</th><th>Revenue</th><th>Profit</th><th>Margin</th>
+              <th onclick="setAnalyticsSort('date')">Date <span class="sort-arrow" data-col="date"></span></th>
+              <th onclick="setAnalyticsSort('sku')">SKU <span class="sort-arrow" data-col="sku"></span></th>
+              <th onclick="setAnalyticsSort('product')">Product <span class="sort-arrow" data-col="product"></span></th>
+              <th onclick="setAnalyticsSort('channel')">Channel <span class="sort-arrow" data-col="channel"></span></th>
+              <th onclick="setAnalyticsSort('units')">Units <span class="sort-arrow" data-col="units"></span></th>
+              <th onclick="setAnalyticsSort('revenue')">Revenue <span class="sort-arrow" data-col="revenue"></span></th>
+              <th onclick="setAnalyticsSort('profit')">Profit <span class="sort-arrow" data-col="profit"></span></th>
+              <th onclick="setAnalyticsSort('margin')">Margin <span class="sort-arrow" data-col="margin"></span></th>
             </tr></thead>
             <tbody id="topSellersBody"><tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
           </table>
@@ -8461,6 +8467,7 @@ async function loadAnalytics() {
       profit: pf(r.net_profit),
       margin: pf(r.profit_margin) * 100
     }));
+    state.analyticsSortCol = 'date';
     state.analyticsSortAsc = false; // default newest first
     renderAnalyticsSalesLog();
 
@@ -8470,11 +8477,44 @@ async function loadAnalytics() {
   }
 }
 
+// v2.8.8: Multi-column sort for Sales Log table.
+// Columns in DESC_DEFAULT default to high→low on first click (date = newest first,
+// numeric cols = biggest first). String columns default to A→Z.
+// Clicking the already-active column flips the direction.
+const ANALYTICS_DESC_DEFAULT_COLS = new Set(['date', 'units', 'revenue', 'profit', 'margin']);
+const ANALYTICS_NUMERIC_COMPARE_COLS = new Set(['units', 'revenue', 'profit', 'margin']);
+
 function renderAnalyticsSalesLog() {
     const sales = state.analyticsSales || [];
-    const sorted = [...sales].sort((a, b) => state.analyticsSortAsc ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
-    const arrow = $('analyticsSortArrow');
-    if (arrow) arrow.textContent = state.analyticsSortAsc ? '▲' : '▼';
+    const col = state.analyticsSortCol || 'date';
+    const asc = !!state.analyticsSortAsc;
+
+    const sorted = [...sales].sort((a, b) => {
+        const av = a[col];
+        const bv = b[col];
+        let cmp;
+        if (ANALYTICS_NUMERIC_COMPARE_COLS.has(col)) {
+            cmp = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
+        } else {
+            // date, sku, product, channel — lexicographic (date strings are YYYY-MM-DD so this works)
+            cmp = String(av || '').localeCompare(String(bv || ''), undefined, { sensitivity: 'base' });
+        }
+        return asc ? cmp : -cmp;
+    });
+
+    // Update all sort arrows — only active column shows ▲/▼, others blank.
+    // Also toggle the 'sorted' class on the parent th so existing CSS highlights it in gold.
+    document.querySelectorAll('#analyticsView .sort-arrow').forEach(el => {
+        const elCol = el.getAttribute('data-col');
+        const th = el.parentElement;
+        if (elCol === col) {
+            el.textContent = asc ? '▲' : '▼';
+            if (th) th.classList.add('sorted');
+        } else {
+            el.textContent = '';
+            if (th) th.classList.remove('sorted');
+        }
+    });
 
     const range = getAnalyticsDateRange();
     $('topSellersRange').textContent = `${range.from} to ${range.to}`;
@@ -8498,6 +8538,22 @@ function renderAnalyticsSalesLog() {
     }
 }
 
+// v2.8.8: Header click handler — picks a column, toggling direction if already active.
+function setAnalyticsSort(col) {
+    if (!col) return;
+    if (state.analyticsSortCol === col) {
+        // Same column — flip direction
+        state.analyticsSortAsc = !state.analyticsSortAsc;
+    } else {
+        // New column — use sensible default direction
+        // date + numeric cols → desc (newest first / biggest first). String cols → asc (A→Z).
+        state.analyticsSortCol = col;
+        state.analyticsSortAsc = !ANALYTICS_DESC_DEFAULT_COLS.has(col);
+    }
+    renderAnalyticsSalesLog();
+}
+
+// Back-compat shim in case any legacy code still calls toggleAnalyticsSort()
 function toggleAnalyticsSort() {
     state.analyticsSortAsc = !state.analyticsSortAsc;
     renderAnalyticsSalesLog();

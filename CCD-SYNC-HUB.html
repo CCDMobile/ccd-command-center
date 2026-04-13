@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.6</title>
+    <title>CCD Sync Hub v4.4.7</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.6 — Clean Build Styles
+           CCD SYNC HUB v4.4.7 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.6 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.7 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -713,11 +713,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.6 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.7 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.6';
+    const SH_VERSION = 'v4.4.7';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1101,6 +1101,25 @@
             let netProfit = totalRevenue - totalCost;
             let profitMargin = totalRevenue > 0 ? netProfit / totalRevenue : 0;
 
+            // v4.4.7: Use actual purchase date from channel payload, not processing time.
+            // order.date is populated by the channel normalization step:
+            //   Etsy  → create_timestamp (unix)
+            //   Wix   → createdDate / dateCreated (ISO)
+            //   Wayfair → poDate / createdDate (ISO)
+            // Falls back to today only if the channel failed to provide a date.
+            let orderDateStr;
+            if (order?.date) {
+                try {
+                    orderDateStr = new Date(order.date).toISOString().split('T')[0];
+                } catch (dateErr) {
+                    console.warn(`[Sales] Unparseable order.date for ${orderId} (${channel}): "${order.date}" — falling back to today`);
+                    orderDateStr = new Date().toISOString().split('T')[0];
+                }
+            } else {
+                console.warn(`[Sales] order.date missing for ${orderId} (${channel}) — falling back to today`);
+                orderDateStr = new Date().toISOString().split('T')[0];
+            }
+
             // v4.1.5: Call calculate_sale_profit() for full fee breakdown.
             // Additive only — if RPC fails, sale still records with simplified formula.
             // Fee columns stay NULL on failure. No sale is ever lost.
@@ -1114,7 +1133,7 @@
                     p_ob_shipping: effectiveObShipping,
                     p_sale_price: perItemDiscount > 0 ? (salePrice - perItemDiscount / qty) : salePrice,
                     p_qty: qty,
-                    p_sale_date: new Date().toISOString().split('T')[0]
+                    p_sale_date: orderDateStr
                 });
                 if (!profitErr && profitData) {
                     feeBreakdown = profitData;
@@ -1136,7 +1155,7 @@
                 brand_name: item.brandName || '',
                 qty_sold: qty,
                 sale_channel: channel,
-                sale_date: new Date().toISOString().split('T')[0],
+                sale_date: orderDateStr,
                 sale_price: salePrice,
                 total_revenue: totalRevenue,
                 total_cost: feeBreakdown ? feeBreakdown.total_cost : totalCost,
@@ -1482,7 +1501,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.6-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.7-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1706,7 +1725,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.6',
+                processedBy: 'Sync Hub v4.4.7',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
