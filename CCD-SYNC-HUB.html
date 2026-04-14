@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.9</title>
+    <title>CCD Sync Hub v4.4.10</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.9 — Clean Build Styles
+           CCD SYNC HUB v4.4.10 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.9 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.10 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -542,6 +542,7 @@
                     <div class="name">Wayfair</div>
                     <div class="status unknown" id="wayfairConnStatus">Not tested</div>
                     <button class="btn btn-sm btn-secondary" onclick="testWayfair()" style="margin-top: 8px;">Test</button>
+                    <button class="btn btn-sm btn-secondary" onclick="checkWayfairFeedStatus()" style="margin-top: 4px;" title="Check Wayfair feed processing status — distinguishes our-pipeline issues from Wayfair's async processing delay">📋 Feed Status</button>
                 </div>
                 <div class="conn-card" id="connShippo">
                     <div class="icon">📦</div>
@@ -719,11 +720,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.9 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.10 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.9';
+    const SH_VERSION = 'v4.4.10';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1521,7 +1522,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.9-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.10-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1745,7 +1746,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.9',
+                processedBy: 'Sync Hub v4.4.10',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -4849,6 +4850,204 @@
                 `Wayfair API connection failed: ${error.message}`,
                 { channel: 'wayfair', error: error.message }
             );
+        }
+    }
+
+
+    // ============================================================
+    // WAYFAIR FEED STATUS VISIBILITY — v4.4.10
+    // ============================================================
+    // Queries Wayfair's `transactions` endpoint via the proxy to show
+    // the async processing status of recent inventory feeds. Purpose:
+    // let Mary see with her own eyes that feeds are in Wayfair's
+    // processing pipeline, so "our pipeline broke something" can be
+    // distinguished from "Wayfair is still processing (45+ min latency)".
+    // 
+    // Status values: NEW, PROCESSING, COMPLETE, ERROR
+    // Non-intrusive: builds a lightweight dynamic overlay in JS, no
+    // HTML template changes, no existing code paths touched.
+    // ============================================================
+    async function checkWayfairFeedStatus() {
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+
+        if (!url) {
+            addLog('⚠️ Wayfair proxy not configured — cannot check feed status', 'warning');
+            return;
+        }
+
+        // Close any existing overlay first (prevents stacking on repeat clicks)
+        const existing = document.getElementById('wfFeedStatusOverlay');
+        if (existing) existing.remove();
+
+        // Build the overlay shell immediately with a loading indicator
+        const overlay = document.createElement('div');
+        overlay.id = 'wfFeedStatusOverlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:99999;display:flex;align-items:center;justify-content:center;font-family:system-ui,-apple-system,sans-serif;';
+        overlay.innerHTML = `
+            <div style="background:#1a1f2e;color:#e2e8f0;border:1px solid #2d3748;border-radius:8px;width:min(92vw,1100px);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(0,0,0,0.5);">
+                <div style="padding:16px 20px;border-bottom:1px solid #2d3748;display:flex;align-items:center;justify-content:space-between;">
+                    <div>
+                        <div style="font-size:16px;font-weight:600;">🏠 Wayfair Feed Status</div>
+                        <div style="font-size:11px;color:#94a3b8;margin-top:2px;">Most recent 20 feeds submitted to Wayfair's inventory pipeline</div>
+                    </div>
+                    <div>
+                        <button id="wfFeedStatusRefresh" style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-right:6px;">↻ Refresh</button>
+                        <button id="wfFeedStatusClose" style="background:#2d3748;color:#e2e8f0;border:1px solid #4a5568;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">✕ Close</button>
+                    </div>
+                </div>
+                <div id="wfFeedStatusBody" style="padding:20px;overflow:auto;flex:1;">
+                    <div style="text-align:center;color:#94a3b8;padding:40px 0;">Loading feed status from Wayfair...</div>
+                </div>
+                <div style="padding:10px 20px;border-top:1px solid #2d3748;font-size:11px;color:#94a3b8;background:#151922;border-radius:0 0 8px 8px;">
+                    <span style="display:inline-block;width:10px;height:10px;background:#3b82f6;border-radius:50%;margin-right:4px;vertical-align:middle;"></span>NEW&nbsp;&nbsp;
+                    <span style="display:inline-block;width:10px;height:10px;background:#eab308;border-radius:50%;margin-right:4px;vertical-align:middle;"></span>PROCESSING&nbsp;&nbsp;
+                    <span style="display:inline-block;width:10px;height:10px;background:#22c55e;border-radius:50%;margin-right:4px;vertical-align:middle;"></span>COMPLETE&nbsp;&nbsp;
+                    <span style="display:inline-block;width:10px;height:10px;background:#ef4444;border-radius:50%;margin-right:4px;vertical-align:middle;"></span>ERROR
+                    <span style="float:right;">Wayfair feeds typically take 30–60 minutes to move from PROCESSING → COMPLETE</span>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        // Wire close/refresh buttons
+        document.getElementById('wfFeedStatusClose').onclick = () => overlay.remove();
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+        document.getElementById('wfFeedStatusRefresh').onclick = () => {
+            overlay.remove();
+            checkWayfairFeedStatus();
+        };
+
+        // Helper to render the table into #wfFeedStatusBody
+        const renderResults = (result) => {
+            const body = document.getElementById('wfFeedStatusBody');
+            if (!body) return; // overlay closed during fetch
+
+            if (!result || !result.success) {
+                body.innerHTML = `
+                    <div style="background:#451a1a;border:1px solid #7f1d1d;color:#fca5a5;padding:16px;border-radius:6px;">
+                        <div style="font-weight:600;margin-bottom:4px;">❌ Failed to fetch feed status</div>
+                        <div style="font-size:12px;">${(result && result.error) || 'Unknown error — check Wayfair proxy URL and network'}</div>
+                    </div>
+                `;
+                return;
+            }
+
+            const txns = result.transactions || [];
+            if (txns.length === 0) {
+                body.innerHTML = `
+                    <div style="text-align:center;color:#94a3b8;padding:40px 0;">
+                        No recent feeds found. If you just pushed something and expected to see it here, wait ~30 seconds and hit Refresh — Wayfair sometimes lags between accepting a feed and showing it in the transactions list.
+                    </div>
+                `;
+                return;
+            }
+
+            const colorForStatus = (s) => {
+                if (s === 'COMPLETE') return '#22c55e';
+                if (s === 'PROCESSING') return '#eab308';
+                if (s === 'ERROR') return '#ef4444';
+                if (s === 'NEW') return '#3b82f6';
+                return '#94a3b8';
+            };
+
+            const formatAge = (mins) => {
+                if (mins == null) return '—';
+                if (mins < 1) return '<1m';
+                if (mins < 60) return mins + 'm';
+                const h = Math.floor(mins / 60);
+                const m = mins % 60;
+                return h + 'h ' + m + 'm';
+            };
+
+            const formatDate = (s) => {
+                if (!s) return '—';
+                // Wayfair format: "2026-04-14 16:31:33.3135 +00:00"
+                try {
+                    const iso = String(s).replace(' ', 'T').replace(' +', '+');
+                    const d = new Date(iso);
+                    if (isNaN(d.getTime())) return s;
+                    return d.toLocaleString();
+                } catch { return s; }
+            };
+
+            // Summary counts by status
+            const counts = { NEW: 0, PROCESSING: 0, COMPLETE: 0, ERROR: 0 };
+            txns.forEach(t => { if (counts[t.status] != null) counts[t.status]++; });
+
+            let summary = '<div style="margin-bottom:12px;font-size:13px;">';
+            summary += `<strong>${txns.length}</strong> recent feed${txns.length === 1 ? '' : 's'}: `;
+            Object.keys(counts).forEach(s => {
+                if (counts[s] > 0) {
+                    summary += `<span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${colorForStatus(s)}22;color:${colorForStatus(s)};border:1px solid ${colorForStatus(s)}66;font-size:11px;font-weight:600;margin-right:6px;">${counts[s]} ${s}</span>`;
+                }
+            });
+            summary += '</div>';
+
+            // Table
+            let table = '<table style="width:100%;border-collapse:collapse;font-size:12px;">';
+            table += '<thead><tr style="background:#0f1319;">';
+            ['Submitted', 'Age', 'Status', 'Items', 'Done', 'Processing', 'Errors', 'Handle'].forEach(h => {
+                table += `<th style="text-align:left;padding:8px 10px;border-bottom:1px solid #2d3748;color:#94a3b8;font-weight:600;">${h}</th>`;
+            });
+            table += '</tr></thead><tbody>';
+
+            txns.forEach(t => {
+                const c = colorForStatus(t.status);
+                const hasErrors = (t.errorCount || 0) > 0;
+                const rowStyle = hasErrors ? 'background:#2d1515;' : '';
+                table += `<tr style="${rowStyle}border-bottom:1px solid #1f2937;">`;
+                table += `<td style="padding:8px 10px;white-space:nowrap;">${formatDate(t.submittedAt)}</td>`;
+                table += `<td style="padding:8px 10px;color:#94a3b8;">${formatAge(t.ageMinutes)}</td>`;
+                table += `<td style="padding:8px 10px;"><span style="display:inline-block;padding:2px 8px;border-radius:10px;background:${c}22;color:${c};border:1px solid ${c}66;font-weight:600;">${t.status || '?'}</span></td>`;
+                table += `<td style="padding:8px 10px;text-align:right;">${t.itemCount}</td>`;
+                table += `<td style="padding:8px 10px;text-align:right;color:#22c55e;">${t.completedCount}</td>`;
+                table += `<td style="padding:8px 10px;text-align:right;color:#eab308;">${t.processingCount}</td>`;
+                table += `<td style="padding:8px 10px;text-align:right;${hasErrors ? 'color:#ef4444;font-weight:600;' : 'color:#94a3b8;'}">${t.errorCount}</td>`;
+                table += `<td style="padding:8px 10px;color:#64748b;font-family:monospace;font-size:10px;" title="${t.handle || ''}">${t.handle ? t.handle.substring(0, 8) + '…' : '—'}</td>`;
+                table += '</tr>';
+            });
+
+            table += '</tbody></table>';
+
+            // Interpretation hint
+            let hint = '';
+            if (counts.PROCESSING > 0 && counts.COMPLETE === 0 && counts.ERROR === 0) {
+                hint = `<div style="margin-top:16px;padding:12px;background:#1e2a3f;border:1px solid #3b82f6;border-radius:6px;font-size:12px;color:#93c5fd;">
+                    ℹ️ All feeds are still <strong>PROCESSING</strong> on Wayfair's side. This is normal — DIFFERENTIAL feeds typically take 30–60 minutes.
+                    If a feed is stuck in PROCESSING for more than 2 hours, that would indicate a Wayfair-side issue (not our pipeline).
+                </div>`;
+            } else if (counts.ERROR > 0) {
+                hint = `<div style="margin-top:16px;padding:12px;background:#2d1515;border:1px solid #ef4444;border-radius:6px;font-size:12px;color:#fca5a5;">
+                    ⚠️ <strong>${counts.ERROR} feed${counts.ERROR === 1 ? ' has' : 's have'} ERROR status.</strong>
+                    These were accepted by Wayfair but failed during processing. Check Partner Home or escalate with Wayfair support using the handle.
+                </div>`;
+            } else if (counts.COMPLETE > 0 && counts.PROCESSING === 0) {
+                hint = `<div style="margin-top:16px;padding:12px;background:#14281c;border:1px solid #22c55e;border-radius:6px;font-size:12px;color:#86efac;">
+                    ✅ All recent feeds have <strong>COMPLETE</strong> status. Wayfair has successfully applied everything we pushed.
+                </div>`;
+            }
+
+            body.innerHTML = summary + table + hint;
+        };
+
+        // Fire the proxy call
+        addLog('📋 Checking Wayfair feed status...', 'info');
+        try {
+            const result = await fetchOrJsonp(url, {
+                action: 'getFeedStatus',
+                key: key,
+                limit: 20
+            });
+            console.log('[Feed Status] Result:', result);
+            renderResults(result);
+            if (result && result.success) {
+                addLog(`📋 Wayfair feed status: ${result.count} recent feeds returned`, 'info');
+            }
+        } catch (error) {
+            console.error('[Feed Status] Error:', error);
+            renderResults({ success: false, error: error.message });
+            addLog(`⚠️ Failed to fetch Wayfair feed status: ${error.message}`, 'warning');
         }
     }
 
