@@ -1,0 +1,1837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CCD Wayfair Product Addition v2.0.3</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0f1117; --surface: #181b24; --surface-raised: #1e2230;
+    --border: #2a2f3e; --border-focus: #3d4460;
+    --text: #e2e4ea; --text-dim: #8b90a0; --text-muted: #5c6175;
+    --pass: #2dd4a0; --pass-bg: rgba(45,212,160,0.08);
+    --fail: #f47068; --fail-bg: rgba(244,112,104,0.08);
+    --warn: #f0b44a; --warn-bg: rgba(240,180,74,0.08);
+    --running: #60a5fa; --running-bg: rgba(96,165,250,0.08);
+    --accent: #818cf8; --accent-hover: #6366f1;
+    --purple: #a78bfa; --purple-bg: rgba(167,139,250,0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 20px; line-height: 1.5; }
+  .container { max-width: 1200px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+  h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+  .env-badge { padding: 4px 12px; border-radius: 5px; font-size: 11px; font-weight: 600; font-family: 'JetBrains Mono', monospace; background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(240,180,74,0.2); }
+  .env-badge.production { background: rgba(45,212,160,0.08); color: #2dd4a0; border: 1px solid rgba(45,212,160,0.2); }
+
+  .config-bar { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: flex-end; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .cfg-field { flex: 1; min-width: 160px; }
+  .cfg-field label { display: block; font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+  .cfg-field input, .cfg-field select { width: 100%; padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 11px; outline: none; }
+
+  .btn { padding: 8px 18px; border-radius: 7px; border: none; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-sm { padding: 6px 14px; font-size: 12px; border-radius: 6px; }
+  .btn-success { background: var(--pass); color: #000; }
+  .btn-success:hover:not(:disabled) { background: #24b888; }
+  .btn-outline { background: transparent; color: var(--text-dim); border: 1px solid var(--border); }
+  .btn-outline:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+  .btn-warn { background: var(--warn); color: #000; }
+  .btn-danger { background: var(--fail); color: #fff; }
+
+  .toast { position: fixed; top: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 999; display: none; animation: fadeIn 0.3s; max-width: 400px; }
+  .toast-ok { background: var(--pass); color: #000; }
+  .toast-err { background: var(--fail); color: #fff; }
+  .toast-warn { background: var(--warn); color: #000; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; } }
+
+  .tabs { display: flex; gap: 2px; }
+  .tab { padding: 12px 24px; background: var(--surface); border: 1px solid var(--border); border-bottom: none; border-radius: 8px 8px 0 0; font-size: 13px; font-weight: 600; color: var(--text-muted); cursor: pointer; }
+  .tab.active { background: var(--surface-raised); color: var(--text); border-color: var(--border-focus); }
+  .tab:hover:not(.active) { color: var(--text-dim); }
+  .tab-panel { display: none; background: var(--surface-raised); border: 1px solid var(--border-focus); border-radius: 0 8px 8px 8px; padding: 20px; }
+  .tab-panel.active { display: block; }
+
+  .summary-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
+  .sum-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; text-align: center; }
+  .sum-card .lbl { font-size: 10px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+  .sum-card .val { font-size: 20px; font-weight: 700; margin-top: 4px; font-family: 'JetBrains Mono', monospace; }
+  .sum-card.pass .val { color: var(--pass); }
+  .sum-card.fail .val { color: var(--fail); }
+  .sum-card.warn .val { color: var(--warn); }
+  .sum-card.info .val { color: var(--running); }
+
+  .tbl-wrap { overflow-x: auto; max-height: 400px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  thead { position: sticky; top: 0; z-index: 2; }
+  th { background: var(--surface); color: var(--text-dim); font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  tr:hover td { background: rgba(129,140,248,0.04); }
+  tr.selected td { background: var(--purple-bg); }
+  td input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; }
+
+  .filter-row { display: flex; gap: 10px; margin-bottom: 14px; align-items: center; flex-wrap: wrap; }
+  .filter-row input, .filter-row select { padding: 7px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 12px; outline: none; }
+  .filter-row input { font-family: 'JetBrains Mono', monospace; min-width: 200px; }
+  .count { font-size: 12px; color: var(--text-muted); }
+
+  .section-title { font-size: 14px; font-weight: 700; margin-bottom: 14px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--text-dim); margin-bottom: 5px; }
+  .field select, .field input, .field textarea { width: 100%; padding: 9px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px; outline: none; }
+  .field select { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .field textarea { font-family: 'JetBrains Mono', monospace; font-size: 11px; min-height: 120px; resize: vertical; }
+  .field .hint { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+  .template-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 14px; }
+  .template-card .tc-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .template-card .tc-meta { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+  .template-card.active { border-color: var(--accent); background: rgba(129,140,248,0.06); }
+
+  .img-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .img-row img { width: 44px; height: 44px; border-radius: 4px; object-fit: cover; border: 1px solid var(--border); }
+
+  .progress-wrap { height: 4px; background: var(--surface); border-radius: 2px; margin-bottom: 14px; overflow: hidden; display: none; }
+  .progress-wrap.visible { display: block; }
+  .progress-bar { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.3s; width: 0%; }
+
+  .status-line { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; display: none; }
+  .status-line.visible { display: block; }
+
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .log-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; margin-top: 20px; max-height: 250px; overflow-y: auto; }
+  .log-panel .log-header { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px; border-bottom: 1px solid var(--border); }
+  .log-panel .log-header span { font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+  .log-body { padding: 8px 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+  .log-line { padding: 2px 0; color: var(--text-dim); }
+  .log-line .ts { color: var(--text-muted); margin-right: 10px; }
+  .log-ok { color: var(--pass); } .log-err { color: var(--fail); } .log-warn { color: var(--warn); } .log-info { color: var(--running); }
+  .log-empty { color: var(--text-muted); font-style: italic; }
+
+  .submission-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+  .submission-card .sc-sku { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600; color: var(--accent); }
+  .submission-card .sc-name { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+  .submission-card .sc-status { font-size: 11px; margin-top: 6px; font-weight: 600; }
+  .submission-card .sc-status.ok { color: var(--pass); }
+  .submission-card .sc-status.fail { color: var(--fail); }
+  .submission-card .sc-status.pending { color: var(--warn); }
+
+  .validate-toggle { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-dim); }
+  .validate-toggle input[type=checkbox] { accent-color: var(--warn); width: 16px; height: 16px; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
+
+  /* ============================================================== */
+  /* TAB 3 (Submit) — candidate-first dynamic form (v2.0.3)         */
+  /* ============================================================== */
+  .candidate-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; }
+  .candidate-nav .nav-pos { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-dim); }
+  .candidate-nav .nav-pos strong { color: var(--accent); font-size: 13px; }
+  .candidate-nav .btn { padding: 6px 14px; font-size: 12px; }
+
+  .candidate-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 18px; display: flex; gap: 14px; align-items: center; }
+  .candidate-card .cc-imgs { display: flex; gap: 4px; flex-shrink: 0; }
+  .candidate-card .cc-imgs img { width: 56px; height: 56px; border-radius: 6px; object-fit: cover; border: 1px solid var(--border); }
+  .candidate-card .cc-imgs .cc-noimg { width: 56px; height: 56px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 18px; }
+  .candidate-card .cc-meta { flex: 1; min-width: 0; }
+  .candidate-card .cc-sku { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: var(--accent); }
+  .candidate-card .cc-name { font-size: 13px; margin-top: 2px; color: var(--text); }
+  .candidate-card .cc-attrs { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 4px; }
+
+  .block-notice { background: var(--warn-bg); border: 1px solid rgba(240,180,74,0.3); border-radius: 8px; padding: 16px; margin-bottom: 14px; }
+  .block-notice .bn-title { font-size: 13px; font-weight: 700; color: var(--warn); margin-bottom: 6px; }
+  .block-notice .bn-body { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+  .block-notice code { background: var(--bg); padding: 1px 6px; border-radius: 3px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text); }
+
+  .empty-notice { background: var(--surface); border: 1px dashed var(--border); border-radius: 10px; padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  .empty-notice .en-cta { margin-top: 10px; font-size: 12px; }
+
+  .config-row { display: grid; grid-template-columns: 1fr 1fr 100px; gap: 12px; align-items: end; margin-bottom: 18px; }
+  @media (max-width: 768px) { .config-row { grid-template-columns: 1fr; } }
+
+  .imp-section { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+  .imp-section .imp-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; cursor: pointer; user-select: none; background: var(--surface); border-bottom: 1px solid transparent; }
+  .imp-section.open .imp-header { border-bottom-color: var(--border); }
+  .imp-section .imp-header:hover { background: var(--surface-raised); }
+  .imp-section .imp-title { display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: 700; }
+  .imp-section .imp-tier-badge { font-size: 9px; font-weight: 700; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.4px; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+  .imp-section .imp-tier-required { background: var(--fail-bg); color: var(--fail); border: 1px solid rgba(244,112,104,0.3); }
+  .imp-section .imp-tier-strong { background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(240,180,74,0.3); }
+  .imp-section .imp-tier-rec { background: var(--running-bg); color: var(--running); border: 1px solid rgba(96,165,250,0.3); }
+  .imp-section .imp-tier-opt { background: var(--purple-bg); color: var(--purple); border: 1px solid rgba(167,139,250,0.3); }
+  .imp-section .imp-count { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+  .imp-section .imp-chev { font-size: 11px; color: var(--text-muted); transition: transform 0.15s; }
+  .imp-section.open .imp-chev { transform: rotate(90deg); }
+  .imp-section .imp-body { display: none; padding: 14px 16px 4px; }
+  .imp-section.open .imp-body { display: block; }
+
+  .q-card { background: var(--surface-raised); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 10px; }
+  .q-card.q-child { background: var(--bg); border-left: 3px solid var(--purple); margin-left: 18px; }
+  .q-card .q-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; flex-wrap: wrap; }
+  .q-card .q-name { font-size: 12px; font-weight: 600; color: var(--text); }
+  .q-card .q-meta { font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; display: flex; gap: 8px; align-items: center; }
+  .q-card .q-meta .q-id { color: var(--text-muted); }
+  .q-card .q-meta .q-type { padding: 1px 6px; background: var(--bg); border-radius: 3px; border: 1px solid var(--border); }
+  .q-card .q-meta .q-multi { padding: 1px 6px; background: var(--purple-bg); color: var(--purple); border-radius: 3px; }
+  .q-card .q-input { margin-top: 4px; }
+  .q-card .q-input select, .q-card .q-input input[type=text], .q-card .q-input input[type=number], .q-card .q-input textarea { width: 100%; padding: 8px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 12px; outline: none; }
+  .q-card .q-input select, .q-card .q-input input { font-family: 'JetBrains Mono', monospace; font-size: 12px; }
+  .q-card .q-input textarea { font-family: 'DM Sans', sans-serif; min-height: 60px; resize: vertical; }
+  .q-card .q-input select:focus, .q-card .q-input input:focus, .q-card .q-input textarea:focus { border-color: var(--accent); }
+
+  .q-mc-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+  .q-mc-grid label { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; font-size: 11px; cursor: pointer; font-family: 'JetBrains Mono', monospace; }
+  .q-mc-grid label:hover { border-color: var(--border-focus); }
+  .q-mc-grid label input { accent-color: var(--accent); margin: 0; }
+  .q-mc-grid label.checked { background: rgba(129,140,248,0.12); border-color: var(--accent); color: var(--text); }
+
+  .q-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .q-toggle input[type=checkbox] { accent-color: var(--accent); width: 18px; height: 18px; }
+  .q-toggle .tog-state { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-dim); }
+
+  .q-multi-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .q-multi-row > *:first-child { flex: 1; }
+  .q-multi-row .btn-mini { padding: 4px 8px; font-size: 11px; }
+  .q-multi-add { font-size: 11px; color: var(--accent); cursor: pointer; padding: 4px 0; display: inline-block; font-weight: 600; }
+  .q-multi-add:hover { text-decoration: underline; }
+
+  .auto-fill-badge { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 700; background: var(--pass-bg); color: var(--pass); border: 1px solid rgba(45,212,160,0.3); border-radius: 3px; letter-spacing: 0.4px; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+
+  .submit-bar { display: flex; gap: 10px; align-items: center; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .submit-bar .answer-summary { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-left: auto; }
+
+  .preview-area { display: none; margin-top: 16px; }
+  .preview-area textarea { font-family: 'JetBrains Mono', monospace; font-size: 11px; min-height: 240px; width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>➕ CCD Wayfair Product Addition</h1>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <span id="envBadgeProd" class="env-badge" title="Production Catalog Proxy">⬡ PROD …</span>
+      <span id="envBadgeSandbox" class="env-badge" title="Sandbox Addition Proxy">⬡ SANDBOX …</span>
+      <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;">v2.0.3</span>
+    </div>
+  </header>
+
+  <div class="config-bar">
+    <div class="cfg-field"><label>Supabase URL</label><input type="text" id="sbUrl" placeholder="https://xxx.supabase.co"></div>
+    <div class="cfg-field"><label>Supabase Key</label><input type="password" id="sbKey" placeholder="eyJ…"></div>
+    <div class="cfg-field"><label>API Key</label><input type="text" id="apiKey" placeholder="ccd_…"></div>
+    <button class="btn btn-primary" onclick="initialize()">🔗 Connect & Load</button>
+  </div>
+  <div class="config-bar" style="margin-top:-10px;">
+    <div class="cfg-field" style="flex:1.2;">
+      <label>🟢 Production Catalog Proxy (read-only — templates, classes)</label>
+      <input type="text" id="wfProxyProd" placeholder="https://script.google.com/…/exec (production v2.0.1)">
+    </div>
+    <div class="cfg-field" style="flex:1.2;">
+      <label>🟡 Sandbox Addition Proxy (submit + track — v2.2.2)</label>
+      <input type="text" id="wfProxySandbox" placeholder="https://script.google.com/…/exec (sandbox v2.2.2)">
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="discover" onclick="switchTab('discover',this)">🔍 Discovery</div>
+    <div class="tab" data-tab="select" onclick="switchTab('select',this)">📋 Select Items</div>
+    <div class="tab" data-tab="submit" onclick="switchTab('submit',this)">📤 Submit</div>
+    <div class="tab" data-tab="track" onclick="switchTab('track',this)">📊 Track</div>
+  </div>
+
+  <!-- TAB 1: DISCOVERY -->
+  <div class="tab-panel active" id="tab-discover">
+    <div class="section-title">Discovery — Brands, Classes & Templates</div>
+    <div id="discoverSummary" class="summary-row" style="display:none;"></div>
+    <div id="discoverProgress" class="progress-wrap"><div class="progress-bar"></div></div>
+    <div id="discoverStatus" class="status-line"></div>
+
+    <div class="two-col">
+      <div>
+        <div class="section-title" style="font-size:13px;">Approved Brands</div>
+        <div class="tbl-wrap" style="max-height:250px;">
+          <table><thead><tr><th>ID</th><th>Manufacturer Name</th></tr></thead>
+          <tbody id="brandsBody"><tr><td colspan="2" style="color:var(--text-muted);">Click Connect & Load</td></tr></tbody></table>
+        </div>
+      </div>
+      <div>
+        <div class="section-title" style="font-size:13px;">Product Classes (from catalog)</div>
+        <div class="tbl-wrap" style="max-height:250px;">
+          <table><thead><tr><th>Class ID</th><th>Class Name</th><th>Products</th><th>Schema?</th></tr></thead>
+          <tbody id="classesBody"><tr><td colspan="4" style="color:var(--text-muted);">Click Connect & Load</td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px;">
+      <div class="section-title" style="font-size:13px;">Class Schema Discovery</div>
+      <div class="template-card" style="margin-bottom:14px;">
+        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="discoverAndCacheClasses()" id="btnDiscoverClasses" disabled>🔎 Discover &amp; cache all Wayfair classes</button>
+          <span id="discoverClassesStatus" style="font-size:12px;color:var(--text-dim);"></span>
+        </div>
+        <div class="hint" style="margin-top:8px;">
+          Step 1: Backfill <code>items.wayfair_class_id</code> by joining items with a <code>wayfair_sku</code> against the loaded catalog.<br>
+          Step 2: For each distinct class found, fetch the question schema via the Sandbox Addition Proxy and cache it in <code>wayfair_class_questions</code>.<br>
+          Safe to re-run — existing rows are upserted.
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px;">
+      <div class="section-title" style="font-size:13px;">Template Product (use existing product as answer template — optional reference)</div>
+      <div class="filter-row">
+        <select id="templateSelect" onchange="loadTemplate()">
+          <option value="">— Select a catalog product as template —</option>
+        </select>
+      </div>
+      <div id="templateInfo" class="template-card" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- TAB 2: SELECT ITEMS -->
+  <div class="tab-panel" id="tab-select">
+    <div class="section-title">Items Without Wayfair SKU — Candidates for Addition</div>
+    <div id="selectSummary" class="summary-row" style="display:none;"></div>
+
+    <div class="filter-row">
+      <input type="text" id="candidateFilter" placeholder="Filter by SKU or name…" oninput="renderCandidates()">
+      <select id="candidateImgFilter" onchange="renderCandidates()">
+        <option value="all">All</option>
+        <option value="has_images">Has images</option>
+        <option value="no_images">No images</option>
+      </select>
+      <button class="btn btn-outline btn-sm" onclick="selectAllCandidates()">Select All Visible</button>
+      <button class="btn btn-outline btn-sm" onclick="deselectAllCandidates()">Deselect All</button>
+      <span class="count" id="candidateCount"></span>
+    </div>
+
+    <div class="tbl-wrap">
+      <table><thead><tr>
+        <th style="width:40px;">☑</th><th>SKU</th><th>Product Name</th><th>Etsy ID</th><th>Qty</th><th>Images</th><th style="width:80px;">Action</th>
+      </tr></thead>
+      <tbody id="candidatesBody"></tbody></table>
+    </div>
+  </div>
+
+  <!-- ============================================================== -->
+  <!-- TAB 3: SUBMIT — candidate-first dynamic form (v2.0.3 rebuild)  -->
+  <!-- ============================================================== -->
+  <div class="tab-panel" id="tab-submit">
+    <div id="submitEmpty" class="empty-notice" style="display:none;">
+      No candidates selected.
+      <div class="en-cta">Pick one or more items in the <a href="#" onclick="switchTab('select', document.querySelector('[data-tab=select]'));return false;" style="color:var(--accent);">Select Items</a> tab, then come back here.</div>
+    </div>
+
+    <div id="submitMain" style="display:none;">
+      <!-- Candidate navigator -->
+      <div class="candidate-nav">
+        <button class="btn btn-outline btn-sm" onclick="prevCandidate()" id="btnPrevCand">◀ Prev</button>
+        <div class="nav-pos">Item <strong id="navPosCur">1</strong> of <strong id="navPosTot">1</strong></div>
+        <button class="btn btn-outline btn-sm" onclick="nextCandidate()" id="btnNextCand">Next ▶</button>
+      </div>
+
+      <!-- Candidate context card -->
+      <div class="candidate-card" id="candCard"></div>
+
+      <!-- Status line -->
+      <div id="submitStatus" class="status-line"></div>
+
+      <!-- Class + Manufacturer config -->
+      <div class="config-row">
+        <div class="field" style="margin-bottom:0;">
+          <label>Class ID (Wayfair taxonomy category)</label>
+          <select id="submitClassId" onchange="onClassChange()">
+            <option value="">— Select class —</option>
+          </select>
+          <div class="hint" id="classHint">Only classes with cached question schemas appear here</div>
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Manufacturer ID</label>
+          <select id="submitMfr" onchange="onMfrChange(this.value)">
+            <option value="">— Select manufacturer —</option>
+          </select>
+        </div>
+        <div>
+          <button class="btn btn-outline btn-sm" onclick="saveClassToItem()" id="btnSaveClass" disabled title="Persist this class on the items row for next time">💾 Save</button>
+        </div>
+      </div>
+
+      <!-- Block notice for uncached class -->
+      <div id="blockNotice" style="display:none;"></div>
+
+      <!-- Dynamic form area -->
+      <div id="dynamicForm"></div>
+
+      <!-- Submit bar -->
+      <div class="submit-bar" id="submitBar" style="display:none;">
+        <button class="btn btn-primary btn-sm" onclick="previewSubmission()" id="btnPreview">👁 Preview Payload</button>
+        <button class="btn btn-success btn-sm" onclick="executeSubmission()" id="btnSubmit">📤 Submit to Wayfair</button>
+        <button class="btn btn-outline btn-sm" onclick="resetCurrentForm()" id="btnReset">↺ Reset Form</button>
+        <label class="validate-toggle"><input type="checkbox" id="submitIncludeImages" checked> Include images</label>
+        <span class="answer-summary" id="answerSummary">0 answers</span>
+      </div>
+
+      <!-- Payload preview -->
+      <div id="previewArea" class="preview-area">
+        <div class="section-title" style="font-size:13px;">Submission Preview (payload to <code>submitProduct</code>)</div>
+        <textarea id="previewJson" readonly></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 4: TRACK -->
+  <div class="tab-panel" id="tab-track">
+    <div class="section-title">Track Submission Status</div>
+    <div id="trackProgress" class="progress-wrap"><div class="progress-bar"></div></div>
+    <div id="trackStatus" class="status-line"></div>
+
+    <div class="field" style="max-width:500px;">
+      <label>Request IDs (from submission)</label>
+      <input type="text" id="trackRequestIds" placeholder="Paste requestId(s) — comma separated">
+    </div>
+    <div style="margin-bottom:20px;">
+      <button class="btn btn-primary btn-sm" onclick="pollSubmissionStatus()">🔄 Check Status</button>
+    </div>
+
+    <div id="trackResults"></div>
+  </div>
+
+  <!-- Log -->
+  <div class="log-panel">
+    <div class="log-header"><span>Activity Log</span><button class="btn btn-outline btn-sm" onclick="clearLog()">Clear</button></div>
+    <div class="log-body" id="logBody"><div class="log-empty">No activity yet</div></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+// =========================================================================
+// STATE
+// =========================================================================
+let sb = null;
+let catalogProducts = [];
+let candidateItems = [];          // DB items without wayfair_sku
+let selectedCandidates = new Set(); // SKUs the user selected in Tab 2
+let brands = [];
+let classMap = {};                // classId → { name, count } from catalog
+let templateProduct = null;
+let lastRequestIds = [];
+
+// v2.0.3 additions:
+let classQuestionsCache = {};     // classId → { class_name, questions[] } from wayfair_class_questions table
+let currentCandIdx = 0;           // index into orderedSelectedSkus()
+let formAnswersByItem = {};       // sku → { classId, manufacturerId, answers: { questionId → value | [values] } }
+let submittedRequestMap = {};     // sku → requestId (for Track tab handoff)
+
+// =========================================================================
+// HELPERS (unchanged from v2.0.2)
+// =========================================================================
+function log(msg, cls) {
+  const body = document.getElementById('logBody');
+  const empty = body.querySelector('.log-empty');
+  if (empty) empty.remove();
+  const ts = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  line.className = `log-line ${cls ? 'log-' + cls : ''}`;
+  line.innerHTML = `<span class="ts">${ts}</span>${msg}`;
+  body.insertBefore(line, body.firstChild);
+  while (body.children.length > 300) body.removeChild(body.lastChild);
+}
+function clearLog() { document.getElementById('logBody').innerHTML = '<div class="log-empty">No activity yet</div>'; }
+function toast(msg, type) { const t = document.getElementById('toast'); t.textContent = msg; t.className = 'toast toast-' + (type||'ok'); t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
+function setProgress(id, pct) { const w = document.getElementById(id); w.classList.add('visible'); w.querySelector('.progress-bar').style.width = pct + '%'; if (pct >= 100) setTimeout(() => w.classList.remove('visible'), 1500); }
+function setStatus(id, msg) { const el = document.getElementById(id); el.classList.add('visible'); el.innerHTML = msg; }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function escHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function proxyUrlProd() { return document.getElementById('wfProxyProd').value.trim(); }
+function proxyUrlSandbox() { return document.getElementById('wfProxySandbox').value.trim(); }
+function apiKey() { return document.getElementById('apiKey').value.trim(); }
+
+async function prodGet(action, params = {}) {
+  const qs = new URLSearchParams({ action, key: apiKey(), ...params });
+  return (await fetch(`${proxyUrlProd()}?${qs}`)).json();
+}
+async function prodPost(action, body = {}) {
+  const payload = { action, key: apiKey(), ...body };
+  // @invariant WF-007 — text/plain CORS workaround for browser→GAS POST. Do NOT change.
+  return (await fetch(proxyUrlProd(), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) })).json();
+}
+async function sandboxGet(action, params = {}) {
+  const qs = new URLSearchParams({ action, key: apiKey(), ...params });
+  return (await fetch(`${proxyUrlSandbox()}?${qs}`)).json();
+}
+async function sandboxPost(action, body = {}) {
+  const payload = { action, key: apiKey(), ...body };
+  // @invariant WF-007 — text/plain CORS workaround for browser→GAS POST. Do NOT change.
+  return (await fetch(proxyUrlSandbox(), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) })).json();
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  if (el) el.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+  if (name === 'submit') openSubmitTab();
+}
+
+function autoConnect() {
+  const sbUrl = localStorage.getItem('ccdSupabaseUrl');
+  const sbKey = localStorage.getItem('ccdSupabaseKey');
+  const wfProxyProd = localStorage.getItem('ccdWayfairCatalogProxy');
+  const wfProxySandbox = localStorage.getItem('ccdWayfairAdditionProxy');
+  const ak = localStorage.getItem('ccdApiKey');
+  if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
+  if (sbKey) document.getElementById('sbKey').value = sbKey;
+  if (wfProxyProd) document.getElementById('wfProxyProd').value = wfProxyProd;
+  if (wfProxySandbox) document.getElementById('wfProxySandbox').value = wfProxySandbox;
+  if (ak) document.getElementById('apiKey').value = ak;
+  if (sbUrl && sbKey) sb = supabase.createClient(sbUrl, sbKey);
+}
+
+async function checkEnv() {
+  if (proxyUrlProd()) {
+    try {
+      const r = await fetch(`${proxyUrlProd()}?action=health&key=${apiKey()}`).then(res => res.json());
+      const env = (r.wayfair?.environment || '').toLowerCase();
+      const ver = r.proxy?.version || r.version || '';
+      const badge = document.getElementById('envBadgeProd');
+      if (env === 'production') { badge.textContent = `● PROD v${ver}`; badge.className = 'env-badge production'; }
+      else { badge.textContent = `⬡ ${env.toUpperCase()} v${ver}`; badge.className = 'env-badge'; }
+    } catch (e) { document.getElementById('envBadgeProd').textContent = '✗ PROD'; }
+  }
+  if (proxyUrlSandbox()) {
+    try {
+      const r = await fetch(`${proxyUrlSandbox()}?action=health&key=${apiKey()}`).then(res => res.json());
+      const env = (r.wayfair?.environment || '').toLowerCase();
+      const ver = r.proxy?.version || r.version || '';
+      const badge = document.getElementById('envBadgeSandbox');
+      badge.textContent = `⬡ ${env.toUpperCase()} v${ver}`;
+      badge.className = 'env-badge';
+    } catch (e) { document.getElementById('envBadgeSandbox').textContent = '✗ SANDBOX'; }
+  }
+}
+
+// =========================================================================
+// INITIALIZE
+// =========================================================================
+async function initialize() {
+  const sbUrl = document.getElementById('sbUrl').value.trim();
+  const sbKey = document.getElementById('sbKey').value.trim();
+  if (!sbUrl || !sbKey) { toast('Enter Supabase credentials', 'err'); return; }
+  if (!proxyUrlProd()) { toast('Enter Production Catalog Proxy URL', 'err'); return; }
+  if (!proxyUrlSandbox()) { toast('Enter Sandbox Addition Proxy URL', 'err'); return; }
+
+  sb = supabase.createClient(sbUrl, sbKey);
+  localStorage.setItem('ccdSupabaseUrl', sbUrl);
+  localStorage.setItem('ccdSupabaseKey', sbKey);
+  localStorage.setItem('ccdWayfairCatalogProxy', proxyUrlProd());
+  localStorage.setItem('ccdWayfairAdditionProxy', proxyUrlSandbox());
+  if (apiKey()) localStorage.setItem('ccdApiKey', apiKey());
+
+  log('Initializing…', 'info');
+  checkEnv();
+
+  // 1. Load candidates
+  setStatus('discoverStatus', '<span class="spinner"></span> Loading DB items…');
+  setProgress('discoverProgress', 10);
+  const { data: candidates, error: candErr } = await sb
+    .from('items')
+    .select('id, sku, product_name, wayfair_sku, etsy_listing_id, etsy_sku, image_urls, qty, parent_sku, wayfair_class_id, wayfair_manufacturer_id, marketing_copy, feature_bullets, manufacturer_part_number, upc, wholesale_price, map_price, product_length_in, product_width_in, product_height_in, product_weight_lb, carton_length_in, carton_width_in, carton_height_in, carton_weight_lb, lead_time_days, replacement_lead_time_days, minimum_order_quantity, display_set_quantity, force_quantity_multiplier, ship_type, wayfair_taxonomy_answers')
+    .is('wayfair_sku', null)
+    .not('etsy_listing_id', 'is', null)
+    .order('sku')
+    .limit(5000);
+  if (candErr) { toast('DB error: ' + candErr.message, 'err'); return; }
+  candidateItems = candidates || [];
+  log(`Loaded ${candidateItems.length} candidate items (no wayfair_sku, has etsy_listing_id)`, 'ok');
+  setProgress('discoverProgress', 25);
+
+  // 2. Load full Wayfair catalog from production
+  setStatus('discoverStatus', '<span class="spinner"></span> Loading Wayfair catalog from production…');
+  const catResult = await prodGet('catalogReadAll', { pageSize: 25 });
+  if (!catResult.success) { toast('Catalog error: ' + catResult.error, 'err'); log('Catalog fetch failed: ' + catResult.error, 'err'); return; }
+  catalogProducts = catResult.products || [];
+  log(`Loaded ${catalogProducts.length} catalog products (production)`, 'ok');
+  setProgress('discoverProgress', 50);
+
+  // 3. Load brands from sandbox
+  setStatus('discoverStatus', '<span class="spinner"></span> Loading brands from sandbox…');
+  const brandResult = await sandboxGet('brandAssociations', { pageSize: 25 });
+  if (brandResult.success) {
+    brands = brandResult.brands || [];
+    log(`Loaded ${brands.length} approved brand(s) (sandbox)`, 'ok');
+  } else {
+    log('Brand fetch: ' + (brandResult.error || 'failed') + ' — check sandbox proxy v2.2.2', 'warn');
+    brands = [];
+  }
+  setProgress('discoverProgress', 75);
+
+  // 4. Load cached class question schemas from Supabase (v2.0.3)
+  setStatus('discoverStatus', '<span class="spinner"></span> Loading cached class schemas…');
+  const { data: classRows, error: classErr } = await sb
+    .from('wayfair_class_questions')
+    .select('class_id, class_name, questions, fetched_at');
+  if (classErr) {
+    log('Class schema fetch failed: ' + classErr.message + ' — Submit tab will be limited', 'warn');
+    classQuestionsCache = {};
+  } else {
+    classQuestionsCache = {};
+    for (const row of (classRows || [])) {
+      classQuestionsCache[String(row.class_id)] = {
+        class_name: row.class_name,
+        questions: row.questions || [],
+        fetched_at: row.fetched_at
+      };
+    }
+    log(`Loaded ${Object.keys(classQuestionsCache).length} cached class schema(s) — ${(classRows||[]).reduce((n,r)=>n+(r.questions?.length||0),0)} total questions`, 'ok');
+  }
+  setProgress('discoverProgress', 100);
+
+  // Build class map from catalog
+  classMap = {};
+  for (const prod of catalogProducts) {
+    const sku0 = prod.skus?.[0];
+    if (sku0?.classId) {
+      const key = String(sku0.classId);
+      if (!classMap[key]) classMap[key] = { name: sku0.className || '—', count: 0 };
+      classMap[key].count++;
+    }
+  }
+  // Also include any cached classes not in catalog
+  for (const cid of Object.keys(classQuestionsCache)) {
+    if (!classMap[cid]) classMap[cid] = { name: classQuestionsCache[cid].class_name || '—', count: 0 };
+  }
+
+  setStatus('discoverStatus', `✓ Discovery complete — ${candidateItems.length} candidates, ${catalogProducts.length} catalog, ${brands.length} brands, ${Object.keys(classQuestionsCache).length} cached schema(s)`);
+  toast('Discovery complete', 'ok');
+
+  renderDiscovery();
+  renderCandidates();
+  populateMfrDropdown();
+  populateClassDropdown();
+  document.getElementById('btnDiscoverClasses').disabled = false;
+}
+
+// =========================================================================
+// DISCOVERY TAB
+// =========================================================================
+function renderDiscovery() {
+  const el = document.getElementById('discoverSummary');
+  el.style.display = 'grid';
+  const withImgs = candidateItems.filter(i => i.image_urls?.length > 0).length;
+  el.innerHTML = `
+    <div class="sum-card info"><div class="lbl">Candidate Items</div><div class="val">${candidateItems.length}</div></div>
+    <div class="sum-card pass"><div class="lbl">With Images</div><div class="val">${withImgs}</div></div>
+    <div class="sum-card"><div class="lbl">Catalog Products</div><div class="val">${catalogProducts.length}</div></div>
+    <div class="sum-card"><div class="lbl">Brands</div><div class="val">${brands.length}</div></div>
+    <div class="sum-card warn"><div class="lbl">Cached Schemas</div><div class="val">${Object.keys(classQuestionsCache).length}</div></div>
+  `;
+
+  document.getElementById('brandsBody').innerHTML = brands.length > 0
+    ? brands.map(b => `<tr><td>${b.manufacturer?.id || '—'}</td><td>${escHtml(b.manufacturer?.name) || '—'}</td></tr>`).join('')
+    : '<tr><td colspan="2" style="color:var(--text-muted);">No brands loaded (proxy v2.2.2 required)</td></tr>';
+
+  const classes = Object.entries(classMap).sort((a, b) => b[1].count - a[1].count);
+  document.getElementById('classesBody').innerHTML = classes.length > 0
+    ? classes.map(([id, c]) => {
+        const cached = classQuestionsCache[id];
+        const cachedCell = cached
+          ? `<span style="color:var(--pass);">✓ ${cached.questions.length}q</span>`
+          : `<span style="color:var(--text-muted);">—</span>`;
+        return `<tr><td>${id}</td><td>${escHtml(c.name)}</td><td>${c.count}</td><td>${cachedCell}</td></tr>`;
+      }).join('')
+    : '<tr><td colspan="4" style="color:var(--text-muted);">No classes found</td></tr>';
+
+  const sel = document.getElementById('templateSelect');
+  sel.innerHTML = '<option value="">— Select a catalog product as template —</option>';
+  for (const prod of catalogProducts) {
+    const sku0 = prod.skus?.[0] || {};
+    sel.innerHTML += `<option value="${escHtml(prod.supplierPartNumber)}">${escHtml(prod.supplierPartNumber)} — ${escHtml(sku0.productName) || '(no name)'} [${escHtml(sku0.className) || '?'}]</option>`;
+  }
+}
+
+function loadTemplate() {
+  const partNum = document.getElementById('templateSelect').value;
+  const info = document.getElementById('templateInfo');
+  if (!partNum) { info.style.display = 'none'; templateProduct = null; return; }
+  const prod = catalogProducts.find(p => p.supplierPartNumber === partNum);
+  if (!prod) { info.style.display = 'none'; return; }
+  templateProduct = prod;
+  const sku0 = prod.skus?.[0] || {};
+  const details = sku0.productDetails || [];
+  info.style.display = 'block';
+  info.className = 'template-card active';
+  info.innerHTML = `
+    <div class="tc-title">Template: ${escHtml(sku0.productName) || '—'}</div>
+    <div class="tc-meta">
+      Part: ${escHtml(prod.supplierPartNumber)} · Class: ${sku0.classId} (${escHtml(sku0.className)}) ·
+      Mfr: ${escHtml(sku0.manufacturer?.name) || '—'} (ID: ${sku0.manufacturer?.id || '—'}) ·
+      ${details.length} attributes · ${(prod.images || []).length} images
+    </div>
+    <div class="tc-meta" style="margin-top:6px;color:var(--text-dim);">Reference only — Tab 3 form does not pull from templates in v2.0.3 (uses cached schemas + per-item pre-fill).</div>
+  `;
+  log(`Template loaded for reference: ${prod.supplierPartNumber} — classId: ${sku0.classId}, ${details.length} attributes`, 'ok');
+}
+
+// =========================================================================
+// CLASS DISCOVERY — backfill + bootstrap (browser-driven, respects WF-010)
+// =========================================================================
+// Step 1: Backfill items.wayfair_class_id by joining items.wayfair_sku
+//         against catalogProducts.supplierPartNumber (already loaded).
+// Step 2: Find distinct class IDs in items not yet in wayfair_class_questions,
+//         fetch each schema via sandbox proxy getClassQuestions, write to
+//         wayfair_class_questions via Supabase (browser-side, RLS-protected).
+// Bootstrap is GAS-editor-only per WF-010 because it writes to Supabase from
+// GAS via a public web app endpoint. This browser-driven version is OK because
+// Supabase writes happen from the browser using the same anon key + RLS that
+// every other CCD tool relies on — the proxy only fetches Wayfair's schema
+// and returns it; it never touches Supabase.
+async function discoverAndCacheClasses() {
+  const btn = document.getElementById('btnDiscoverClasses');
+  const statusEl = document.getElementById('discoverClassesStatus');
+  if (!sb) { toast('Connect to Supabase first', 'err'); return; }
+  if (!proxyUrlSandbox()) { toast('Sandbox proxy URL required', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Working…';
+  statusEl.innerHTML = '';
+  log('=== Class discovery + bootstrap started ===', 'info');
+
+  try {
+    // ---------------------------------------------------------------------
+    // PHASE 1 — Backfill items.wayfair_class_id from loaded catalog
+    // ---------------------------------------------------------------------
+    statusEl.innerHTML = '<span class="spinner"></span> Phase 1/3 — Loading items with wayfair_sku…';
+    const { data: wfItems, error: wfErr } = await sb
+      .from('items')
+      .select('id, sku, wayfair_sku, wayfair_class_id')
+      .not('wayfair_sku', 'is', null);
+    if (wfErr) throw new Error('items query: ' + wfErr.message);
+    log(`Phase 1: ${wfItems.length} items have a wayfair_sku`, 'info');
+
+    // Build catalog lookup: supplierPartNumber → classId
+    const catBySpn = {};
+    for (const prod of catalogProducts) {
+      const cid = prod.skus?.[0]?.classId;
+      if (cid && prod.supplierPartNumber) catBySpn[prod.supplierPartNumber] = parseInt(cid, 10);
+    }
+    log(`Phase 1: ${Object.keys(catBySpn).length} catalog entries indexed by supplierPartNumber`, 'info');
+
+    // Find items needing backfill (no class_id yet, but catalog has a match)
+    const toBackfill = [];
+    let alreadyHadClass = 0;
+    let noCatalogMatch = 0;
+    for (const item of wfItems) {
+      if (item.wayfair_class_id) { alreadyHadClass++; continue; }
+      const cid = catBySpn[item.wayfair_sku] || catBySpn[item.sku];
+      if (!cid) { noCatalogMatch++; continue; }
+      toBackfill.push({ sku: item.sku, classId: cid });
+    }
+    log(`Phase 1: ${alreadyHadClass} already have class_id, ${noCatalogMatch} no catalog match, ${toBackfill.length} to backfill`, 'info');
+
+    // Bulk update — one round-trip per item (no native batched UPDATE-with-different-values in PostgREST)
+    let backfilled = 0;
+    for (let i = 0; i < toBackfill.length; i++) {
+      const row = toBackfill[i];
+      statusEl.innerHTML = `<span class="spinner"></span> Phase 1/3 — Backfilling ${i + 1}/${toBackfill.length} (${escHtml(row.sku)})…`;
+      const { error } = await sb.from('items').update({ wayfair_class_id: row.classId }).eq('sku', row.sku);
+      if (error) log(`  backfill failed for ${row.sku}: ${error.message}`, 'warn');
+      else {
+        backfilled++;
+        // Also update local in-memory cache if present (candidateItems excludes items with wayfair_sku, so usually no-op)
+        const idx = candidateItems.findIndex(c => c.sku === row.sku);
+        if (idx >= 0) candidateItems[idx].wayfair_class_id = row.classId;
+      }
+    }
+    log(`Phase 1 done: ${backfilled}/${toBackfill.length} items backfilled with wayfair_class_id`, 'ok');
+
+    // ---------------------------------------------------------------------
+    // PHASE 2 — Discover distinct classes in items, find missing schemas
+    // ---------------------------------------------------------------------
+    statusEl.innerHTML = '<span class="spinner"></span> Phase 2/3 — Discovering distinct class IDs…';
+    const { data: classRows, error: distErr } = await sb
+      .from('items')
+      .select('wayfair_class_id')
+      .not('wayfair_class_id', 'is', null);
+    if (distErr) throw new Error('distinct class query: ' + distErr.message);
+    const distinctClasses = [...new Set(classRows.map(r => parseInt(r.wayfair_class_id, 10)).filter(Boolean))].sort((a, b) => a - b);
+    log(`Phase 2: ${distinctClasses.length} distinct class IDs in items table — [${distinctClasses.join(', ')}]`, 'info');
+
+    const cachedIds = new Set(Object.keys(classQuestionsCache).map(s => parseInt(s, 10)));
+    const missingClasses = distinctClasses.filter(c => !cachedIds.has(c));
+    log(`Phase 2: ${missingClasses.length} class(es) missing from cache — [${missingClasses.join(', ') || 'none'}]`, missingClasses.length > 0 ? 'info' : 'ok');
+
+    if (missingClasses.length === 0) {
+      statusEl.innerHTML = `✓ All ${distinctClasses.length} distinct class(es) already cached. ${backfilled} item(s) backfilled.`;
+      toast(`Done — ${backfilled} backfilled, all classes cached`, 'ok');
+      btn.disabled = false;
+      btn.innerHTML = '🔎 Discover &amp; cache all Wayfair classes';
+      renderDiscovery();
+      populateClassDropdown();
+      return;
+    }
+
+    // ---------------------------------------------------------------------
+    // PHASE 3 — Fetch schemas via sandbox proxy + write to Supabase
+    // ---------------------------------------------------------------------
+    let cachedNew = 0;
+    let failedFetch = 0;
+    for (let i = 0; i < missingClasses.length; i++) {
+      const cid = missingClasses[i];
+      statusEl.innerHTML = `<span class="spinner"></span> Phase 3/3 — Fetching schema ${i + 1}/${missingClasses.length} (class ${cid})…`;
+      try {
+        const result = await sandboxGet('getClassQuestions', { classId: String(cid) });
+        if (!result.success) {
+          log(`  class ${cid}: fetch failed — ${result.error || 'unknown'}`, 'err');
+          failedFetch++;
+          continue;
+        }
+        const questions = result.questions || [];
+        // Derive class_name from local classMap (loaded from catalog) or fall back
+        const className = classMap[String(cid)]?.name || `Class ${cid}`;
+        const row = {
+          class_id: cid,
+          class_name: className,
+          questions: questions,
+          fetched_at: new Date().toISOString()
+        };
+        const { error: upErr } = await sb.from('wayfair_class_questions').upsert(row, { onConflict: 'class_id' });
+        if (upErr) {
+          log(`  class ${cid}: upsert failed — ${upErr.message}`, 'err');
+          failedFetch++;
+          continue;
+        }
+        // Update local cache so the rest of the session sees it
+        classQuestionsCache[String(cid)] = { class_name: className, questions: questions, fetched_at: row.fetched_at };
+        cachedNew++;
+        log(`  class ${cid} (${className}): cached ${questions.length} question(s)`, 'ok');
+      } catch (e) {
+        log(`  class ${cid}: error — ${e.message}`, 'err');
+        failedFetch++;
+      }
+    }
+
+    // ---------------------------------------------------------------------
+    // DONE
+    // ---------------------------------------------------------------------
+    const totalCached = Object.keys(classQuestionsCache).length;
+    const totalQuestions = Object.values(classQuestionsCache).reduce((n, c) => n + (c.questions?.length || 0), 0);
+    statusEl.innerHTML = `✓ Backfilled ${backfilled} · Cached ${cachedNew} new schema(s) (${failedFetch} failed) · Total ${totalCached} class(es) / ${totalQuestions} questions`;
+    toast(`Done — ${cachedNew} new schemas cached`, cachedNew > 0 ? 'ok' : (failedFetch > 0 ? 'warn' : 'ok'));
+    log(`=== Discovery complete: ${backfilled} backfilled, ${cachedNew} schemas cached, ${failedFetch} failed ===`, 'ok');
+
+    // Refresh dependent UI
+    renderDiscovery();
+    populateClassDropdown();
+  } catch (e) {
+    log(`Discovery failed: ${e.message}`, 'err');
+    toast('Discovery failed — check log', 'err');
+    statusEl.innerHTML = `✗ ${escHtml(e.message)}`;
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🔎 Discover &amp; cache all Wayfair classes';
+}
+
+// =========================================================================
+// SELECT ITEMS TAB
+// =========================================================================
+function renderCandidates() {
+  const filter = (document.getElementById('candidateFilter')?.value || '').toLowerCase();
+  const imgFilter = document.getElementById('candidateImgFilter')?.value || 'all';
+  let items = [...candidateItems];
+  if (filter) items = items.filter(i => (i.sku || '').toLowerCase().includes(filter) || (i.product_name || '').toLowerCase().includes(filter));
+  if (imgFilter === 'has_images') items = items.filter(i => i.image_urls?.length > 0);
+  if (imgFilter === 'no_images') items = items.filter(i => !i.image_urls || i.image_urls.length === 0);
+
+  document.getElementById('candidateCount').textContent = `${items.length} shown · ${selectedCandidates.size} selected`;
+
+  const el = document.getElementById('selectSummary');
+  el.style.display = 'grid';
+  el.innerHTML = `
+    <div class="sum-card info"><div class="lbl">Total Candidates</div><div class="val">${candidateItems.length}</div></div>
+    <div class="sum-card pass"><div class="lbl">Selected</div><div class="val">${selectedCandidates.size}</div></div>
+  `;
+
+  const tbody = document.getElementById('candidatesBody');
+  tbody.innerHTML = items.slice(0, 200).map(item => {
+    const checked = selectedCandidates.has(item.sku) ? 'checked' : '';
+    const rowCls = selectedCandidates.has(item.sku) ? 'selected' : '';
+    const imgs = item.image_urls?.length || 0;
+    const skuEsc = escHtml(item.sku);
+    return `<tr class="${rowCls}">
+      <td><input type="checkbox" ${checked} onchange="toggleCandidate('${skuEsc}')"></td>
+      <td>${skuEsc || '—'}</td>
+      <td style="white-space:normal;max-width:300px;font-family:'DM Sans',sans-serif;">${escHtml(item.product_name) || '—'}</td>
+      <td>${item.etsy_listing_id || '—'}</td>
+      <td>${item.qty ?? '—'}</td>
+      <td>${imgs > 0 ? '✓ ' + imgs : '—'}</td>
+      <td><button class="btn btn-outline btn-sm" onclick="jumpToSubmit('${skuEsc}')" title="Select & jump to Submit tab">→</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function toggleCandidate(sku) {
+  if (selectedCandidates.has(sku)) selectedCandidates.delete(sku);
+  else selectedCandidates.add(sku);
+  renderCandidates();
+}
+
+function selectAllCandidates() {
+  const filter = (document.getElementById('candidateFilter')?.value || '').toLowerCase();
+  const imgFilter = document.getElementById('candidateImgFilter')?.value || 'all';
+  let items = [...candidateItems];
+  if (filter) items = items.filter(i => (i.sku||'').toLowerCase().includes(filter) || (i.product_name||'').toLowerCase().includes(filter));
+  if (imgFilter === 'has_images') items = items.filter(i => i.image_urls?.length > 0);
+  if (imgFilter === 'no_images') items = items.filter(i => !i.image_urls || i.image_urls.length === 0);
+  items.forEach(i => selectedCandidates.add(i.sku));
+  renderCandidates();
+}
+
+function deselectAllCandidates() {
+  selectedCandidates.clear();
+  renderCandidates();
+}
+
+function jumpToSubmit(sku) {
+  // Add this SKU to the selection, set as current candidate, switch tab
+  if (!selectedCandidates.has(sku)) selectedCandidates.add(sku);
+  const ordered = orderedSelectedSkus();
+  currentCandIdx = Math.max(0, ordered.indexOf(sku));
+  switchTab('submit', document.querySelector('[data-tab=submit]'));
+}
+
+// =========================================================================
+// SUBMIT TAB (v2.0.3 — candidate-first dynamic form)
+// =========================================================================
+
+function orderedSelectedSkus() {
+  // Preserve candidateItems order for stable Prev/Next nav
+  return candidateItems.filter(i => selectedCandidates.has(i.sku)).map(i => i.sku);
+}
+
+function getCurrentCandidate() {
+  const ordered = orderedSelectedSkus();
+  if (ordered.length === 0) return null;
+  if (currentCandIdx >= ordered.length) currentCandIdx = ordered.length - 1;
+  if (currentCandIdx < 0) currentCandIdx = 0;
+  const sku = ordered[currentCandIdx];
+  return candidateItems.find(i => i.sku === sku) || null;
+}
+
+function openSubmitTab() {
+  const ordered = orderedSelectedSkus();
+  const empty = document.getElementById('submitEmpty');
+  const main = document.getElementById('submitMain');
+
+  if (ordered.length === 0) {
+    empty.style.display = 'block';
+    main.style.display = 'none';
+    return;
+  }
+
+  empty.style.display = 'none';
+  main.style.display = 'block';
+
+  if (currentCandIdx >= ordered.length) currentCandIdx = 0;
+  renderCandidatePane();
+}
+
+function prevCandidate() {
+  const ordered = orderedSelectedSkus();
+  if (ordered.length === 0) return;
+  currentCandIdx = (currentCandIdx - 1 + ordered.length) % ordered.length;
+  renderCandidatePane();
+}
+
+function nextCandidate() {
+  const ordered = orderedSelectedSkus();
+  if (ordered.length === 0) return;
+  currentCandIdx = (currentCandIdx + 1) % ordered.length;
+  renderCandidatePane();
+}
+
+function renderCandidatePane() {
+  const ordered = orderedSelectedSkus();
+  const item = getCurrentCandidate();
+  if (!item) { openSubmitTab(); return; }
+
+  document.getElementById('navPosCur').textContent = currentCandIdx + 1;
+  document.getElementById('navPosTot').textContent = ordered.length;
+  document.getElementById('btnPrevCand').disabled = ordered.length < 2;
+  document.getElementById('btnNextCand').disabled = ordered.length < 2;
+
+  // Candidate context card
+  const imgs = (item.image_urls || []).slice(0, 4);
+  const imgHtml = imgs.length > 0
+    ? imgs.map(img => `<img src="${escHtml(img.url || img)}" alt="">`).join('')
+    : '<div class="cc-noimg">📷</div>';
+  const dim = (item.product_length_in && item.product_width_in)
+    ? `${item.product_length_in}×${item.product_width_in}${item.product_height_in ? '×' + item.product_height_in : ''}″`
+    : '';
+  const wt = item.product_weight_lb ? `${item.product_weight_lb}lb` : '';
+  const attrs = [
+    `qty: ${item.qty ?? '—'}`,
+    item.etsy_listing_id ? `etsy: ${item.etsy_listing_id}` : null,
+    dim ? `dim: ${dim}` : null,
+    wt ? `wt: ${wt}` : null,
+    `imgs: ${item.image_urls?.length || 0}`
+  ].filter(Boolean).join(' · ');
+
+  document.getElementById('candCard').innerHTML = `
+    <div class="cc-imgs">${imgHtml}</div>
+    <div class="cc-meta">
+      <div class="cc-sku">${escHtml(item.sku)}</div>
+      <div class="cc-name">${escHtml(item.product_name) || '(no name)'}</div>
+      <div class="cc-attrs">${attrs}</div>
+    </div>
+  `;
+
+  // Initialize per-item form state if not already
+  if (!formAnswersByItem[item.sku]) {
+    formAnswersByItem[item.sku] = {
+      classId: item.wayfair_class_id ? String(item.wayfair_class_id) : '',
+      manufacturerId: item.wayfair_manufacturer_id ? String(item.wayfair_manufacturer_id) : '',
+      answers: {}
+    };
+  }
+
+  // Restore class + mfr selections
+  const state = formAnswersByItem[item.sku];
+  document.getElementById('submitClassId').value = state.classId || '';
+  document.getElementById('submitMfr').value = state.manufacturerId || '';
+
+  // Render or show block notice
+  onClassChange();
+  document.getElementById('previewArea').style.display = 'none';
+}
+
+function populateClassDropdown() {
+  const sel = document.getElementById('submitClassId');
+  sel.innerHTML = '<option value="">— Select class —</option>';
+  // Show only classes that have a cached schema
+  const cachedIds = Object.keys(classQuestionsCache).sort((a, b) => {
+    const ca = classMap[a]?.count || 0;
+    const cb = classMap[b]?.count || 0;
+    return cb - ca;
+  });
+  for (const cid of cachedIds) {
+    const cached = classQuestionsCache[cid];
+    const name = cached.class_name || classMap[cid]?.name || '—';
+    const qCount = cached.questions.length;
+    sel.innerHTML += `<option value="${cid}">${cid} — ${escHtml(name)} (${qCount}q)</option>`;
+  }
+}
+
+function populateMfrDropdown() {
+  const mfrSel = document.getElementById('submitMfr');
+  mfrSel.innerHTML = '<option value="">— Select manufacturer —</option>';
+  if (brands.length > 0) {
+    brands.forEach(b => { if (b.manufacturer) mfrSel.innerHTML += `<option value="${b.manufacturer.id}">${escHtml(b.manufacturer.name)} (${b.manufacturer.id})</option>`; });
+  } else {
+    const mfrs = {};
+    catalogProducts.forEach(p => { const m = p.skus?.[0]?.manufacturer; if (m?.id) mfrs[m.id] = m.name; });
+    Object.entries(mfrs).forEach(([id, name]) => { mfrSel.innerHTML += `<option value="${id}">${escHtml(name)} (${id})</option>`; });
+  }
+}
+
+function onClassChange() {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const classIdRaw = document.getElementById('submitClassId').value;
+  formAnswersByItem[item.sku].classId = classIdRaw;
+
+  document.getElementById('btnSaveClass').disabled = !classIdRaw;
+
+  if (!classIdRaw) {
+    document.getElementById('blockNotice').style.display = 'none';
+    document.getElementById('dynamicForm').innerHTML = '';
+    document.getElementById('submitBar').style.display = 'none';
+    return;
+  }
+
+  const cached = classQuestionsCache[classIdRaw];
+  if (!cached) {
+    showBlockNotice(classIdRaw);
+    document.getElementById('dynamicForm').innerHTML = '';
+    document.getElementById('submitBar').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('blockNotice').style.display = 'none';
+  renderDynamicForm(item, cached);
+  document.getElementById('submitBar').style.display = 'flex';
+}
+
+function onMfrChange(value) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  formAnswersByItem[item.sku].manufacturerId = value || '';
+}
+
+function showBlockNotice(classId) {
+  const className = classMap[classId]?.name || 'Unknown';
+  const el = document.getElementById('blockNotice');
+  el.style.display = 'block';
+  el.innerHTML = `
+    <div class="block-notice">
+      <div class="bn-title">⚠ No question schema cached for class ${escHtml(classId)} (${escHtml(className)})</div>
+      <div class="bn-body">
+        Tab 3 needs the question schema for this class before it can render the configuration form.
+        Bootstrap it via the Catalog Sandbox Proxy GAS editor:
+        <ol style="margin-top:8px;margin-left:20px;">
+          <li>Open the <strong>CCD-Wayfair-Product-Addition-Sandbox</strong> GAS project</li>
+          <li>Add <code>${escHtml(classId)}</code> to the <code>EXTRA_CLASS_IDS</code> array in <code>bootstrapClassQuestionsToSupabase()</code></li>
+          <li>Run the function (≈2 seconds per class)</li>
+          <li>Reload this tool — the new class will appear in the dropdown</li>
+        </ol>
+        <div style="margin-top:8px;color:var(--text-muted);">
+          Currently cached: ${Object.keys(classQuestionsCache).length} class(es) — ${Object.keys(classQuestionsCache).sort().join(', ') || 'none'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// -------------------------------------------------------------------------
+// Dynamic form rendering — by importance tier and answerType
+// -------------------------------------------------------------------------
+
+const IMPORTANCE_TIERS = [
+  { key: 'REQUIRED',              label: 'Required',              tierCls: 'imp-tier-required', openByDefault: true },
+  { key: 'STRONGLY_RECOMMENDED',  label: 'Strongly Recommended',  tierCls: 'imp-tier-strong',   openByDefault: true },
+  { key: 'RECOMMENDED',           label: 'Recommended',           tierCls: 'imp-tier-rec',      openByDefault: false },
+  { key: 'OPTIONAL',              label: 'Optional',              tierCls: 'imp-tier-opt',      openByDefault: false },
+];
+
+// Pre-fill rules: detect questions whose displayName matches our items columns.
+// Run on first form render per item if no answer yet.
+const PREFILL_PATTERNS = [
+  { col: 'marketing_copy',           re: /(marketing\s*copy|product\s*description|long\s*description|description)/i, single: true },
+  { col: 'feature_bullets',          re: /(feature\s*bullets?|selling\s*points?|key\s*features?|product\s*highlights?)/i, multi: true },
+  { col: 'product_length_in',        re: /(overall\s*length|product\s*length|length(\s*in\s*inches?)?)/i, single: true },
+  { col: 'product_width_in',         re: /(overall\s*width|product\s*width|width(\s*in\s*inches?)?)/i, single: true },
+  { col: 'product_height_in',        re: /(overall\s*height|product\s*height|height(\s*in\s*inches?)?)/i, single: true },
+  { col: 'product_weight_lb',        re: /(overall\s*weight|product\s*weight|weight(\s*in\s*(lb|pounds?))?)/i, single: true },
+  { col: 'carton_length_in',         re: /(carton\s*length|package\s*length|shipping\s*length)/i, single: true },
+  { col: 'carton_width_in',          re: /(carton\s*width|package\s*width|shipping\s*width)/i, single: true },
+  { col: 'carton_height_in',         re: /(carton\s*height|package\s*height|shipping\s*height)/i, single: true },
+  { col: 'carton_weight_lb',         re: /(carton\s*weight|package\s*weight|shipping\s*weight)/i, single: true },
+  { col: 'manufacturer_part_number', re: /(manufacturer\s*part\s*(number|#)|mpn)/i, single: true },
+  { col: 'upc',                      re: /\b(upc|gtin)\b/i, single: true },
+  { col: 'wholesale_price',          re: /(wholesale\s*price|cost(\s*price)?|supplier\s*price)/i, single: true },
+  { col: 'map_price',                re: /(map\s*price|minimum\s*advertised)/i, single: true },
+  { col: 'lead_time_days',           re: /(lead\s*time)/i, single: true },
+  { col: 'replacement_lead_time_days', re: /(replacement\s*lead\s*time)/i, single: true },
+  { col: 'minimum_order_quantity',   re: /(min(imum)?\s*order\s*qty|minimum\s*order\s*quantity|moq)/i, single: true },
+  { col: 'display_set_quantity',     re: /(display\s*set\s*qty|display\s*set\s*quantity)/i, single: true },
+  { col: 'force_quantity_multiplier', re: /(force\s*quantity\s*multiplier)/i, single: true },
+  { col: 'ship_type',                re: /\bship\s*type\b/i, single: true },
+];
+
+function autoFillAnswers(item, questions) {
+  // Returns map of { questionId → { value, source } } for any fields that match a pre-fill pattern.
+  // Does NOT overwrite existing answers in formAnswersByItem.
+  const out = {};
+  const existing = formAnswersByItem[item.sku].answers;
+
+  function walk(qs) {
+    for (const q of qs) {
+      if (existing[q.id] !== undefined) continue; // Don't overwrite
+      const dn = (q.displayName || '').trim();
+      for (const rule of PREFILL_PATTERNS) {
+        if (!rule.re.test(dn)) continue;
+        const itemVal = item[rule.col];
+        if (itemVal === null || itemVal === undefined || itemVal === '') continue;
+
+        if (rule.multi && Array.isArray(itemVal)) {
+          out[q.id] = { value: itemVal.map(v => String(v)), source: rule.col };
+        } else if (q.isMultiValue) {
+          out[q.id] = { value: [String(itemVal)], source: rule.col };
+        } else {
+          out[q.id] = { value: String(itemVal), source: rule.col };
+        }
+        break;
+      }
+      if (q.childQuestions && q.childQuestions.length) walk(q.childQuestions);
+    }
+  }
+  walk(questions);
+  return out;
+}
+
+function renderDynamicForm(item, cached) {
+  const state = formAnswersByItem[item.sku];
+  const questions = cached.questions || [];
+
+  // Apply pre-fill on first render of this item+class combo
+  const prefillKey = `__prefilled_${state.classId}`;
+  const prefillSources = state[prefillKey] || {};
+  if (!state[prefillKey]) {
+    const auto = autoFillAnswers(item, questions);
+    for (const [qid, info] of Object.entries(auto)) {
+      state.answers[qid] = info.value;
+      prefillSources[qid] = info.source;
+    }
+    state[prefillKey] = prefillSources;
+    if (Object.keys(auto).length > 0) log(`Pre-filled ${Object.keys(auto).length} answer(s) from item row for ${item.sku}`, 'info');
+  }
+
+  // Group questions by importance tier (top-level only — childQuestions render nested under parents)
+  const grouped = { REQUIRED: [], STRONGLY_RECOMMENDED: [], RECOMMENDED: [], OPTIONAL: [], OTHER: [] };
+  let hidden = 0;
+  for (const q of questions) {
+    if (q.isActive === false) { hidden++; continue; }
+    const tier = q.importanceType || 'OPTIONAL';
+    if (grouped[tier]) grouped[tier].push(q);
+    else grouped.OTHER.push(q);
+  }
+
+  let html = '';
+  for (const tier of IMPORTANCE_TIERS) {
+    const list = grouped[tier.key];
+    if (!list || list.length === 0) continue;
+    const openCls = tier.openByDefault ? 'open' : '';
+    html += `<div class="imp-section ${openCls}" data-tier="${tier.key}">
+      <div class="imp-header" onclick="toggleImpSection(this.parentElement)">
+        <div class="imp-title">
+          <span class="imp-tier-badge ${tier.tierCls}">${tier.label}</span>
+          <span class="imp-count">${list.length} question${list.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="imp-chev">▶</span>
+      </div>
+      <div class="imp-body">
+        ${list.map(q => renderQuestion(q, state.answers, prefillSources, false)).join('')}
+      </div>
+    </div>`;
+  }
+  if (grouped.OTHER.length > 0) {
+    html += `<div class="imp-section open" data-tier="OTHER">
+      <div class="imp-header" onclick="toggleImpSection(this.parentElement)">
+        <div class="imp-title">
+          <span class="imp-tier-badge imp-tier-opt">Other (uncategorized)</span>
+          <span class="imp-count">${grouped.OTHER.length} question${grouped.OTHER.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="imp-chev">▶</span>
+      </div>
+      <div class="imp-body">
+        ${grouped.OTHER.map(q => renderQuestion(q, state.answers, prefillSources, false)).join('')}
+      </div>
+    </div>`;
+  }
+  if (hidden > 0) {
+    html += `<div style="font-size:11px;color:var(--text-muted);margin-top:8px;padding:6px 10px;font-family:'JetBrains Mono',monospace;">${hidden} inactive question(s) hidden</div>`;
+  }
+
+  document.getElementById('dynamicForm').innerHTML = html;
+  updateAnswerSummary();
+}
+
+function toggleImpSection(el) {
+  el.classList.toggle('open');
+}
+
+function renderQuestion(q, answersMap, prefillSources, isChild) {
+  const qid = String(q.id);
+  const cur = answersMap[qid];
+  const isMulti = !!q.isMultiValue;
+  const cardCls = isChild ? 'q-card q-child' : 'q-card';
+  const fromAuto = prefillSources && prefillSources[qid];
+  const autoBadge = fromAuto ? `<span class="auto-fill-badge" title="Pre-filled from items.${escHtml(fromAuto)}">auto-filled</span>` : '';
+  const multiBadge = isMulti ? `<span class="q-multi">multi</span>` : '';
+
+  let inputHtml = '';
+  switch (q.answerType) {
+    case 'SINGLE_CHOICE':
+      inputHtml = renderSingleChoice(q, cur, isMulti);
+      break;
+    case 'MULTI_CHOICE':
+      inputHtml = renderMultiChoice(q, cur);
+      break;
+    case 'BOOLEAN':
+      inputHtml = renderBoolean(q, cur);
+      break;
+    case 'NUMERIC':
+    case 'NUMBER':
+    case 'INTEGER':
+    case 'DECIMAL':
+      inputHtml = renderNumeric(q, cur, isMulti);
+      break;
+    case 'TEXT':
+    case 'STRING':
+    case 'LONG_TEXT':
+      inputHtml = renderText(q, cur, isMulti);
+      break;
+    default:
+      // Unknown answerType — render as text input + meta hint
+      inputHtml = renderText(q, cur, isMulti) +
+        `<div class="hint" style="font-size:10px;color:var(--warn);margin-top:4px;">Unknown answerType: ${escHtml(q.answerType)} — rendered as text. Verify before submit.</div>`;
+  }
+
+  // Child questions — render below if this question has any (currently rendered always; conditional reveal logic could refine later)
+  let childHtml = '';
+  if (q.childQuestions && q.childQuestions.length > 0) {
+    const hasValue = cur !== undefined && cur !== '' && !(Array.isArray(cur) && cur.length === 0);
+    if (hasValue) {
+      childHtml = q.childQuestions.map(cq => renderQuestion(cq, answersMap, prefillSources, true)).join('');
+    } else {
+      childHtml = `<div style="font-size:10px;color:var(--text-muted);margin-top:6px;padding-left:12px;">↳ ${q.childQuestions.length} dependent question(s) will appear when this is answered</div>`;
+    }
+  }
+
+  return `<div class="${cardCls}" data-qid="${qid}">
+    <div class="q-head">
+      <div class="q-name">${escHtml(q.displayName || ('Question ' + qid))} ${autoBadge}</div>
+      <div class="q-meta">
+        <span class="q-id">id:${qid}</span>
+        <span class="q-type">${escHtml(q.answerType || '?')}</span>
+        ${multiBadge}
+      </div>
+    </div>
+    <div class="q-input">${inputHtml}</div>
+    ${childHtml}
+  </div>`;
+}
+
+function renderSingleChoice(q, cur, isMulti) {
+  const opts = q.possibleAnswers || [];
+  if (isMulti) {
+    // Render as checkbox group when isMultiValue
+    const curArr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
+    return `<div class="q-mc-grid">${
+      opts.map(o => {
+        const v = String(o.key ?? o.value ?? '');
+        const lbl = String(o.value ?? o.key ?? '');
+        const chk = curArr.includes(v) ? 'checked' : '';
+        const cls = curArr.includes(v) ? 'checked' : '';
+        return `<label class="${cls}"><input type="checkbox" value="${escHtml(v)}" ${chk} onchange="onMultiChoiceToggle(this, '${q.id}')">${escHtml(lbl)}</label>`;
+      }).join('')
+    }</div>`;
+  }
+  return `<select onchange="onAnswerChange('${q.id}', this.value)">
+    <option value="">— Select —</option>
+    ${opts.map(o => {
+      const v = String(o.key ?? o.value ?? '');
+      const lbl = String(o.value ?? o.key ?? '');
+      const sel = (cur === v) ? 'selected' : '';
+      return `<option value="${escHtml(v)}" ${sel}>${escHtml(lbl)}</option>`;
+    }).join('')}
+  </select>`;
+}
+
+function renderMultiChoice(q, cur) {
+  const opts = q.possibleAnswers || [];
+  const curArr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
+  if (opts.length === 0) {
+    // Free-form multi-value text
+    return renderText(q, cur, true);
+  }
+  return `<div class="q-mc-grid">${
+    opts.map(o => {
+      const v = String(o.key ?? o.value ?? '');
+      const lbl = String(o.value ?? o.key ?? '');
+      const chk = curArr.includes(v) ? 'checked' : '';
+      const cls = curArr.includes(v) ? 'checked' : '';
+      return `<label class="${cls}"><input type="checkbox" value="${escHtml(v)}" ${chk} onchange="onMultiChoiceToggle(this, '${q.id}')">${escHtml(lbl)}</label>`;
+    }).join('')
+  }</div>`;
+}
+
+function renderBoolean(q, cur) {
+  const checked = (cur === true || cur === 'true' || cur === 'YES' || cur === 'Yes') ? 'checked' : '';
+  const stateText = checked ? 'YES' : 'NO';
+  return `<label class="q-toggle">
+    <input type="checkbox" ${checked} onchange="onBooleanChange('${q.id}', this)">
+    <span class="tog-state">${stateText}</span>
+  </label>`;
+}
+
+function renderNumeric(q, cur, isMulti) {
+  if (isMulti) {
+    const curArr = Array.isArray(cur) ? cur : (cur ? [cur] : ['']);
+    return curArr.map((v, idx) => `
+      <div class="q-multi-row">
+        <input type="number" step="any" value="${escHtml(v)}" placeholder="(numeric)" oninput="onMultiValueChange('${q.id}', ${idx}, this.value, 'number')">
+        <button class="btn btn-outline btn-mini" onclick="onMultiValueRemove('${q.id}', ${idx})" title="Remove">✕</button>
+      </div>
+    `).join('') + `<a class="q-multi-add" onclick="onMultiValueAdd('${q.id}', '')">+ Add another</a>`;
+  }
+  const val = (cur === undefined || cur === null) ? '' : cur;
+  return `<input type="number" step="any" value="${escHtml(val)}" placeholder="(numeric)" oninput="onAnswerChange('${q.id}', this.value)">`;
+}
+
+function renderText(q, cur, isMulti) {
+  if (isMulti) {
+    const curArr = Array.isArray(cur) ? cur : (cur ? [cur] : ['']);
+    return curArr.map((v, idx) => `
+      <div class="q-multi-row">
+        <input type="text" value="${escHtml(v)}" placeholder="(text)" oninput="onMultiValueChange('${q.id}', ${idx}, this.value, 'string')">
+        <button class="btn btn-outline btn-mini" onclick="onMultiValueRemove('${q.id}', ${idx})" title="Remove">✕</button>
+      </div>
+    `).join('') + `<a class="q-multi-add" onclick="onMultiValueAdd('${q.id}', '')">+ Add another</a>`;
+  }
+  const val = cur ?? '';
+  // Use textarea if displayName suggests long text or value is already long
+  const isLong = /description|copy|bullet|story|detail/i.test(q.displayName || '') || (typeof val === 'string' && val.length > 80);
+  if (isLong) {
+    return `<textarea oninput="onAnswerChange('${q.id}', this.value)" placeholder="(text)">${escHtml(val)}</textarea>`;
+  }
+  return `<input type="text" value="${escHtml(val)}" placeholder="(text)" oninput="onAnswerChange('${q.id}', this.value)">`;
+}
+
+// -------------------------------------------------------------------------
+// Form change handlers — write into formAnswersByItem
+// -------------------------------------------------------------------------
+function onAnswerChange(qid, value) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  if (value === '' || value === null || value === undefined) {
+    delete state.answers[qid];
+  } else {
+    state.answers[qid] = value;
+  }
+  // Clear pre-fill source marker since user has now edited
+  const pkey = `__prefilled_${state.classId}`;
+  if (state[pkey] && state[pkey][qid]) delete state[pkey][qid];
+  // Re-render only the question card if it has children (to reveal/hide them)
+  // For now, simplest: if has children, do a lightweight re-render of dynamic form
+  const q = findQuestionById(qid);
+  if (q && q.childQuestions && q.childQuestions.length > 0) {
+    const cached = classQuestionsCache[state.classId];
+    if (cached) renderDynamicForm(item, cached);
+  }
+  updateAnswerSummary();
+}
+
+function onMultiChoiceToggle(input, qid) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  const cur = state.answers[qid];
+  const curArr = Array.isArray(cur) ? [...cur] : (cur ? [cur] : []);
+  const v = input.value;
+  if (input.checked) { if (!curArr.includes(v)) curArr.push(v); }
+  else { const i = curArr.indexOf(v); if (i >= 0) curArr.splice(i, 1); }
+  if (curArr.length === 0) delete state.answers[qid];
+  else state.answers[qid] = curArr;
+  // Update label visual
+  const lbl = input.closest('label');
+  if (lbl) lbl.classList.toggle('checked', input.checked);
+  // Clear prefill source
+  const pkey = `__prefilled_${state.classId}`;
+  if (state[pkey] && state[pkey][qid]) delete state[pkey][qid];
+  updateAnswerSummary();
+}
+
+function onBooleanChange(qid, input) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  state.answers[qid] = input.checked;
+  // Update text
+  const tog = input.parentElement.querySelector('.tog-state');
+  if (tog) tog.textContent = input.checked ? 'YES' : 'NO';
+  // Clear prefill source
+  const pkey = `__prefilled_${state.classId}`;
+  if (state[pkey] && state[pkey][qid]) delete state[pkey][qid];
+  // Children?
+  const q = findQuestionById(qid);
+  if (q && q.childQuestions && q.childQuestions.length > 0) {
+    const cached = classQuestionsCache[state.classId];
+    if (cached) renderDynamicForm(item, cached);
+  }
+  updateAnswerSummary();
+}
+
+function onMultiValueChange(qid, idx, value, kind) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  const cur = state.answers[qid];
+  const arr = Array.isArray(cur) ? [...cur] : (cur ? [cur] : []);
+  while (arr.length <= idx) arr.push('');
+  arr[idx] = value;
+  // Filter empties only on final commit (preview/submit time); here just store
+  state.answers[qid] = arr;
+  const pkey = `__prefilled_${state.classId}`;
+  if (state[pkey] && state[pkey][qid]) delete state[pkey][qid];
+  updateAnswerSummary();
+}
+
+function onMultiValueAdd(qid, initial) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  const cur = state.answers[qid];
+  const arr = Array.isArray(cur) ? [...cur] : (cur ? [cur] : []);
+  arr.push(initial || '');
+  state.answers[qid] = arr;
+  // Re-render full form (simplest)
+  const cached = classQuestionsCache[state.classId];
+  if (cached) renderDynamicForm(item, cached);
+}
+
+function onMultiValueRemove(qid, idx) {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  const cur = state.answers[qid];
+  const arr = Array.isArray(cur) ? [...cur] : (cur ? [cur] : []);
+  arr.splice(idx, 1);
+  if (arr.length === 0) delete state.answers[qid];
+  else state.answers[qid] = arr;
+  const cached = classQuestionsCache[state.classId];
+  if (cached) renderDynamicForm(item, cached);
+}
+
+function findQuestionById(qid) {
+  const item = getCurrentCandidate();
+  if (!item) return null;
+  const state = formAnswersByItem[item.sku];
+  const cached = classQuestionsCache[state.classId];
+  if (!cached) return null;
+  function walk(qs) {
+    for (const q of qs) {
+      if (String(q.id) === String(qid)) return q;
+      if (q.childQuestions) { const found = walk(q.childQuestions); if (found) return found; }
+    }
+    return null;
+  }
+  return walk(cached.questions);
+}
+
+function updateAnswerSummary() {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const state = formAnswersByItem[item.sku];
+  const n = Object.keys(state.answers).filter(qid => {
+    const v = state.answers[qid];
+    if (v === undefined || v === null || v === '') return false;
+    if (Array.isArray(v) && v.filter(x => x !== '' && x !== null && x !== undefined).length === 0) return false;
+    return true;
+  }).length;
+  const unanswered = scanUnansweredRequired();
+  const reqHint = unanswered.length > 0
+    ? ` · <span style="color:var(--warn);">${unanswered.length} REQUIRED unanswered</span>`
+    : ` · <span style="color:var(--pass);">REQUIRED complete</span>`;
+  document.getElementById('answerSummary').innerHTML = `${n} answer${n === 1 ? '' : 's'}${reqHint}`;
+}
+
+function resetCurrentForm() {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  if (!confirm(`Reset all answers for ${item.sku}? This clears the form (class + manufacturer kept).`)) return;
+  const cls = formAnswersByItem[item.sku].classId;
+  const mfr = formAnswersByItem[item.sku].manufacturerId;
+  formAnswersByItem[item.sku] = { classId: cls, manufacturerId: mfr, answers: {} };
+  onClassChange();
+}
+
+async function saveClassToItem() {
+  const item = getCurrentCandidate();
+  if (!item) return;
+  const classId = parseInt(formAnswersByItem[item.sku].classId);
+  if (!classId) { toast('Select a class first', 'warn'); return; }
+  if (!sb) { toast('Not connected to Supabase', 'err'); return; }
+
+  const { error } = await sb.from('items').update({ wayfair_class_id: classId }).eq('sku', item.sku);
+  if (error) { toast('DB error: ' + error.message, 'err'); log(`Save class failed for ${item.sku}: ${error.message}`, 'err'); return; }
+  // Update in-memory candidate
+  const idx = candidateItems.findIndex(c => c.sku === item.sku);
+  if (idx >= 0) candidateItems[idx].wayfair_class_id = classId;
+  toast(`Saved class ${classId} → ${item.sku}`, 'ok');
+  log(`✓ items.wayfair_class_id = ${classId} for ${item.sku}`, 'ok');
+}
+
+// -------------------------------------------------------------------------
+// Build payload + Preview + Submit
+// -------------------------------------------------------------------------
+// Walk the question tree for the current item; return REQUIRED-tier questions whose answer is missing/empty.
+// Pre-flight only — does NOT block submit. Surfaces likely Wayfair rejections to the user up front.
+function scanUnansweredRequired() {
+  const item = getCurrentCandidate();
+  if (!item) return [];
+  const state = formAnswersByItem[item.sku];
+  const cached = classQuestionsCache[state.classId];
+  if (!cached) return [];
+
+  const unanswered = [];
+  function isAnswered(qid) {
+    const v = state.answers[qid];
+    if (v === undefined || v === null || v === '') return false;
+    if (Array.isArray(v)) {
+      const filtered = v.filter(x => x !== '' && x !== null && x !== undefined);
+      return filtered.length > 0;
+    }
+    return true;
+  }
+  function walk(qs, parentAnswered) {
+    for (const q of qs) {
+      if (q.isActive === false) continue;
+      // For child questions, only check if parent has been answered (otherwise child isn't applicable)
+      if (q.importanceType === 'REQUIRED' && parentAnswered && !isAnswered(q.id)) {
+        unanswered.push(q);
+      }
+      if (q.childQuestions && q.childQuestions.length > 0) {
+        walk(q.childQuestions, isAnswered(q.id));
+      }
+    }
+  }
+  walk(cached.questions, true); // top-level questions are always "applicable"
+  return unanswered;
+}
+
+function buildAnswersArray(state) {
+  const out = [];
+  for (const [qid, val] of Object.entries(state.answers)) {
+    if (qid.startsWith('__')) continue; // Skip internal markers
+    if (val === undefined || val === null || val === '') continue;
+    if (Array.isArray(val)) {
+      const filtered = val.filter(v => v !== '' && v !== null && v !== undefined);
+      if (filtered.length === 0) continue;
+      // For multi-value, emit one entry per value
+      for (const v of filtered) out.push({ questionId: qid, value: String(v) });
+    } else if (typeof val === 'boolean') {
+      out.push({ questionId: qid, value: val ? 'Yes' : 'No' });
+    } else {
+      out.push({ questionId: qid, value: String(val) });
+    }
+  }
+  return out;
+}
+
+function buildSubmissionPayload() {
+  const item = getCurrentCandidate();
+  if (!item) return null;
+  const state = formAnswersByItem[item.sku];
+  const classId = parseInt(state.classId);
+  const mfrId = state.manufacturerId;
+  if (!classId) { toast('Select a class', 'warn'); return null; }
+  if (!mfrId) { toast('Select a manufacturer', 'warn'); return null; }
+
+  const answers = buildAnswersArray(state);
+  const includeImages = document.getElementById('submitIncludeImages').checked;
+
+  const part = {
+    productName: item.product_name || item.sku,
+    supplierPartNumber: item.sku,
+    manufacturerId: mfrId,
+    answers: answers
+  };
+  if (includeImages && item.image_urls?.length > 0) {
+    part.media = { images: item.image_urls.map(img => img.url || img).filter(Boolean) };
+  }
+  return { classId, parts: [part], _itemSku: item.sku };
+}
+
+function previewSubmission() {
+  const payload = buildSubmissionPayload();
+  if (!payload) return;
+  const preview = {
+    action: 'submitProduct',
+    classId: payload.classId,
+    parts: payload.parts,
+    rejectAllOnErrors: true,
+    ignoreWarnings: true,
+    _note: `Single-item submission for ${payload._itemSku}`
+  };
+  document.getElementById('previewJson').value = JSON.stringify(preview, null, 2);
+  document.getElementById('previewArea').style.display = 'block';
+  log(`Preview generated for ${payload._itemSku} — classId ${payload.classId}, ${payload.parts[0].answers.length} answer(s)`, 'info');
+}
+
+async function executeSubmission() {
+  const payload = buildSubmissionPayload();
+  if (!payload) return;
+  const sku = payload._itemSku;
+
+  const ans = payload.parts[0].answers.length;
+
+  // Soft pre-flight — scan REQUIRED questions for unanswered (does not block, just warns)
+  const unansweredRequired = scanUnansweredRequired();
+  let preflightMsg = '';
+  if (unansweredRequired.length > 0) {
+    const sample = unansweredRequired.slice(0, 8).map(q => `  • ${q.displayName} (id:${q.id})`).join('\n');
+    const more = unansweredRequired.length > 8 ? `\n  …and ${unansweredRequired.length - 8} more` : '';
+    preflightMsg = `\n\n⚠ ${unansweredRequired.length} REQUIRED question(s) appear to be unanswered:\n${sample}${more}\n\nWayfair will likely return validation errors. Submit anyway?`;
+  }
+
+  const confirmed = confirm(`Submit ${sku} to Wayfair?\n\nClass: ${payload.classId}\nAnswers: ${ans}${preflightMsg}\n\nThis is a real submission — the product will enter Wayfair's review pipeline.`);
+  if (!confirmed) return;
+
+  const btn = document.getElementById('btnSubmit');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Submitting…';
+  setStatus('submitStatus', `<span class="spinner"></span> Submitting ${sku} to Wayfair…`);
+  log(`Submitting ${sku} — classId ${payload.classId}, ${ans} answer(s)`, 'info');
+
+  try {
+    const result = await sandboxPost('submitProduct', {
+      classId: payload.classId,
+      parts: payload.parts,
+      rejectAllOnErrors: true,
+      ignoreWarnings: true
+    });
+
+    if (result.success && result.requestIds?.length > 0) {
+      const reqId = result.requestIds[0];
+      submittedRequestMap[sku] = reqId;
+      lastRequestIds = [...new Set([...lastRequestIds, ...result.requestIds])];
+
+      // Append to Track tab
+      const tEl = document.getElementById('trackRequestIds');
+      tEl.value = lastRequestIds.join(', ');
+
+      // Log to Supabase wayfair_submission_log table
+      try {
+        const logRow = {
+          sku: sku,
+          request_id: reqId,
+          class_id: payload.classId,
+          manufacturer_id: payload.parts[0].manufacturerId,
+          payload: payload.parts[0],
+          status: 'PENDING'
+        };
+        const { error: logErr } = await sb.from('wayfair_submission_log').insert(logRow);
+        if (logErr) log(`Submission log INSERT failed: ${logErr.message}`, 'warn');
+        else log(`✓ wayfair_submission_log row inserted for ${sku}`, 'ok');
+      } catch (e) { log(`Submission log error: ${e.message}`, 'warn'); }
+
+      setStatus('submitStatus', `✓ Submitted — requestId: ${reqId}. Switch to Track to monitor.`);
+      log(`Submission success — ${sku} → requestId ${reqId}`, 'ok');
+      toast(`Submitted ${sku}!`, 'ok');
+    } else {
+      const errMsg = result.error || 'Unknown error';
+      const gqlDetail = result.graphqlErrors ? result.graphqlErrors.map(e => e.message).join('; ') : '';
+      setStatus('submitStatus', `✗ Failed: ${errMsg}${gqlDetail ? ' — ' + gqlDetail : ''}`);
+      log(`Submission failed for ${sku}: ${errMsg}${gqlDetail ? ' | ' + gqlDetail : ''}`, 'err');
+      toast('Submission failed — check log', 'err');
+    }
+  } catch (e) {
+    setStatus('submitStatus', `✗ Error: ${e.message}`);
+    log(`Submission error for ${sku}: ${e.message}`, 'err');
+    toast('Submission error', 'err');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '📤 Submit to Wayfair';
+}
+
+// =========================================================================
+// TRACK TAB (unchanged from v2.0.2)
+// =========================================================================
+async function pollSubmissionStatus() {
+  const idsRaw = document.getElementById('trackRequestIds').value.trim();
+  if (!idsRaw) { toast('Enter request IDs', 'warn'); return; }
+  const ids = idsRaw.split(',').map(s => s.trim()).filter(Boolean);
+  setStatus('trackStatus', '<span class="spinner"></span> Checking status…');
+  setProgress('trackProgress', 30);
+  log(`Polling status for ${ids.length} request(s)…`, 'info');
+
+  const result = await sandboxPost('submissionStatus', { requestIds: ids });
+  setProgress('trackProgress', 100);
+
+  if (!result.success) {
+    const errMsg = result.error || 'Unknown error';
+    setStatus('trackStatus', `✗ ${errMsg}`);
+    log(`Status check failed: ${errMsg}`, 'err');
+    document.getElementById('trackResults').innerHTML = `<div style="color:var(--fail);font-size:13px;">Error: ${errMsg}</div>`;
+    return;
+  }
+
+  const submissions = result.submissions || [];
+  log(`Status returned for ${submissions.length} part(s)`, 'ok');
+
+  if (submissions.length === 0) {
+    setStatus('trackStatus', '⏳ No results yet — submission may still be processing. Try again in a few minutes.');
+    document.getElementById('trackResults').innerHTML = '<div style="color:var(--text-muted);">No submission data returned yet. Status updates can take up to 30 minutes.</div>';
+    return;
+  }
+
+  const succeeded = submissions.filter(s => s.submissionStatus === 'SUCCEEDED').length;
+  const failed = submissions.filter(s => s.validationStatus === 'FAILED').length;
+  const processing = submissions.filter(s => s.status === 'PROCESSING' || s.status === 'VALIDATING').length;
+
+  setStatus('trackStatus', `✓ ${submissions.length} parts — ${succeeded} succeeded, ${failed} failed, ${processing} processing`);
+
+  // Reflect terminal status back into wayfair_submission_log
+  if (sb) {
+    for (const sub of submissions) {
+      if (!sub.requestId) continue;
+      let newStatus = null;
+      if (sub.submissionStatus === 'SUCCEEDED') newStatus = 'SUCCEEDED';
+      else if (sub.validationStatus === 'FAILED') newStatus = 'FAILED';
+      if (!newStatus) continue;
+      try {
+        const updates = { status: newStatus, resolved_at: new Date().toISOString() };
+        if (newStatus === 'FAILED' && sub.validationFlaws) updates.validation_flaws = sub.validationFlaws;
+        await sb.from('wayfair_submission_log').update(updates).eq('request_id', sub.requestId);
+      } catch (e) { log(`Log update failed for ${sub.requestId}: ${e.message}`, 'warn'); }
+    }
+  }
+
+  document.getElementById('trackResults').innerHTML = submissions.map(sub => {
+    let statusCls = 'pending';
+    let statusText = sub.status || '—';
+    if (sub.submissionStatus === 'SUCCEEDED') { statusCls = 'ok'; statusText = '✓ SUBMITTED'; }
+    else if (sub.validationStatus === 'FAILED') { statusCls = 'fail'; statusText = '✗ VALIDATION FAILED'; }
+
+    const flaws = (sub.validationFlaws || []).map(f =>
+      `<div style="font-size:10px;color:var(--fail);margin-left:12px;">• Q${f.questionId}: ${f.flawType} — ${f.flaw}</div>`
+    ).join('');
+
+    return `<div class="submission-card">
+      <div class="sc-sku">${escHtml(sub.supplierPartNumber) || '—'}</div>
+      <div class="sc-status ${statusCls}">${statusText}</div>
+      ${flaws}
+    </div>`;
+  }).join('');
+
+  if (succeeded > 0) {
+    const successParts = submissions.filter(s => s.submissionStatus === 'SUCCEEDED').map(s => s.supplierPartNumber).filter(Boolean);
+    if (successParts.length > 0) {
+      document.getElementById('trackResults').innerHTML += `
+        <div style="margin-top:14px;padding:14px;background:var(--pass-bg);border:1px solid rgba(45,212,160,0.2);border-radius:8px;">
+          <div style="font-size:13px;font-weight:600;color:var(--pass);margin-bottom:8px;">✓ ${successParts.length} product(s) submitted successfully</div>
+          <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">These are now in Wayfair's review pipeline. Once approved, they'll appear in your catalog. Click below to set wayfair_sku on these items in your DB.</div>
+          <button class="btn btn-success btn-sm" onclick='writeWayfairSkus(${JSON.stringify(successParts).replace(/"/g, "&quot;")})'>Write wayfair_sku to DB (${successParts.length} items)</button>
+        </div>`;
+    }
+  }
+}
+
+async function writeWayfairSkus(partNumbers) {
+  if (!sb) { toast('Not connected', 'err'); return; }
+  let updated = 0;
+  for (const partNum of partNumbers) {
+    const { error } = await sb.from('items').update({ wayfair_sku: partNum }).eq('sku', partNum);
+    if (!error) { updated++; log(`✓ Set wayfair_sku = "${partNum}" on item ${partNum}`, 'ok'); }
+    else log(`Failed to update ${partNum}: ${error.message}`, 'err');
+  }
+  toast(`Updated ${updated}/${partNumbers.length} items`, updated === partNumbers.length ? 'ok' : 'warn');
+  log(`DB update complete — ${updated}/${partNumbers.length} wayfair_sku values written`, 'ok');
+}
+
+// =========================================================================
+// INIT
+// =========================================================================
+autoConnect();
+checkEnv();
+</script>
+</body>
+</html>
