@@ -365,10 +365,9 @@
       <div class="config-row">
         <div class="field" style="margin-bottom:0;">
           <label>Class ID (Wayfair taxonomy category)</label>
-          <select id="submitClassId" onchange="onClassChange()">
-            <option value="">— Select class —</option>
-          </select>
-          <div class="hint" id="classHint">Only classes with cached question schemas appear here</div>
+          <input type="text" id="submitClassId" list="classOptions" placeholder="Type class ID or name to search…" oninput="onClassChange()" autocomplete="off">
+          <datalist id="classOptions"></datalist>
+          <div class="hint" id="classHint">Type a known class ID directly to bootstrap it on the fly</div>
         </div>
         <div class="field" style="margin-bottom:0;">
           <label>Manufacturer ID</label>
@@ -1145,19 +1144,45 @@ function applyTemplateToCurrentItem() {
 }
 
 function populateClassDropdown() {
-  const sel = document.getElementById('submitClassId');
-  sel.innerHTML = '<option value="">— Select class —</option>';
-  // Show only classes that have a cached schema
-  const cachedIds = Object.keys(classQuestionsCache).sort((a, b) => {
+  const dl = document.getElementById('classOptions');
+  // Build superset: cached classes + classes seen in catalog (classMap)
+  const allIds = new Set([...Object.keys(classQuestionsCache), ...Object.keys(classMap)]);
+  // Sort: cached first, then by catalog product count desc, then by ID asc
+  const sorted = [...allIds].sort((a, b) => {
+    const ac = classQuestionsCache[a] ? 1 : 0;
+    const bc = classQuestionsCache[b] ? 1 : 0;
+    if (ac !== bc) return bc - ac;
     const ca = classMap[a]?.count || 0;
     const cb = classMap[b]?.count || 0;
-    return cb - ca;
+    if (ca !== cb) return cb - ca;
+    return parseInt(a, 10) - parseInt(b, 10);
   });
-  for (const cid of cachedIds) {
+  dl.innerHTML = sorted.map(cid => {
     const cached = classQuestionsCache[cid];
-    const name = cached.class_name || classMap[cid]?.name || '—';
-    const qCount = cached.questions.length;
-    sel.innerHTML += `<option value="${cid}">${cid} — ${escHtml(name)} (${qCount}q)</option>`;
+    const name = cached?.class_name || classMap[cid]?.name || `Class ${cid}`;
+    const tag = cached
+      ? `${cached.questions.length}q cached`
+      : 'uncached — will bootstrap';
+    return `<option value="${cid}">${escHtml(name)} (${tag})</option>`;
+  }).join('');
+}
+
+// Update hint text + Bootstrap button visibility based on what's typed
+function updateClassFieldHint(typedValue) {
+  const hint = document.getElementById('classHint');
+  if (!typedValue) {
+    hint.innerHTML = `${Object.keys(classQuestionsCache).length} class(es) cached, ${Object.keys(classMap).length} known from catalog. Type ID or name to search.`;
+    return;
+  }
+  const cached = classQuestionsCache[typedValue];
+  if (cached) {
+    hint.innerHTML = `<span style="color:var(--pass);">✓ ${escHtml(cached.class_name)} — ${cached.questions.length} cached questions</span>`;
+  } else if (classMap[typedValue]) {
+    hint.innerHTML = `<span style="color:var(--warn);">⚠ ${escHtml(classMap[typedValue].name)} — schema not cached yet (use Bootstrap below)</span>`;
+  } else if (/^\d+$/.test(typedValue)) {
+    hint.innerHTML = `<span style="color:var(--warn);">⚠ Class ${escHtml(typedValue)} unknown — use Bootstrap below to fetch its schema from Wayfair</span>`;
+  } else {
+    hint.innerHTML = `<span style="color:var(--text-muted);">No exact match. Pick from suggestions or enter a numeric class ID.</span>`;
   }
 }
 
@@ -1176,10 +1201,11 @@ function populateMfrDropdown() {
 function onClassChange() {
   const item = getCurrentCandidate();
   if (!item) return;
-  const classIdRaw = document.getElementById('submitClassId').value;
+  const classIdRaw = (document.getElementById('submitClassId').value || '').trim();
   formAnswersByItem[item.sku].classId = classIdRaw;
 
-  document.getElementById('btnSaveClass').disabled = !classIdRaw;
+  document.getElementById('btnSaveClass').disabled = !classIdRaw || !/^\d+$/.test(classIdRaw);
+  updateClassFieldHint(classIdRaw);
 
   if (!classIdRaw) {
     document.getElementById('blockNotice').style.display = 'none';
@@ -1208,27 +1234,97 @@ function onMfrChange(value) {
 }
 
 function showBlockNotice(classId) {
-  const className = classMap[classId]?.name || 'Unknown';
+  const className = classMap[classId]?.name || classQuestionsCache[classId]?.class_name || '';
+  const isNumeric = /^\d+$/.test(classId);
   const el = document.getElementById('blockNotice');
   el.style.display = 'block';
+
+  const headerLabel = className
+    ? `${escHtml(className)} (class ${escHtml(classId)})`
+    : `Class ${escHtml(classId)}`;
+
+  if (!isNumeric) {
+    el.innerHTML = `
+      <div class="block-notice">
+        <div class="bn-title">⚠ Not a valid class ID</div>
+        <div class="bn-body">
+          Class IDs are numeric. Pick from suggestions or type the numeric Wayfair classId.
+        </div>
+      </div>
+    `;
+    return;
+  }
+
   el.innerHTML = `
     <div class="block-notice">
-      <div class="bn-title">⚠ No question schema cached for class ${escHtml(classId)} (${escHtml(className)})</div>
+      <div class="bn-title">⚠ ${headerLabel} — schema not cached</div>
       <div class="bn-body">
-        Tab 3 needs the question schema for this class before it can render the configuration form.
-        Bootstrap it via the Catalog Sandbox Proxy GAS editor:
-        <ol style="margin-top:8px;margin-left:20px;">
-          <li>Open the <strong>CCD-Wayfair-Product-Addition-Sandbox</strong> GAS project</li>
-          <li>Add <code>${escHtml(classId)}</code> to the <code>EXTRA_CLASS_IDS</code> array in <code>bootstrapClassQuestionsToSupabase()</code></li>
-          <li>Run the function (≈2 seconds per class)</li>
-          <li>Reload this tool — the new class will appear in the dropdown</li>
-        </ol>
-        <div style="margin-top:8px;color:var(--text-muted);">
-          Currently cached: ${Object.keys(classQuestionsCache).length} class(es) — ${Object.keys(classQuestionsCache).sort().join(', ') || 'none'}
+        Tab 3 needs the question schema before it can render the configuration form.
+        Click below to fetch it from Wayfair now (~2 seconds), or bootstrap many at once via Discovery.
+        <div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" id="btnBootstrapNow" onclick="bootstrapSingleClass(${parseInt(classId, 10)})">🔎 Bootstrap class ${escHtml(classId)} now</button>
+          <span id="bootstrapInlineStatus" style="font-size:11px;color:var(--text-muted);"></span>
         </div>
       </div>
     </div>
   `;
+}
+
+// Fetch + cache a single class schema on demand. Updates classQuestionsCache,
+// writes to wayfair_class_questions, refreshes the dropdown + form.
+async function bootstrapSingleClass(classId) {
+  const btn = document.getElementById('btnBootstrapNow');
+  const statusEl = document.getElementById('bootstrapInlineStatus');
+  if (!sb) { toast('Connect to Supabase first', 'err'); return; }
+  if (!proxyUrlSandbox()) { toast('Sandbox proxy URL required', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Fetching…';
+  statusEl.innerHTML = '';
+  log(`Bootstrapping class ${classId}…`, 'info');
+
+  try {
+    const result = await sandboxGet('getClassQuestions', { classId: String(classId) });
+    if (!result.success) {
+      const msg = result.error || 'unknown error';
+      statusEl.innerHTML = `<span style="color:var(--fail);">✗ ${escHtml(msg)}</span>`;
+      log(`Bootstrap failed for class ${classId}: ${msg}`, 'err');
+      btn.disabled = false;
+      btn.innerHTML = `🔎 Bootstrap class ${classId} now`;
+      return;
+    }
+    const questions = result.questions || [];
+    const className = classMap[String(classId)]?.name || `Class ${classId}`;
+
+    const row = {
+      class_id: classId,
+      class_name: className,
+      questions: questions,
+      fetched_at: new Date().toISOString()
+    };
+    const { error: upErr } = await sb.from('wayfair_class_questions').upsert(row, { onConflict: 'class_id' });
+    if (upErr) {
+      statusEl.innerHTML = `<span style="color:var(--fail);">✗ DB upsert: ${escHtml(upErr.message)}</span>`;
+      log(`Bootstrap DB write failed for ${classId}: ${upErr.message}`, 'err');
+      btn.disabled = false;
+      btn.innerHTML = `🔎 Bootstrap class ${classId} now`;
+      return;
+    }
+    // Update local cache
+    classQuestionsCache[String(classId)] = { class_name: className, questions: questions, fetched_at: row.fetched_at };
+    log(`✓ Class ${classId} (${className}): cached ${questions.length} question(s)`, 'ok');
+    toast(`Cached ${questions.length} question(s) for class ${classId}`, 'ok');
+
+    // Refresh dropdown + render form for current candidate
+    populateClassDropdown();
+    renderDiscovery();
+    onClassChange();
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--fail);">✗ ${escHtml(e.message)}</span>`;
+    log(`Bootstrap error for ${classId}: ${e.message}`, 'err');
+    btn.disabled = false;
+    btn.innerHTML = `🔎 Bootstrap class ${classId} now`;
+  }
 }
 
 // -------------------------------------------------------------------------
@@ -1670,8 +1766,9 @@ function resetCurrentForm() {
 async function saveClassToItem() {
   const item = getCurrentCandidate();
   if (!item) return;
-  const classId = parseInt(formAnswersByItem[item.sku].classId);
-  if (!classId) { toast('Select a class first', 'warn'); return; }
+  const raw = (formAnswersByItem[item.sku].classId || '').trim();
+  if (!/^\d+$/.test(raw)) { toast('Class must be a numeric ID', 'warn'); return; }
+  const classId = parseInt(raw, 10);
   if (!sb) { toast('Not connected to Supabase', 'err'); return; }
 
   const { error } = await sb.from('items').update({ wayfair_class_id: classId }).eq('sku', item.sku);
