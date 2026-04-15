@@ -369,6 +369,9 @@
           <input type="text" id="submitClassId" list="classOptions" placeholder="Type class ID or name to search…" oninput="onClassChange()" autocomplete="off">
           <datalist id="classOptions"></datalist>
           <div class="hint" id="classHint">Type a known class ID directly to bootstrap it on the fly</div>
+          <div style="margin-top:6px;">
+            <button class="btn btn-outline btn-sm" id="btnToggleShowAll" onclick="toggleShowAllCategories()" style="font-size:10px;padding:3px 10px;">Showing relevant only</button>
+          </div>
         </div>
         <div class="field" style="margin-bottom:0;">
           <label>Manufacturer ID</label>
@@ -444,7 +447,8 @@ let lastRequestIds = [];
 
 // v2.0.3 additions:
 let classQuestionsCache = {};     // classId → { class_name, questions[] } from wayfair_class_questions table
-let taxonomyCache = {};           // taxonomyCategoryId → name (full Wayfair taxonomy from wayfair_taxonomy_categories table)
+let taxonomyCache = {};           // taxonomyCategoryId → { name, is_relevant } (full Wayfair taxonomy from wayfair_taxonomy_categories table)
+let taxonomyShowAll = false;      // when false, datalist only shows is_relevant=true categories
 let currentCandIdx = 0;           // index into orderedSelectedSkus()
 let formAnswersByItem = {};       // sku → { classId, manufacturerId, answers: { questionId → value | [values] } }
 let submittedRequestMap = {};     // sku → requestId (for Track tab handoff)
@@ -619,15 +623,19 @@ async function initialize() {
   try {
     const { data: taxRows, error: taxErr } = await sb
       .from('wayfair_taxonomy_categories')
-      .select('taxonomy_category_id, name')
+      .select('taxonomy_category_id, name, is_relevant')
       .order('name');
     if (taxErr) {
       log('Taxonomy fetch: ' + taxErr.message + ' — full taxonomy not cached. Use "Refresh Wayfair taxonomy" in Discovery to populate.', 'warn');
     } else {
+      let relevantCount = 0;
       for (const row of (taxRows || [])) {
-        taxonomyCache[String(row.taxonomy_category_id)] = row.name;
+        const isRel = row.is_relevant === false ? false : true; // default true if column missing
+        taxonomyCache[String(row.taxonomy_category_id)] = { name: row.name, is_relevant: isRel };
+        if (isRel) relevantCount++;
       }
-      log(`Loaded ${Object.keys(taxonomyCache).length} taxonomy categor${Object.keys(taxonomyCache).length === 1 ? 'y' : 'ies'} from cache`, Object.keys(taxonomyCache).length > 0 ? 'ok' : 'warn');
+      const total = Object.keys(taxonomyCache).length;
+      log(`Loaded ${total} taxonomy categor${total === 1 ? 'y' : 'ies'} from cache (${relevantCount} relevant, ${total - relevantCount} filtered)`, total > 0 ? 'ok' : 'warn');
     }
   } catch (e) { log('Taxonomy fetch error: ' + e.message, 'warn'); }
   setProgress('discoverProgress', 100);
@@ -842,7 +850,7 @@ async function discoverAndCacheClasses() {
         }
         const questions = result.questions || [];
         // Derive class_name from local classMap (loaded from catalog) or taxonomy cache or fall back
-        const className = classMap[String(cid)]?.name || taxonomyCache[String(cid)] || `Class ${cid}`;
+        const className = classMap[String(cid)]?.name || taxonomyCache[String(cid)]?.name || `Class ${cid}`;
         const row = {
           class_id: cid,
           class_name: className,
@@ -906,12 +914,17 @@ async function refreshTaxonomy() {
 
   try {
     // Single proxy call — the proxy handles pagination server-side and returns flat list
-    const result = await sandboxGet('getTaxonomyCategories', { fetchAll: 'true', pageSize: '100' });
+    // pageSize 50 is the largest value Wayfair accepts for taxonomyCategories
+    // (allowed: [10, 20, 25, 50] — undocumented constraint discovered Session 11)
+    const result = await sandboxGet('getTaxonomyCategories', { fetchAll: 'true', pageSize: '50' });
     if (!result.success) {
       const msg = result.error || 'unknown error';
+      const gqlDetail = result.graphqlErrors && result.graphqlErrors.length > 0
+        ? ' — GraphQL: ' + result.graphqlErrors.map(e => e.message).join(' | ')
+        : '';
       const partial = result.partialCount ? ` (got ${result.partialCount} partial)` : '';
-      statusEl.innerHTML = `<span style="color:var(--fail);">✗ ${escHtml(msg)}${escHtml(partial)}</span>`;
-      log(`Taxonomy refresh failed: ${msg}${partial}`, 'err');
+      statusEl.innerHTML = `<span style="color:var(--fail);">✗ ${escHtml(msg)}${escHtml(gqlDetail)}${escHtml(partial)}</span>`;
+      log(`Taxonomy refresh failed: ${msg}${gqlDetail}${partial}`, 'err');
       btn.disabled = false;
       btn.innerHTML = '🌳 Refresh Wayfair taxonomy';
       return;
@@ -949,7 +962,7 @@ async function refreshTaxonomy() {
 
     // Update local cache
     taxonomyCache = {};
-    for (const r of rows) taxonomyCache[String(r.taxonomy_category_id)] = r.name;
+    for (const r of rows) taxonomyCache[String(r.taxonomy_category_id)] = { name: r.name, is_relevant: true };
 
     statusEl.innerHTML = `✓ Taxonomy refreshed — ${written} categor${written === 1 ? 'y' : 'ies'} cached`;
     toast(`Taxonomy refreshed: ${written} classes`, 'ok');
@@ -1249,11 +1262,16 @@ function applyTemplateToCurrentItem() {
 function populateClassDropdown() {
   const dl = document.getElementById('classOptions');
   // Build superset: cached schemas + classes seen in catalog (classMap) + full Wayfair taxonomy
+  // Filter taxonomy entries by is_relevant unless Show All is enabled.
+  // Always include classes that are cached or in catalog regardless of relevance flag —
+  // user has already invested time in those, never hide them.
   const allIds = new Set([
     ...Object.keys(classQuestionsCache),
-    ...Object.keys(classMap),
-    ...Object.keys(taxonomyCache)
+    ...Object.keys(classMap)
   ]);
+  for (const cid of Object.keys(taxonomyCache)) {
+    if (taxonomyShowAll || taxonomyCache[cid].is_relevant) allIds.add(cid);
+  }
   // Sort: cached first, then by catalog product count desc, then by name asc
   const sorted = [...allIds].sort((a, b) => {
     const ac = classQuestionsCache[a] ? 1 : 0;
@@ -1262,26 +1280,51 @@ function populateClassDropdown() {
     const ca = classMap[a]?.count || 0;
     const cb = classMap[b]?.count || 0;
     if (ca !== cb) return cb - ca;
-    const na = (classQuestionsCache[a]?.class_name || classMap[a]?.name || taxonomyCache[a] || '').toLowerCase();
-    const nb = (classQuestionsCache[b]?.class_name || classMap[b]?.name || taxonomyCache[b] || '').toLowerCase();
+    const na = (classQuestionsCache[a]?.class_name || classMap[a]?.name || taxonomyCache[a]?.name || '').toLowerCase();
+    const nb = (classQuestionsCache[b]?.class_name || classMap[b]?.name || taxonomyCache[b]?.name || '').toLowerCase();
     if (na && nb && na !== nb) return na.localeCompare(nb);
     return parseInt(a, 10) - parseInt(b, 10);
   });
   dl.innerHTML = sorted.map(cid => {
     const cached = classQuestionsCache[cid];
-    const name = cached?.class_name || classMap[cid]?.name || taxonomyCache[cid] || `Class ${cid}`;
+    const name = cached?.class_name || classMap[cid]?.name || taxonomyCache[cid]?.name || `Class ${cid}`;
     const tag = cached
       ? `${cached.questions.length}q cached`
       : (classMap[cid] ? 'in catalog · uncached' : 'taxonomy · uncached');
     return `<option value="${cid}">${escHtml(name)} (${tag})</option>`;
   }).join('');
+
+  // Update the "Show All" toggle button if it exists
+  const tog = document.getElementById('btnToggleShowAll');
+  if (tog) {
+    const totalTax = Object.keys(taxonomyCache).length;
+    const relTax = Object.values(taxonomyCache).filter(t => t.is_relevant).length;
+    if (taxonomyShowAll) {
+      tog.textContent = `Showing all ${totalTax} (click to filter to ${relTax} relevant)`;
+    } else {
+      tog.textContent = `Showing ${relTax} of ${totalTax} (click to show all)`;
+    }
+  }
+}
+
+// Toggle show-all state and re-render dropdown
+function toggleShowAllCategories() {
+  taxonomyShowAll = !taxonomyShowAll;
+  populateClassDropdown();
+  log(taxonomyShowAll
+    ? `Class search now shows all ${Object.keys(taxonomyCache).length} Wayfair categories`
+    : `Class search filtered to ${Object.values(taxonomyCache).filter(t => t.is_relevant).length} CCD-relevant categories`,
+    'info');
 }
 
 // Update hint text + Bootstrap button visibility based on what's typed
 function updateClassFieldHint(typedValue) {
   const hint = document.getElementById('classHint');
   if (!typedValue) {
-    hint.innerHTML = `${Object.keys(classQuestionsCache).length} class(es) cached · ${Object.keys(taxonomyCache).length} in Wayfair taxonomy. Type ID or name to search.`;
+    const totalTax = Object.keys(taxonomyCache).length;
+    const relTax = Object.values(taxonomyCache).filter(t => t.is_relevant).length;
+    const taxLabel = taxonomyShowAll ? `${totalTax} Wayfair categories (all)` : `${relTax} of ${totalTax} Wayfair categories (filtered to CCD-relevant)`;
+    hint.innerHTML = `${Object.keys(classQuestionsCache).length} class(es) cached · ${taxLabel}. Type ID or name to search.`;
     return;
   }
   const cached = classQuestionsCache[typedValue];
@@ -1290,7 +1333,8 @@ function updateClassFieldHint(typedValue) {
   } else if (classMap[typedValue]) {
     hint.innerHTML = `<span style="color:var(--warn);">⚠ ${escHtml(classMap[typedValue].name)} — schema not cached yet (use Bootstrap below)</span>`;
   } else if (taxonomyCache[typedValue]) {
-    hint.innerHTML = `<span style="color:var(--warn);">⚠ ${escHtml(taxonomyCache[typedValue])} — Wayfair taxonomy class, schema not cached yet (use Bootstrap below)</span>`;
+    const relSuffix = taxonomyCache[typedValue].is_relevant ? '' : ' (marked NOT CCD-relevant — review before bootstrapping)';
+    hint.innerHTML = `<span style="color:var(--warn);">⚠ ${escHtml(taxonomyCache[typedValue].name)} — Wayfair taxonomy class, schema not cached yet (use Bootstrap below)${escHtml(relSuffix)}</span>`;
   } else if (/^\d+$/.test(typedValue)) {
     hint.innerHTML = `<span style="color:var(--warn);">⚠ Class ${escHtml(typedValue)} unknown — use Bootstrap below to fetch its schema from Wayfair</span>`;
   } else {
@@ -1346,7 +1390,7 @@ function onMfrChange(value) {
 }
 
 function showBlockNotice(classId) {
-  const className = classMap[classId]?.name || classQuestionsCache[classId]?.class_name || '';
+  const className = classMap[classId]?.name || classQuestionsCache[classId]?.class_name || taxonomyCache[classId]?.name || '';
   const isNumeric = /^\d+$/.test(classId);
   const el = document.getElementById('blockNotice');
   el.style.display = 'block';
@@ -1406,7 +1450,7 @@ async function bootstrapSingleClass(classId) {
       return;
     }
     const questions = result.questions || [];
-    const className = classMap[String(classId)]?.name || taxonomyCache[String(classId)] || `Class ${classId}`;
+    const className = classMap[String(classId)]?.name || taxonomyCache[String(classId)]?.name || `Class ${classId}`;
 
     const row = {
       class_id: classId,
