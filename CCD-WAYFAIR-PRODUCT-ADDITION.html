@@ -205,12 +205,21 @@
   .q-multi-add:hover { text-decoration: underline; }
 
   .auto-fill-badge { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 700; background: var(--pass-bg); color: var(--pass); border: 1px solid rgba(45,212,160,0.3); border-radius: 3px; letter-spacing: 0.4px; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+  .req-star { color: var(--fail); font-weight: 800; margin-left: 3px; font-size: 14px; vertical-align: middle; }
 
   .submit-bar { display: flex; gap: 10px; align-items: center; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
   .submit-bar .answer-summary { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-left: auto; }
 
   .preview-area { display: none; margin-top: 16px; }
   .preview-area textarea { font-family: 'JetBrains Mono', monospace; font-size: 11px; min-height: 240px; width: 100%; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+
+  .tpl-banner { display: none; align-items: center; justify-content: space-between; gap: 12px; background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.3); border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tpl-banner.visible { display: flex; }
+  .tpl-banner .tb-info { font-size: 12px; color: var(--text); }
+  .tpl-banner .tb-info strong { color: var(--purple); }
+  .tpl-banner .tb-meta { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+  .tpl-banner.mismatch { background: var(--warn-bg); border-color: rgba(240,180,74,0.3); }
+  .tpl-banner.mismatch .tb-info strong { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -345,6 +354,9 @@
 
       <!-- Candidate context card -->
       <div class="candidate-card" id="candCard"></div>
+
+      <!-- Template apply banner (visible when a template is loaded in Discovery) -->
+      <div id="tplBanner" class="tpl-banner"></div>
 
       <!-- Status line -->
       <div id="submitStatus" class="status-line"></div>
@@ -682,9 +694,16 @@ function loadTemplate() {
       Mfr: ${escHtml(sku0.manufacturer?.name) || '—'} (ID: ${sku0.manufacturer?.id || '—'}) ·
       ${details.length} attributes · ${(prod.images || []).length} images
     </div>
-    <div class="tc-meta" style="margin-top:6px;color:var(--text-dim);">Reference only — Tab 3 form does not pull from templates in v2.0.3 (uses cached schemas + per-item pre-fill).</div>
+    <div class="tc-meta" style="margin-top:6px;color:var(--text-dim);">→ Switch to <strong>Submit</strong> tab to apply this template's answers to a candidate.</div>
   `;
-  log(`Template loaded for reference: ${prod.supplierPartNumber} — classId: ${sku0.classId}, ${details.length} attributes`, 'ok');
+  log(`Template loaded: ${prod.supplierPartNumber} — classId: ${sku0.classId}, ${details.length} attributes available`, 'ok');
+
+  // If the user is currently on the Submit tab, refresh the banner immediately
+  const submitPanel = document.getElementById('tab-submit');
+  if (submitPanel && submitPanel.classList.contains('active')) {
+    const item = getCurrentCandidate();
+    if (item) renderTemplateBanner(item, formAnswersByItem[item.sku] || {});
+  }
 }
 
 // =========================================================================
@@ -1015,9 +1034,114 @@ function renderCandidatePane() {
   document.getElementById('submitClassId').value = state.classId || '';
   document.getElementById('submitMfr').value = state.manufacturerId || '';
 
+  // Render template banner if template loaded
+  renderTemplateBanner(item, state);
+
   // Render or show block notice
   onClassChange();
   document.getElementById('previewArea').style.display = 'none';
+}
+
+function renderTemplateBanner(item, state) {
+  const banner = document.getElementById('tplBanner');
+  if (!templateProduct) {
+    banner.className = 'tpl-banner';
+    banner.innerHTML = '';
+    return;
+  }
+  const sku0 = templateProduct.skus?.[0] || {};
+  const tplName = sku0.productName || templateProduct.supplierPartNumber;
+  const tplClassId = String(sku0.classId || '');
+  const tplDetails = sku0.productDetails || [];
+  const detailsWithVals = tplDetails.filter(d => d.questionId && d.value !== null && d.value !== undefined && d.value !== '');
+
+  const candClassId = state.classId || '';
+  const classMatch = candClassId && candClassId === tplClassId;
+
+  let warnMsg = '';
+  let bannerCls = 'tpl-banner visible';
+  if (!candClassId) {
+    warnMsg = ' — pick a class first';
+  } else if (!classMatch) {
+    warnMsg = ` — ⚠ template class ${tplClassId} ≠ current class ${candClassId} (only matching question IDs will apply)`;
+    bannerCls = 'tpl-banner visible mismatch';
+  }
+
+  banner.className = bannerCls;
+  banner.innerHTML = `
+    <div>
+      <div class="tb-info"><strong>📋 Template loaded:</strong> ${escHtml(tplName)}</div>
+      <div class="tb-meta">${escHtml(templateProduct.supplierPartNumber)} · class ${tplClassId} · ${detailsWithVals.length} answer(s) available${escHtml(warnMsg)}</div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-outline btn-sm" onclick="applyTemplateToCurrentItem()" ${!candClassId ? 'disabled' : ''}>Apply to current item</button>
+      <button class="btn btn-outline btn-sm" onclick="dismissTemplate()">✕</button>
+    </div>
+  `;
+}
+
+function dismissTemplate() {
+  templateProduct = null;
+  document.getElementById('templateSelect').value = '';
+  document.getElementById('templateInfo').style.display = 'none';
+  renderTemplateBanner(getCurrentCandidate(), formAnswersByItem[getCurrentCandidate()?.sku] || {});
+  log('Template dismissed', 'info');
+}
+
+function applyTemplateToCurrentItem() {
+  const item = getCurrentCandidate();
+  if (!item || !templateProduct) return;
+  const state = formAnswersByItem[item.sku];
+  if (!state.classId) { toast('Pick a class first', 'warn'); return; }
+
+  const sku0 = templateProduct.skus?.[0] || {};
+  const tplDetails = (sku0.productDetails || []).filter(d => d.questionId && d.value !== null && d.value !== undefined && d.value !== '');
+  if (tplDetails.length === 0) { toast('Template has no answers to apply', 'warn'); return; }
+
+  // Build set of valid question IDs in current cached schema (top-level + child)
+  const cached = classQuestionsCache[state.classId];
+  if (!cached) { toast('Class schema not cached', 'err'); return; }
+  const validIds = new Set();
+  function collectIds(qs) {
+    for (const q of qs) {
+      validIds.add(String(q.id));
+      if (q.childQuestions) collectIds(q.childQuestions);
+    }
+  }
+  collectIds(cached.questions);
+
+  // Only apply template values whose questionIds exist in this class's schema
+  const applicable = tplDetails.filter(d => validIds.has(String(d.questionId)));
+  const skipped = tplDetails.length - applicable.length;
+
+  if (applicable.length === 0) {
+    toast(`No matching question IDs (${skipped} from template don't apply to this class)`, 'warn');
+    log(`Template apply: 0 matched, ${skipped} skipped (different class schema)`, 'warn');
+    return;
+  }
+
+  // Confirm overwrite if any answers exist already
+  const existingCount = Object.keys(state.answers).length;
+  if (existingCount > 0) {
+    if (!confirm(`Apply ${applicable.length} template answer(s) to ${item.sku}?\n\nThis will overwrite existing form values where the question IDs match.\n${skipped > 0 ? `(${skipped} template answers don't apply to this class — will be skipped.)` : ''}`)) return;
+  }
+
+  // Apply — clear pre-fill source markers since user is now using template values
+  let applied = 0;
+  for (const d of applicable) {
+    const qid = String(d.questionId);
+    state.answers[qid] = d.value;
+    applied++;
+  }
+  // Clear pre-fill source markers since we've now actively populated answers
+  const pkey = `__prefilled_${state.classId}`;
+  if (state[pkey]) delete state[pkey];
+
+  log(`Template applied to ${item.sku}: ${applied} answer(s) copied${skipped > 0 ? `, ${skipped} skipped (different class)` : ''}`, 'ok');
+  toast(`Applied ${applied} template answer(s)`, 'ok');
+
+  // Re-render the form to show new values
+  renderDynamicForm(item, cached);
 }
 
 function populateClassDropdown() {
@@ -1253,6 +1377,7 @@ function renderQuestion(q, answersMap, prefillSources, isChild) {
   const fromAuto = prefillSources && prefillSources[qid];
   const autoBadge = fromAuto ? `<span class="auto-fill-badge" title="Pre-filled from items.${escHtml(fromAuto)}">auto-filled</span>` : '';
   const multiBadge = isMulti ? `<span class="q-multi">multi</span>` : '';
+  const reqStar = q.importanceType === 'REQUIRED' ? `<span class="req-star" title="REQUIRED">*</span>` : '';
 
   let inputHtml = '';
   switch (q.answerType) {
@@ -1295,7 +1420,7 @@ function renderQuestion(q, answersMap, prefillSources, isChild) {
 
   return `<div class="${cardCls}" data-qid="${qid}">
     <div class="q-head">
-      <div class="q-name">${escHtml(q.displayName || ('Question ' + qid))} ${autoBadge}</div>
+      <div class="q-name">${escHtml(q.displayName || ('Question ' + qid))}${reqStar} ${autoBadge}</div>
       <div class="q-meta">
         <span class="q-id">id:${qid}</span>
         <span class="q-type">${escHtml(q.answerType || '?')}</span>
