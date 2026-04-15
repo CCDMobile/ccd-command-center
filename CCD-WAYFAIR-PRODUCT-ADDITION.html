@@ -289,12 +289,13 @@
       <div class="template-card" style="margin-bottom:14px;">
         <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="discoverAndCacheClasses()" id="btnDiscoverClasses" disabled>🔎 Discover &amp; cache all Wayfair classes</button>
+          <button class="btn btn-outline btn-sm" onclick="refreshTaxonomy()" id="btnRefreshTaxonomy" disabled>🌳 Refresh Wayfair taxonomy</button>
           <span id="discoverClassesStatus" style="font-size:12px;color:var(--text-dim);"></span>
         </div>
         <div class="hint" style="margin-top:8px;">
-          Step 1: Backfill <code>items.wayfair_class_id</code> by joining items with a <code>wayfair_sku</code> against the loaded catalog.<br>
-          Step 2: For each distinct class found, fetch the question schema via the Sandbox Addition Proxy and cache it in <code>wayfair_class_questions</code>.<br>
-          Safe to re-run — existing rows are upserted.
+          <strong>Discover &amp; cache:</strong> backfill <code>items.wayfair_class_id</code>, then bootstrap question schemas for any new classes seen in items.<br>
+          <strong>Refresh taxonomy:</strong> pull Wayfair's full ~150 product class list (names + IDs) so the Submit tab's class search can find any class by name, even ones you've never sold.<br>
+          Both safe to re-run — existing rows are upserted.
         </div>
       </div>
     </div>
@@ -443,6 +444,7 @@ let lastRequestIds = [];
 
 // v2.0.3 additions:
 let classQuestionsCache = {};     // classId → { class_name, questions[] } from wayfair_class_questions table
+let taxonomyCache = {};           // taxonomyCategoryId → name (full Wayfair taxonomy from wayfair_taxonomy_categories table)
 let currentCandIdx = 0;           // index into orderedSelectedSkus()
 let formAnswersByItem = {};       // sku → { classId, manufacturerId, answers: { questionId → value | [values] } }
 let submittedRequestMap = {};     // sku → requestId (for Track tab handoff)
@@ -610,6 +612,24 @@ async function initialize() {
     }
     log(`Loaded ${Object.keys(classQuestionsCache).length} cached class schema(s) — ${(classRows||[]).reduce((n,r)=>n+(r.questions?.length||0),0)} total questions`, 'ok');
   }
+
+  // 5. Load full Wayfair taxonomy cache (v2.0.3 / proxy v2.2.3)
+  setStatus('discoverStatus', '<span class="spinner"></span> Loading Wayfair taxonomy cache…');
+  taxonomyCache = {};
+  try {
+    const { data: taxRows, error: taxErr } = await sb
+      .from('wayfair_taxonomy_categories')
+      .select('taxonomy_category_id, name')
+      .order('name');
+    if (taxErr) {
+      log('Taxonomy fetch: ' + taxErr.message + ' — full taxonomy not cached. Use "Refresh Wayfair taxonomy" in Discovery to populate.', 'warn');
+    } else {
+      for (const row of (taxRows || [])) {
+        taxonomyCache[String(row.taxonomy_category_id)] = row.name;
+      }
+      log(`Loaded ${Object.keys(taxonomyCache).length} taxonomy categor${Object.keys(taxonomyCache).length === 1 ? 'y' : 'ies'} from cache`, Object.keys(taxonomyCache).length > 0 ? 'ok' : 'warn');
+    }
+  } catch (e) { log('Taxonomy fetch error: ' + e.message, 'warn'); }
   setProgress('discoverProgress', 100);
 
   // Build class map from catalog
@@ -635,6 +655,7 @@ async function initialize() {
   populateMfrDropdown();
   populateClassDropdown();
   document.getElementById('btnDiscoverClasses').disabled = false;
+  document.getElementById('btnRefreshTaxonomy').disabled = false;
 }
 
 // =========================================================================
@@ -650,6 +671,7 @@ function renderDiscovery() {
     <div class="sum-card"><div class="lbl">Catalog Products</div><div class="val">${catalogProducts.length}</div></div>
     <div class="sum-card"><div class="lbl">Brands</div><div class="val">${brands.length}</div></div>
     <div class="sum-card warn"><div class="lbl">Cached Schemas</div><div class="val">${Object.keys(classQuestionsCache).length}</div></div>
+    <div class="sum-card info"><div class="lbl">Taxonomy</div><div class="val">${Object.keys(taxonomyCache).length}</div></div>
   `;
 
   document.getElementById('brandsBody').innerHTML = brands.length > 0
@@ -819,8 +841,8 @@ async function discoverAndCacheClasses() {
           continue;
         }
         const questions = result.questions || [];
-        // Derive class_name from local classMap (loaded from catalog) or fall back
-        const className = classMap[String(cid)]?.name || `Class ${cid}`;
+        // Derive class_name from local classMap (loaded from catalog) or taxonomy cache or fall back
+        const className = classMap[String(cid)]?.name || taxonomyCache[String(cid)] || `Class ${cid}`;
         const row = {
           class_id: cid,
           class_name: className,
@@ -863,6 +885,87 @@ async function discoverAndCacheClasses() {
 
   btn.disabled = false;
   btn.innerHTML = '🔎 Discover &amp; cache all Wayfair classes';
+}
+
+// =========================================================================
+// REFRESH TAXONOMY — pull Wayfair's full ~150 product class list
+// =========================================================================
+// Calls Sandbox proxy v2.2.3 getTaxonomyCategories action (which pages through
+// all results server-side) and upserts into wayfair_taxonomy_categories.
+// Once done, the Submit tab's class search can find any Wayfair class by name.
+async function refreshTaxonomy() {
+  const btn = document.getElementById('btnRefreshTaxonomy');
+  const statusEl = document.getElementById('discoverClassesStatus');
+  if (!sb) { toast('Connect to Supabase first', 'err'); return; }
+  if (!proxyUrlSandbox()) { toast('Sandbox proxy URL required', 'err'); return; }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Fetching taxonomy…';
+  statusEl.innerHTML = '<span class="spinner"></span> Calling getTaxonomyCategories…';
+  log('=== Wayfair taxonomy refresh started ===', 'info');
+
+  try {
+    // Single proxy call — the proxy handles pagination server-side and returns flat list
+    const result = await sandboxGet('getTaxonomyCategories', { fetchAll: 'true', pageSize: '100' });
+    if (!result.success) {
+      const msg = result.error || 'unknown error';
+      const partial = result.partialCount ? ` (got ${result.partialCount} partial)` : '';
+      statusEl.innerHTML = `<span style="color:var(--fail);">✗ ${escHtml(msg)}${escHtml(partial)}</span>`;
+      log(`Taxonomy refresh failed: ${msg}${partial}`, 'err');
+      btn.disabled = false;
+      btn.innerHTML = '🌳 Refresh Wayfair taxonomy';
+      return;
+    }
+    const categories = result.categories || [];
+    log(`Fetched ${categories.length} taxonomy categor${categories.length === 1 ? 'y' : 'ies'} across ${result.pagesFetched} page(s)`, 'ok');
+
+    // Upsert in batches (Supabase JS handles arrays natively for upsert)
+    statusEl.innerHTML = `<span class="spinner"></span> Writing ${categories.length} rows to Supabase…`;
+    const rows = categories
+      .filter(c => c.taxonomyCategoryId !== null && c.taxonomyCategoryId !== undefined)
+      .map(c => ({
+        taxonomy_category_id: parseInt(c.taxonomyCategoryId, 10),
+        name: c.name || `Class ${c.taxonomyCategoryId}`,
+        fetched_at: new Date().toISOString()
+      }));
+
+    // Chunk to avoid Supabase POST size limits — 500 per upsert is safe
+    const CHUNK = 500;
+    let written = 0;
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK);
+      const { error: upErr } = await sb
+        .from('wayfair_taxonomy_categories')
+        .upsert(chunk, { onConflict: 'taxonomy_category_id' });
+      if (upErr) {
+        statusEl.innerHTML = `<span style="color:var(--fail);">✗ DB upsert failed at row ${i}: ${escHtml(upErr.message)}</span>`;
+        log(`Taxonomy upsert failed at chunk ${i}-${i + chunk.length}: ${upErr.message}`, 'err');
+        btn.disabled = false;
+        btn.innerHTML = '🌳 Refresh Wayfair taxonomy';
+        return;
+      }
+      written += chunk.length;
+    }
+
+    // Update local cache
+    taxonomyCache = {};
+    for (const r of rows) taxonomyCache[String(r.taxonomy_category_id)] = r.name;
+
+    statusEl.innerHTML = `✓ Taxonomy refreshed — ${written} categor${written === 1 ? 'y' : 'ies'} cached`;
+    toast(`Taxonomy refreshed: ${written} classes`, 'ok');
+    log(`=== Taxonomy refresh complete: ${written} categories upserted ===`, 'ok');
+
+    // Refresh dependent UI
+    renderDiscovery();
+    populateClassDropdown();
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--fail);">✗ ${escHtml(e.message)}</span>`;
+    log(`Taxonomy refresh error: ${e.message}`, 'err');
+    toast('Taxonomy refresh failed', 'err');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '🌳 Refresh Wayfair taxonomy';
 }
 
 // =========================================================================
@@ -1145,9 +1248,13 @@ function applyTemplateToCurrentItem() {
 
 function populateClassDropdown() {
   const dl = document.getElementById('classOptions');
-  // Build superset: cached classes + classes seen in catalog (classMap)
-  const allIds = new Set([...Object.keys(classQuestionsCache), ...Object.keys(classMap)]);
-  // Sort: cached first, then by catalog product count desc, then by ID asc
+  // Build superset: cached schemas + classes seen in catalog (classMap) + full Wayfair taxonomy
+  const allIds = new Set([
+    ...Object.keys(classQuestionsCache),
+    ...Object.keys(classMap),
+    ...Object.keys(taxonomyCache)
+  ]);
+  // Sort: cached first, then by catalog product count desc, then by name asc
   const sorted = [...allIds].sort((a, b) => {
     const ac = classQuestionsCache[a] ? 1 : 0;
     const bc = classQuestionsCache[b] ? 1 : 0;
@@ -1155,14 +1262,17 @@ function populateClassDropdown() {
     const ca = classMap[a]?.count || 0;
     const cb = classMap[b]?.count || 0;
     if (ca !== cb) return cb - ca;
+    const na = (classQuestionsCache[a]?.class_name || classMap[a]?.name || taxonomyCache[a] || '').toLowerCase();
+    const nb = (classQuestionsCache[b]?.class_name || classMap[b]?.name || taxonomyCache[b] || '').toLowerCase();
+    if (na && nb && na !== nb) return na.localeCompare(nb);
     return parseInt(a, 10) - parseInt(b, 10);
   });
   dl.innerHTML = sorted.map(cid => {
     const cached = classQuestionsCache[cid];
-    const name = cached?.class_name || classMap[cid]?.name || `Class ${cid}`;
+    const name = cached?.class_name || classMap[cid]?.name || taxonomyCache[cid] || `Class ${cid}`;
     const tag = cached
       ? `${cached.questions.length}q cached`
-      : 'uncached — will bootstrap';
+      : (classMap[cid] ? 'in catalog · uncached' : 'taxonomy · uncached');
     return `<option value="${cid}">${escHtml(name)} (${tag})</option>`;
   }).join('');
 }
@@ -1171,7 +1281,7 @@ function populateClassDropdown() {
 function updateClassFieldHint(typedValue) {
   const hint = document.getElementById('classHint');
   if (!typedValue) {
-    hint.innerHTML = `${Object.keys(classQuestionsCache).length} class(es) cached, ${Object.keys(classMap).length} known from catalog. Type ID or name to search.`;
+    hint.innerHTML = `${Object.keys(classQuestionsCache).length} class(es) cached · ${Object.keys(taxonomyCache).length} in Wayfair taxonomy. Type ID or name to search.`;
     return;
   }
   const cached = classQuestionsCache[typedValue];
@@ -1179,6 +1289,8 @@ function updateClassFieldHint(typedValue) {
     hint.innerHTML = `<span style="color:var(--pass);">✓ ${escHtml(cached.class_name)} — ${cached.questions.length} cached questions</span>`;
   } else if (classMap[typedValue]) {
     hint.innerHTML = `<span style="color:var(--warn);">⚠ ${escHtml(classMap[typedValue].name)} — schema not cached yet (use Bootstrap below)</span>`;
+  } else if (taxonomyCache[typedValue]) {
+    hint.innerHTML = `<span style="color:var(--warn);">⚠ ${escHtml(taxonomyCache[typedValue])} — Wayfair taxonomy class, schema not cached yet (use Bootstrap below)</span>`;
   } else if (/^\d+$/.test(typedValue)) {
     hint.innerHTML = `<span style="color:var(--warn);">⚠ Class ${escHtml(typedValue)} unknown — use Bootstrap below to fetch its schema from Wayfair</span>`;
   } else {
@@ -1294,7 +1406,7 @@ async function bootstrapSingleClass(classId) {
       return;
     }
     const questions = result.questions || [];
-    const className = classMap[String(classId)]?.name || `Class ${classId}`;
+    const className = classMap[String(classId)]?.name || taxonomyCache[String(classId)] || `Class ${classId}`;
 
     const row = {
       class_id: classId,
