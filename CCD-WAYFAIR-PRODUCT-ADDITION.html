@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Product Addition v2.0.3</title>
+<title>CCD Wayfair Product Addition v2.0.5</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -230,7 +230,7 @@
     <div style="display:flex;gap:10px;align-items:center;">
       <span id="envBadgeProd" class="env-badge" title="Production Catalog Proxy">⬡ PROD …</span>
       <span id="envBadgeSandbox" class="env-badge" title="Sandbox Addition Proxy">⬡ SANDBOX …</span>
-      <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;">v2.0.3</span>
+      <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;">v2.0.5</span>
     </div>
   </header>
 
@@ -445,6 +445,25 @@ let classMap = {};                // classId → { name, count } from catalog
 let templateProduct = null;
 let lastRequestIds = [];
 
+// v2.0.5 (Session 12):
+//   - FIX: Answer input shape — now emits {questionId, value, parentRank, rank}
+//     on every answer (all four NON_NULL per Wayfair schema). Multi-value
+//     questions get ranks 1..N. Previous emission lacked ranks, triggering
+//     "duplicated questions with ids [...]" rejection. See WF-017.
+//   - FIX: Expanded WF-015 filter from 4 → 12 top-level-promotable questionIds
+//     after introspecting ProductPartWithAnswers input type.
+//   - NEW: WF-018 — promote items-row data to top-level part fields
+//     (marketingCopy, featureBullets, manufacturerPartNumber,
+//     universalProductCode) so WF-015 stripping doesn't silently drop data.
+//   - NEW: WF-016 — auto-initialize REQUIRED BOOLEAN questions to false on
+//     first render so the "NO" visual state is a real answer from the start.
+//
+// v2.0.4 (Session 12):
+//   - FIX: strip answers with questionIds auto-answered by top-level part fields
+//     (core::supplierPartNumber, productName, collectionName, media) before
+//     submit. Sending both triggered "N instances of <field> found" rejection.
+//     See WF-015 in Regression Registry. Filter lives in buildAnswersArray().
+//
 // v2.0.3 additions:
 let classQuestionsCache = {};     // classId → { class_name, questions[] } from wayfair_class_questions table
 let taxonomyCache = {};           // taxonomyCategoryId → { name, is_relevant } (full Wayfair taxonomy from wayfair_taxonomy_categories table)
@@ -1565,6 +1584,30 @@ function renderDynamicForm(item, cached) {
     }
     state[prefillKey] = prefillSources;
     if (Object.keys(auto).length > 0) log(`Pre-filled ${Object.keys(auto).length} answer(s) from item row for ${item.sku}`, 'info');
+
+    // WF-016: Auto-initialize REQUIRED BOOLEAN questions to false. The visual
+    // default of an unchecked toggle is "NO", but undefined state counts as
+    // unanswered and blocks the pre-flight counter. Setting false here makes
+    // the visual match the logical state from the moment the form renders.
+    // User can still click to change to true. Only touches REQUIRED booleans
+    // — optional/recommended booleans stay undefined so they remain genuinely
+    // optional. Pre-fill runs first, so anything already answered is preserved.
+    let boolInits = 0;
+    function initBooleans(qs) {
+      for (const q of qs) {
+        if (q.isActive === false) continue;
+        if (q.answerType === 'BOOLEAN' &&
+            q.importanceType === 'REQUIRED' &&
+            !q.isMultiValue &&
+            state.answers[q.id] === undefined) {
+          state.answers[q.id] = false;
+          boolInits++;
+        }
+        if (q.childQuestions && q.childQuestions.length) initBooleans(q.childQuestions);
+      }
+    }
+    initBooleans(questions);
+    if (boolInits > 0) log(`WF-016: initialized ${boolInits} REQUIRED boolean question(s) to NO`, 'info');
   }
 
   // Group questions by importance tier (top-level only — childQuestions render nested under parents)
@@ -1974,25 +2017,189 @@ function scanUnansweredRequired() {
   return unanswered;
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ @invariant     WF-015                                                    ║
+// ║ @rule          Strip questions auto-answered by top-level part fields    ║
+// ║                before sending to Wayfair's submitProduct mutation.       ║
+// ║ @established   Session 12 (April 16, 2026)                               ║
+// ║ @updated       Session 12 v2.0.5 — expanded 4 → 12 entries after         ║
+// ║                introspecting ProductPartWithAnswers input type           ║
+// ║ @severity      HIGH — causes outright submission rejection               ║
+// ║                                                                          ║
+// ║ WHY:                                                                     ║
+// ║ Wayfair's ProductPartWithAnswers input type has 12 dedicated top-level   ║
+// ║ fields that are explicitly described as "in place of answering the       ║
+// ║ '<core::*>' question." Sending the same data both at the part level AND  ║
+// ║ as an Answer entry triggers:                                             ║
+// ║   "N instances of <field> found, but 1 was expected. It is passed in as  ║
+// ║    an optional field, but is also found in Answers."                     ║
+// ║                                                                          ║
+// ║ The complete list was discovered Session 12 by introspecting the        ║
+// ║ ProductPartWithAnswers INPUT_OBJECT. Every entry in this Set corresponds ║
+// ║ to a top-level field on the part itself — see buildSubmissionPayload    ║
+// ║ for where each one is promoted from the items row or user state.        ║
+// ║                                                                          ║
+// ║ WHAT THIS PRESERVES:                                                     ║
+// ║ - The form still RENDERS these questions (pre-filled, visible), so the   ║
+// ║   user sees the full schema and can verify values.                       ║
+// ║ - Only the submit payload is filtered — the data is instead promoted to ║
+// ║   the proper top-level slot in ProductPartWithAnswers.                  ║
+// ║                                                                          ║
+// ║ IF YOU ADD TO THIS SET:                                                  ║
+// ║ Also add a corresponding promotion in buildSubmissionPayload, otherwise  ║
+// ║ the data will be silently dropped instead of reaching Wayfair.           ║
+// ║                                                                          ║
+// ║ See CCD-WAYFAIR-Regression-Registry.md entry WF-015.                     ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+const AUTO_ANSWERED_QUESTION_IDS = new Set([
+  'core::supplierPartNumber',
+  'core::productName',
+  'core::collectionName',
+  'core::media',
+  'core::manufacturerId',
+  'core::manufacturerName',
+  'core::manufacturerPartNumber',
+  'core::manufacturerProductUrl',
+  'core::amazonStandardIdentificationNumber',
+  'core::universalProductCode',
+  'featureDescription::genericFeatures',
+  'featureDescription::romanceCopy'
+]);
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ @invariant     WF-017                                                    ║
+// ║ @rule          Answer input type requires {questionId, value, parentRank,║
+// ║                rank} — all four fields NON_NULL. For multi-value answers,║
+// ║                emit one entry per value with parentRank/rank 1-indexed.  ║
+// ║ @established   Session 12 (April 16, 2026)                               ║
+// ║ @severity      HIGH — emitting multiple entries with same questionId and ║
+// ║                without ranks triggers "duplicated questions" rejection.  ║
+// ║                                                                          ║
+// ║ WHY:                                                                     ║
+// ║ Introspection of Wayfair's Answer INPUT_OBJECT (Session 12) revealed:    ║
+// ║   questionId:  String!  (required)                                       ║
+// ║   value:       String!  (required, single value per entry)               ║
+// ║   parentRank:  Int!     (required, 1-indexed. "Applies when providing    ║
+// ║                         more than one answer to a multi-valued question  ║
+// ║                         i.e. isMultiValue == true.")                     ║
+// ║   rank:        Int!     (required, 1-indexed. "Applies when providing    ║
+// ║                         more than one answer to a multi-choice question  ║
+// ║                         i.e. QuestionAnswerType == MULTI_CHOICE.")       ║
+// ║                                                                          ║
+// ║ The previous implementation (v2.0.4) emitted multiple Answer entries     ║
+// ║ with the same questionId but without ranks — Wayfair rejected as         ║
+// ║ "duplicated questions with ids [...]". With proper ranks, multiple       ║
+// ║ entries for the same question are valid multi-value answers.             ║
+// ║                                                                          ║
+// ║ RANK SEMANTICS:                                                          ║
+// ║ Wayfair describes two independent dimensions (can be combined):          ║
+// ║   - parentRank increments when question.isMultiValue = true              ║
+// ║   - rank increments when question.answerType = MULTI_CHOICE              ║
+// ║ The safest universal rule: for the i-th value in an array, set the      ║
+// ║ relevant rank to i (1-indexed), and leave the other at 1. We look up    ║
+// ║ the question schema via findQuestionById to determine which applies.    ║
+// ║                                                                          ║
+// ║ IF YOU MODIFY THIS FUNCTION:                                             ║
+// ║ Keep WF-015 filtering at the top (before rank assignment). Keep all four ║
+// ║ fields populated on every emitted Answer — Wayfair's schema marks them  ║
+// ║ all NON_NULL.                                                            ║
+// ║                                                                          ║
+// ║ See CCD-WAYFAIR-Regression-Registry.md entry WF-017.                     ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 function buildAnswersArray(state) {
   const out = [];
+  let stripped = 0;
   for (const [qid, val] of Object.entries(state.answers)) {
     if (qid.startsWith('__')) continue; // Skip internal markers
     if (val === undefined || val === null || val === '') continue;
+    // WF-015: skip questions Wayfair auto-answers from top-level part fields
+    if (AUTO_ANSWERED_QUESTION_IDS.has(String(qid))) {
+      stripped++;
+      continue;
+    }
+
+    // Look up the question schema to determine rank semantics (WF-017)
+    const q = findQuestionById(qid);
+    const isMultiValue = !!(q && q.isMultiValue);
+    const isMultiChoice = !!(q && q.answerType === 'MULTI_CHOICE');
+
     if (Array.isArray(val)) {
       const filtered = val.filter(v => v !== '' && v !== null && v !== undefined);
       if (filtered.length === 0) continue;
-      // For multi-value, emit one entry per value
-      for (const v of filtered) out.push({ questionId: qid, value: String(v) });
+      // Multi-value: emit one Answer per value with rank incrementing 1..N
+      // Increment parentRank (isMultiValue) and/or rank (MULTI_CHOICE) as the
+      // schema indicates. If neither flag applies but we have an array anyway,
+      // increment both to be safe.
+      for (let i = 0; i < filtered.length; i++) {
+        const r = i + 1; // 1-indexed
+        out.push({
+          questionId: String(qid),
+          value: String(filtered[i]),
+          parentRank: isMultiValue ? r : 1,
+          rank: isMultiChoice ? r : (isMultiValue ? 1 : r)
+        });
+      }
     } else if (typeof val === 'boolean') {
-      out.push({ questionId: qid, value: val ? 'Yes' : 'No' });
+      out.push({
+        questionId: String(qid),
+        value: val ? 'Yes' : 'No',
+        parentRank: 1,
+        rank: 1
+      });
     } else {
-      out.push({ questionId: qid, value: String(val) });
+      out.push({
+        questionId: String(qid),
+        value: String(val),
+        parentRank: 1,
+        rank: 1
+      });
     }
+  }
+  if (stripped > 0) {
+    log(`WF-015: stripped ${stripped} auto-answered question(s) from submit payload`, 'info');
   }
   return out;
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ @invariant     WF-018                                                    ║
+// ║ @rule          Promote items-row data to top-level ProductPartWithAnswers║
+// ║                fields where Wayfair defines dedicated slots, instead of  ║
+// ║                emitting them as Answers (which WF-015 would strip).      ║
+// ║ @established   Session 12 (April 16, 2026)                               ║
+// ║ @severity      HIGH — without promotion, WF-015 would silently drop data║
+// ║                                                                          ║
+// ║ WHY:                                                                     ║
+// ║ ProductPartWithAnswers (discovered via introspection Session 12) has 12 ║
+// ║ dedicated fields explicitly described as "in place of answering the      ║
+// ║ '<core::*>' question." WF-015 filters those question IDs out of the     ║
+// ║ answers array — but the data still needs to reach Wayfair. This promotion║
+// ║ reads from the items row and sets the proper top-level field.           ║
+// ║                                                                          ║
+// ║ Fields promoted from items columns:                                      ║
+// ║   part.marketingCopy           ← item.marketing_copy                    ║
+// ║   part.featureBullets          ← item.feature_bullets (JSONB array)     ║
+// ║   part.manufacturerPartNumber  ← item.manufacturer_part_number          ║
+// ║   part.universalProductCode    ← item.upc                                ║
+// ║                                                                          ║
+// ║ Already set elsewhere (unchanged):                                       ║
+// ║   part.supplierPartNumber / productName / manufacturerId / media        ║
+// ║                                                                          ║
+// ║ Not promoted (no corresponding items column — add later if needed):     ║
+// ║   collectionName / manufacturerProductUrl /                             ║
+// ║   amazonStandardIdentificationNumber / manufacturerName                 ║
+// ║                                                                          ║
+// ║ POLICY: Skip empty/null/undefined values — do NOT send empty strings.   ║
+// ║ Sending "" triggers Wayfair's own validation errors for fields that     ║
+// ║ would otherwise fall back to the Answer (if the user filled it in the   ║
+// ║ form) or remain genuinely absent.                                        ║
+// ║                                                                          ║
+// ║ IF YOU ADD MORE PROMOTIONS:                                              ║
+// ║ Also add the corresponding questionId to AUTO_ANSWERED_QUESTION_IDS     ║
+// ║ (WF-015) so the form-provided value doesn't duplicate the promoted one. ║
+// ║                                                                          ║
+// ║ See CCD-WAYFAIR-Regression-Registry.md entry WF-018.                     ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
 function buildSubmissionPayload() {
   const item = getCurrentCandidate();
   if (!item) return null;
@@ -2014,6 +2221,34 @@ function buildSubmissionPayload() {
   if (includeImages && item.image_urls?.length > 0) {
     part.media = { images: item.image_urls.map(img => img.url || img).filter(Boolean) };
   }
+
+  // WF-018: promote items-row data to top-level part fields
+  const promoted = [];
+  if (item.marketing_copy && String(item.marketing_copy).trim() !== '') {
+    part.marketingCopy = String(item.marketing_copy);
+    promoted.push('marketingCopy');
+  }
+  if (Array.isArray(item.feature_bullets) && item.feature_bullets.length > 0) {
+    const bullets = item.feature_bullets
+      .map(b => typeof b === 'string' ? b.trim() : String(b || '').trim())
+      .filter(b => b !== '');
+    if (bullets.length > 0) {
+      part.featureBullets = bullets;
+      promoted.push(`featureBullets(${bullets.length})`);
+    }
+  }
+  if (item.manufacturer_part_number && String(item.manufacturer_part_number).trim() !== '') {
+    part.manufacturerPartNumber = String(item.manufacturer_part_number).trim();
+    promoted.push('manufacturerPartNumber');
+  }
+  if (item.upc && String(item.upc).trim() !== '') {
+    part.universalProductCode = String(item.upc).trim();
+    promoted.push('universalProductCode');
+  }
+  if (promoted.length > 0) {
+    log(`WF-018: promoted top-level fields — ${promoted.join(', ')}`, 'info');
+  }
+
   return { classId, parts: [part], _itemSku: item.sku };
 }
 
