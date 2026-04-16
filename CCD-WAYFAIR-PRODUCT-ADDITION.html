@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Product Addition v2.0.5</title>
+<title>CCD Wayfair Product Addition v2.0.6</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -205,6 +205,9 @@
   .q-multi-add:hover { text-decoration: underline; }
 
   .auto-fill-badge { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 700; background: var(--pass-bg); color: var(--pass); border: 1px solid rgba(45,212,160,0.3); border-radius: 3px; letter-spacing: 0.4px; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+  .review-badge { display: inline-block; padding: 1px 6px; font-size: 9px; font-weight: 700; background: var(--warn-bg); color: var(--warn); border: 1px solid rgba(240,180,74,0.4); border-radius: 3px; letter-spacing: 0.4px; text-transform: uppercase; font-family: 'JetBrains Mono', monospace; }
+  .q-card.needs-review { border-left: 3px solid var(--warn); background: var(--warn-bg); }
+  .q-desc-hint { font-size: 10.5px; color: var(--text-muted); margin: 2px 0 6px 0; line-height: 1.45; font-style: italic; border-left: 2px solid var(--border); padding-left: 8px; }
   .req-star { color: var(--fail); font-weight: 800; margin-left: 3px; font-size: 14px; vertical-align: middle; }
 
   .submit-bar { display: flex; gap: 10px; align-items: center; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); flex-wrap: wrap; }
@@ -230,7 +233,7 @@
     <div style="display:flex;gap:10px;align-items:center;">
       <span id="envBadgeProd" class="env-badge" title="Production Catalog Proxy">⬡ PROD …</span>
       <span id="envBadgeSandbox" class="env-badge" title="Sandbox Addition Proxy">⬡ SANDBOX …</span>
-      <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;">v2.0.5</span>
+      <span style="font-size:11px;color:var(--text-muted);font-family:'JetBrains Mono',monospace;">v2.0.6</span>
     </div>
   </header>
 
@@ -445,6 +448,43 @@ let classMap = {};                // classId → { name, count } from catalog
 let templateProduct = null;
 let lastRequestIds = [];
 
+// v2.0.6 (Session 12):
+//   - FIX (CRITICAL): renderSingleChoice / renderMultiChoice now submit
+//     PossibleAnswer.value (not .key). Discovery A confirmed value is what
+//     Wayfair expects per its API docstring. Previous behavior caused
+//     "Please select one of the provided options. Custom entries are not
+//     allowed" errors for every SINGLE_CHOICE / MULTI_CHOICE question.
+//     See WF-019.
+//   - NEW: DNA cascade — when a BOOLEAN parent question resolves to "No",
+//     REQUIRED children with isNotApplicableEligible get auto-answered
+//     "Does Not Apply". Triggers on initial render (for WF-016-initialized
+//     parents) and on user toggle. See WF-028.
+//   - REVISED WF-022: Removed the IMPLICIT_QUESTIONS hardcode. After the
+//     v2.2.4 proxy patch fetched childQuestions (WF-020), we discovered the
+//     four carton dimensions are real children of a shippingAndFulfillment::
+//     cartons container parent in Wayfair's schema. mergeImplicitQuestions
+//     is now a decoration pass that attaches _sourceCol hints to specific
+//     child question IDs for pre-fill. No structural merging.
+//   - NEW: CONDITIONAL importance tier added (e.g., featureDescription::
+//     genericFeatures, ::romanceCopy, core::universalProductCode are all
+//     CONDITIONAL). Treated visually like REQUIRED. See WF-021.
+//   - NEW: Pre-fill validates values against possibleAnswers. Mismatches
+//     are still pre-filled (to preserve the auto-fill convenience) but
+//     flagged with a "needs review" badge + orange left border on the
+//     question card. See WF-023.
+//   - NEW: Question description rendered as format hint below each field.
+//     Discovery A confirmed description is the only format guidance Wayfair
+//     exposes (no hint/example/unit fields exist on the schema). See WF-024.
+//   - NEW: ENUM answerType explicitly handled (routes to renderSingleChoice).
+//     Previously fell through to text-with-warning. See WF-026.
+//   - NEW: items SELECT expanded to load wayfair_dimensions, wayfair_weight,
+//     wayfair_materials, wayfair_color, wayfair_country, wayfair_props,
+//     wayfair_pricing_notes — unlocking additional pre-fill coverage for
+//     questions like "Primary Material" and "Country of Manufacturer".
+//     See WF-025.
+//   - REQUIRES Catalog Sandbox Proxy v2.2.4 (2-level childQuestions depth)
+//     + cache rebootstrap. See WF-020 and WF-027.
+//
 // v2.0.5 (Session 12):
 //   - FIX: Answer input shape — now emits {questionId, value, parentRank, rank}
 //     on every answer (all four NON_NULL per Wayfair schema). Multi-value
@@ -586,7 +626,7 @@ async function initialize() {
   setProgress('discoverProgress', 10);
   const { data: candidates, error: candErr } = await sb
     .from('items')
-    .select('id, sku, product_name, wayfair_sku, etsy_listing_id, etsy_sku, image_urls, qty, parent_sku, wayfair_class_id, wayfair_manufacturer_id, marketing_copy, feature_bullets, manufacturer_part_number, upc, wholesale_price, map_price, product_length_in, product_width_in, product_height_in, product_weight_lb, carton_length_in, carton_width_in, carton_height_in, carton_weight_lb, lead_time_days, replacement_lead_time_days, minimum_order_quantity, display_set_quantity, force_quantity_multiplier, ship_type, wayfair_taxonomy_answers')
+    .select('id, sku, product_name, wayfair_sku, etsy_listing_id, etsy_sku, image_urls, qty, parent_sku, wayfair_class_id, wayfair_manufacturer_id, marketing_copy, feature_bullets, manufacturer_part_number, upc, wholesale_price, map_price, product_length_in, product_width_in, product_height_in, product_weight_lb, carton_length_in, carton_width_in, carton_height_in, carton_weight_lb, lead_time_days, replacement_lead_time_days, minimum_order_quantity, display_set_quantity, force_quantity_multiplier, ship_type, wayfair_taxonomy_answers, wayfair_dimensions, wayfair_weight, wayfair_materials, wayfair_color, wayfair_country, wayfair_props, wayfair_pricing_notes')
     .is('wayfair_sku', null)
     .not('etsy_listing_id', 'is', null)
     .order('sku')
@@ -1508,10 +1548,85 @@ async function bootstrapSingleClass(classId) {
 
 const IMPORTANCE_TIERS = [
   { key: 'REQUIRED',              label: 'Required',              tierCls: 'imp-tier-required', openByDefault: true },
+  { key: 'CONDITIONAL',           label: 'Conditional (often required)', tierCls: 'imp-tier-required', openByDefault: true },
   { key: 'STRONGLY_RECOMMENDED',  label: 'Strongly Recommended',  tierCls: 'imp-tier-strong',   openByDefault: true },
   { key: 'RECOMMENDED',           label: 'Recommended',           tierCls: 'imp-tier-rec',      openByDefault: false },
   { key: 'OPTIONAL',              label: 'Optional',              tierCls: 'imp-tier-opt',      openByDefault: false },
 ];
+// WF-021: CONDITIONAL tier added Session 12. Wayfair uses this for questions
+// that are required under certain conditions (e.g., featureDescription::
+// genericFeatures and ::romanceCopy are CONDITIONAL — either Marketing Copy
+// OR 3+ Feature Bullets must be provided). Treated visually like REQUIRED
+// since failure to fill these produces submission errors.
+
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ @invariant     WF-022 (revised)                                           ║
+// ║ @rule          Inject items-column hints (_sourceCol) onto specific      ║
+// ║                child questions for pre-fill, without changing their      ║
+// ║                structure.                                                 ║
+// ║ @established   Session 12 (April 16, 2026)                               ║
+// ║ @revised       Session 12 same day — see history below                   ║
+// ║ @severity      MEDIUM — without hints, pre-fill regex rules also cover  ║
+// ║                these fields (Carton Depth/Width/Height/Weight are       ║
+// ║                matched by existing PREFILL_PATTERNS).                    ║
+// ║                                                                          ║
+// ║ HISTORY:                                                                 ║
+// ║ Initially conceived (v2.0.6 first draft) as IMPLICIT_QUESTIONS — a      ║
+// ║ hardcoded list of four "universally required but schemaless" shipping   ║
+// ║ dimensions that would be MERGED into every class's schema at render    ║
+// ║ time. Based on empirical evidence from SKU 101003 failure and          ║
+// ║ Discovery D eliminating every endpoint/type hypothesis for where they  ║
+// ║ lived.                                                                   ║
+// ║                                                                          ║
+// ║ Proxy v2.2.4 (WF-020) then fetched childQuestions, and the cache       ║
+// ║ rebootstrap revealed the truth: those four ARE in the schema, as       ║
+// ║ children of a `shippingAndFulfillment::cartons` container parent. They  ║
+// ║ were just invisible to v2.2.3 because childQuestions wasn't fetched.   ║
+// ║                                                                          ║
+// ║ Similarly for media::imageValue (child of media::images) and            ║
+// ║ propSixtyFive::chemicalId/toxicity (children of                         ║
+// ║ propSixtyFive::chemicals).                                              ║
+// ║                                                                          ║
+// ║ CURRENT BEHAVIOR:                                                        ║
+// ║ mergeImplicitQuestions() is now a lookup+decorate pass: it walks the   ║
+// ║ question tree and attaches _sourceCol hints to specific known child    ║
+// ║ questions so autoFillAnswers can pre-fill them from items columns.     ║
+// ║ No structural merge happens — Wayfair's own schema is complete.         ║
+// ║                                                                          ║
+// ║ DO NOT restore the IMPLICIT_QUESTIONS hardcode. It would cause double- ║
+// ║ rendering once the cache refreshes to include childQuestions.           ║
+// ║                                                                          ║
+// ║ See CCD-WAYFAIR-Regression-Registry.md entry WF-022.                     ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
+// Question-id → items-column hint map. Attached to matching questions during
+// the mergeImplicitQuestions pass so pre-fill knows the direct source (faster
+// and more reliable than regex displayName matching for these specific IDs).
+const SOURCE_COL_HINTS = {
+  'shippingAndFulfillment::depth':  'carton_length_in',
+  'shippingAndFulfillment::width':  'carton_width_in',
+  'shippingAndFulfillment::height': 'carton_height_in',
+  'shippingAndFulfillment::weight': 'carton_weight_lb'
+  // media::imageValue deliberately omitted — image URLs flow via top-level
+  // part.media per ProductPartWithAnswers + WF-015 filtering, not as answer.
+};
+
+function mergeImplicitQuestions(questions) {
+  // v2.0.6 revised: no structural merge. We walk the tree and decorate
+  // specific questions with _sourceCol hints for pre-fill. Safe to call
+  // multiple times — decoration is idempotent.
+  function decorate(qs) {
+    if (!qs) return;
+    for (const q of qs) {
+      const hint = SOURCE_COL_HINTS[String(q.id)];
+      if (hint && !q._sourceCol) q._sourceCol = hint;
+      if (q.childQuestions && q.childQuestions.length) decorate(q.childQuestions);
+    }
+  }
+  decorate(questions);
+  return questions || [];
+}
 
 // Pre-fill rules: detect questions whose displayName matches our items columns.
 // Run on first form render per item if no answer yet.
@@ -1536,6 +1651,10 @@ const PREFILL_PATTERNS = [
   { col: 'display_set_quantity',     re: /(display\s*set\s*qty|display\s*set\s*quantity)/i, single: true },
   { col: 'force_quantity_multiplier', re: /(force\s*quantity\s*multiplier)/i, single: true },
   { col: 'ship_type',                re: /\bship\s*type\b/i, single: true },
+  // WF-025 (Session 12): rules for wayfair_* items columns now loaded
+  { col: 'wayfair_materials',        re: /(material|primary\s*material|material\s*composition)/i, multi: true },
+  { col: 'wayfair_color',            re: /(^color$|primary\s*color|overall\s*color)/i, single: true },
+  { col: 'wayfair_country',          re: /(country\s*of\s*manufact|country\s*of\s*origin)/i, single: true },
 ];
 
 function autoFillAnswers(item, questions) {
@@ -1547,6 +1666,18 @@ function autoFillAnswers(item, questions) {
   function walk(qs) {
     for (const q of qs) {
       if (existing[q.id] !== undefined) continue; // Don't overwrite
+
+      // WF-022: implicit questions carry a _sourceCol pointer for direct
+      // pre-fill, bypassing regex rules. Used by shipping dimensions.
+      if (q._sourceCol) {
+        const srcVal = item[q._sourceCol];
+        if (srcVal !== null && srcVal !== undefined && srcVal !== '') {
+          out[q.id] = { value: String(srcVal), source: q._sourceCol };
+        }
+        if (q.childQuestions && q.childQuestions.length) walk(q.childQuestions);
+        continue;
+      }
+
       const dn = (q.displayName || '').trim();
       for (const rule of PREFILL_PATTERNS) {
         if (!rule.re.test(dn)) continue;
@@ -1569,21 +1700,146 @@ function autoFillAnswers(item, questions) {
   return out;
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ @invariant     WF-028                                                    ║
+// ║ @rule          When a BOOLEAN parent question resolves to "No", its      ║
+// ║                REQUIRED children with isNotApplicableEligible=true get   ║
+// ║                auto-answered with "Does Not Apply".                      ║
+// ║ @established   Session 12 (April 16, 2026)                               ║
+// ║ @severity      MEDIUM — without cascade, Wayfair rejects with            ║
+// ║                "Since '<parent>' is set to 'No', this value should be   ║
+// ║                'Does Not Apply'" on every BOOLEAN parent answered No.   ║
+// ║                                                                          ║
+// ║ WHY:                                                                     ║
+// ║ Wayfair's validation rule: if the parent indicates the category doesn't ║
+// ║ apply (CWP=No, Canada Restriction=No, etc.), REQUIRED children can't be║
+// ║ left blank — they must explicitly answer "Does Not Apply" via the key   ║
+// ║ "doesNotApply". Discovery B confirmed isNotApplicableEligible is the    ║
+// ║ schema flag that authorizes this answer for a given child.              ║
+// ║                                                                          ║
+// ║ WHEN IT RUNS:                                                            ║
+// ║   1. Initial render (applyDnaCascadeInitial) — catches children of      ║
+// ║      parents auto-answered NO by WF-016 or pre-filled NO.               ║
+// ║   2. On parent toggle (applyDnaCascadeOnBooleanChange) — catches user   ║
+// ║      flipping a parent to No after initial render, and clears the      ║
+// ║      cascade when they flip back to Yes.                                ║
+// ║                                                                          ║
+// ║ WHAT IT SETS:                                                            ║
+// ║ Per the "doesNotApply" possibleAnswer we see in class 1223's schema:    ║
+// ║   key: "doesNotApply", value: "Does Not Apply"                          ║
+// ║ WF-019: we submit VALUE, so the literal string "Does Not Apply" is     ║
+// ║ what goes into state.answers[childId].                                  ║
+// ║                                                                          ║
+// ║ USER OVERRIDE:                                                           ║
+// ║ Cascaded values are flagged in prefillSources (WF-023 infrastructure)  ║
+// ║ so the user sees "auto-filled" on each cascaded child. Normal edit     ║
+// ║ handlers clear the prefill flag, so user-initiated changes stick.      ║
+// ║                                                                          ║
+// ║ See CCD-WAYFAIR-Regression-Registry.md entry WF-028.                     ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+
+const DNA_VALUE = 'Does Not Apply'; // per Wayfair's PossibleAnswer.value
+
+// Helper: determine if the cascade should target this child. Conservative.
+function _dnaEligible(child) {
+  return child &&
+         child.isActive !== false &&
+         child.importanceType === 'REQUIRED' &&
+         child.isNotApplicableEligible === true;
+}
+
+// Initial-render cascade — runs inside the first-render pre-fill block.
+function applyDnaCascadeInitial(questions, state, prefillSources) {
+  let applied = 0;
+  function walk(qs) {
+    if (!qs) return;
+    for (const q of qs) {
+      if (q.isActive === false) continue;
+      const parentIsBool = q.answerType === 'BOOLEAN';
+      const parentIsNo = state.answers[q.id] === false;
+      if (parentIsBool && parentIsNo && q.childQuestions && q.childQuestions.length) {
+        for (const child of q.childQuestions) {
+          if (_dnaEligible(child) && state.answers[child.id] === undefined) {
+            state.answers[child.id] = DNA_VALUE;
+            prefillSources[child.id] = { col: `WF-028 (parent ${q.id}=No)`, needsReview: false };
+            applied++;
+          }
+        }
+      }
+      if (q.childQuestions && q.childQuestions.length) walk(q.childQuestions);
+    }
+  }
+  walk(questions);
+  return applied;
+}
+
+// Interactive cascade — runs from onBooleanChange. Applies if now=false,
+// clears if now=true (only for values we previously cascaded).
+function applyDnaCascadeOnBooleanChange(parentQ, newBoolValue, state, prefillSources) {
+  if (!parentQ || !parentQ.childQuestions) return 0;
+  let changed = 0;
+  for (const child of parentQ.childQuestions) {
+    if (!_dnaEligible(child)) continue;
+    if (newBoolValue === false) {
+      // Only set if unanswered OR if we previously set it via cascade.
+      const prev = prefillSources[child.id];
+      const wasCascaded = prev && typeof prev === 'object' && typeof prev.col === 'string' && prev.col.indexOf('WF-028') === 0;
+      if (state.answers[child.id] === undefined || wasCascaded) {
+        state.answers[child.id] = DNA_VALUE;
+        prefillSources[child.id] = { col: `WF-028 (parent ${parentQ.id}=No)`, needsReview: false };
+        changed++;
+      }
+    } else {
+      // Parent flipped to Yes. Clear any value we previously cascaded.
+      const prev = prefillSources[child.id];
+      const wasCascaded = prev && typeof prev === 'object' && typeof prev.col === 'string' && prev.col.indexOf('WF-028') === 0;
+      if (wasCascaded) {
+        delete state.answers[child.id];
+        delete prefillSources[child.id];
+        changed++;
+      }
+    }
+  }
+  return changed;
+}
+
 function renderDynamicForm(item, cached) {
   const state = formAnswersByItem[item.sku];
-  const questions = cached.questions || [];
+  // WF-022 (revised): decorate known child questions with _sourceCol hints
+  // for pre-fill. No structural merge — Wayfair's own schema is complete.
+  const questions = mergeImplicitQuestions(cached.questions || []);
 
   // Apply pre-fill on first render of this item+class combo
   const prefillKey = `__prefilled_${state.classId}`;
   const prefillSources = state[prefillKey] || {};
   if (!state[prefillKey]) {
     const auto = autoFillAnswers(item, questions);
+    let reviewCount = 0;
     for (const [qid, info] of Object.entries(auto)) {
       state.answers[qid] = info.value;
-      prefillSources[qid] = info.source;
+      // WF-023: If the question has a closed possibleAnswers set, check that
+      // the pre-fill value is in it. Mark needs-review if not.
+      const q = (function findIt(list) {
+        for (const x of list) {
+          if (String(x.id) === String(qid)) return x;
+          if (x.childQuestions) { const f = findIt(x.childQuestions); if (f) return f; }
+        }
+        return null;
+      })(questions);
+      let needsReview = false;
+      if (q && q.possibleAnswers && q.possibleAnswers.length > 0) {
+        const allowedValues = new Set(q.possibleAnswers.map(pa => String(pa.value ?? '')));
+        const vals = Array.isArray(info.value) ? info.value : [info.value];
+        for (const v of vals) {
+          if (!allowedValues.has(String(v))) { needsReview = true; break; }
+        }
+      }
+      prefillSources[qid] = { col: info.source, needsReview };
+      if (needsReview) reviewCount++;
     }
     state[prefillKey] = prefillSources;
     if (Object.keys(auto).length > 0) log(`Pre-filled ${Object.keys(auto).length} answer(s) from item row for ${item.sku}`, 'info');
+    if (reviewCount > 0) log(`WF-023: ${reviewCount} pre-filled value(s) don't match question options — flagged "needs review"`, 'warn');
 
     // WF-016: Auto-initialize REQUIRED BOOLEAN questions to false. The visual
     // default of an unchecked toggle is "NO", but undefined state counts as
@@ -1608,10 +1864,18 @@ function renderDynamicForm(item, cached) {
     }
     initBooleans(questions);
     if (boolInits > 0) log(`WF-016: initialized ${boolInits} REQUIRED boolean question(s) to NO`, 'info');
+
+    // WF-028: DNA cascade on initial render. For every BOOLEAN parent with
+    // value === false, auto-answer its REQUIRED+isNotApplicableEligible
+    // children with "Does Not Apply" if they aren't already answered.
+    // Marks them in prefillSources so the "auto-filled" badge surfaces the
+    // action to the user — they can still edit if needed.
+    const dnaApplied = applyDnaCascadeInitial(questions, state, prefillSources);
+    if (dnaApplied > 0) log(`WF-028: applied "Does Not Apply" to ${dnaApplied} child(ren) of NO-answered boolean parents`, 'info');
   }
 
   // Group questions by importance tier (top-level only — childQuestions render nested under parents)
-  const grouped = { REQUIRED: [], STRONGLY_RECOMMENDED: [], RECOMMENDED: [], OPTIONAL: [], OTHER: [] };
+  const grouped = { REQUIRED: [], CONDITIONAL: [], STRONGLY_RECOMMENDED: [], RECOMMENDED: [], OPTIONAL: [], OTHER: [] };
   let hidden = 0;
   for (const q of questions) {
     if (q.isActive === false) { hidden++; continue; }
@@ -1668,9 +1932,15 @@ function renderQuestion(q, answersMap, prefillSources, isChild) {
   const qid = String(q.id);
   const cur = answersMap[qid];
   const isMulti = !!q.isMultiValue;
-  const cardCls = isChild ? 'q-card q-child' : 'q-card';
   const fromAuto = prefillSources && prefillSources[qid];
-  const autoBadge = fromAuto ? `<span class="auto-fill-badge" title="Pre-filled from items.${escHtml(fromAuto)}">auto-filled</span>` : '';
+  // WF-023: prefillSources[qid] is now { col, needsReview } — support both
+  // the new object shape and legacy plain-string shape defensively.
+  const autoCol = (fromAuto && typeof fromAuto === 'object') ? fromAuto.col : fromAuto;
+  const needsReview = !!(fromAuto && typeof fromAuto === 'object' && fromAuto.needsReview);
+  let cardCls = isChild ? 'q-card q-child' : 'q-card';
+  if (needsReview) cardCls += ' needs-review';
+  const autoBadge = autoCol ? `<span class="auto-fill-badge" title="Pre-filled from items.${escHtml(autoCol)}">auto-filled</span>` : '';
+  const reviewBadge = needsReview ? `<span class="review-badge" title="Pre-fill value doesn't match this question's allowed options — please verify">needs review</span>` : '';
   const multiBadge = isMulti ? `<span class="q-multi">multi</span>` : '';
   const reqStar = q.importanceType === 'REQUIRED' ? `<span class="req-star" title="REQUIRED">*</span>` : '';
 
@@ -1681,6 +1951,9 @@ function renderQuestion(q, answersMap, prefillSources, isChild) {
       break;
     case 'MULTI_CHOICE':
       inputHtml = renderMultiChoice(q, cur);
+      break;
+    case 'ENUM':  // WF-026: Wayfair uses ENUM for closed-set single-choice
+      inputHtml = renderSingleChoice(q, cur, isMulti);
       break;
     case 'BOOLEAN':
       inputHtml = renderBoolean(q, cur);
@@ -1713,18 +1986,46 @@ function renderQuestion(q, answersMap, prefillSources, isChild) {
     }
   }
 
+  // WF-024: show Wayfair's schema description as a format hint under the
+  // field (when non-empty). Discovery A confirmed this is the only format
+  // guidance Wayfair exposes — no hint/example/unit fields exist on the
+  // question type, so description text is our best signal for things like
+  // "Must be less than 64 characters" or "[Hours]" (lead time unit marker)
+  // or "15 words or less". Truncated + expandable would be nicer UX but
+  // plain-text is fine for v1.
+  const descHint = q.description
+    ? `<div class="q-desc-hint">${escHtml(q.description)}</div>`
+    : '';
+
   return `<div class="${cardCls}" data-qid="${qid}">
     <div class="q-head">
-      <div class="q-name">${escHtml(q.displayName || ('Question ' + qid))}${reqStar} ${autoBadge}</div>
+      <div class="q-name">${escHtml(q.displayName || ('Question ' + qid))}${reqStar} ${autoBadge} ${reviewBadge}</div>
       <div class="q-meta">
         <span class="q-id">id:${qid}</span>
         <span class="q-type">${escHtml(q.answerType || '?')}</span>
         ${multiBadge}
       </div>
     </div>
+    ${descHint}
     <div class="q-input">${inputHtml}</div>
     ${childHtml}
   </div>`;
+}
+
+// WF-019: PossibleAnswer.value is what Wayfair expects in submissions (per
+// Discovery A description: "THIS is the value which must ultimately be
+// supplied when answer questions with the productAddition.submit mutation.")
+// Display label prefers value, but falls back to humanized key when value is
+// all-digits (e.g., Lead Time's hours-as-string values like "168").
+function choiceLabel(o) {
+  const key = String(o.key ?? '');
+  const val = String(o.value ?? '');
+  // If value is all digits (or blank), use humanized key as label instead
+  if (val === '' || /^\d+$/.test(val)) {
+    if (key) return key.replace(/_/g, ' ').replace(/\w\S*/g,
+      w => w.charAt(0).toUpperCase() + w.substr(1).toLowerCase());
+  }
+  return val || key;
 }
 
 function renderSingleChoice(q, cur, isMulti) {
@@ -1734,8 +2035,8 @@ function renderSingleChoice(q, cur, isMulti) {
     const curArr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
     return `<div class="q-mc-grid">${
       opts.map(o => {
-        const v = String(o.key ?? o.value ?? '');
-        const lbl = String(o.value ?? o.key ?? '');
+        const v = String(o.value ?? o.key ?? '');  // WF-019: submit VALUE
+        const lbl = choiceLabel(o);
         const chk = curArr.includes(v) ? 'checked' : '';
         const cls = curArr.includes(v) ? 'checked' : '';
         return `<label class="${cls}"><input type="checkbox" value="${escHtml(v)}" ${chk} onchange="onMultiChoiceToggle(this, '${q.id}')">${escHtml(lbl)}</label>`;
@@ -1745,8 +2046,8 @@ function renderSingleChoice(q, cur, isMulti) {
   return `<select onchange="onAnswerChange('${q.id}', this.value)">
     <option value="">— Select —</option>
     ${opts.map(o => {
-      const v = String(o.key ?? o.value ?? '');
-      const lbl = String(o.value ?? o.key ?? '');
+      const v = String(o.value ?? o.key ?? '');  // WF-019: submit VALUE
+      const lbl = choiceLabel(o);
       const sel = (cur === v) ? 'selected' : '';
       return `<option value="${escHtml(v)}" ${sel}>${escHtml(lbl)}</option>`;
     }).join('')}
@@ -1762,8 +2063,8 @@ function renderMultiChoice(q, cur) {
   }
   return `<div class="q-mc-grid">${
     opts.map(o => {
-      const v = String(o.key ?? o.value ?? '');
-      const lbl = String(o.value ?? o.key ?? '');
+      const v = String(o.value ?? o.key ?? '');  // WF-019: submit VALUE
+      const lbl = choiceLabel(o);
       const chk = curArr.includes(v) ? 'checked' : '';
       const cls = curArr.includes(v) ? 'checked' : '';
       return `<label class="${cls}"><input type="checkbox" value="${escHtml(v)}" ${chk} onchange="onMultiChoiceToggle(this, '${q.id}')">${escHtml(lbl)}</label>`;
@@ -1872,6 +2173,13 @@ function onBooleanChange(qid, input) {
   // Children?
   const q = findQuestionById(qid);
   if (q && q.childQuestions && q.childQuestions.length > 0) {
+    // WF-028: DNA cascade — auto-answer eligible children based on new parent value
+    const prefillSources = state[pkey] || {};
+    const cascadeCount = applyDnaCascadeOnBooleanChange(q, input.checked, state, prefillSources);
+    state[pkey] = prefillSources;
+    if (cascadeCount > 0) {
+      log(`WF-028: ${input.checked ? 'cleared' : 'applied "Does Not Apply" for'} ${cascadeCount} child(ren) of ${qid}`, 'info');
+    }
     const cached = classQuestionsCache[state.classId];
     if (cached) renderDynamicForm(item, cached);
   }
@@ -1925,6 +2233,8 @@ function findQuestionById(qid) {
   const state = formAnswersByItem[item.sku];
   const cached = classQuestionsCache[state.classId];
   if (!cached) return null;
+  // WF-022: walk merged list so implicit questions are findable too
+  const merged = mergeImplicitQuestions(cached.questions || []);
   function walk(qs) {
     for (const q of qs) {
       if (String(q.id) === String(qid)) return q;
@@ -1932,7 +2242,7 @@ function findQuestionById(qid) {
     }
     return null;
   }
-  return walk(cached.questions);
+  return walk(merged);
 }
 
 function updateAnswerSummary() {
@@ -1990,6 +2300,8 @@ function scanUnansweredRequired() {
   const state = formAnswersByItem[item.sku];
   const cached = classQuestionsCache[state.classId];
   if (!cached) return [];
+  // WF-022: walk merged list so implicit shipping questions are checked too
+  const merged = mergeImplicitQuestions(cached.questions || []);
 
   const unanswered = [];
   function isAnswered(qid) {
@@ -2005,7 +2317,7 @@ function scanUnansweredRequired() {
     for (const q of qs) {
       if (q.isActive === false) continue;
       // For child questions, only check if parent has been answered (otherwise child isn't applicable)
-      if (q.importanceType === 'REQUIRED' && parentAnswered && !isAnswered(q.id)) {
+      if ((q.importanceType === 'REQUIRED' || q.importanceType === 'CONDITIONAL') && parentAnswered && !isAnswered(q.id)) {
         unanswered.push(q);
       }
       if (q.childQuestions && q.childQuestions.length > 0) {
@@ -2013,7 +2325,7 @@ function scanUnansweredRequired() {
       }
     }
   }
-  walk(cached.questions, true); // top-level questions are always "applicable"
+  walk(merged, true); // top-level questions are always "applicable"
   return unanswered;
 }
 
