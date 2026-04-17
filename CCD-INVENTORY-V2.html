@@ -5540,13 +5540,46 @@ async function confirmSell() {
       qtyUpdates[chQtyMap[channel]] = Math.max(0, pi(item[chQtyMap[channel]]) - qty);
     }
 
-    // v2.8.10: Etsy/Wix cross-deduct REMOVED. Under independent channels, a sale on one
-    // channel only reduces THAT channel's allocation. The shared inventory cap below
-    // (lines further down) handles any other channel that ends up exceeding the new
-    // available pool — that's the cascade-through-defined-logic behavior.
+    // v2.8.11 FIX (P0-WIX-DEDUCT, Session 21):
+    //   When physical stock is consumed by an online sale, the shared inventory
+    //   pool shrinks — every online channel that was at or above the sold channel's
+    //   PRE-sale level must reduce by qty to reflect that the stock is physically gone.
+    //
+    //   This is NOT Etsy/Wix mirroring (ECOSYSTEM-002 forbids that for user-driven
+    //   allocation). This is sale-time peer-deduction, which preserves user-set
+    //   differentials:
+    //     - warehouse=5, etsy=5, wix=5, wf=5, Etsy sale 1 -> etsy=4, wix=4, wf=4 (all at peer level)
+    //     - warehouse=5, etsy=5, wix=3, wf=5, Etsy sale 1 -> etsy=4, wix=3 (held-back preserved), wf=4
+    //     - warehouse=5, etsy=5, wix=5, wf=5, TM sale 1 -> tm=tm+1 via Rule 1.5 path (not here)
+    //
+    //   Rule 1.5 in SH still handles the Wayfair-specific decrement for orders not
+    //   coming through V2 sell flow. This client-side peer-deduction covers V2-initiated
+    //   sales only.
+    const onlineChannels = ['etsy', 'wix', 'wayfair'];
+    if (onlineChannels.includes(channel)) {
+      const soldChannelPreSale = pi(item[chQtyMap[channel]]);
+      for (const peer of onlineChannels) {
+        if (peer === channel) continue;
+        const peerCol = chQtyMap[peer];
+        const peerPreSale = pi(item[peerCol]);
+        // Only deduct if peer was at or above the sold channel's pre-sale level —
+        // i.e., peer COULD have sold the same physical stock. If peer is lower, user
+        // intentionally held back that channel; leave it alone.
+        if (peerPreSale >= soldChannelPreSale && peerPreSale > 0) {
+          const peerNew = Math.max(0, peerPreSale - qty);
+          qtyUpdates[peerCol] = peerNew;
+          console.log(`[Pool Deduct v2.8.11] ${peer}: ${peerPreSale}→${peerNew} (peer of ${channel} sale, peer>=${soldChannelPreSale})`);
+        } else {
+          console.log(`[Pool Deduct v2.8.11] ${peer}: ${peerPreSale} unchanged (below ${channel}'s pre-sale ${soldChannelPreSale}, preserved)`);
+        }
+      }
+    }
 
     // v2.8.5 ALLOCATION GUARD: shared inventory — each online channel ≤ (warehouse − TM)
-    // After sale deduction + Etsy/Wix mirror, cap any channel that exceeds available pool.
+    // After sale deduction, cap any channel that exceeds available pool.
+    // (This is a safety net — peer-deduct above usually keeps things consistent, but
+    // edge cases like warehouse having been manually reduced or TM having grown can
+    // still leave a channel over cap. Cap enforcement is idempotent.)
     const newWarehouse = qtyUpdates.qty;
     const currentTm = pi(item.treasuremarts_qty);
     const saleAvailOnline = Math.max(0, newWarehouse - (channel === 'treasuremarts' ? Math.max(0, currentTm - qty) : currentTm));
@@ -5598,11 +5631,23 @@ async function confirmSell() {
         if (chQtyMap[channel] && pi(freshComp[chQtyMap[channel]]) > 0) {
           compUpdates[chQtyMap[channel]] = Math.max(0, pi(freshComp[chQtyMap[channel]]) - deductQty);
         }
-        // v2.8.10: Etsy/Wix cross-deduct REMOVED on bundle components too.
-        // A bundle sale on etsy only deducts the component's etsy allocation.
-        // Wix component allocation is unchanged unless it now exceeds cap (not enforced
-        // here for components — cap enforcement happens via SH's autoAdjust during the
-        // cascade push, or via the Bulk Allocation Fix utility).
+        // v2.8.11 FIX (P0-WIX-DEDUCT, Session 21):
+        //   Peer-deduct for bundle components — same rule as the top-level item.
+        //   Component stock is physically consumed, so peer online channels at or
+        //   above the sold channel's pre-sale level must reduce by deductQty.
+        //   User-held-back allocations (peer below sold channel's level) preserved.
+        if (onlineChannels.includes(channel)) {
+          const compSoldPreSale = pi(freshComp[chQtyMap[channel]]);
+          for (const peer of onlineChannels) {
+            if (peer === channel) continue;
+            const peerCol = chQtyMap[peer];
+            const peerPreSale = pi(freshComp[peerCol]);
+            if (peerPreSale >= compSoldPreSale && peerPreSale > 0) {
+              compUpdates[peerCol] = Math.max(0, peerPreSale - deductQty);
+              console.log(`[Pool Deduct v2.8.11 bundle] ${freshComp.sku} ${peer}: ${peerPreSale}→${compUpdates[peerCol]} (peer of ${channel})`);
+            }
+          }
+        }
 
         const { error: compErr } = await sb.from('items').update(compUpdates).eq('id', freshComp.id);
         if (compErr) console.warn(`[Bundle Cascade] Failed to deduct from ${freshComp.sku}:`, compErr.message);
