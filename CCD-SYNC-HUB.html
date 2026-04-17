@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.13</title>
+    <title>CCD Sync Hub v4.4.12</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.13 — Clean Build Styles
+           CCD SYNC HUB v4.4.12 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.13 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.12 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -720,11 +720,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.13 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.12 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.13';
+    const SH_VERSION = 'v4.4.12';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1522,7 +1522,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.13-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.12-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1746,7 +1746,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.13',
+                processedBy: 'Sync Hub v4.4.12',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -2831,13 +2831,20 @@
 
     // === autoAdjustChannelAllocations ===
     // ============================================================================
-    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.4.6 - INDEPENDENT CHANNELS)
+    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.4.12 - SHARED POOL, DECREMENT + CAP)
     // Ensures channel allocations stay valid after order processing.
     // Rules (shared inventory model):
-    // - Each online channel (etsy, wix, wayfair) is INDEPENDENT
-    // - Each online channel ≤ (Warehouse Qty − TM Qty)
-    // - TreasureMarts is physical location, reduces available online pool
-    // - Source channel is deducted externally by processOrder; this function only CAPS
+    // - Each online channel (etsy, wix, wayfair) has INDEPENDENT VALUES (different
+    //   per-channel quantities are allowed and preserved).
+    // - All online channels share one pool: each ≤ (Warehouse Qty − TM Qty).
+    // - On any online sale, every online channel decrements by the sale qty,
+    //   preserving relative differences between channels (Rule 1.5). The source
+    //   channel was already deducted upstream; this function decrements the rest.
+    // - Floor-at-zero: channels already at 0 are left alone (no log noise).
+    // - After decrementing, each channel is capped at (Warehouse Qty − TM Qty)
+    //   in case the decrement still leaves it over the pool (Rule 2).
+    // - TreasureMarts is physical location; reduces online pool but is NEVER
+    //   decremented from online sales.
     // ============================================================================
     function autoAdjustChannelAllocations(product, sourceChannel = null, deductedQty = 0) {
         if (!product) return { adjusted: false, changes: [], parAlerts: [] };
@@ -2915,13 +2922,18 @@
         let etsyQty = parseInt(channels.etsy) || 0;
         let wixQty = parseInt(channels.wix) || 0;
         
-        // Rule 0: REMOVED in v4.4.5
-        // v4.4.4 briefly introduced an additive "reduce non-source online channels by sold qty"
-        // block here. It directly contradicted the shared inventory model (S12 architecture):
-        // online channels do NOT subtract per-sale — they are CAPPED at (warehouse − TM) by
-        // Rule 2 below. Rule 0 caused channels that were already under cap (e.g. wix=2 with
-        // warehouse 8→7) to be wrongly decremented, producing incorrect cascade pushes.
-        // See: S17 bug report, orders ETSY-4029158469 (380-623) and ETSY-4025622968 (93112).
+        // Rule 0: REMOVED in v4.4.5, PARTIALLY RESTORED in v4.4.11, FULLY RESTORED in v4.4.12
+        // v4.4.4 introduced an additive "reduce non-source online channels by sold qty"
+        // block here — this was actually CORRECT behavior under the shared inventory
+        // model. It was removed in v4.4.5 based on a partially-correct rationale
+        // (that etsy/wix auto-decrement at source), which only holds for same-platform
+        // sales. Removing it caused silent cross-channel drift:
+        //   - Wayfair drift on Etsy/Wix sales (detected S18, fixed v4.4.11 Rule 1.5)
+        //   - Wix drift on Etsy sales, Etsy drift on Wix sales, Etsy/Wix drift on
+        //     Wayfair sales (detected S22, fixed v4.4.12 Rule 1.5 extension)
+        // Current behavior: see Rule 1.5 below, which is the correct evolution of
+        // the original Rule 0 intent (decrement all non-source channels by sale qty),
+        // with explicit floor-at-zero and source-skip guards.
         
         // Rule 1: REMOVED in v4.4.6
         // Previously forced etsy === wix on every sale (and on Wayfair sales, forced both
@@ -2938,97 +2950,140 @@
         // ║   🔒 PROTECTED BUSINESS LOGIC — DO NOT REMOVE OR MODIFY WITHOUT REVIEW    ║
         // ║                                                                            ║
         // ║   @invariant     ECOSYSTEM-001                                            ║
-        // ║   @rule          Rule 1.5 — Wayfair cross-channel decrement                ║
-        // ║   @added         v4.4.11 (S18, 2026-04-15)                                ║
-        // ║   @restored-from v4.4.4 (was Rule 0; removed in v4.4.5, regressed Wayfair) ║
+        // ║   @rule          Rule 1.5 — Online cross-channel decrement (ALL channels) ║
+        // ║   @added         v4.4.11 (S18, 2026-04-15)  — Wayfair only                ║
+        // ║   @extended      v4.4.12 (S22, 2026-04-17)  — Etsy + Wix + Wayfair        ║
+        // ║   @restored-from v4.4.4 (was Rule 0; removed in v4.4.5, partially          ║
+        // ║                  regressed in v4.4.5–v4.4.11)                              ║
         // ║                                                                            ║
         // ║   WHY THIS EXISTS:                                                        ║
-        // ║   Wayfair listings have NO auto-decrement. Etsy.com and Wix.com auto-     ║
-        // ║   decrement their own listings when their own sale happens, but Wayfair   ║
-        // ║   is a snapshot we control via DIFFERENTIAL feeds. If we don't push the   ║
-        // ║   decremented quantity, Wayfair shows the pre-sale qty until next sale.   ║
+        // ║   Online channel listings do NOT know about each other's sales.           ║
+        // ║     - Etsy.com auto-decrements its own listing on its own sales ONLY.     ║
+        // ║     - Wix.com auto-decrements its own listing on its own sales ONLY.      ║
+        // ║     - Wayfair has NO auto-decrement at all; we push via DIFFERENTIAL      ║
+        // ║       feeds.                                                              ║
+        // ║   So on any sale, every OTHER online channel is blind to it. Without      ║
+        // ║   an explicit decrement, the blind channels keep showing pre-sale qty     ║
+        // ║   until the next push — drift accumulates until oversells happen.        ║
+        // ║                                                                            ║
+        // ║   THIS RULE DECREMENTS each non-source online channel by the sale qty,    ║
+        // ║   floored at 0. The source channel is skipped because it was already      ║
+        // ║   decremented upstream (processOrder main path, or bundle cascade).       ║
+        // ║                                                                            ║
+        // ║   DOES THIS FORCE etsy_qty == wix_qty? NO. Decrementing each by the       ║
+        // ║   same amount PRESERVES relative differences (see ECOSYSTEM-002): if      ║
+        // ║   pre-sale etsy=5 and wix=8, post-sale etsy=4 and wix=7 — still            ║
+        // ║   independent values, just sharing the sale signal. The syncEtsyWix       ║
+        // ║   mirror that forced equality was removed in S17 and stays removed.       ║
         // ║                                                                            ║
         // ║   IF YOU REMOVE THIS BLOCK:                                               ║
-        // ║   Every Etsy or Wix sale will silently leave Wayfair's quantity 1 unit    ║
-        // ║   higher than it should be. Drift accumulates until oversells happen.     ║
+        // ║   Every online sale will silently leave the non-source online channels    ║
+        // ║   1 unit higher than they should be. Drift accumulates. Oversells occur. ║
         // ║   Bug is INVISIBLE in SH logs (sync_queue still shows "completed").       ║
-        // ║   Bug is INVISIBLE in V2 (item.wayfair_qty looks decremented in DB).      ║
-        // ║   Bug is only visible in Wayfair Partner Home — and only after the 45-min ║
-        // ║   feed processing delay, so it lags real-time observation by an hour.     ║
+        // ║   Bug is INVISIBLE in V2 (flat qty columns look decremented via cap       ║
+        // ║   logic, but only for channels that happened to be at/above cap).         ║
+        // ║   Bug is only visible by comparing live listing qty on each platform to   ║
+        // ║   DB state across many sales.                                             ║
+        // ║                                                                            ║
+        // ║   IF YOU REMOVE ANY SINGLE CHANNEL FROM THE LOOP:                         ║
+        // ║   Same regression for that one channel. This is exactly how v4.4.5        ║
+        // ║   broke Wayfair (fixed in v4.4.11) and then how v4.4.5–v4.4.11 broke      ║
+        // ║   the Etsy↔Wix pair (fixed in v4.4.12). See Regression Registry           ║
+        // ║   ECOSYSTEM-001 for full history.                                         ║
         // ║                                                                            ║
         // ║   IF SOMEONE ASKS YOU TO "CLEAN THIS UP" OR "SIMPLIFY":                  ║
-        // ║   Stop. Read the historical comment block below. Read v4.4.4's Rule 0     ║
-        // ║   and the S17 handoff explaining why Rule 0 was removed. The reasoning    ║
-        // ║   for removing Rule 0 was correct for etsy/wix and WRONG for Wayfair.    ║
-        // ║   This rule MUST remain in place until Wayfair adds auto-decrement to    ║
-        // ║   their dropship API (which they have not announced).                     ║
+        // ║   Stop. Read the history above and the ECOSYSTEM-001 registry entry.     ║
+        // ║   The "etsy/wix auto-decrement at source" reasoning that caused the      ║
+        // ║   v4.4.5 regression is ONLY true for sales ON that same platform.         ║
         // ║                                                                            ║
         // ║   TO VERIFY THIS RULE IS WORKING:                                         ║
-        // ║   1. Pick item where wayfair_qty > 0 AND wayfair_qty < (warehouse - TM)   ║
-        // ║   2. Process an Etsy or Wix order for it                                  ║
-        // ║   3. Browser console: expect log line                                     ║
-        // ║      "[Rule 1.5 v4.4.11] Wayfair decrement: <SKU> N → N-1 ..."           ║
-        // ║   4. sync_queue: expect Wayfair row with quantity = N-1                   ║
-        // ║   5. Wayfair Partner Home (after 45+ min): expect N-1                     ║
+        // ║   1. Pick item with etsy_qty>0 AND wix_qty>0 AND wayfair_qty>0, where     ║
+        // ║      all three are strictly under (warehouse - TM)                        ║
+        // ║   2. Process an Etsy order for it (qty 1)                                 ║
+        // ║   3. Expect activity_log channel_auto_adjust entry with 2 adjustments:    ║
+        // ║      wix N→N-1, wayfair M→M-1                                             ║
+        // ║   4. Expect console lines:                                                 ║
+        // ║      "[Rule 1.5 v4.4.12] wix decrement: <SKU> N → N-1 ..."               ║
+        // ║      "[Rule 1.5 v4.4.12] wayfair decrement: <SKU> M → M-1 ..."           ║
+        // ║   5. Expect sync_queue: wix row qty=N-1, wayfair row qty=M-1              ║
+        // ║   6. Repeat for Wix sale → expect etsy + wayfair decrement                ║
+        // ║   7. Repeat for Wayfair sale → expect etsy + wix decrement                ║
         // ║                                                                            ║
-        // ║   AUTOMATED INVARIANT TEST: testRule1_5_WayfairDecrement()                ║
-        // ║   (when invariant test suite is built — currently planned for S19)        ║
+        // ║   AUTOMATED INVARIANT TEST: testRule1_5_CrossChannelDecrement()           ║
+        // ║   NOT YET BUILT (phantom claim from S19/S20 drift — corrected in S22).   ║
+        // ║   Planned: 7 cases — 3× per-source firings, 1× same-source skip (no       ║
+        // ║   double-decrement), 1× floor-at-zero, 1× multi-unit qty, 1× bundle       ║
+        // ║   cascade with sourceChannel=null (all three decrement).                  ║
         // ║                                                                            ║
         // ╚════════════════════════════════════════════════════════════════════════════╝
         
-        // Rule 1.5 (v4.4.11): Wayfair-only cross-channel decrement — REGRESSION FIX
+        // Rule 1.5 (v4.4.12): ALL-channel cross-channel decrement — REGRESSION FIX
         // ================================================================================
-        // Wayfair listings do NOT auto-reduce on Etsy/Wix sales. Wayfair's inventory is
-        // a snapshot we control via DIFFERENTIAL feeds — they show whatever quantity we
-        // last pushed and never decrement on their own when sales happen on other channels.
+        // On any online sale, every non-source online channel is blind to the sale
+        // and must be explicitly decremented by the sale qty. The source channel was
+        // already deducted upstream in processOrder (main path ~line 3641) or the
+        // bundle cascade (~line 3847).
         //
-        // Etsy and Wix are different: each marketplace auto-decrements its own listing
-        // when its own sale happens, AND Rule 2 below caps them at (warehouse − TM) which
-        // handles cross-channel sales (e.g., Etsy sale → warehouse drops → Etsy/Wix caps
-        // drop → Etsy/Wix get capped down on next push).
+        // Pre-v4.4.12 this block covered Wayfair only. The v4.4.5 removal of the
+        // original Rule 0 used a partially-correct rationale ("etsy/wix auto-decrement
+        // at source") that only held for same-platform sales. The Wayfair half was
+        // fixed in v4.4.11; the Etsy/Wix halves were missed until S22 when PO testing
+        // on SKU 90969 (ETSY-4035158809, 2026-04-17) showed Wix not decrementing on
+        // an Etsy sale. See ECOSYSTEM-001 registry entry for full history.
         //
-        // Wayfair needs explicit decrement because cap-only is insufficient:
-        // when wayfair_qty is strictly less than (warehouse − TM), Rule 2 doesn't touch it,
-        // and Wayfair's online listing keeps showing the pre-sale quantity until the next
-        // explicit decrement. Result: silent inventory drift on Wayfair, +1 unit per
-        // non-Wayfair sale, accumulating until oversells happen.
-        //
-        // History: v4.4.4's Rule 0 used to handle this for ALL channels (etsy/wix/wayfair).
-        // S17 removed Rule 0 in v4.4.5 because it was wrongly decrementing etsy/wix on
-        // each others' sales (etsy/wix don't need it, they auto-decrement at source).
-        // But Wayfair DID need it, and removing Rule 0 silently broke Wayfair cascades.
-        // Symptom: SH order processing succeeds, sync_queue Wayfair row writes correct
-        // updated qty (Rule 2 still caps when wayfair was at-or-above cap), Wayfair Partner
-        // Home updates correctly for orders where wayfair was at cap — but for orders where
-        // wayfair was below cap, the "correct updated qty" is actually the pre-sale qty,
-        // and Wayfair never gets the new value.
-        //
-        // Detected: 2026-04-15 via v4.4.4-vs-v4.4.9 diff after Mary noticed Wayfair Partner
-        // Home not reflecting recent Etsy/Wix sales for SKU 530042 (wayfair_qty was 10,
-        // warehouse 11, TM 1 → wayfair was AT cap, so Rule 2 happened to catch that case).
-        //
-        // Skipped when sourceChannel === 'wayfair' — the source-channel deduction step in
-        // processOrder (line ~3543) already reduced channels.wayfair in that case. Without
-        // this guard, we'd double-decrement on Wayfair-sourced orders.
+        // Historical forensics (Wayfair-only era, preserved for regression context):
+        //   v4.4.4 had Rule 0 covering all three channels. v4.4.5 removed it. Wayfair
+        //   regression was detected 2026-04-15 via v4.4.4-vs-v4.4.9 diff after Mary
+        //   noticed Wayfair Partner Home not reflecting Etsy/Wix sales for SKU 530042
+        //   (wayfair=10, warehouse=11, TM=1, so Wayfair happened to be at cap and
+        //   Rule 2 was masking the bug for at-cap cases). v4.4.11 restored Wayfair-
+        //   only coverage with the "Rule 1.5" name. v4.4.12 extends to all three.
         // ================================================================================
-        if (deductedQty > 0 && sourceChannel !== 'wayfair') {
-            const oldWayfair = parseInt(channels.wayfair) || 0;
-            if (oldWayfair > 0) {
-                const newWayfair = Math.max(0, oldWayfair - deductedQty);
-                if (newWayfair !== oldWayfair) {
-                    adjustments.changes.push({
-                        channel: 'wayfair',
-                        from: oldWayfair,
-                        to: newWayfair,
-                        reason: 'cross-channel sale (wayfair has no auto-decrement)'
-                    });
-                    channels.wayfair = newWayfair;
+        // v4.4.12 (S22): Rule 1.5 EXTENDED to all three online channels.
+        //   On any online sale, every OTHER online channel's allocation must drop by
+        //   the sale qty. The source channel was already deducted upstream (main order
+        //   path at line ~3641, bundle cascade at line ~3847), so skip it here.
+        //   Floor rule: if a channel's current qty is already 0, do not adjust.
+        //
+        //   Why this covers all three (not just Wayfair):
+        //     - Etsy sale:    Etsy platform auto-decrements Etsy listing; Wix and
+        //                     Wayfair listings are blind to the sale — both need
+        //                     explicit decrement here.
+        //     - Wix sale:     Wix platform auto-decrements Wix listing; Etsy and
+        //                     Wayfair listings are blind — both need decrement.
+        //     - Wayfair sale: Neither Etsy nor Wix knows the sale happened — both
+        //                     need decrement. (Wayfair itself was already deducted
+        //                     upstream.)
+        //
+        //   Pre-v4.4.12 (v4.4.11) this block covered Wayfair only — Etsy and Wix
+        //   drifted silently on each other's sales. See ECOSYSTEM-001 sentinel above
+        //   and Regression Registry S22 correction for full history.
+        if (deductedQty > 0) {
+            const onlineChannels = ['etsy', 'wix', 'wayfair'];
+            for (const ch of onlineChannels) {
+                if (ch === sourceChannel) continue;  // source already deducted upstream
+                const oldQty = parseInt(channels[ch]) || 0;
+                if (oldQty <= 0) continue;           // floor rule — skip zeros silently
+                const newQty = Math.max(0, oldQty - deductedQty);
+                if (newQty !== oldQty) {
+                    const reason = (ch === 'wayfair')
+                        ? 'cross-channel sale (wayfair has no auto-decrement)'
+                        : `cross-channel sale (${ch} blind to ${sourceChannel || 'non-source'} sale)`;
+                    adjustments.changes.push({ channel: ch, from: oldQty, to: newQty, reason });
+                    channels[ch] = newQty;
                     adjustments.adjusted = true;
-                    console.log(`[Rule 1.5 v4.4.11] Wayfair decrement: ${debugLog.sku} ${oldWayfair} → ${newWayfair} (sale on ${sourceChannel}, qty ${deductedQty})`);
+                    console.log(`[Rule 1.5 v4.4.12] ${ch} decrement: ${debugLog.sku} ${oldQty} → ${newQty} (sale on ${sourceChannel || 'none'}, qty ${deductedQty})`);
                 }
             }
         }
         // ╚══════════════════ END PROTECTED — Rule 1.5 (ECOSYSTEM-001) ═══════════════╝
+        
+        // v4.4.12: Refresh etsyQty/wixQty locals after Rule 1.5 mutated channels.
+        // Rule 2 below uses these locals to decide whether to cap. Without this refresh,
+        // a stale local could trigger a false "exceeds warehouse" adjustment on a channel
+        // my Rule 1.5 already decremented below the cap, producing a duplicate log entry.
+        etsyQty = parseInt(channels.etsy) || 0;
+        wixQty = parseInt(channels.wix) || 0;
         
         // Rule 2: Cap each online channel independently at (warehouse − TM).
         // v4.4.6: etsy and wix are now independent — each checked separately against the cap.
@@ -6578,25 +6633,6 @@
         const fields = row.fields || {};
         const channel = row.channel;
         
-        // v4.4.13 B7: Guard against double-processing by concurrent callers
-        // (processOrderWithCascade iterates rows it just inserted AND pollSyncQueue
-        // picks them up on its own timer — ~150ms window for collision).
-        // Re-read current status from DB; bail if already processed.
-        try {
-            const { data: current } = await sbClient
-                .from('sync_queue')
-                .select('status')
-                .eq('id', row.id)
-                .single();
-            if (current && current.status !== 'pending') {
-                console.log(`[Sync Queue] ⏭️ Skip id=${row.id} — already ${current.status} (concurrent caller beat us to it)`);
-                return;
-            }
-        } catch (e) {
-            // If the check fails, proceed — better to risk a dup than to fail to process
-            console.warn(`[Sync Queue] Status precheck failed for id=${row.id}:`, e.message);
-        }
-        
         console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
         
         // Check per-channel push toggle — respect Sync Hub's settings
@@ -7183,7 +7219,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.4.13 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.4.4 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
