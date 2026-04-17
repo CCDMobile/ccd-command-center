@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.11</title>
+    <title>CCD Sync Hub v4.4.13</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.11 — Clean Build Styles
+           CCD SYNC HUB v4.4.13 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.11 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.13 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -720,11 +720,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.11 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.13 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.11';
+    const SH_VERSION = 'v4.4.13';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1522,7 +1522,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.11-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.13-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1746,7 +1746,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.11',
+                processedBy: 'Sync Hub v4.4.13',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -6578,6 +6578,25 @@
         const fields = row.fields || {};
         const channel = row.channel;
         
+        // v4.4.13 B7: Guard against double-processing by concurrent callers
+        // (processOrderWithCascade iterates rows it just inserted AND pollSyncQueue
+        // picks them up on its own timer — ~150ms window for collision).
+        // Re-read current status from DB; bail if already processed.
+        try {
+            const { data: current } = await sbClient
+                .from('sync_queue')
+                .select('status')
+                .eq('id', row.id)
+                .single();
+            if (current && current.status !== 'pending') {
+                console.log(`[Sync Queue] ⏭️ Skip id=${row.id} — already ${current.status} (concurrent caller beat us to it)`);
+                return;
+            }
+        } catch (e) {
+            // If the check fails, proceed — better to risk a dup than to fail to process
+            console.warn(`[Sync Queue] Status precheck failed for id=${row.id}:`, e.message);
+        }
+        
         console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
         
         // Check per-channel push toggle — respect Sync Hub's settings
@@ -7164,7 +7183,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.4.4 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.4.13 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             

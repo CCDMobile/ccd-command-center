@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.10</title>
+<title>CCD Inventory System v2.8.11</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -361,6 +361,19 @@ input[type="date"]{color-scheme:dark;}
 .form-input-wide{width:100%;text-align:left;}
 .form-static{font-size:13px;color:var(--muted2);font-family:var(--mono);}
 textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;font-family:var(--font);}
+/* v2.8.11: Wider, grippable scrollbar for textareas */
+textarea.form-input::-webkit-scrollbar{width:14px;height:14px;}
+textarea.form-input::-webkit-scrollbar-track{background:var(--bg1);border-radius:7px;}
+textarea.form-input::-webkit-scrollbar-thumb{background:var(--muted);border-radius:7px;border:2px solid var(--bg-input);min-height:30px;}
+textarea.form-input::-webkit-scrollbar-thumb:hover{background:var(--gold);}
+textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1);}
+/* v2.8.11: Textarea + stepper wrapper */
+.textarea-stepper-wrap{position:relative;width:100%;}
+.textarea-stepper-wrap textarea.form-input{padding-right:26px;}
+.textarea-stepper{position:absolute;right:3px;top:3px;bottom:3px;width:20px;display:flex;flex-direction:column;gap:2px;pointer-events:none;z-index:2;}
+.textarea-stepper-btn{flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:4px;color:var(--muted);font-size:10px;cursor:pointer;pointer-events:auto;padding:0;display:flex;align-items:center;justify-content:center;transition:var(--transition);user-select:none;}
+.textarea-stepper-btn:hover{background:var(--gold);color:var(--bg0);border-color:var(--gold);}
+.textarea-stepper-btn:active{transform:scale(0.95);}
 
 /* Two-Column Layout */
 .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
@@ -609,7 +622,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.10 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.11 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -621,7 +634,7 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.10</div>
+      <div class="topbar-version">v2.8.11</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1131,6 +1144,58 @@ textarea.form-input{text-align:left;resize:vertical;min-height:60px;width:100%;f
             <div class="setting-row"><div class="setting-label">Overhead %</div><div class="setting-value"><input class="setting-input" id="fee_tm_oh" type="number" step="0.5" style="width:70px;"></div></div>
             <div class="setting-row"><div class="setting-label">Commission %</div><div class="setting-value"><input class="setting-input" id="fee_tm_comm" type="number" step="0.5" style="width:70px;"></div></div>
           </div>
+          <!-- v2.8.11: Packing Slip Customization -->
+          <div class="settings-section">
+            <div class="settings-section-title">🧾 Packing Slip Customization</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Customize how packing slips appear when printed. Changes save to this device (localStorage) and take effect immediately — no reload needed.</div>
+
+            <!-- Logo -->
+            <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div class="setting-label" style="width:auto;">Logo</div>
+                <input type="file" id="pslipLogoInput" accept="image/png,image/jpeg,image/svg+xml,image/webp" onchange="onPslipLogoSelected(event)" style="font-size:11px;color:var(--muted);">
+                <button type="button" class="btn-card" onclick="clearPslipLogo()" style="padding:4px 10px;font-size:11px;">Clear</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <div id="pslipLogoPreview" style="width:120px;height:80px;border:1px dashed var(--border);border-radius:6px;background:var(--bg1);display:flex;align-items:center;justify-content:center;color:var(--muted2);font-size:10px;overflow:hidden;">No logo</div>
+                <div style="font-size:11px;color:var(--muted);flex:1;">Recommended: PNG with transparent background, ~200–400px wide. Large files are base64-encoded and may slow print. Stays on this device.</div>
+              </div>
+            </div>
+
+            <!-- Business Identity -->
+            <div class="setting-row"><div class="setting-label">Business Name</div><div class="setting-value"><input class="setting-input" id="pslipBizName" placeholder="Country Charm Decor" maxlength="60"></div></div>
+            <div class="setting-row"><div class="setting-label">Tagline</div><div class="setting-value"><input class="setting-input" id="pslipTagline" placeholder="Handcrafted Home Décor" maxlength="80"></div></div>
+
+            <!-- Ship-From -->
+            <div class="setting-row" style="align-items:flex-start;">
+              <div class="setting-label" style="padding-top:8px;">Ship From</div>
+              <div class="setting-value"><div class="textarea-stepper-wrap"><textarea class="form-input" id="pslipShipFrom" style="min-height:70px;font-family:var(--mono);font-size:12px;" placeholder="Country Charm Decor&#10;Orlando, FL"></textarea><div class="textarea-stepper"><button type="button" class="textarea-stepper-btn" onmousedown="startTextareaScroll('pslipShipFrom',-1,event)" onmouseup="stopTextareaScroll()" onmouseleave="stopTextareaScroll()">▲</button><button type="button" class="textarea-stepper-btn" onmousedown="startTextareaScroll('pslipShipFrom',1,event)" onmouseup="stopTextareaScroll()" onmouseleave="stopTextareaScroll()">▼</button></div></div></div>
+            </div>
+
+            <!-- Footer -->
+            <div class="setting-row"><div class="setting-label">Thank-You</div><div class="setting-value"><input class="setting-input" id="pslipThankYou" placeholder="Thank you for your order!" maxlength="80"></div></div>
+            <div class="setting-row"><div class="setting-label">Contact Email</div><div class="setting-value"><input class="setting-input" id="pslipFooterEmail" placeholder="countrycharm@email.com" maxlength="80"></div></div>
+            <div class="setting-row"><div class="setting-label">Website</div><div class="setting-value"><input class="setting-input" id="pslipFooterWeb" placeholder="www.countrycharm.com" maxlength="80"></div></div>
+            <div class="setting-row"><div class="setting-label">Footer Note</div><div class="setting-value"><input class="setting-input" id="pslipFooterNote" placeholder="Optional extra line (return policy, hashtag, etc.)" maxlength="120"></div></div>
+
+            <!-- Accent -->
+            <div class="setting-row">
+              <div class="setting-label">Accent Color</div>
+              <div class="setting-value" style="display:flex;align-items:center;gap:10px;">
+                <input type="color" id="pslipAccent" value="#d4a853" style="width:44px;height:30px;padding:0;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);cursor:pointer;">
+                <span id="pslipAccentText" style="font-size:12px;font-family:var(--mono);color:var(--muted);">#d4a853</span>
+                <button type="button" class="btn-card" onclick="$('pslipAccent').value='#d4a853';$('pslipAccentText').textContent='#d4a853';" style="padding:4px 10px;font-size:11px;">Reset</button>
+              </div>
+            </div>
+
+            <!-- Save + Preview -->
+            <div style="display:flex;gap:10px;margin-top:14px;">
+              <button type="button" class="btn-card btn-save" onclick="savePackingSlipSettings()" style="flex:1;padding:8px 16px;font-size:13px;">💾 Save Packing Slip Settings</button>
+              <button type="button" class="btn-card" onclick="previewPackingSlipSample()" style="flex:1;padding:8px 16px;font-size:13px;">👁 Preview Sample</button>
+            </div>
+            <div id="pslipSettingsStatus" style="margin-top:8px;font-size:12px;display:none;"></div>
+          </div>
+
           <!-- Data Maintenance -->
           <div class="settings-section">
             <div class="settings-section-title">🔧 Data Maintenance</div>
@@ -2461,7 +2526,7 @@ function renderOverview(item) {
       </div>
       <div class="form-row" style="align-items:flex-start;">
         <div class="form-label" style="padding-top:8px;">Comments</div>
-        <div class="form-value"><textarea class="form-input" id="f_comments">${escHtml(item.comments || '')}</textarea></div>
+        <div class="form-value"><div class="textarea-stepper-wrap"><textarea class="form-input" id="f_comments">${escHtml(item.comments || '')}</textarea><div class="textarea-stepper"><button type="button" class="textarea-stepper-btn" aria-label="Scroll up" onmousedown="startTextareaScroll('f_comments',-1,event)" onmouseup="stopTextareaScroll()" onmouseleave="stopTextareaScroll()" ontouchstart="startTextareaScroll('f_comments',-1,event)" ontouchend="stopTextareaScroll()">▲</button><button type="button" class="textarea-stepper-btn" aria-label="Scroll down" onmousedown="startTextareaScroll('f_comments',1,event)" onmouseup="stopTextareaScroll()" onmouseleave="stopTextareaScroll()" ontouchstart="startTextareaScroll('f_comments',1,event)" ontouchend="stopTextareaScroll()">▼</button></div></div></div>
       </div>
       <!-- Photographed + Description Date -->
       <div style="margin-top:12px;padding:14px 16px;background:linear-gradient(90deg,rgba(102,126,234,0.12),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.25);border-radius:var(--radius);display:flex;justify-content:space-between;align-items:center;">
@@ -6025,6 +6090,275 @@ function closeSlipModal() {
   slipSaleData = null;
 }
 
+// v2.8.11: Packing Slip Customization
+// ═══════════════════════════════════════════════════════════════════
+const PSLIP_DEFAULTS = {
+  bizName: 'Country Charm Decor',
+  tagline: 'Handcrafted Home Décor',
+  shipFrom: 'Country Charm Decor\nOrlando, FL',
+  thankYou: 'Thank you for your order!',
+  footerEmail: 'countrycharm@email.com',
+  footerWeb: 'www.countrycharm.com',
+  footerNote: '',
+  accent: '#d4a853',
+  logoData: '' // data URL
+};
+
+function getPslipSettings() {
+  try {
+    const raw = localStorage.getItem('ccdPslipSettings');
+    if (!raw) return { ...PSLIP_DEFAULTS };
+    return { ...PSLIP_DEFAULTS, ...JSON.parse(raw) };
+  } catch (e) { return { ...PSLIP_DEFAULTS }; }
+}
+
+function hydratePslipSettingsUI() {
+  const s = getPslipSettings();
+  if (ge('pslipBizName')) $('pslipBizName').value = s.bizName || '';
+  if (ge('pslipTagline')) $('pslipTagline').value = s.tagline || '';
+  if (ge('pslipShipFrom')) $('pslipShipFrom').value = s.shipFrom || '';
+  if (ge('pslipThankYou')) $('pslipThankYou').value = s.thankYou || '';
+  if (ge('pslipFooterEmail')) $('pslipFooterEmail').value = s.footerEmail || '';
+  if (ge('pslipFooterWeb')) $('pslipFooterWeb').value = s.footerWeb || '';
+  if (ge('pslipFooterNote')) $('pslipFooterNote').value = s.footerNote || '';
+  if (ge('pslipAccent')) { $('pslipAccent').value = s.accent || '#d4a853'; if (ge('pslipAccentText')) $('pslipAccentText').textContent = s.accent || '#d4a853'; }
+  renderPslipLogoPreview(s.logoData);
+  // Live accent color readout
+  const ac = $('pslipAccent');
+  if (ac && !ac._bound) {
+    ac._bound = true;
+    ac.addEventListener('input', () => { if (ge('pslipAccentText')) $('pslipAccentText').textContent = ac.value; });
+  }
+}
+
+function renderPslipLogoPreview(dataUrl) {
+  const prev = $('pslipLogoPreview');
+  if (!prev) return;
+  if (dataUrl) {
+    prev.innerHTML = `<img src="${dataUrl}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+  } else {
+    prev.innerHTML = 'No logo';
+  }
+}
+
+function onPslipLogoSelected(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  // Size cap: ~500KB raw → ~680KB base64. Warn beyond that.
+  if (file.size > 500 * 1024) {
+    if (!confirm(`Logo is ${(file.size/1024).toFixed(0)} KB. Large logos slow print and bloat localStorage. Continue?`)) {
+      ev.target.value = '';
+      return;
+    }
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    // Stash on settings object in memory; user still has to click Save
+    renderPslipLogoPreview(dataUrl);
+    window._pendingPslipLogo = dataUrl;
+  };
+  reader.onerror = () => { alert('Could not read logo file.'); };
+  reader.readAsDataURL(file);
+}
+
+function clearPslipLogo() {
+  window._pendingPslipLogo = '';
+  renderPslipLogoPreview('');
+  const input = $('pslipLogoInput');
+  if (input) input.value = '';
+}
+
+function savePackingSlipSettings() {
+  const existing = getPslipSettings();
+  const logoData = (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : existing.logoData;
+  const s = {
+    bizName: ($('pslipBizName').value || '').trim(),
+    tagline: ($('pslipTagline').value || '').trim(),
+    shipFrom: ($('pslipShipFrom').value || '').trim(),
+    thankYou: ($('pslipThankYou').value || '').trim(),
+    footerEmail: ($('pslipFooterEmail').value || '').trim(),
+    footerWeb: ($('pslipFooterWeb').value || '').trim(),
+    footerNote: ($('pslipFooterNote').value || '').trim(),
+    accent: ($('pslipAccent').value || '#d4a853'),
+    logoData: logoData || ''
+  };
+  try {
+    const serialized = JSON.stringify(s);
+    // localStorage cap is ~5MB; a data URL logo rarely gets past 1MB but warn just in case
+    if (serialized.length > 2 * 1024 * 1024) {
+      alert('Settings payload exceeds 2MB. Try a smaller logo.');
+      return;
+    }
+    localStorage.setItem('ccdPslipSettings', serialized);
+    delete window._pendingPslipLogo;
+    const st = $('pslipSettingsStatus');
+    if (st) {
+      st.style.display = 'block';
+      st.innerHTML = '<span style="color:var(--green);">✅ Packing slip settings saved.</span>';
+      setTimeout(() => { st.style.display = 'none'; }, 3000);
+    }
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  }
+}
+
+function previewPackingSlipSample() {
+  // Build a sample packing slip using whatever's currently in the form
+  // (not yet saved). Gives instant feedback while tweaking.
+  const s = {
+    bizName: ($('pslipBizName').value || PSLIP_DEFAULTS.bizName).trim(),
+    tagline: ($('pslipTagline').value || PSLIP_DEFAULTS.tagline).trim(),
+    shipFrom: ($('pslipShipFrom').value || PSLIP_DEFAULTS.shipFrom).trim(),
+    thankYou: ($('pslipThankYou').value || PSLIP_DEFAULTS.thankYou).trim(),
+    footerEmail: ($('pslipFooterEmail').value || PSLIP_DEFAULTS.footerEmail).trim(),
+    footerWeb: ($('pslipFooterWeb').value || PSLIP_DEFAULTS.footerWeb).trim(),
+    footerNote: ($('pslipFooterNote').value || '').trim(),
+    accent: ($('pslipAccent').value || PSLIP_DEFAULTS.accent),
+    logoData: (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : getPslipSettings().logoData
+  };
+  const sampleItems = [
+    { product_name: 'Paisley Bird Rain Gauge', qty_sold: 1, sale_price: 22.99, total_revenue: 22.99 },
+    { product_name: 'Garden Gate Napkin Holder', qty_sold: 2, sale_price: 14.50, total_revenue: 29.00 }
+  ];
+  const html = _buildPackingSlipWith(s, 'priced', {
+    orderId: 'SAMPLE-PREVIEW',
+    orderDate: new Date().toISOString().slice(0,10),
+    channel: 'Etsy',
+    shipTo: 'Jane Sample\n123 Main Street\nAnytown, ST 12345',
+    items: sampleItems
+  });
+  const win = window.open('', '_blank', 'width=700,height=900');
+  if (!win) { alert('Popup blocked — please allow popups to preview.'); return; }
+  win.document.write(html);
+  win.document.close();
+}
+
+// Internal builder that takes settings as a parameter (so preview can use
+// unsaved in-flight values). The existing buildPackingSlip reads saved settings.
+function _buildPackingSlipWith(s, type, d) {
+  const showPrice = type === 'priced';
+  const items = d.items || [];
+  const orderTotal = items.reduce((acc, i) => acc + pf(i.total_revenue), 0);
+  const totalQty = items.reduce((acc, i) => acc + (i.qty_sold || 1), 0);
+  const accent = s.accent || '#d4a853';
+  const logoBlock = s.logoData
+    ? `<img src="${s.logoData}" style="max-height:60px;max-width:220px;object-fit:contain;display:block;margin-bottom:8px;">`
+    : '';
+  const shipFromHtml = escHtml(s.shipFrom || PSLIP_DEFAULTS.shipFrom);
+  const itemRows = items.map(i => `
+    <tr>
+      <td>${escHtml(i.product_name)}</td>
+      <td class="text-right">${i.qty_sold || 1}</td>
+      ${showPrice ? `<td class="text-right">$${pf(i.sale_price).toFixed(2)}</td><td class="text-right">$${pf(i.total_revenue).toFixed(2)}</td>` : ''}
+    </tr>`).join('');
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Packing Slip</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#1a1a2e;padding:40px;max-width:700px;margin:0 auto;}
+.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:20px;border-bottom:2px solid ${accent};}
+.brand{font-size:24px;font-weight:800;color:#1a1a2e;letter-spacing:-0.5px;}
+.brand-sub{font-size:12px;color:#666;margin-top:4px;}
+.order-info{text-align:right;font-size:12px;color:#555;line-height:1.6;}
+.order-id{font-size:14px;font-weight:700;color:#1a1a2e;}
+.addresses{display:flex;justify-content:space-between;margin-bottom:28px;}
+.addr-block{flex:1;}
+.addr-label{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+.addr-text{font-size:13px;line-height:1.6;color:#333;white-space:pre-line;}
+table{width:100%;border-collapse:collapse;margin-bottom:24px;}
+th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e5e5e5;background:#fafafa;}
+td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
+.text-right{text-align:right;}
+.total-row td{font-weight:700;border-top:2px solid ${accent};border-bottom:none;font-size:14px;}
+.summary{font-size:12px;color:#777;margin-bottom:16px;}
+.footer{text-align:center;padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;line-height:1.6;}
+.thank-you{font-size:16px;font-weight:700;color:${accent};margin-bottom:8px;}
+@media print{body{padding:20px;}@page{margin:0.5in;}}
+</style></head><body>
+<div class="header">
+  <div>
+    ${logoBlock}
+    <div class="brand">${escHtml(s.bizName || PSLIP_DEFAULTS.bizName)}</div>
+    ${s.tagline ? `<div class="brand-sub">${escHtml(s.tagline)}</div>` : ''}
+  </div>
+  <div class="order-info">
+    <div class="order-id">${escHtml(d.orderId)}</div>
+    <div>Date: ${escHtml(d.orderDate)}</div>
+    <div>Channel: ${escHtml(d.channel)}</div>
+  </div>
+</div>
+
+<div class="addresses">
+  <div class="addr-block">
+    <div class="addr-label">Ship From</div>
+    <div class="addr-text">${shipFromHtml}</div>
+  </div>
+  ${d.shipTo ? `<div class="addr-block" style="text-align:right;">
+    <div class="addr-label">Ship To</div>
+    <div class="addr-text">${escHtml(d.shipTo)}</div>
+  </div>` : ''}
+</div>
+
+<div class="summary">${items.length} item${items.length !== 1 ? 's' : ''} · ${totalQty} unit${totalQty !== 1 ? 's' : ''}</div>
+
+<table>
+  <thead><tr>
+    <th>Item</th>
+    <th class="text-right">Qty</th>
+    ${showPrice ? '<th class="text-right">Unit Price</th><th class="text-right">Total</th>' : ''}
+  </tr></thead>
+  <tbody>
+    ${itemRows}
+    ${showPrice ? `<tr class="total-row">
+      <td colspan="3" class="text-right">Order Total</td>
+      <td class="text-right">$${orderTotal.toFixed(2)}</td>
+    </tr>` : ''}
+  </tbody>
+</table>
+
+<div class="footer">
+  ${s.thankYou ? `<div class="thank-you">${escHtml(s.thankYou)}</div>` : ''}
+  ${s.footerEmail ? `<div>Questions? Contact us at ${escHtml(s.footerEmail)}</div>` : ''}
+  ${s.footerWeb ? `<div>${escHtml(s.footerWeb)}</div>` : ''}
+  ${s.footerNote ? `<div style="margin-top:6px;">${escHtml(s.footerNote)}</div>` : ''}
+</div>
+</body></html>`;
+}
+
+function _buildGiftSlipWith(s, shipTo, giftMsg, orderDate) {
+  const accent = s.accent || '#d4a853';
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gift Card</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f0e8;padding:40px;}
+.gift-card{background:#fff;border-radius:16px;padding:48px 40px;max-width:500px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8e0d0;}
+.gift-ornament{font-size:32px;margin-bottom:16px;color:${accent};letter-spacing:8px;}
+.gift-brand{font-size:20px;font-weight:800;color:#1a1a2e;margin-bottom:4px;}
+.gift-sub{font-size:11px;color:#999;text-transform:uppercase;letter-spacing:2px;margin-bottom:24px;}
+.gift-divider{width:60px;height:2px;background:${accent};margin:0 auto 24px;}
+.gift-to{font-size:12px;color:#888;margin-bottom:4px;}
+.gift-name{font-family:'Instrument Serif',serif;font-size:22px;font-style:italic;color:#333;margin-bottom:20px;}
+.gift-message{font-family:'Instrument Serif',serif;font-size:18px;font-style:italic;color:#555;line-height:1.7;padding:20px 24px;background:#faf8f3;border-radius:12px;margin-bottom:24px;min-height:80px;white-space:pre-line;border-left:3px solid ${accent};}
+.gift-from{font-size:13px;color:#888;margin-bottom:16px;}
+.gift-footer{font-size:10px;color:#bbb;margin-top:20px;}
+.gift-logo{max-height:48px;max-width:180px;object-fit:contain;margin:0 auto 12px;display:block;}
+@media print{body{background:#fff;padding:20px;}.gift-card{box-shadow:none;border:1px solid #ddd;}@page{margin:0.5in;}}
+</style></head><body>
+<div class="gift-card">
+  ${s.logoData ? `<img src="${s.logoData}" class="gift-logo">` : `<div class="gift-ornament">✦ ✦ ✦</div>`}
+  <div class="gift-brand">${escHtml(s.bizName || PSLIP_DEFAULTS.bizName)}</div>
+  <div class="gift-sub">A Gift For You</div>
+  <div class="gift-divider"></div>
+  ${shipTo ? `<div class="gift-name">${escHtml(shipTo.split('\n')[0])}</div>` : ''}
+  ${giftMsg ? `<div class="gift-message">${escHtml(giftMsg)}</div>` : `<div class="gift-message" style="color:#ccc;font-style:italic;">— with love —</div>`}
+  <div class="gift-footer">${escHtml(orderDate)}</div>
+</div>
+</body></html>`;
+}
+
 function printPackingSlip() {
   if (!slipSaleData) return;
   const { sale, orderItems } = slipSaleData;
@@ -6052,125 +6386,36 @@ function printPackingSlip() {
   setTimeout(() => win.print(), 400);
 }
 
+// v2.8.11: Delegates to _buildPackingSlipWith using saved customization settings.
+// Public signature unchanged — all existing callers work without modification.
 function buildPackingSlip(type, d) {
-  const showPrice = type === 'priced';
-  const items = d.items || [];
-  const orderTotal = items.reduce((s, i) => s + pf(i.total_revenue), 0);
-  const totalQty = items.reduce((s, i) => s + (i.qty_sold || 1), 0);
-
-  const itemRows = items.map(i => `
-    <tr>
-      <td>${escHtml(i.product_name)}</td>
-      <td class="text-right">${i.qty_sold || 1}</td>
-      ${showPrice ? `<td class="text-right">$${pf(i.sale_price).toFixed(2)}</td><td class="text-right">$${pf(i.total_revenue).toFixed(2)}</td>` : ''}
-    </tr>`).join('');
-
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Packing Slip</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#1a1a2e;padding:40px;max-width:700px;margin:0 auto;}
-.header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:20px;border-bottom:2px solid #d4a853;}
-.brand{font-size:24px;font-weight:800;color:#1a1a2e;letter-spacing:-0.5px;}
-.brand-sub{font-size:12px;color:#666;margin-top:4px;}
-.order-info{text-align:right;font-size:12px;color:#555;line-height:1.6;}
-.order-id{font-size:14px;font-weight:700;color:#1a1a2e;}
-.addresses{display:flex;justify-content:space-between;margin-bottom:28px;}
-.addr-block{flex:1;}
-.addr-label{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
-.addr-text{font-size:13px;line-height:1.6;color:#333;white-space:pre-line;}
-table{width:100%;border-collapse:collapse;margin-bottom:24px;}
-th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.5px;border-bottom:2px solid #e5e5e5;background:#fafafa;}
-td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
-.text-right{text-align:right;}
-.total-row td{font-weight:700;border-top:2px solid #d4a853;border-bottom:none;font-size:14px;}
-.summary{font-size:12px;color:#777;margin-bottom:16px;}
-.footer{text-align:center;padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;line-height:1.6;}
-.thank-you{font-size:16px;font-weight:700;color:#d4a853;margin-bottom:8px;}
-@media print{body{padding:20px;}@page{margin:0.5in;}}
-</style></head><body>
-<div class="header">
-  <div>
-    <div class="brand">Country Charm Decor</div>
-    <div class="brand-sub">Handcrafted Home D\u00e9cor</div>
-  </div>
-  <div class="order-info">
-    <div class="order-id">${escHtml(d.orderId)}</div>
-    <div>Date: ${escHtml(d.orderDate)}</div>
-    <div>Channel: ${escHtml(d.channel)}</div>
-  </div>
-</div>
-
-<div class="addresses">
-  <div class="addr-block">
-    <div class="addr-label">Ship From</div>
-    <div class="addr-text">Country Charm Decor\nOrlando, FL</div>
-  </div>
-  ${d.shipTo ? `<div class="addr-block" style="text-align:right;">
-    <div class="addr-label">Ship To</div>
-    <div class="addr-text">${escHtml(d.shipTo)}</div>
-  </div>` : ''}
-</div>
-
-<div class="summary">${items.length} item${items.length !== 1 ? 's' : ''} · ${totalQty} unit${totalQty !== 1 ? 's' : ''}</div>
-
-<table>
-  <thead><tr>
-    <th>Item</th>
-    <th class="text-right">Qty</th>
-    ${showPrice ? '<th class="text-right">Unit Price</th><th class="text-right">Total</th>' : ''}
-  </tr></thead>
-  <tbody>
-    ${itemRows}
-    ${showPrice ? `<tr class="total-row">
-      <td colspan="3" class="text-right">Order Total</td>
-      <td class="text-right">$${orderTotal.toFixed(2)}</td>
-    </tr>` : ''}
-  </tbody>
-</table>
-
-<div class="footer">
-  <div class="thank-you">Thank you for your order!</div>
-  <div>Questions? Contact us at countrycharm@email.com</div>
-  <div>www.countrycharm.com</div>
-</div>
-</body></html>`;
+  return _buildPackingSlipWith(getPslipSettings(), type, d);
 }
 
 function buildGiftSlip(shipTo, giftMsg, orderDate) {
-  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gift Card</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
-*{margin:0;padding:0;box-sizing:border-box;}
-body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#1a1a2e;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f5f0e8;padding:40px;}
-.gift-card{background:#fff;border-radius:16px;padding:48px 40px;max-width:500px;width:100%;text-align:center;box-shadow:0 4px 24px rgba(0,0,0,0.08);border:1px solid #e8e0d0;}
-.gift-ornament{font-size:32px;margin-bottom:16px;color:#d4a853;letter-spacing:8px;}
-.gift-brand{font-size:20px;font-weight:800;color:#1a1a2e;margin-bottom:4px;}
-.gift-sub{font-size:11px;color:#999;text-transform:uppercase;letter-spacing:2px;margin-bottom:24px;}
-.gift-divider{width:60px;height:2px;background:#d4a853;margin:0 auto 24px;}
-.gift-to{font-size:12px;color:#888;margin-bottom:4px;}
-.gift-name{font-family:'Instrument Serif',serif;font-size:22px;font-style:italic;color:#333;margin-bottom:20px;}
-.gift-message{font-family:'Instrument Serif',serif;font-size:18px;font-style:italic;color:#555;line-height:1.7;padding:20px 24px;background:#faf8f3;border-radius:12px;margin-bottom:24px;min-height:80px;white-space:pre-line;border-left:3px solid #d4a853;}
-.gift-from{font-size:13px;color:#888;margin-bottom:16px;}
-.gift-footer{font-size:10px;color:#bbb;margin-top:20px;}
-@media print{body{background:#fff;padding:20px;}.gift-card{box-shadow:none;border:1px solid #ddd;}@page{margin:0.5in;}}
-</style></head><body>
-<div class="gift-card">
-  <div class="gift-ornament">✦ ✦ ✦</div>
-  <div class="gift-brand">Country Charm Decor</div>
-  <div class="gift-sub">A Gift For You</div>
-  <div class="gift-divider"></div>
-  ${shipTo ? `<div class="gift-name">${escHtml(shipTo.split('\n')[0])}</div>` : ''}
-  ${giftMsg ? `<div class="gift-message">${escHtml(giftMsg)}</div>` : `<div class="gift-message" style="color:#ccc;font-style:italic;">— with love —</div>`}
-  <div class="gift-footer">${escHtml(orderDate)}</div>
-</div>
-</body></html>`;
+  return _buildGiftSlipWith(getPslipSettings(), shipTo, giftMsg, orderDate);
 }
 
 // Field helpers — get value from DOM if element exists, else return null
 function gv(id) { const el = $(id); return el ? el.value : null; }
 function gn(id) { const el = $(id); if (!el) return null; const v = el.value.trim(); if (v === '') return null; const n = parseFloat(v); return isNaN(n) ? null : n; }
 function ge(id) { return !!$(id); }
+
+// v2.8.11: Textarea stepper scroll helpers
+let _textareaScrollTimer = null;
+function startTextareaScroll(id, dir, ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  const el = $(id);
+  if (!el) return;
+  const step = 18; // one line-height-ish
+  const tick = () => { el.scrollTop += dir * step; };
+  tick(); // immediate feedback
+  stopTextareaScroll();
+  _textareaScrollTimer = setInterval(tick, 60);
+}
+function stopTextareaScroll() {
+  if (_textareaScrollTimer) { clearInterval(_textareaScrollTimer); _textareaScrollTimer = null; }
+}
 
 // ═══════════════════════════════════════════════════════════
 // UTILITIES
@@ -8698,6 +8943,9 @@ async function loadSettings() {
     state.emailTemplate = DEFAULT_EMAIL_TEMPLATE;
     console.log('Email template load skipped:', e.message);
   }
+
+  // v2.8.11: Hydrate packing slip customization UI (localStorage, not Supabase)
+  try { hydratePslipSettingsUI(); } catch(e) { console.log('Pslip settings hydrate skipped:', e.message); }
 }
 
 async function saveSettingsToDb() {
