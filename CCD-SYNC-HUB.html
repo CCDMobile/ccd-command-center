@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.12</title>
+    <title>CCD Sync Hub v4.4.13</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.12 — Clean Build Styles
+           CCD SYNC HUB v4.4.13 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.12 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.13 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -720,11 +720,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.12 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.13 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.12';
+    const SH_VERSION = 'v4.4.13';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1522,7 +1522,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.12-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return 'SyncHub-v4.4.13-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1746,7 +1746,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.12',
+                processedBy: 'Sync Hub v4.4.13',
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -6634,6 +6634,32 @@
         const channel = row.channel;
         
         console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
+        
+        // B7 fix v4.4.13: Re-read row status at entry to prevent duplicate processing
+        // from the cascade-path + poller race. Cascade inserts rows and immediately
+        // calls processSyncQueueRow(row, true). The poller, on its own timer, may also
+        // pick up the same row as status='pending' and call processSyncQueueRow(row).
+        // Both paths then push to the channel and both emit queue_push_success, producing
+        // duplicate activity_log entries (observed: SKU 90969 order ETSY-4035158809,
+        // queueId=488 logged at 19:09:28 and 19:09:29 — same row, 550ms apart).
+        //
+        // Fix: re-read the row's status from DB at entry. If it's no longer 'pending'
+        // (completed / failed / skipped / superseded), bail silently. No push, no log.
+        // If the precheck itself fails (network glitch, row gone), proceed — better a
+        // dup than a silent skip that could cost inventory accuracy.
+        try {
+            const { data: freshRow, error: rowErr } = await sbClient
+                .from('sync_queue')
+                .select('status')
+                .eq('id', row.id)
+                .single();
+            if (!rowErr && freshRow && freshRow.status !== 'pending') {
+                console.log(`[Sync Queue] ⏭️ B7 dedup: row id=${row.id} already ${freshRow.status} — skipping to prevent duplicate push`);
+                return;
+            }
+        } catch (precheckErr) {
+            console.warn(`[Sync Queue] B7 status precheck failed for id=${row.id}, proceeding anyway:`, precheckErr.message);
+        }
         
         // Check per-channel push toggle — respect Sync Hub's settings
         // v4.2.0: forceProcess=true bypasses this check (used by "Process & Push" button)
