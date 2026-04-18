@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.13</title>
+    <title>CCD Sync Hub v4.4.14</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.13 — Clean Build Styles
+           CCD SYNC HUB v4.4.14 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.13 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.14 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -458,6 +458,7 @@
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
         <button class="tab-btn" onclick="switchTab('settings')" id="tabSettings">⚙️ Settings</button>
         <button class="tab-btn" onclick="switchTab('shippo')" id="tabShippo">📦 Shippo</button>
+        <button class="tab-btn" onclick="switchTab('wayfair')" id="tabWayfair">🏠 Wayfair</button>
         <button class="tab-btn" onclick="switchTab('log')" id="tabLog">📋 Log</button>
     </div>
     
@@ -708,6 +709,118 @@
             </div>
         </div>
         
+        <!-- ==================== WAYFAIR TAB (v4.4.14) ==================== -->
+        <div class="tab-content" id="tab-wayfair">
+            <div class="card">
+                <div class="card-header">
+                    <h3>🏠 Wayfair Scheduled Inventory Feed (TRUE_UP)</h3>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <button class="btn btn-sm btn-secondary" onclick="loadTrueUpStatus()" id="btnTrueUpRefresh">↻ Refresh Status</button>
+                    </div>
+                </div>
+                <div class="card-body">
+
+                    <!-- Explainer strip -->
+                    <div id="trueUpIntro" style="padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 16px; font-size: 0.85rem; color: var(--text-dim); line-height: 1.5;">
+                        Wayfair requires a full inventory feed every 24 hours. This card manages the scheduled TRUE_UP heartbeat — the master switch triggers a server-side GAS timer that pushes every active Wayfair item at the selected cadence. The switch stays <strong>OFF</strong> until allocation cleanup is complete; you can test the plumbing safely using the <em>Run Now</em> section below with specific SKUs (sent as DIFFERENTIAL, not TRUE_UP).
+                    </div>
+
+                    <!-- Status + Config panel -->
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+
+                        <!-- LEFT: Schedule controls -->
+                        <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem;">⚙️ Schedule Configuration</h4>
+
+                            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                                <label style="font-size: 0.9rem; font-weight: 500;">Master switch</label>
+                                <label class="switch-inline" style="cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" id="trueUpEnabled" style="transform: scale(1.3);" />
+                                    <span id="trueUpEnabledLabel" style="font-size: 0.85rem; color: var(--text-dim);">OFF</span>
+                                </label>
+                            </div>
+
+                            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                                <label style="font-size: 0.9rem; font-weight: 500;">Cadence</label>
+                                <select id="trueUpCadence" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.85rem;">
+                                    <option value="6">Every 6 hours (4×/day)</option>
+                                    <option value="8" selected>Every 8 hours (3×/day)</option>
+                                    <option value="24">Every 24 hours (1×/day)</option>
+                                </select>
+                            </div>
+
+                            <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border);">
+                                <label style="font-size: 0.9rem; font-weight: 500;" title="Proxy-side constant — not editable from here for security">Supplier ID</label>
+                                <span id="trueUpSupplierId" style="font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; color: var(--text-dim);">—</span>
+                            </div>
+
+                            <div style="margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap;">
+                                <button class="btn btn-primary" onclick="saveTrueUpConfig()" id="btnTrueUpSave">💾 Save Config</button>
+                                <span id="trueUpSaveStatus" style="font-size: 0.8rem; color: var(--text-dim); align-self: center;"></span>
+                            </div>
+                        </div>
+
+                        <!-- RIGHT: Last-run status -->
+                        <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+                            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem;">📊 Last Run</h4>
+
+                            <div style="display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; font-size: 0.85rem;">
+                                <div style="color: var(--text-dim);">Status:</div>
+                                <div id="trueUpLastStatus" style="font-weight: 600;">—</div>
+
+                                <div style="color: var(--text-dim);">When:</div>
+                                <div id="trueUpLastAt" style="font-family: 'JetBrains Mono', monospace; font-size: 0.82rem;">—</div>
+
+                                <div style="color: var(--text-dim);">Feed kind:</div>
+                                <div id="trueUpLastKind">—</div>
+
+                                <div style="color: var(--text-dim);">Items:</div>
+                                <div id="trueUpLastItemCount">—</div>
+
+                                <div style="color: var(--text-dim);">Handle:</div>
+                                <div id="trueUpLastHandle" style="font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; word-break: break-all;">—</div>
+
+                                <div style="color: var(--text-dim);">Triggered by:</div>
+                                <div id="trueUpLastTriggered">—</div>
+
+                                <div style="color: var(--text-dim);">Duration:</div>
+                                <div id="trueUpLastDuration">—</div>
+                            </div>
+
+                            <div id="trueUpLastError" style="display: none; margin-top: 10px; padding: 8px 10px; background: #451a1a; border: 1px solid #7f1d1d; border-radius: 6px; color: #fca5a5; font-size: 0.8rem;"></div>
+                        </div>
+                    </div>
+
+                    <!-- TEST / AD-HOC RUN panel -->
+                    <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+                        <h4 style="margin: 0 0 10px 0; font-size: 0.95rem;">▶ Test / Ad-Hoc Run</h4>
+                        <div style="font-size: 0.8rem; color: var(--text-dim); margin-bottom: 10px; line-height: 1.5;">
+                            Comma-separated SKUs → sent as <strong>DIFFERENTIAL</strong> (safe partial push against known-good items).<br>
+                            Leave blank → full <strong>TRUE_UP</strong> catalog push (only do this once allocations are verified).
+                        </div>
+                        <textarea id="trueUpTestSkus" placeholder="SKU1, SKU2, SKU3" rows="2" style="width: 100%; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; resize: vertical; box-sizing: border-box;"></textarea>
+                        <div style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <button class="btn btn-primary" onclick="runTrueUpNow()" id="btnTrueUpRun">▶ Run Now</button>
+                            <button class="btn btn-sm btn-secondary" onclick="document.getElementById('trueUpTestSkus').value=''">Clear</button>
+                            <span id="trueUpRunStatus" style="font-size: 0.8rem; color: var(--text-dim);"></span>
+                        </div>
+                    </div>
+
+                    <!-- RECENT RUNS history -->
+                    <div style="background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 16px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                            <h4 style="margin: 0; font-size: 0.95rem;">📜 Recent Runs (last 20)</h4>
+                            <button class="btn btn-sm btn-secondary" onclick="loadTrueUpHistory()" id="btnTrueUpHistoryRefresh">↻ Refresh</button>
+                        </div>
+                        <div id="trueUpHistoryBody" style="max-height: 420px; overflow-y: auto; font-size: 0.82rem;">
+                            <div style="text-align: center; color: var(--text-dim); padding: 20px 0;">Click Refresh or open this tab to load history.</div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
         <!-- ==================== LOG TAB ==================== -->
         <div class="tab-content" id="tab-log">
             <div style="display: flex; gap: 10px; margin-bottom: 12px;">
@@ -720,11 +833,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.13 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.14 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.13';
+    const SH_VERSION = 'v4.4.14';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -2831,20 +2944,13 @@
 
     // === autoAdjustChannelAllocations ===
     // ============================================================================
-    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.4.12 - SHARED POOL, DECREMENT + CAP)
+    // CHANNEL ALLOCATION AUTO-ADJUSTMENT (v4.4.6 - INDEPENDENT CHANNELS)
     // Ensures channel allocations stay valid after order processing.
     // Rules (shared inventory model):
-    // - Each online channel (etsy, wix, wayfair) has INDEPENDENT VALUES (different
-    //   per-channel quantities are allowed and preserved).
-    // - All online channels share one pool: each ≤ (Warehouse Qty − TM Qty).
-    // - On any online sale, every online channel decrements by the sale qty,
-    //   preserving relative differences between channels (Rule 1.5). The source
-    //   channel was already deducted upstream; this function decrements the rest.
-    // - Floor-at-zero: channels already at 0 are left alone (no log noise).
-    // - After decrementing, each channel is capped at (Warehouse Qty − TM Qty)
-    //   in case the decrement still leaves it over the pool (Rule 2).
-    // - TreasureMarts is physical location; reduces online pool but is NEVER
-    //   decremented from online sales.
+    // - Each online channel (etsy, wix, wayfair) is INDEPENDENT
+    // - Each online channel ≤ (Warehouse Qty − TM Qty)
+    // - TreasureMarts is physical location, reduces available online pool
+    // - Source channel is deducted externally by processOrder; this function only CAPS
     // ============================================================================
     function autoAdjustChannelAllocations(product, sourceChannel = null, deductedQty = 0) {
         if (!product) return { adjusted: false, changes: [], parAlerts: [] };
@@ -2922,18 +3028,13 @@
         let etsyQty = parseInt(channels.etsy) || 0;
         let wixQty = parseInt(channels.wix) || 0;
         
-        // Rule 0: REMOVED in v4.4.5, PARTIALLY RESTORED in v4.4.11, FULLY RESTORED in v4.4.12
-        // v4.4.4 introduced an additive "reduce non-source online channels by sold qty"
-        // block here — this was actually CORRECT behavior under the shared inventory
-        // model. It was removed in v4.4.5 based on a partially-correct rationale
-        // (that etsy/wix auto-decrement at source), which only holds for same-platform
-        // sales. Removing it caused silent cross-channel drift:
-        //   - Wayfair drift on Etsy/Wix sales (detected S18, fixed v4.4.11 Rule 1.5)
-        //   - Wix drift on Etsy sales, Etsy drift on Wix sales, Etsy/Wix drift on
-        //     Wayfair sales (detected S22, fixed v4.4.12 Rule 1.5 extension)
-        // Current behavior: see Rule 1.5 below, which is the correct evolution of
-        // the original Rule 0 intent (decrement all non-source channels by sale qty),
-        // with explicit floor-at-zero and source-skip guards.
+        // Rule 0: REMOVED in v4.4.5
+        // v4.4.4 briefly introduced an additive "reduce non-source online channels by sold qty"
+        // block here. It directly contradicted the shared inventory model (S12 architecture):
+        // online channels do NOT subtract per-sale — they are CAPPED at (warehouse − TM) by
+        // Rule 2 below. Rule 0 caused channels that were already under cap (e.g. wix=2 with
+        // warehouse 8→7) to be wrongly decremented, producing incorrect cascade pushes.
+        // See: S17 bug report, orders ETSY-4029158469 (380-623) and ETSY-4025622968 (93112).
         
         // Rule 1: REMOVED in v4.4.6
         // Previously forced etsy === wix on every sale (and on Wayfair sales, forced both
@@ -2950,140 +3051,97 @@
         // ║   🔒 PROTECTED BUSINESS LOGIC — DO NOT REMOVE OR MODIFY WITHOUT REVIEW    ║
         // ║                                                                            ║
         // ║   @invariant     ECOSYSTEM-001                                            ║
-        // ║   @rule          Rule 1.5 — Online cross-channel decrement (ALL channels) ║
-        // ║   @added         v4.4.11 (S18, 2026-04-15)  — Wayfair only                ║
-        // ║   @extended      v4.4.12 (S22, 2026-04-17)  — Etsy + Wix + Wayfair        ║
-        // ║   @restored-from v4.4.4 (was Rule 0; removed in v4.4.5, partially          ║
-        // ║                  regressed in v4.4.5–v4.4.11)                              ║
+        // ║   @rule          Rule 1.5 — Wayfair cross-channel decrement                ║
+        // ║   @added         v4.4.11 (S18, 2026-04-15)                                ║
+        // ║   @restored-from v4.4.4 (was Rule 0; removed in v4.4.5, regressed Wayfair) ║
         // ║                                                                            ║
         // ║   WHY THIS EXISTS:                                                        ║
-        // ║   Online channel listings do NOT know about each other's sales.           ║
-        // ║     - Etsy.com auto-decrements its own listing on its own sales ONLY.     ║
-        // ║     - Wix.com auto-decrements its own listing on its own sales ONLY.      ║
-        // ║     - Wayfair has NO auto-decrement at all; we push via DIFFERENTIAL      ║
-        // ║       feeds.                                                              ║
-        // ║   So on any sale, every OTHER online channel is blind to it. Without      ║
-        // ║   an explicit decrement, the blind channels keep showing pre-sale qty     ║
-        // ║   until the next push — drift accumulates until oversells happen.        ║
-        // ║                                                                            ║
-        // ║   THIS RULE DECREMENTS each non-source online channel by the sale qty,    ║
-        // ║   floored at 0. The source channel is skipped because it was already      ║
-        // ║   decremented upstream (processOrder main path, or bundle cascade).       ║
-        // ║                                                                            ║
-        // ║   DOES THIS FORCE etsy_qty == wix_qty? NO. Decrementing each by the       ║
-        // ║   same amount PRESERVES relative differences (see ECOSYSTEM-002): if      ║
-        // ║   pre-sale etsy=5 and wix=8, post-sale etsy=4 and wix=7 — still            ║
-        // ║   independent values, just sharing the sale signal. The syncEtsyWix       ║
-        // ║   mirror that forced equality was removed in S17 and stays removed.       ║
+        // ║   Wayfair listings have NO auto-decrement. Etsy.com and Wix.com auto-     ║
+        // ║   decrement their own listings when their own sale happens, but Wayfair   ║
+        // ║   is a snapshot we control via DIFFERENTIAL feeds. If we don't push the   ║
+        // ║   decremented quantity, Wayfair shows the pre-sale qty until next sale.   ║
         // ║                                                                            ║
         // ║   IF YOU REMOVE THIS BLOCK:                                               ║
-        // ║   Every online sale will silently leave the non-source online channels    ║
-        // ║   1 unit higher than they should be. Drift accumulates. Oversells occur. ║
+        // ║   Every Etsy or Wix sale will silently leave Wayfair's quantity 1 unit    ║
+        // ║   higher than it should be. Drift accumulates until oversells happen.     ║
         // ║   Bug is INVISIBLE in SH logs (sync_queue still shows "completed").       ║
-        // ║   Bug is INVISIBLE in V2 (flat qty columns look decremented via cap       ║
-        // ║   logic, but only for channels that happened to be at/above cap).         ║
-        // ║   Bug is only visible by comparing live listing qty on each platform to   ║
-        // ║   DB state across many sales.                                             ║
-        // ║                                                                            ║
-        // ║   IF YOU REMOVE ANY SINGLE CHANNEL FROM THE LOOP:                         ║
-        // ║   Same regression for that one channel. This is exactly how v4.4.5        ║
-        // ║   broke Wayfair (fixed in v4.4.11) and then how v4.4.5–v4.4.11 broke      ║
-        // ║   the Etsy↔Wix pair (fixed in v4.4.12). See Regression Registry           ║
-        // ║   ECOSYSTEM-001 for full history.                                         ║
+        // ║   Bug is INVISIBLE in V2 (item.wayfair_qty looks decremented in DB).      ║
+        // ║   Bug is only visible in Wayfair Partner Home — and only after the 45-min ║
+        // ║   feed processing delay, so it lags real-time observation by an hour.     ║
         // ║                                                                            ║
         // ║   IF SOMEONE ASKS YOU TO "CLEAN THIS UP" OR "SIMPLIFY":                  ║
-        // ║   Stop. Read the history above and the ECOSYSTEM-001 registry entry.     ║
-        // ║   The "etsy/wix auto-decrement at source" reasoning that caused the      ║
-        // ║   v4.4.5 regression is ONLY true for sales ON that same platform.         ║
+        // ║   Stop. Read the historical comment block below. Read v4.4.4's Rule 0     ║
+        // ║   and the S17 handoff explaining why Rule 0 was removed. The reasoning    ║
+        // ║   for removing Rule 0 was correct for etsy/wix and WRONG for Wayfair.    ║
+        // ║   This rule MUST remain in place until Wayfair adds auto-decrement to    ║
+        // ║   their dropship API (which they have not announced).                     ║
         // ║                                                                            ║
         // ║   TO VERIFY THIS RULE IS WORKING:                                         ║
-        // ║   1. Pick item with etsy_qty>0 AND wix_qty>0 AND wayfair_qty>0, where     ║
-        // ║      all three are strictly under (warehouse - TM)                        ║
-        // ║   2. Process an Etsy order for it (qty 1)                                 ║
-        // ║   3. Expect activity_log channel_auto_adjust entry with 2 adjustments:    ║
-        // ║      wix N→N-1, wayfair M→M-1                                             ║
-        // ║   4. Expect console lines:                                                 ║
-        // ║      "[Rule 1.5 v4.4.12] wix decrement: <SKU> N → N-1 ..."               ║
-        // ║      "[Rule 1.5 v4.4.12] wayfair decrement: <SKU> M → M-1 ..."           ║
-        // ║   5. Expect sync_queue: wix row qty=N-1, wayfair row qty=M-1              ║
-        // ║   6. Repeat for Wix sale → expect etsy + wayfair decrement                ║
-        // ║   7. Repeat for Wayfair sale → expect etsy + wix decrement                ║
+        // ║   1. Pick item where wayfair_qty > 0 AND wayfair_qty < (warehouse - TM)   ║
+        // ║   2. Process an Etsy or Wix order for it                                  ║
+        // ║   3. Browser console: expect log line                                     ║
+        // ║      "[Rule 1.5 v4.4.11] Wayfair decrement: <SKU> N → N-1 ..."           ║
+        // ║   4. sync_queue: expect Wayfair row with quantity = N-1                   ║
+        // ║   5. Wayfair Partner Home (after 45+ min): expect N-1                     ║
         // ║                                                                            ║
-        // ║   AUTOMATED INVARIANT TEST: testRule1_5_CrossChannelDecrement()           ║
-        // ║   NOT YET BUILT (phantom claim from S19/S20 drift — corrected in S22).   ║
-        // ║   Planned: 7 cases — 3× per-source firings, 1× same-source skip (no       ║
-        // ║   double-decrement), 1× floor-at-zero, 1× multi-unit qty, 1× bundle       ║
-        // ║   cascade with sourceChannel=null (all three decrement).                  ║
+        // ║   AUTOMATED INVARIANT TEST: testRule1_5_WayfairDecrement()                ║
+        // ║   (when invariant test suite is built — currently planned for S19)        ║
         // ║                                                                            ║
         // ╚════════════════════════════════════════════════════════════════════════════╝
         
-        // Rule 1.5 (v4.4.12): ALL-channel cross-channel decrement — REGRESSION FIX
+        // Rule 1.5 (v4.4.11): Wayfair-only cross-channel decrement — REGRESSION FIX
         // ================================================================================
-        // On any online sale, every non-source online channel is blind to the sale
-        // and must be explicitly decremented by the sale qty. The source channel was
-        // already deducted upstream in processOrder (main path ~line 3641) or the
-        // bundle cascade (~line 3847).
+        // Wayfair listings do NOT auto-reduce on Etsy/Wix sales. Wayfair's inventory is
+        // a snapshot we control via DIFFERENTIAL feeds — they show whatever quantity we
+        // last pushed and never decrement on their own when sales happen on other channels.
         //
-        // Pre-v4.4.12 this block covered Wayfair only. The v4.4.5 removal of the
-        // original Rule 0 used a partially-correct rationale ("etsy/wix auto-decrement
-        // at source") that only held for same-platform sales. The Wayfair half was
-        // fixed in v4.4.11; the Etsy/Wix halves were missed until S22 when PO testing
-        // on SKU 90969 (ETSY-4035158809, 2026-04-17) showed Wix not decrementing on
-        // an Etsy sale. See ECOSYSTEM-001 registry entry for full history.
+        // Etsy and Wix are different: each marketplace auto-decrements its own listing
+        // when its own sale happens, AND Rule 2 below caps them at (warehouse − TM) which
+        // handles cross-channel sales (e.g., Etsy sale → warehouse drops → Etsy/Wix caps
+        // drop → Etsy/Wix get capped down on next push).
         //
-        // Historical forensics (Wayfair-only era, preserved for regression context):
-        //   v4.4.4 had Rule 0 covering all three channels. v4.4.5 removed it. Wayfair
-        //   regression was detected 2026-04-15 via v4.4.4-vs-v4.4.9 diff after Mary
-        //   noticed Wayfair Partner Home not reflecting Etsy/Wix sales for SKU 530042
-        //   (wayfair=10, warehouse=11, TM=1, so Wayfair happened to be at cap and
-        //   Rule 2 was masking the bug for at-cap cases). v4.4.11 restored Wayfair-
-        //   only coverage with the "Rule 1.5" name. v4.4.12 extends to all three.
+        // Wayfair needs explicit decrement because cap-only is insufficient:
+        // when wayfair_qty is strictly less than (warehouse − TM), Rule 2 doesn't touch it,
+        // and Wayfair's online listing keeps showing the pre-sale quantity until the next
+        // explicit decrement. Result: silent inventory drift on Wayfair, +1 unit per
+        // non-Wayfair sale, accumulating until oversells happen.
+        //
+        // History: v4.4.4's Rule 0 used to handle this for ALL channels (etsy/wix/wayfair).
+        // S17 removed Rule 0 in v4.4.5 because it was wrongly decrementing etsy/wix on
+        // each others' sales (etsy/wix don't need it, they auto-decrement at source).
+        // But Wayfair DID need it, and removing Rule 0 silently broke Wayfair cascades.
+        // Symptom: SH order processing succeeds, sync_queue Wayfair row writes correct
+        // updated qty (Rule 2 still caps when wayfair was at-or-above cap), Wayfair Partner
+        // Home updates correctly for orders where wayfair was at cap — but for orders where
+        // wayfair was below cap, the "correct updated qty" is actually the pre-sale qty,
+        // and Wayfair never gets the new value.
+        //
+        // Detected: 2026-04-15 via v4.4.4-vs-v4.4.9 diff after Mary noticed Wayfair Partner
+        // Home not reflecting recent Etsy/Wix sales for SKU 530042 (wayfair_qty was 10,
+        // warehouse 11, TM 1 → wayfair was AT cap, so Rule 2 happened to catch that case).
+        //
+        // Skipped when sourceChannel === 'wayfair' — the source-channel deduction step in
+        // processOrder (line ~3543) already reduced channels.wayfair in that case. Without
+        // this guard, we'd double-decrement on Wayfair-sourced orders.
         // ================================================================================
-        // v4.4.12 (S22): Rule 1.5 EXTENDED to all three online channels.
-        //   On any online sale, every OTHER online channel's allocation must drop by
-        //   the sale qty. The source channel was already deducted upstream (main order
-        //   path at line ~3641, bundle cascade at line ~3847), so skip it here.
-        //   Floor rule: if a channel's current qty is already 0, do not adjust.
-        //
-        //   Why this covers all three (not just Wayfair):
-        //     - Etsy sale:    Etsy platform auto-decrements Etsy listing; Wix and
-        //                     Wayfair listings are blind to the sale — both need
-        //                     explicit decrement here.
-        //     - Wix sale:     Wix platform auto-decrements Wix listing; Etsy and
-        //                     Wayfair listings are blind — both need decrement.
-        //     - Wayfair sale: Neither Etsy nor Wix knows the sale happened — both
-        //                     need decrement. (Wayfair itself was already deducted
-        //                     upstream.)
-        //
-        //   Pre-v4.4.12 (v4.4.11) this block covered Wayfair only — Etsy and Wix
-        //   drifted silently on each other's sales. See ECOSYSTEM-001 sentinel above
-        //   and Regression Registry S22 correction for full history.
-        if (deductedQty > 0) {
-            const onlineChannels = ['etsy', 'wix', 'wayfair'];
-            for (const ch of onlineChannels) {
-                if (ch === sourceChannel) continue;  // source already deducted upstream
-                const oldQty = parseInt(channels[ch]) || 0;
-                if (oldQty <= 0) continue;           // floor rule — skip zeros silently
-                const newQty = Math.max(0, oldQty - deductedQty);
-                if (newQty !== oldQty) {
-                    const reason = (ch === 'wayfair')
-                        ? 'cross-channel sale (wayfair has no auto-decrement)'
-                        : `cross-channel sale (${ch} blind to ${sourceChannel || 'non-source'} sale)`;
-                    adjustments.changes.push({ channel: ch, from: oldQty, to: newQty, reason });
-                    channels[ch] = newQty;
+        if (deductedQty > 0 && sourceChannel !== 'wayfair') {
+            const oldWayfair = parseInt(channels.wayfair) || 0;
+            if (oldWayfair > 0) {
+                const newWayfair = Math.max(0, oldWayfair - deductedQty);
+                if (newWayfair !== oldWayfair) {
+                    adjustments.changes.push({
+                        channel: 'wayfair',
+                        from: oldWayfair,
+                        to: newWayfair,
+                        reason: 'cross-channel sale (wayfair has no auto-decrement)'
+                    });
+                    channels.wayfair = newWayfair;
                     adjustments.adjusted = true;
-                    console.log(`[Rule 1.5 v4.4.12] ${ch} decrement: ${debugLog.sku} ${oldQty} → ${newQty} (sale on ${sourceChannel || 'none'}, qty ${deductedQty})`);
+                    console.log(`[Rule 1.5 v4.4.11] Wayfair decrement: ${debugLog.sku} ${oldWayfair} → ${newWayfair} (sale on ${sourceChannel}, qty ${deductedQty})`);
                 }
             }
         }
         // ╚══════════════════ END PROTECTED — Rule 1.5 (ECOSYSTEM-001) ═══════════════╝
-        
-        // v4.4.12: Refresh etsyQty/wixQty locals after Rule 1.5 mutated channels.
-        // Rule 2 below uses these locals to decide whether to cap. Without this refresh,
-        // a stale local could trigger a false "exceeds warehouse" adjustment on a channel
-        // my Rule 1.5 already decremented below the cap, producing a duplicate log entry.
-        etsyQty = parseInt(channels.etsy) || 0;
-        wixQty = parseInt(channels.wix) || 0;
         
         // Rule 2: Cap each online channel independently at (warehouse − TM).
         // v4.4.6: etsy and wix are now independent — each checked separately against the cap.
@@ -6028,6 +6086,413 @@
 
 
     // ============================================================
+    // WAYFAIR TRUE_UP SCHEDULED FEED — UI (v4.4.14)
+    // ------------------------------------------------------------
+    // Manages the scheduled TRUE_UP inventory feed card on the
+    // Wayfair tab. Talks to Wayfair Proxy v1.3.0 actions:
+    //   getTrueUpStatus, setupTrueUpTrigger, disableTrueUpTrigger,
+    //   runTrueUpNow. Also reads activity_log for run history.
+    //
+    // Design principle: nothing is pushed to Wayfair unless Paul
+    // clicks a button. Loading this card is read-only.
+    // ============================================================
+
+    const TRUEUP_STATE = {
+        loaded: false,
+        loading: false,
+        lastConfig: null
+    };
+
+    async function loadTrueUpStatus() {
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+
+        if (!url) {
+            _trueUpShowConfigError('Wayfair proxy URL not configured — set it in Settings → Proxy URLs.');
+            return;
+        }
+        if (!key) {
+            _trueUpShowConfigError('CCD API key not configured — set it in Settings → API Keys.');
+            return;
+        }
+
+        TRUEUP_STATE.loading = true;
+        _trueUpSetSaveStatus('Loading…', 'info');
+
+        try {
+            const result = await fetchOrJsonp(url, {
+                action: 'getTrueUpStatus',
+                key: key
+            });
+
+            if (!result || !result.success) {
+                const errMsg = (result && (result.error || result.code)) || 'Unknown error';
+                _trueUpShowConfigError(`Status fetch failed: ${errMsg}`);
+                addLog(`⚠️ TRUE_UP status fetch failed: ${errMsg}`, 'warning');
+                return;
+            }
+
+            TRUEUP_STATE.lastConfig = result.config || {};
+            TRUEUP_STATE.loaded = true;
+            _trueUpRenderConfig(result.config || {});
+            _trueUpSetSaveStatus('✓ Loaded', 'ok');
+            setTimeout(() => _trueUpSetSaveStatus('', ''), 2500);
+        } catch (err) {
+            _trueUpShowConfigError(`Status fetch threw: ${err.message}`);
+            addLog(`⚠️ TRUE_UP status fetch error: ${err.message}`, 'warning');
+        } finally {
+            TRUEUP_STATE.loading = false;
+        }
+    }
+
+    function _trueUpRenderConfig(cfg) {
+        const $ = (id) => document.getElementById(id);
+
+        // Schedule controls
+        const enabled = !!cfg.enabled;
+        if ($('trueUpEnabled')) $('trueUpEnabled').checked = enabled;
+        if ($('trueUpEnabledLabel')) {
+            $('trueUpEnabledLabel').textContent = enabled ? 'ON' : 'OFF';
+            $('trueUpEnabledLabel').style.color = enabled ? 'var(--success, #22c55e)' : 'var(--text-dim)';
+        }
+
+        const cadence = String(cfg.cadence_hours || 8);
+        if ($('trueUpCadence')) $('trueUpCadence').value = cadence;
+
+        if ($('trueUpSupplierId')) {
+            $('trueUpSupplierId').textContent = cfg.supplier_id != null ? String(cfg.supplier_id) : '—';
+        }
+
+        // Last-run panel
+        const status = cfg.last_run_status || '—';
+        const statusEl = $('trueUpLastStatus');
+        if (statusEl) {
+            if (status === 'success')        { statusEl.textContent = '✅ Success';  statusEl.style.color = '#22c55e'; }
+            else if (status === 'failed')    { statusEl.textContent = '❌ Failed';   statusEl.style.color = '#ef4444'; }
+            else if (status === 'skipped')   { statusEl.textContent = '⏭️ Skipped';  statusEl.style.color = '#eab308'; }
+            else if (status === 'config_load_failed') { statusEl.textContent = '⚠️ Config load failed'; statusEl.style.color = '#ef4444'; }
+            else                             { statusEl.textContent = '—';          statusEl.style.color = 'var(--text-dim)'; }
+        }
+        if ($('trueUpLastAt'))         $('trueUpLastAt').textContent         = cfg.last_run_at         ? _trueUpFmtIso(cfg.last_run_at) : '—';
+        if ($('trueUpLastKind'))       $('trueUpLastKind').textContent       = cfg.last_run_feed_kind  || '—';
+        if ($('trueUpLastItemCount'))  $('trueUpLastItemCount').textContent  = (cfg.last_run_item_count != null) ? String(cfg.last_run_item_count) : '—';
+        if ($('trueUpLastHandle'))     $('trueUpLastHandle').textContent     = cfg.last_run_handle     || '—';
+        if ($('trueUpLastTriggered'))  $('trueUpLastTriggered').textContent  = cfg.last_run_triggered_by || '—';
+        if ($('trueUpLastDuration'))   $('trueUpLastDuration').textContent   = (cfg.last_run_duration_ms != null) ? `${cfg.last_run_duration_ms} ms` : '—';
+
+        const errEl = $('trueUpLastError');
+        if (errEl) {
+            if (cfg.last_run_error) {
+                errEl.textContent = `Last error: ${cfg.last_run_error}`;
+                errEl.style.display = 'block';
+            } else {
+                errEl.style.display = 'none';
+                errEl.textContent = '';
+            }
+        }
+
+        // Wire the toggle label live as user flips the checkbox
+        const toggleEl = $('trueUpEnabled');
+        if (toggleEl && !toggleEl.dataset.listenerWired) {
+            toggleEl.addEventListener('change', () => {
+                const on = toggleEl.checked;
+                const lbl = $('trueUpEnabledLabel');
+                if (lbl) {
+                    lbl.textContent = on ? 'ON (unsaved)' : 'OFF (unsaved)';
+                    lbl.style.color = on ? 'var(--warning, #eab308)' : 'var(--warning, #eab308)';
+                }
+            });
+            toggleEl.dataset.listenerWired = '1';
+        }
+    }
+
+    function _trueUpShowConfigError(msg) {
+        const el = document.getElementById('trueUpLastError');
+        if (el) {
+            el.textContent = msg;
+            el.style.display = 'block';
+        }
+        _trueUpSetSaveStatus('', '');
+    }
+
+    function _trueUpSetSaveStatus(msg, kind) {
+        const el = document.getElementById('trueUpSaveStatus');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.style.color = (kind === 'ok')   ? '#22c55e'
+                       : (kind === 'error') ? '#ef4444'
+                       : (kind === 'info')  ? 'var(--text-dim)'
+                       : 'var(--text-dim)';
+    }
+
+    function _trueUpFmtIso(iso) {
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return iso;
+            // YYYY-MM-DD HH:MM UTC format for compact display
+            const pad = (n) => String(n).padStart(2, '0');
+            return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())} UTC`;
+        } catch (e) {
+            return iso;
+        }
+    }
+
+    /**
+     * Save Config button handler.
+     * - If enabled=true  → calls setupTrueUpTrigger (registers/updates GAS trigger)
+     * - If enabled=false → calls disableTrueUpTrigger (removes GAS trigger)
+     * Either way, the proxy persists the result to settings.wayfair_trueup_config.
+     */
+    async function saveTrueUpConfig() {
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+
+        if (!url || !key) {
+            _trueUpSetSaveStatus('⚠️ Proxy URL or API key missing', 'error');
+            return;
+        }
+
+        const enabled = document.getElementById('trueUpEnabled').checked;
+        const cadence = parseInt(document.getElementById('trueUpCadence').value) || 8;
+
+        if (![6, 8, 24].includes(cadence)) {
+            _trueUpSetSaveStatus(`⚠️ Invalid cadence ${cadence}h`, 'error');
+            return;
+        }
+
+        // Belt + suspenders confirmation when turning ON
+        if (enabled) {
+            const proceed = confirm(
+                `⚠️ TURN ON WAYFAIR TRUE_UP?\n\n` +
+                `This will register a GAS trigger that pushes the FULL inventory\n` +
+                `catalog to Wayfair every ${cadence} hours as a TRUE_UP feed.\n\n` +
+                `Before flipping this on:\n` +
+                `  • All wayfair_qty values in V2 should be verified correct\n` +
+                `  • You should have tested first via the Run Now section\n` +
+                `  • Partner Home cross-check should be clean\n\n` +
+                `Proceed?`
+            );
+            if (!proceed) {
+                _trueUpSetSaveStatus('Cancelled', 'info');
+                return;
+            }
+        }
+
+        _trueUpSetSaveStatus('Saving…', 'info');
+        document.getElementById('btnTrueUpSave').disabled = true;
+
+        try {
+            const action = enabled ? 'setupTrueUpTrigger' : 'disableTrueUpTrigger';
+            const params = enabled
+                ? { action: action, key: key, hours: cadence }
+                : { action: action, key: key };
+
+            const result = await fetchOrJsonp(url, params);
+
+            if (!result || !result.success) {
+                const errMsg = (result && result.error) || 'Unknown error';
+                _trueUpSetSaveStatus(`❌ ${errMsg}`, 'error');
+                addLog(`⚠️ TRUE_UP save failed: ${errMsg}`, 'warning');
+                return;
+            }
+
+            if (enabled) {
+                const nextRun = result.nextRun ? _trueUpFmtIso(result.nextRun) : '—';
+                _trueUpSetSaveStatus(`✅ Enabled (${cadence}h) — next run ~${nextRun}`, 'ok');
+                addLog(`✅ TRUE_UP enabled @ ${cadence}h cadence (trigger registered)`, 'success');
+            } else {
+                _trueUpSetSaveStatus(`✅ Disabled (${result.removedTriggers || 0} trigger(s) removed)`, 'ok');
+                addLog(`🛑 TRUE_UP disabled (${result.removedTriggers || 0} trigger(s) removed)`, 'info');
+            }
+
+            // Reload status to show fresh state
+            setTimeout(() => loadTrueUpStatus(), 800);
+        } catch (err) {
+            _trueUpSetSaveStatus(`❌ ${err.message}`, 'error');
+            addLog(`⚠️ TRUE_UP save error: ${err.message}`, 'warning');
+        } finally {
+            document.getElementById('btnTrueUpSave').disabled = false;
+        }
+    }
+
+    /**
+     * Run Now button handler.
+     * If the SKU textarea is non-empty → DIFFERENTIAL push on those SKUs only.
+     * If blank → full TRUE_UP push (requires second-tier confirmation).
+     */
+    async function runTrueUpNow() {
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+
+        if (!url || !key) {
+            document.getElementById('trueUpRunStatus').textContent = '⚠️ Proxy URL or API key missing';
+            document.getElementById('trueUpRunStatus').style.color = '#ef4444';
+            return;
+        }
+
+        const raw = (document.getElementById('trueUpTestSkus').value || '').trim();
+        const skus = raw.length
+            ? raw.split(',').map(s => s.trim()).filter(s => s.length > 0)
+            : [];
+
+        const runStatusEl = document.getElementById('trueUpRunStatus');
+        runStatusEl.style.color = 'var(--text-dim)';
+
+        // Confirmation tiers
+        if (skus.length === 0) {
+            // Full TRUE_UP — triple-check
+            const proceed = confirm(
+                `⚠️ RUN FULL TRUE_UP NOW?\n\n` +
+                `This pushes EVERY active Wayfair item to Wayfair as the\n` +
+                `authoritative TRUE_UP feed. Any qty discrepancies in V2 will\n` +
+                `overwrite Wayfair's current state.\n\n` +
+                `Only do this if allocation cleanup is complete.\n\n` +
+                `Proceed?`
+            );
+            if (!proceed) {
+                runStatusEl.textContent = 'Cancelled';
+                return;
+            }
+        } else if (skus.length > 10) {
+            const proceed = confirm(
+                `About to DIFFERENTIAL-push ${skus.length} SKUs to Wayfair.\n\n` +
+                `Proceed?`
+            );
+            if (!proceed) {
+                runStatusEl.textContent = 'Cancelled';
+                return;
+            }
+        }
+
+        runStatusEl.textContent = skus.length
+            ? `Running DIFFERENTIAL for ${skus.length} SKU(s)…`
+            : `Running full TRUE_UP…`;
+        document.getElementById('btnTrueUpRun').disabled = true;
+
+        try {
+            const params = { action: 'runTrueUpNow', key: key };
+            if (skus.length) params.skus = skus.join(',');
+
+            const result = await fetchOrJsonp(url, params);
+
+            if (!result || !result.success) {
+                const errMsg = (result && result.error) || 'Unknown error';
+                runStatusEl.textContent = `❌ ${errMsg}`;
+                runStatusEl.style.color = '#ef4444';
+                addLog(`⚠️ TRUE_UP run failed: ${errMsg}`, 'warning');
+                return;
+            }
+
+            if (result.skipped) {
+                runStatusEl.textContent = `⏭️ Skipped: ${result.reason || 'no items'}`;
+                runStatusEl.style.color = '#eab308';
+            } else {
+                const kind = result.feedKind || '—';
+                const handle = result.handle ? ` (handle: ${result.handle.substring(0, 10)}…)` : '';
+                runStatusEl.textContent = `✅ ${kind} accepted — ${result.itemCount || 0} item(s)${handle}`;
+                runStatusEl.style.color = '#22c55e';
+                addLog(`✅ TRUE_UP ${kind} pushed: ${result.itemCount || 0} item(s)${handle}`, 'success');
+            }
+
+            // Refresh status + history so the card reflects the fresh run
+            setTimeout(() => {
+                loadTrueUpStatus();
+                loadTrueUpHistory();
+            }, 1200);
+        } catch (err) {
+            runStatusEl.textContent = `❌ ${err.message}`;
+            runStatusEl.style.color = '#ef4444';
+            addLog(`⚠️ TRUE_UP run error: ${err.message}`, 'warning');
+        } finally {
+            document.getElementById('btnTrueUpRun').disabled = false;
+        }
+    }
+
+    /**
+     * Load recent TRUE_UP runs from activity_log. This queries Supabase
+     * directly (no proxy hop — faster, and the proxy already writes these
+     * rows). Requires sbClient to be connected; gracefully degrades if not.
+     */
+    async function loadTrueUpHistory() {
+        const body = document.getElementById('trueUpHistoryBody');
+        if (!body) return;
+
+        if (!sbClient) {
+            body.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:20px 0;">Supabase not connected — connect above to load history.</div>`;
+            return;
+        }
+
+        body.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:20px 0;">Loading…</div>`;
+
+        try {
+            const { data, error } = await sbClient
+                .from('activity_log')
+                .select('*')
+                .in('action', ['wayfair_trueup_complete', 'wayfair_trueup_failed', 'wayfair_trueup_skipped'])
+                .order('created_at', { ascending: false })
+                .limit(20);
+
+            if (error) throw new Error(error.message);
+
+            if (!data || data.length === 0) {
+                body.innerHTML = `<div style="text-align:center;color:var(--text-dim);padding:20px 0;">No TRUE_UP runs recorded yet.</div>`;
+                return;
+            }
+
+            let html = `
+                <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                    <thead>
+                        <tr style="text-align:left;border-bottom:1px solid var(--border);color:var(--text-dim);">
+                            <th style="padding:6px 8px;">When</th>
+                            <th style="padding:6px 8px;">Status</th>
+                            <th style="padding:6px 8px;">Kind</th>
+                            <th style="padding:6px 8px;text-align:right;">Items</th>
+                            <th style="padding:6px 8px;">Trigger</th>
+                            <th style="padding:6px 8px;">Handle</th>
+                            <th style="padding:6px 8px;">Summary</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            data.forEach(row => {
+                const when = _trueUpFmtIso(row.created_at);
+                const d = row.details || {};
+                const kind = d.feedKind || '—';
+                const items = (d.itemCount != null) ? d.itemCount : '—';
+                const triggeredBy = d.triggeredBy || '—';
+                const handle = d.handle ? d.handle.substring(0, 10) + '…' : '—';
+
+                let statusIcon = '—';
+                let statusColor = 'var(--text-dim)';
+                if (row.action === 'wayfair_trueup_complete') { statusIcon = '✅'; statusColor = '#22c55e'; }
+                else if (row.action === 'wayfair_trueup_failed') { statusIcon = '❌'; statusColor = '#ef4444'; }
+                else if (row.action === 'wayfair_trueup_skipped') { statusIcon = '⏭️'; statusColor = '#eab308'; }
+
+                const summary = (row.summary || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+                html += `
+                    <tr style="border-bottom:1px solid var(--border);">
+                        <td style="padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;">${when}</td>
+                        <td style="padding:6px 8px;color:${statusColor};font-weight:600;">${statusIcon}</td>
+                        <td style="padding:6px 8px;">${kind}</td>
+                        <td style="padding:6px 8px;text-align:right;">${items}</td>
+                        <td style="padding:6px 8px;color:var(--text-dim);font-size:0.78rem;">${triggeredBy}</td>
+                        <td style="padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:0.75rem;color:var(--text-dim);" title="${d.handle || ''}">${handle}</td>
+                        <td style="padding:6px 8px;font-size:0.78rem;color:var(--text-dim);max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${summary}">${summary}</td>
+                    </tr>
+                `;
+            });
+
+            html += '</tbody></table>';
+            body.innerHTML = html;
+        } catch (err) {
+            body.innerHTML = `<div style="padding:12px;background:#451a1a;border:1px solid #7f1d1d;border-radius:6px;color:#fca5a5;">Failed to load history: ${err.message}</div>`;
+        }
+    }
+
+
+    // ============================================================
     // UI: TAB SWITCHING
     // ============================================================
     
@@ -6039,6 +6504,12 @@
         const btnEl = document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1));
         if (tabEl) tabEl.classList.add('active');
         if (btnEl) btnEl.classList.add('active');
+
+        // v4.4.14: Lazy-load Wayfair TRUE_UP status on first tab open
+        if (tabName === 'wayfair' && !TRUEUP_STATE.loaded && !TRUEUP_STATE.loading) {
+            loadTrueUpStatus();
+            loadTrueUpHistory();
+        }
     }
     
     // ============================================================
@@ -6633,33 +7104,26 @@
         const fields = row.fields || {};
         const channel = row.channel;
         
-        console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
-        
-        // B7 fix v4.4.13: Re-read row status at entry to prevent duplicate processing
-        // from the cascade-path + poller race. Cascade inserts rows and immediately
-        // calls processSyncQueueRow(row, true). The poller, on its own timer, may also
-        // pick up the same row as status='pending' and call processSyncQueueRow(row).
-        // Both paths then push to the channel and both emit queue_push_success, producing
-        // duplicate activity_log entries (observed: SKU 90969 order ETSY-4035158809,
-        // queueId=488 logged at 19:09:28 and 19:09:29 — same row, 550ms apart).
-        //
-        // Fix: re-read the row's status from DB at entry. If it's no longer 'pending'
-        // (completed / failed / skipped / superseded), bail silently. No push, no log.
-        // If the precheck itself fails (network glitch, row gone), proceed — better a
-        // dup than a silent skip that could cost inventory accuracy.
+        // v4.4.13 B7: Guard against double-processing by concurrent callers
+        // (processOrderWithCascade iterates rows it just inserted AND pollSyncQueue
+        // picks them up on its own timer — ~150ms window for collision).
+        // Re-read current status from DB; bail if already processed.
         try {
-            const { data: freshRow, error: rowErr } = await sbClient
+            const { data: current } = await sbClient
                 .from('sync_queue')
                 .select('status')
                 .eq('id', row.id)
                 .single();
-            if (!rowErr && freshRow && freshRow.status !== 'pending') {
-                console.log(`[Sync Queue] ⏭️ B7 dedup: row id=${row.id} already ${freshRow.status} — skipping to prevent duplicate push`);
+            if (current && current.status !== 'pending') {
+                console.log(`[Sync Queue] ⏭️ Skip id=${row.id} — already ${current.status} (concurrent caller beat us to it)`);
                 return;
             }
-        } catch (precheckErr) {
-            console.warn(`[Sync Queue] B7 status precheck failed for id=${row.id}, proceeding anyway:`, precheckErr.message);
+        } catch (e) {
+            // If the check fails, proceed — better to risk a dup than to fail to process
+            console.warn(`[Sync Queue] Status precheck failed for id=${row.id}:`, e.message);
         }
+        
+        console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
         
         // Check per-channel push toggle — respect Sync Hub's settings
         // v4.2.0: forceProcess=true bypasses this check (used by "Process & Push" button)
@@ -7245,7 +7709,7 @@
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.4.4 — Supabase-Native Push Build');
+            console.log('[Init] CCD Sync Hub v4.4.13 — Supabase-Native Push Build');
             
             ensureHostnameSet();
             
