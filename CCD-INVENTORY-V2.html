@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.8.12</title>
+<title>CCD Inventory System v2.8.11</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -23,8 +23,6 @@
   --font:'Plus Jakarta Sans',system-ui,sans-serif;
   --mono:'DM Mono',monospace;
   --transition:0.2s ease;
-  /* v2.8.12: height of sticky .topbar — used by sticky thead to stay below it, not behind */
-  --topbar-height:48px;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 html{scroll-behavior:smooth;}
@@ -107,7 +105,7 @@ input,select,textarea,button{font-family:var(--font);}
    ═══════════════════════════════════════════ */
 .table-wrap{overflow-x:auto;background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius-lg);}
 table{width:100%;border-collapse:collapse;font-size:13px;}
-thead th{padding:11px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;transition:var(--transition);position:sticky;top:var(--topbar-height);background:var(--bg2);z-index:50;}
+thead th{padding:11px 14px;text-align:left;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;border-bottom:1px solid var(--border);cursor:pointer;user-select:none;white-space:nowrap;transition:var(--transition);position:sticky;top:0;background:var(--bg2);z-index:1;}
 thead th:hover{color:var(--text2);}
 thead th.sorted{color:var(--gold);}
 thead th .sort-arrow{font-size:10px;margin-left:4px;opacity:0.5;}
@@ -624,7 +622,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.8.12 · Phases 1-6 + Bundles</div>
+    <div class="login-version">v2.8.11 · Phases 1-6 + Bundles</div>
   </div>
 </div>
 
@@ -636,7 +634,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.8.12</div>
+      <div class="topbar-version">v2.8.11</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1001,9 +999,8 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
               <th onclick="setAnalyticsSort('revenue')">Revenue <span class="sort-arrow" data-col="revenue"></span></th>
               <th onclick="setAnalyticsSort('profit')">Profit <span class="sort-arrow" data-col="profit"></span></th>
               <th onclick="setAnalyticsSort('margin')">Margin <span class="sort-arrow" data-col="margin"></span></th>
-              <th style="cursor:default;">Actions</th>
             </tr></thead>
-            <tbody id="topSellersBody"><tr><td colspan="9" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
+            <tbody id="topSellersBody"><tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -3142,55 +3139,6 @@ async function reverseSale(idx) {
 
   } catch(e) {
     showCardStatus(`Reversal failed: ${e.message}`, 'error');
-  }
-}
-
-// v2.8.12: Reverse a sale from the Analytics Sales Log.
-// Thin wrapper that sets up state.currentItem + state.salesRows then delegates
-// to the existing reverseSale() — the same battle-tested path the item-detail
-// Sales History tab uses. No forked logic.
-//
-// If the user has a different item detail open when they click Reverse in
-// Analytics, state is saved before the shim and restored in finally. There
-// may be a brief UI flicker in the item-detail card (KPIs/sales re-rendered
-// to show the shim'd item mid-call), but DB state and sync_queue are correct.
-async function reverseSaleFromAnalytics(saleId) {
-  const sale = (state.analyticsSales || []).find(s => s.id === saleId);
-  if (!sale) { showCardStatus('Sale not found in current view', 'error'); return; }
-  if (sale.status === 'reversed') { showCardStatus('Sale already reversed', 'error'); return; }
-  if (!sale.item_id) { showCardStatus('Sale has no linked item — cannot reverse from Analytics', 'error'); return; }
-
-  // Fetch the item fresh so the reverseSale() call has accurate channel state
-  const { data: itemRow, error: itemErr } = await sb.from('items').select('*').eq('id', sale.item_id).single();
-  if (itemErr || !itemRow) { showCardStatus('Could not load item for this sale', 'error'); return; }
-
-  // Save outer state (user may have a different item detail open)
-  const savedItem = state.currentItem;
-  const savedRows = state.salesRows;
-
-  // Shim state so reverseSale(0) operates on this sale's item
-  state.currentItem = itemRow;
-  state.salesRows = [{
-    id: sale.id,
-    sku: sale.sku,
-    qty_sold: sale.qty_sold,
-    sale_channel: sale.sale_channel,
-    sale_price: sale.sale_price,
-    sale_date: sale.sale_date,
-    order_id: sale.order_id,
-    notes: sale.notes,
-    status: sale.status
-  }];
-
-  try {
-    await reverseSale(0);
-    // Mark in analytics view and re-render to flip button → "↩ Reversed"
-    sale.status = 'reversed';
-    renderAnalyticsSalesLog();
-  } finally {
-    // Restore outer state so the user's item detail view is unchanged
-    state.currentItem = savedItem;
-    state.salesRows = savedRows;
   }
 }
 
@@ -5592,46 +5540,13 @@ async function confirmSell() {
       qtyUpdates[chQtyMap[channel]] = Math.max(0, pi(item[chQtyMap[channel]]) - qty);
     }
 
-    // v2.8.11 FIX (P0-WIX-DEDUCT, Session 21):
-    //   When physical stock is consumed by an online sale, the shared inventory
-    //   pool shrinks — every online channel that was at or above the sold channel's
-    //   PRE-sale level must reduce by qty to reflect that the stock is physically gone.
-    //
-    //   This is NOT Etsy/Wix mirroring (ECOSYSTEM-002 forbids that for user-driven
-    //   allocation). This is sale-time peer-deduction, which preserves user-set
-    //   differentials:
-    //     - warehouse=5, etsy=5, wix=5, wf=5, Etsy sale 1 -> etsy=4, wix=4, wf=4 (all at peer level)
-    //     - warehouse=5, etsy=5, wix=3, wf=5, Etsy sale 1 -> etsy=4, wix=3 (held-back preserved), wf=4
-    //     - warehouse=5, etsy=5, wix=5, wf=5, TM sale 1 -> tm=tm+1 via Rule 1.5 path (not here)
-    //
-    //   Rule 1.5 in SH still handles the Wayfair-specific decrement for orders not
-    //   coming through V2 sell flow. This client-side peer-deduction covers V2-initiated
-    //   sales only.
-    const onlineChannels = ['etsy', 'wix', 'wayfair'];
-    if (onlineChannels.includes(channel)) {
-      const soldChannelPreSale = pi(item[chQtyMap[channel]]);
-      for (const peer of onlineChannels) {
-        if (peer === channel) continue;
-        const peerCol = chQtyMap[peer];
-        const peerPreSale = pi(item[peerCol]);
-        // Only deduct if peer was at or above the sold channel's pre-sale level —
-        // i.e., peer COULD have sold the same physical stock. If peer is lower, user
-        // intentionally held back that channel; leave it alone.
-        if (peerPreSale >= soldChannelPreSale && peerPreSale > 0) {
-          const peerNew = Math.max(0, peerPreSale - qty);
-          qtyUpdates[peerCol] = peerNew;
-          console.log(`[Pool Deduct v2.8.11] ${peer}: ${peerPreSale}→${peerNew} (peer of ${channel} sale, peer>=${soldChannelPreSale})`);
-        } else {
-          console.log(`[Pool Deduct v2.8.11] ${peer}: ${peerPreSale} unchanged (below ${channel}'s pre-sale ${soldChannelPreSale}, preserved)`);
-        }
-      }
-    }
+    // v2.8.10: Etsy/Wix cross-deduct REMOVED. Under independent channels, a sale on one
+    // channel only reduces THAT channel's allocation. The shared inventory cap below
+    // (lines further down) handles any other channel that ends up exceeding the new
+    // available pool — that's the cascade-through-defined-logic behavior.
 
     // v2.8.5 ALLOCATION GUARD: shared inventory — each online channel ≤ (warehouse − TM)
-    // After sale deduction, cap any channel that exceeds available pool.
-    // (This is a safety net — peer-deduct above usually keeps things consistent, but
-    // edge cases like warehouse having been manually reduced or TM having grown can
-    // still leave a channel over cap. Cap enforcement is idempotent.)
+    // After sale deduction + Etsy/Wix mirror, cap any channel that exceeds available pool.
     const newWarehouse = qtyUpdates.qty;
     const currentTm = pi(item.treasuremarts_qty);
     const saleAvailOnline = Math.max(0, newWarehouse - (channel === 'treasuremarts' ? Math.max(0, currentTm - qty) : currentTm));
@@ -5683,23 +5598,11 @@ async function confirmSell() {
         if (chQtyMap[channel] && pi(freshComp[chQtyMap[channel]]) > 0) {
           compUpdates[chQtyMap[channel]] = Math.max(0, pi(freshComp[chQtyMap[channel]]) - deductQty);
         }
-        // v2.8.11 FIX (P0-WIX-DEDUCT, Session 21):
-        //   Peer-deduct for bundle components — same rule as the top-level item.
-        //   Component stock is physically consumed, so peer online channels at or
-        //   above the sold channel's pre-sale level must reduce by deductQty.
-        //   User-held-back allocations (peer below sold channel's level) preserved.
-        if (onlineChannels.includes(channel)) {
-          const compSoldPreSale = pi(freshComp[chQtyMap[channel]]);
-          for (const peer of onlineChannels) {
-            if (peer === channel) continue;
-            const peerCol = chQtyMap[peer];
-            const peerPreSale = pi(freshComp[peerCol]);
-            if (peerPreSale >= compSoldPreSale && peerPreSale > 0) {
-              compUpdates[peerCol] = Math.max(0, peerPreSale - deductQty);
-              console.log(`[Pool Deduct v2.8.11 bundle] ${freshComp.sku} ${peer}: ${peerPreSale}→${compUpdates[peerCol]} (peer of ${channel})`);
-            }
-          }
-        }
+        // v2.8.10: Etsy/Wix cross-deduct REMOVED on bundle components too.
+        // A bundle sale on etsy only deducts the component's etsy allocation.
+        // Wix component allocation is unchanged unless it now exceeds cap (not enforced
+        // here for components — cap enforcement happens via SH's autoAdjust during the
+        // cascade push, or via the Bulk Allocation Fix utility).
 
         const { error: compErr } = await sb.from('items').update(compUpdates).eq('id', freshComp.id);
         if (compErr) console.warn(`[Bundle Cascade] Failed to deduct from ${freshComp.sku}:`, compErr.message);
@@ -8824,12 +8727,7 @@ async function loadAnalytics() {
     }).join('');
 
     // Sales log — individual sales sorted by date (newest first by default)
-    // v2.8.12: Extended to carry id/item_id/raw sale fields so the Analytics Log
-    // can drive reverseSale() without re-fetching. `status` lets us hide the
-    // Reverse button when the sale is already reversed.
     state.analyticsSales = rows.map(r => ({
-      id: r.id,
-      item_id: r.item_id,
       date: (r.sale_date || '').substring(0, 10),
       sku: r.sku || 'UNKNOWN',
       product: r.product_name || '',
@@ -8837,15 +8735,7 @@ async function loadAnalytics() {
       units: pi(r.qty_sold) || 1,
       revenue: pf(r.total_revenue) || pf(r.sale_price),
       profit: pf(r.net_profit),
-      margin: pf(r.profit_margin) * 100,
-      // Fields required by reverseSale flow
-      qty_sold: pi(r.qty_sold) || 1,
-      sale_channel: r.sale_channel || '',
-      sale_price: pf(r.sale_price),
-      sale_date: r.sale_date || '',
-      order_id: r.order_id || null,
-      notes: r.notes || '',
-      status: r.status || null
+      margin: pf(r.profit_margin) * 100
     }));
     state.analyticsSortCol = 'date';
     state.analyticsSortAsc = false; // default newest first
@@ -8900,14 +8790,10 @@ function renderAnalyticsSalesLog() {
     $('topSellersRange').textContent = `${range.from} to ${range.to}`;
 
     if (sorted.length === 0) {
-      $('topSellersBody').innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--muted);">No sales in this period.</td></tr>';
+      $('topSellersBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">No sales in this period.</td></tr>';
     } else {
       $('topSellersBody').innerHTML = sorted.map(s => {
         const chColor = { etsy:'var(--etsy)', wix:'var(--wix)', wayfair:'var(--wayfair)', treasuremarts:'var(--tm)' }[s.channel] || 'var(--muted)';
-        // v2.8.12: Reverse button — hidden (grayed out) if already reversed
-        const actionCell = s.status === 'reversed'
-          ? `<span style="color:var(--muted);font-size:11px;">↩ Reversed</span>`
-          : `<button class="btn-packing" style="color:var(--red);" onclick="reverseSaleFromAnalytics(${s.id})">↩ Reverse</button>`;
         return `<tr>
           <td class="mono">${s.date}</td>
           <td><span class="sku-cell">${escHtml(s.sku)}</span></td>
@@ -8917,7 +8803,6 @@ function renderAnalyticsSalesLog() {
           <td class="mono" style="color:var(--gold);">$${s.revenue.toFixed(2)}</td>
           <td class="mono" style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'};">$${s.profit.toFixed(2)}</td>
           <td style="color:${s.margin >= 0 ? 'var(--green)' : 'var(--red)'};">${s.margin.toFixed(1)}%</td>
-          <td>${actionCell}</td>
         </tr>`;
       }).join('');
     }
