@@ -3,9 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.0</title>
+<title>CCD Inventory System v2.9.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
 
@@ -133,6 +135,7 @@ tbody td{padding:10px 14px;white-space:nowrap;}
 .badge-var{background:rgba(167,139,250,0.15);color:var(--purple);font-family:var(--mono);margin-left:6px;}
 .badge-bundle{background:rgba(251,191,36,0.18);color:var(--yellow);font-family:var(--mono);margin-left:6px;}
 .badge-sales{background:rgba(77,159,255,0.12);color:var(--blue);font-family:var(--mono);min-width:28px;text-align:center;}
+.badge-gift{background:rgba(240,92,92,0.15);color:var(--red);letter-spacing:normal;text-transform:none;font-size:11px;}
 
 /* Channel dots */
 .ch-dots{display:flex;gap:5px;align-items:center;}
@@ -622,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.0 · ECOSYSTEM-011 Peer-Decrement</div>
+    <div class="login-version">v2.9.2 · Gift Order 🎁 Flags</div>
   </div>
 </div>
 
@@ -634,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.0</div>
+      <div class="topbar-version">v2.9.2</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1144,10 +1147,22 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             <div class="setting-row"><div class="setting-label">Overhead %</div><div class="setting-value"><input class="setting-input" id="fee_tm_oh" type="number" step="0.5" style="width:70px;"></div></div>
             <div class="setting-row"><div class="setting-label">Commission %</div><div class="setting-value"><input class="setting-input" id="fee_tm_comm" type="number" step="0.5" style="width:70px;"></div></div>
           </div>
-          <!-- v2.8.11: Packing Slip Customization -->
+          <!-- v2.8.13: Packing Slip Profiles (Supabase-backed, shared across users) -->
           <div class="settings-section">
-            <div class="settings-section-title">🧾 Packing Slip Customization</div>
-            <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Customize how packing slips appear when printed. Changes save to this device (localStorage) and take effect immediately — no reload needed.</div>
+            <div class="settings-section-title">🧾 Packing Slip Profiles</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Create named profiles (e.g. "Regular", "Holiday", "Wholesale") and pick one at print time. Profiles are stored in Supabase and shared across all users. The ⭐ profile is the default — up to 10 profiles.</div>
+
+            <!-- Profile selector bar -->
+            <div class="setting-row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+              <div class="setting-label" style="width:auto;">Editing</div>
+              <select id="pslipProfileSelect" class="setting-input" style="flex:1;min-width:180px;" onchange="onPslipProfileSwitch()"></select>
+              <button type="button" class="btn-card" onclick="createPslipProfile()" style="padding:4px 10px;font-size:11px;" title="Create a new blank profile">➕ New</button>
+              <button type="button" class="btn-card" onclick="renamePslipProfile()" style="padding:4px 10px;font-size:11px;" title="Rename the current profile">✏️ Rename</button>
+              <button type="button" class="btn-card" onclick="duplicatePslipProfile()" style="padding:4px 10px;font-size:11px;" title="Copy the current profile under a new name">📋 Duplicate</button>
+              <button type="button" class="btn-card" onclick="deletePslipProfile()" style="padding:4px 10px;font-size:11px;color:var(--red);" title="Delete the current profile (cannot be undone)">🗑 Delete</button>
+              <button type="button" class="btn-card" onclick="setActivePslipProfile()" style="padding:4px 10px;font-size:11px;" title="Make this profile the default used when no override is chosen">⭐ Set as Default</button>
+            </div>
+            <div id="pslipActiveHint" style="font-size:11px;color:var(--muted);margin:4px 0 12px 0;"></div>
 
             <!-- Logo -->
             <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px;">
@@ -1431,6 +1446,10 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     <div class="modal-title">🖨 Packing Slip</div>
     <div class="modal-info" id="slipInfo"></div>
     <div class="modal-field">
+      <label>Profile</label>
+      <select id="slipProfileSelect"></select>
+    </div>
+    <div class="modal-field">
       <label>Slip Type</label>
       <select id="slipType" onchange="$('slipGiftField').style.display=this.value==='gift'?'block':'none'">
         <option value="standard">Standard — no SKU, no pricing</option>
@@ -1448,6 +1467,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <div class="modal-actions">
       <button class="btn-card btn-save" onclick="printPackingSlip()" style="flex:1;">🖨 Print Slip</button>
+      <button class="btn-card" onclick="pdfPackingSlip()" style="flex:1;">📄 Save PDF</button>
       <button class="btn-card btn-push" onclick="closeSlipModal()" style="flex:1;">Cancel</button>
     </div>
   </div>
@@ -1500,7 +1520,18 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 // ═══════════════════════════════════════════════════════════
 // CONFIG
 // ═══════════════════════════════════════════════════════════
-const TOOL_VERSION = '2.9.0';
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.9.2 (S26, 2026-04-22) — Gift order 🎁 red-flag indicators in Sales tab
+//   (order_id cell) and Shipping tab (recipient cell). Additive UI only;
+//   no change to sales, sync, or TM paths. Shipping tab enriches is_gift
+//   from sales_history via the existing SKU-enrichment lookup pass.
+// v2.9.1 (S26, 2026-04-22) — REBASE: v2.9.0 (ECOSYSTEM-011 peer-decrement +
+//   Model B TM, S24) + v2.8.14 (packing slip profiles + PDF save, S23).
+//   No semantic changes to sell/reverse/TM paths; invariant sentinels at
+//   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
+//   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
+// ─────────────────────────────────────────────────────────────────────────────
+const TOOL_VERSION = '2.9.2';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1670,6 +1701,11 @@ async function showApp() {
       }
     }
   } catch(e) { console.log('Settings hydration skipped:', e.message); }
+
+  // v2.8.13: Load packing slip profiles from Supabase at login so print paths
+  // have the profile cache ready even if Settings tab is never opened.
+  try { await initPslipProfiles(); }
+  catch(e) { console.log('[pslip] showApp init skipped:', e.message); }
 
   // Load brand list for filter dropdown
   await loadBrands();
@@ -2957,10 +2993,12 @@ async function renderSales(item) {
       const profitColor = profit >= 0 ? 'var(--green)' : 'var(--red)';
       const isReversed = r.status === 'reversed';
       const rowStyle = isReversed ? 'opacity:0.45;text-decoration:line-through;' : '';
+      // v2.9.2 (S26): 🎁 red-flag badge for gift orders; is_gift is already in sales_history select('*')
+      const giftBadge = r.is_gift ? `<span class="badge badge-gift" title="Gift order — remember to include gift slip${r.gift_message ? ' and message' : ''}">🎁</span> ` : '';
       return `<tr style="${rowStyle}">
         <td class="mono">${(r.sale_date || '').substring(0,10)}</td>
         <td>${chDot}</td>
-        <td class="mono">${escHtml(r.order_id || '—')}</td>
+        <td class="mono">${giftBadge}${escHtml(r.order_id || '—')}</td>
         <td>${r.qty_sold || 1}</td>
         <td class="mono">$${pf(r.sale_price).toFixed(2)}</td>
         <td class="mono" style="color:${profitColor};">$${profit.toFixed(2)}</td>
@@ -6170,6 +6208,7 @@ async function openPackingSlip(idx) {
     $('slipType').value = 'standard';
     $('slipGiftField').style.display = 'none';
   }
+  populateSlipModalProfileSelect(); // v2.8.13
   $('slipModal').classList.add('active');
 }
 
@@ -6178,8 +6217,15 @@ function closeSlipModal() {
   slipSaleData = null;
 }
 
-// v2.8.11: Packing Slip Customization
+// v2.8.13: Packing Slip Profiles (Supabase-backed, shared across users)
 // ═══════════════════════════════════════════════════════════════════
+// Stored in settings table under key 'pslip_profiles'.
+// Replaces v2.8.11 localStorage ccdPslipSettings (migrated on first load).
+// Shape: { version:2, activeId, profiles: { id: {id, name, ...PSLIP_FIELDS} } }
+// activeId = ⭐ default profile used by buildPackingSlip() legacy callers.
+// Per-print override via profile dropdown in slip modal.
+// ═══════════════════════════════════════════════════════════════════
+
 const PSLIP_DEFAULTS = {
   bizName: 'Country Charm Decor',
   tagline: 'Handcrafted Home Décor',
@@ -6192,16 +6238,317 @@ const PSLIP_DEFAULTS = {
   logoData: '' // data URL
 };
 
-function getPslipSettings() {
+const PSLIP_STORE_SETTINGS_KEY = 'pslip_profiles';
+const PSLIP_LEGACY_LOCAL_KEY = 'ccdPslipSettings';
+const PSLIP_MAX_PROFILES = 10;
+const PSLIP_MAX_NAME_LEN = 40;
+const PSLIP_MAX_STORE_BYTES = 4 * 1024 * 1024; // 4 MB safety cap on Supabase JSONB row
+
+// Module-level state
+let _pslipStoreCache = null;
+let _pslipEditingId = null;
+
+function _pslipGenId() {
+  return 'p_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+}
+
+function _pslipBlankProfile(id, name) {
+  return { id, name, ...PSLIP_DEFAULTS };
+}
+
+function _pslipEmptyStore() {
+  return {
+    version: 2,
+    activeId: 'default',
+    profiles: { 'default': _pslipBlankProfile('default', 'Default') }
+  };
+}
+
+// Returns the profile id currently being edited in Settings.
+// Defaults to active (⭐) profile when nothing else selected.
+function _pslipCurrentEditingId() {
+  const store = getPslipStore();
+  if (_pslipEditingId && store.profiles[_pslipEditingId]) return _pslipEditingId;
+  return store.activeId;
+}
+
+// Load profiles from Supabase on page load. Handles migration from legacy localStorage.
+async function initPslipProfiles() {
+  if (!sb) { _pslipStoreCache = _pslipEmptyStore(); return; }
   try {
-    const raw = localStorage.getItem('ccdPslipSettings');
-    if (!raw) return { ...PSLIP_DEFAULTS };
-    return { ...PSLIP_DEFAULTS, ...JSON.parse(raw) };
-  } catch (e) { return { ...PSLIP_DEFAULTS }; }
+    const { data, error } = await sb.from('settings')
+      .select('value').eq('key', PSLIP_STORE_SETTINGS_KEY).limit(1);
+    if (!error && data && data.length > 0 && data[0].value) {
+      const raw = data[0].value;
+      const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (v && v.profiles && typeof v.profiles === 'object' && Object.keys(v.profiles).length > 0) {
+        if (!v.profiles[v.activeId]) v.activeId = Object.keys(v.profiles)[0];
+        _pslipStoreCache = v;
+        return;
+      }
+    }
+    // No row yet — check legacy localStorage for migration seed
+    const store = _pslipEmptyStore();
+    try {
+      const legacy = localStorage.getItem(PSLIP_LEGACY_LOCAL_KEY);
+      if (legacy) {
+        const old = JSON.parse(legacy);
+        store.profiles.default = {
+          ..._pslipBlankProfile('default', 'Default'),
+          ...old,
+          id: 'default',
+          name: 'Default'
+        };
+        console.log('[pslip] Migrated legacy ccdPslipSettings to profile "Default"');
+      }
+    } catch(e) { /* ignore bad legacy */ }
+    _pslipStoreCache = store;
+    // Persist seed so Mary/other devices see the same starting point
+    try { await _persistPslipStore(store); }
+    catch(e) { console.log('[pslip] Seed persist failed (will retry on next save):', e.message); }
+  } catch(e) {
+    console.log('[pslip] Init error:', e.message);
+    _pslipStoreCache = _pslipEmptyStore();
+  }
+}
+
+async function _persistPslipStore(store) {
+  if (!sb) throw new Error('Not connected to Supabase');
+  const serialized = JSON.stringify(store);
+  if (serialized.length > PSLIP_MAX_STORE_BYTES) {
+    throw new Error(`Profile store is ${(serialized.length/1024/1024).toFixed(1)} MB — try smaller logos (max ${PSLIP_MAX_STORE_BYTES/1024/1024} MB).`);
+  }
+  const now = new Date().toISOString();
+  const { data: existing } = await sb.from('settings')
+    .select('key').eq('key', PSLIP_STORE_SETTINGS_KEY).limit(1);
+  if (existing && existing.length > 0) {
+    const { error } = await sb.from('settings')
+      .update({ value: store, updated_at: now, updated_by: 'inventory_v2' })
+      .eq('key', PSLIP_STORE_SETTINGS_KEY);
+    if (error) throw error;
+  } else {
+    const { error } = await sb.from('settings')
+      .insert({ key: PSLIP_STORE_SETTINGS_KEY, value: store, updated_at: now, updated_by: 'inventory_v2' });
+    if (error) throw error;
+  }
+}
+
+function getPslipStore() {
+  if (!_pslipStoreCache) return _pslipEmptyStore();
+  return _pslipStoreCache;
+}
+
+function getPslipProfile(id) {
+  const store = getPslipStore();
+  const p = store.profiles[id] || store.profiles[store.activeId] || Object.values(store.profiles)[0];
+  return { ...PSLIP_DEFAULTS, ...p };
+}
+
+// Backward-compat: returns the ACTIVE (⭐ default) profile.
+// All existing callers of buildPackingSlip/buildGiftSlip hit this path.
+function getPslipSettings() {
+  return getPslipProfile(getPslipStore().activeId);
+}
+
+function setPslipStatus(msg, kind) {
+  const st = $('pslipSettingsStatus');
+  if (!st) return;
+  let color = 'var(--green)';
+  if (kind === 'red') color = 'var(--red)';
+  else if (kind === 'muted') color = 'var(--muted)';
+  else if (kind === 'pending') color = 'var(--muted)';
+  st.style.display = 'block';
+  st.innerHTML = `<span style="color:${color};">${msg}</span>`;
+  clearTimeout(st._t);
+  if (kind !== 'pending') {
+    st._t = setTimeout(() => { st.style.display = 'none'; }, 3000);
+  }
+}
+
+function updatePslipActiveHint() {
+  const el = $('pslipActiveHint');
+  if (!el) return;
+  const store = getPslipStore();
+  const editId = _pslipCurrentEditingId();
+  const editing = store.profiles[editId];
+  const active = store.profiles[store.activeId];
+  if (!editing || !active) { el.textContent = ''; return; }
+  if (editing.id === active.id) {
+    el.innerHTML = `<span style="color:var(--green);">⭐ "${escHtml(editing.name)}" is the default profile used for printing.</span>`;
+  } else {
+    el.innerHTML = `Editing "<strong>${escHtml(editing.name)}</strong>" — default is "<strong>${escHtml(active.name)}</strong>". Click ⭐ Set as Default to change.`;
+  }
+}
+
+function rebuildPslipProfileSelect() {
+  const sel = $('pslipProfileSelect');
+  if (!sel) return;
+  const store = getPslipStore();
+  const editId = _pslipCurrentEditingId();
+  sel.innerHTML = '';
+  const sorted = Object.values(store.profiles).sort((a, b) => a.name.localeCompare(b.name));
+  for (const p of sorted) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name + (p.id === store.activeId ? '  ⭐' : '');
+    sel.appendChild(opt);
+  }
+  sel.value = editId;
+  updatePslipActiveHint();
+}
+
+function onPslipProfileSwitch() {
+  const sel = $('pslipProfileSelect');
+  if (!sel) return;
+  _pslipEditingId = sel.value;
+  window._pendingPslipLogo = undefined;  // discard any unsaved logo swap when switching
+  hydratePslipSettingsUI();
+}
+
+async function createPslipProfile() {
+  const store = getPslipStore();
+  if (Object.keys(store.profiles).length >= PSLIP_MAX_PROFILES) {
+    alert(`Maximum ${PSLIP_MAX_PROFILES} profiles.`);
+    return;
+  }
+  const name = prompt('Name for the new profile:', 'New Profile');
+  if (!name || !name.trim()) return;
+  const trimmed = name.trim().slice(0, PSLIP_MAX_NAME_LEN);
+  if (Object.values(store.profiles).some(p => p.name.toLowerCase() === trimmed.toLowerCase())) {
+    alert('A profile with that name already exists.');
+    return;
+  }
+  const id = _pslipGenId();
+  store.profiles[id] = _pslipBlankProfile(id, trimmed);
+  setPslipStatus('⏳ Creating profile…', 'pending');
+  try {
+    await _persistPslipStore(store);
+    _pslipEditingId = id;
+    window._pendingPslipLogo = undefined;
+    rebuildPslipProfileSelect();
+    hydratePslipSettingsUI();
+    setPslipStatus(`✅ Created "${trimmed}".`, 'green');
+  } catch(e) {
+    delete store.profiles[id];
+    setPslipStatus(`❌ Create failed: ${e.message}`, 'red');
+  }
+}
+
+async function renamePslipProfile() {
+  const store = getPslipStore();
+  const id = _pslipCurrentEditingId();
+  const p = store.profiles[id];
+  if (!p) return;
+  const newName = prompt('Rename profile:', p.name);
+  if (!newName || !newName.trim()) return;
+  const trimmed = newName.trim().slice(0, PSLIP_MAX_NAME_LEN);
+  if (trimmed === p.name) return;
+  if (Object.values(store.profiles).some(pp => pp.id !== id && pp.name.toLowerCase() === trimmed.toLowerCase())) {
+    alert('A profile with that name already exists.');
+    return;
+  }
+  const oldName = p.name;
+  p.name = trimmed;
+  setPslipStatus('⏳ Renaming…', 'pending');
+  try {
+    await _persistPslipStore(store);
+    rebuildPslipProfileSelect();
+    setPslipStatus(`✅ Renamed to "${trimmed}".`, 'green');
+  } catch(e) {
+    p.name = oldName;
+    setPslipStatus(`❌ Rename failed: ${e.message}`, 'red');
+  }
+}
+
+async function duplicatePslipProfile() {
+  const store = getPslipStore();
+  const srcId = _pslipCurrentEditingId();
+  const src = store.profiles[srcId];
+  if (!src) return;
+  if (Object.keys(store.profiles).length >= PSLIP_MAX_PROFILES) {
+    alert(`Maximum ${PSLIP_MAX_PROFILES} profiles.`);
+    return;
+  }
+  const suggested = `${src.name} Copy`.slice(0, PSLIP_MAX_NAME_LEN);
+  const name = prompt('Name for the duplicated profile:', suggested);
+  if (!name || !name.trim()) return;
+  const trimmed = name.trim().slice(0, PSLIP_MAX_NAME_LEN);
+  if (Object.values(store.profiles).some(p => p.name.toLowerCase() === trimmed.toLowerCase())) {
+    alert('A profile with that name already exists.');
+    return;
+  }
+  const newId = _pslipGenId();
+  store.profiles[newId] = { ...src, id: newId, name: trimmed };
+  setPslipStatus('⏳ Duplicating…', 'pending');
+  try {
+    await _persistPslipStore(store);
+    _pslipEditingId = newId;
+    window._pendingPslipLogo = undefined;
+    rebuildPslipProfileSelect();
+    hydratePslipSettingsUI();
+    setPslipStatus(`✅ Duplicated — now editing "${trimmed}".`, 'green');
+  } catch(e) {
+    delete store.profiles[newId];
+    setPslipStatus(`❌ Duplicate failed: ${e.message}`, 'red');
+  }
+}
+
+async function deletePslipProfile() {
+  const store = getPslipStore();
+  const id = _pslipCurrentEditingId();
+  const p = store.profiles[id];
+  if (!p) return;
+  if (Object.keys(store.profiles).length <= 1) {
+    alert('Cannot delete the last profile.');
+    return;
+  }
+  if (!confirm(`Delete profile "${p.name}"? This cannot be undone.`)) return;
+  const snapshot = { ...store.profiles };
+  const prevActive = store.activeId;
+  delete store.profiles[id];
+  if (store.activeId === id) {
+    store.activeId = Object.keys(store.profiles)[0];
+  }
+  setPslipStatus('⏳ Deleting…', 'pending');
+  try {
+    await _persistPslipStore(store);
+    _pslipEditingId = store.activeId;
+    window._pendingPslipLogo = undefined;
+    rebuildPslipProfileSelect();
+    hydratePslipSettingsUI();
+    setPslipStatus(`🗑 Deleted "${p.name}".`, 'green');
+  } catch(e) {
+    store.profiles = snapshot;
+    store.activeId = prevActive;
+    setPslipStatus(`❌ Delete failed: ${e.message}`, 'red');
+  }
+}
+
+async function setActivePslipProfile() {
+  const store = getPslipStore();
+  const id = _pslipCurrentEditingId();
+  if (!store.profiles[id]) return;
+  if (store.activeId === id) {
+    setPslipStatus(`"${store.profiles[id].name}" is already the default.`, 'muted');
+    return;
+  }
+  const prev = store.activeId;
+  store.activeId = id;
+  setPslipStatus('⏳ Setting default…', 'pending');
+  try {
+    await _persistPslipStore(store);
+    rebuildPslipProfileSelect();
+    setPslipStatus(`⭐ "${store.profiles[id].name}" is now the default.`, 'green');
+  } catch(e) {
+    store.activeId = prev;
+    setPslipStatus(`❌ Set default failed: ${e.message}`, 'red');
+  }
 }
 
 function hydratePslipSettingsUI() {
-  const s = getPslipSettings();
+  rebuildPslipProfileSelect();
+  const id = _pslipCurrentEditingId();
+  const s = getPslipProfile(id);
   if (ge('pslipBizName')) $('pslipBizName').value = s.bizName || '';
   if (ge('pslipTagline')) $('pslipTagline').value = s.tagline || '';
   if (ge('pslipShipFrom')) $('pslipShipFrom').value = s.shipFrom || '';
@@ -6209,7 +6556,10 @@ function hydratePslipSettingsUI() {
   if (ge('pslipFooterEmail')) $('pslipFooterEmail').value = s.footerEmail || '';
   if (ge('pslipFooterWeb')) $('pslipFooterWeb').value = s.footerWeb || '';
   if (ge('pslipFooterNote')) $('pslipFooterNote').value = s.footerNote || '';
-  if (ge('pslipAccent')) { $('pslipAccent').value = s.accent || '#d4a853'; if (ge('pslipAccentText')) $('pslipAccentText').textContent = s.accent || '#d4a853'; }
+  if (ge('pslipAccent')) {
+    $('pslipAccent').value = s.accent || '#d4a853';
+    if (ge('pslipAccentText')) $('pslipAccentText').textContent = s.accent || '#d4a853';
+  }
   renderPslipLogoPreview(s.logoData);
   // Live accent color readout
   const ac = $('pslipAccent');
@@ -6234,7 +6584,7 @@ function onPslipLogoSelected(ev) {
   if (!file) return;
   // Size cap: ~500KB raw → ~680KB base64. Warn beyond that.
   if (file.size > 500 * 1024) {
-    if (!confirm(`Logo is ${(file.size/1024).toFixed(0)} KB. Large logos slow print and bloat localStorage. Continue?`)) {
+    if (!confirm(`Logo is ${(file.size/1024).toFixed(0)} KB. Large logos slow print and bloat the Supabase row (4 MB cap across all profiles). Continue?`)) {
       ev.target.value = '';
       return;
     }
@@ -6257,10 +6607,15 @@ function clearPslipLogo() {
   if (input) input.value = '';
 }
 
-function savePackingSlipSettings() {
-  const existing = getPslipSettings();
+async function savePackingSlipSettings() {
+  const store = getPslipStore();
+  const id = _pslipCurrentEditingId();
+  const existing = store.profiles[id] || _pslipBlankProfile(id, 'Profile');
   const logoData = (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : existing.logoData;
-  const s = {
+  const updated = {
+    ...existing,
+    id,
+    name: existing.name,
     bizName: ($('pslipBizName').value || '').trim(),
     tagline: ($('pslipTagline').value || '').trim(),
     shipFrom: ($('pslipShipFrom').value || '').trim(),
@@ -6271,29 +6626,25 @@ function savePackingSlipSettings() {
     accent: ($('pslipAccent').value || '#d4a853'),
     logoData: logoData || ''
   };
+  const prev = store.profiles[id];
+  store.profiles[id] = updated;
+  setPslipStatus(`⏳ Saving "${updated.name}"…`, 'pending');
   try {
-    const serialized = JSON.stringify(s);
-    // localStorage cap is ~5MB; a data URL logo rarely gets past 1MB but warn just in case
-    if (serialized.length > 2 * 1024 * 1024) {
-      alert('Settings payload exceeds 2MB. Try a smaller logo.');
-      return;
-    }
-    localStorage.setItem('ccdPslipSettings', serialized);
+    await _persistPslipStore(store);
     delete window._pendingPslipLogo;
-    const st = $('pslipSettingsStatus');
-    if (st) {
-      st.style.display = 'block';
-      st.innerHTML = '<span style="color:var(--green);">✅ Packing slip settings saved.</span>';
-      setTimeout(() => { st.style.display = 'none'; }, 3000);
-    }
-  } catch (e) {
-    alert('Save failed: ' + e.message);
+    setPslipStatus(`✅ Saved "${updated.name}".`, 'green');
+  } catch(e) {
+    store.profiles[id] = prev;
+    setPslipStatus(`❌ Save failed: ${e.message}`, 'red');
   }
 }
 
 function previewPackingSlipSample() {
   // Build a sample packing slip using whatever's currently in the form
   // (not yet saved). Gives instant feedback while tweaking.
+  const store = getPslipStore();
+  const id = _pslipCurrentEditingId();
+  const existing = store.profiles[id] || {};
   const s = {
     bizName: ($('pslipBizName').value || PSLIP_DEFAULTS.bizName).trim(),
     tagline: ($('pslipTagline').value || PSLIP_DEFAULTS.tagline).trim(),
@@ -6303,7 +6654,7 @@ function previewPackingSlipSample() {
     footerWeb: ($('pslipFooterWeb').value || PSLIP_DEFAULTS.footerWeb).trim(),
     footerNote: ($('pslipFooterNote').value || '').trim(),
     accent: ($('pslipAccent').value || PSLIP_DEFAULTS.accent),
-    logoData: (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : getPslipSettings().logoData
+    logoData: (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : (existing.logoData || '')
   };
   const sampleItems = [
     { product_name: 'Paisley Bird Rain Gauge', qty_sold: 1, sale_price: 22.99, total_revenue: 22.99 },
@@ -6320,6 +6671,22 @@ function previewPackingSlipSample() {
   if (!win) { alert('Popup blocked — please allow popups to preview.'); return; }
   win.document.write(html);
   win.document.close();
+}
+
+// Populate the slip modal's profile dropdown. Defaults to the ⭐ active profile.
+function populateSlipModalProfileSelect() {
+  const sel = $('slipProfileSelect');
+  if (!sel) return;
+  const store = getPslipStore();
+  sel.innerHTML = '';
+  const sorted = Object.values(store.profiles).sort((a, b) => a.name.localeCompare(b.name));
+  for (const p of sorted) {
+    const opt = document.createElement('option');
+    opt.value = p.id;
+    opt.textContent = p.name + (p.id === store.activeId ? '  ⭐' : '');
+    sel.appendChild(opt);
+  }
+  sel.value = store.activeId;
 }
 
 // Internal builder that takes settings as a parameter (so preview can use
@@ -6454,6 +6821,11 @@ function printPackingSlip() {
   const shipTo = $('slipShipTo').value.trim();
   const giftMsg = $('slipGiftMsg').value.trim();
 
+  // v2.8.13: Per-print profile override via slip modal dropdown (defaults to ⭐ active).
+  const selEl = $('slipProfileSelect');
+  const profileId = (selEl && selEl.value) ? selEl.value : getPslipStore().activeId;
+  const profile = getPslipProfile(profileId);
+
   const orderDate = sale.sale_date ? sale.sale_date.substring(0, 10) : new Date().toISOString().split('T')[0];
   const orderId = sale.order_id || 'Manual Sale';
   const channel = sale.sale_channel || 'Direct';
@@ -6461,9 +6833,9 @@ function printPackingSlip() {
   let html = '';
 
   if (slipType === 'gift') {
-    html = buildGiftSlip(shipTo, giftMsg, orderDate);
+    html = _buildGiftSlipWith(profile, shipTo, giftMsg, orderDate);
   } else {
-    html = buildPackingSlip(slipType, {
+    html = _buildPackingSlipWith(profile, slipType, {
       orderId, orderDate, channel, shipTo, items: orderItems
     });
   }
@@ -6472,6 +6844,90 @@ function printPackingSlip() {
   win.document.write(html);
   win.document.close();
   setTimeout(() => win.print(), 400);
+}
+
+// v2.8.14: Save-as-PDF — builds the same slip HTML as printPackingSlip,
+// renders via html2pdf (html2canvas + jsPDF) in a hidden iframe for clean
+// CSS scope, then opens the PDF in a new tab. Filename is preset so Ctrl+S
+// saves with a meaningful name. Groundwork for future auto-print-on-order:
+// same function can be called headlessly, PDF sent to Supabase Storage or
+// a local print agent.
+async function pdfPackingSlip() {
+  if (typeof html2pdf === 'undefined') {
+    alert('PDF library not loaded. Check your internet connection and refresh the page.');
+    return;
+  }
+  if (!slipSaleData) return;
+  const { sale, orderItems } = slipSaleData;
+  const slipType = $('slipType').value;
+  const shipTo = $('slipShipTo').value.trim();
+  const giftMsg = $('slipGiftMsg').value.trim();
+
+  // Per-print profile override (same as printPackingSlip)
+  const selEl = $('slipProfileSelect');
+  const profileId = (selEl && selEl.value) ? selEl.value : getPslipStore().activeId;
+  const profile = getPslipProfile(profileId);
+
+  const orderDate = sale.sale_date ? sale.sale_date.substring(0, 10) : new Date().toISOString().split('T')[0];
+  const orderId = sale.order_id || 'Manual Sale';
+  const channel = sale.sale_channel || 'Direct';
+
+  const html = (slipType === 'gift')
+    ? _buildGiftSlipWith(profile, shipTo, giftMsg, orderDate)
+    : _buildPackingSlipWith(profile, slipType, { orderId, orderDate, channel, shipTo, items: orderItems });
+
+  // Filename: packing-slip-ORDER123-ProfileName.pdf (alphanumeric + - _ . only)
+  const safePart = (s) => (s || '').toString().replace(/[^a-zA-Z0-9\-_.]/g, '_').slice(0, 50);
+  const labelType = slipType === 'gift' ? 'gift-card' : 'packing-slip';
+  const filename = `${labelType}-${safePart(orderId)}-${safePart(profile.name)}.pdf`;
+
+  // Hidden iframe for clean CSS scope (slip HTML has its own full <html>/<style>)
+  const iframe = document.createElement('iframe');
+  iframe.style.cssText = 'position:fixed;left:-10000px;top:0;width:820px;height:1100px;border:0;';
+  document.body.appendChild(iframe);
+  iframe.contentDocument.open();
+  iframe.contentDocument.write(html);
+  iframe.contentDocument.close();
+
+  // Wait briefly for web fonts (Google Fonts @import inside the slip) to load
+  await new Promise(r => setTimeout(r, 400));
+
+  try {
+    const worker = html2pdf()
+      .set({
+        margin: [0.4, 0.4, 0.4, 0.4],
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.95 },
+        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' }
+      })
+      .from(iframe.contentDocument.body);
+
+    // Produce a blob URL and open in a new tab — native PDF viewer handles print/save
+    const pdfBlob = await worker.toPdf().get('pdf').then(pdf => pdf.output('blob'));
+    const blobUrl = URL.createObjectURL(pdfBlob);
+
+    // Open new tab with the PDF. The browser's Ctrl+S will use `filename` from
+    // the PDF's /Title metadata set by jsPDF.
+    const newTab = window.open(blobUrl, '_blank');
+    if (!newTab) {
+      // Popup blocked — fall back to direct download
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    // Revoke blob URL after a minute to free memory (tab keeps its own reference)
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  } catch (err) {
+    console.error('[pdfPackingSlip] Generation failed:', err);
+    alert('PDF generation failed: ' + (err.message || err));
+  } finally {
+    if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+  }
 }
 
 // v2.8.11: Delegates to _buildPackingSlipWith using saved customization settings.
@@ -7146,43 +7602,69 @@ async function loadShippingTab() {
     (itemRows || []).forEach(i => { if (i.sku) shipProductNames[i.sku] = i.product_name || ''; });
     
     // Enrich missing SKUs from sales_history by matching order_id or recipient+date
+    // v2.9.2 (S26): also enrich is_gift / gift_message so the shipping tab can render 🎁 flag
     const needsSku = shipTabData.filter(r => !r.sku && (r.order_id || r.recipient_name));
-    if (needsSku.length > 0) {
+    const needsGiftEnrich = shipTabData.some(r => r.is_gift === undefined);
+    if (needsSku.length > 0 || needsGiftEnrich) {
       try {
         // Batch lookup: get recent sales with order_id or ship_to_name
         const { data: salesRows } = await sb.from('sales_history')
-          .select('sku, order_id, ship_to_name, sale_date')
+          .select('sku, order_id, ship_to_name, sale_date, is_gift, gift_message')
           .order('sale_date', { ascending: false })
           .limit(2000);
         if (salesRows && salesRows.length > 0) {
           // Build lookup maps
           const byOrderId = {};
           const byNameDate = {};
+          const giftByOrderId = {};
+          const giftByNameDate = {};
           for (const s of salesRows) {
-            if (s.order_id) byOrderId[s.order_id] = s.sku;
+            if (s.order_id) {
+              byOrderId[s.order_id] = s.sku;
+              if (s.is_gift) giftByOrderId[s.order_id] = { is_gift: true, gift_message: s.gift_message || '' };
+            }
             if (s.ship_to_name && s.sale_date) {
               const key = (s.ship_to_name || '').toLowerCase().trim() + '|' + s.sale_date.substring(0,10);
               if (!byNameDate[key]) byNameDate[key] = s.sku;
+              if (s.is_gift && !giftByNameDate[key]) giftByNameDate[key] = { is_gift: true, gift_message: s.gift_message || '' };
             }
           }
           let enriched = 0;
-          for (const r of needsSku) {
-            // Try order_id match first
-            if (r.order_id && byOrderId[r.order_id]) {
-              r.sku = byOrderId[r.order_id];
-              enriched++;
-              continue;
-            }
-            // Try recipient name + date match
-            if (r.recipient_name && r.shippo_created_at) {
-              const key = (r.recipient_name || '').toLowerCase().trim() + '|' + (r.shippo_created_at || '').substring(0,10);
-              if (byNameDate[key]) {
-                r.sku = byNameDate[key];
+          let giftsFlagged = 0;
+          for (const r of shipTabData) {
+            // SKU enrichment path (only rows that need it)
+            if (!r.sku && (r.order_id || r.recipient_name)) {
+              if (r.order_id && byOrderId[r.order_id]) {
+                r.sku = byOrderId[r.order_id];
                 enriched++;
+              } else if (r.recipient_name && r.shippo_created_at) {
+                const key = (r.recipient_name || '').toLowerCase().trim() + '|' + (r.shippo_created_at || '').substring(0,10);
+                if (byNameDate[key]) {
+                  r.sku = byNameDate[key];
+                  enriched++;
+                }
+              }
+            }
+            // Gift enrichment path (all rows — sales_history is source of truth)
+            if (r.is_gift === undefined || r.is_gift === null) {
+              let g = null;
+              if (r.order_id && giftByOrderId[r.order_id]) {
+                g = giftByOrderId[r.order_id];
+              } else if (r.recipient_name && r.shippo_created_at) {
+                const key = (r.recipient_name || '').toLowerCase().trim() + '|' + (r.shippo_created_at || '').substring(0,10);
+                if (giftByNameDate[key]) g = giftByNameDate[key];
+              }
+              if (g) {
+                r.is_gift = true;
+                r.gift_message = g.gift_message;
+                giftsFlagged++;
+              } else {
+                r.is_gift = false;
               }
             }
           }
           if (enriched > 0) console.log(`[Shipping] Enriched ${enriched} rows with SKUs from sales_history`);
+          if (giftsFlagged > 0) console.log(`[Shipping v2.9.2] Flagged ${giftsFlagged} rows as gift orders from sales_history`);
         }
       } catch(e) { console.log('SKU enrichment error:', e.message); }
     }
@@ -7310,6 +7792,8 @@ function renderShippingTab() {
       const prodName = escHtml((r.sku && shipProductNames[r.sku]) ? shipProductNames[r.sku].substring(0,35) : '—');
       const recipientName = escHtml(r.recipient_name || '—');
       const recipientLoc = [r.recipient_city, r.recipient_state, r.recipient_zip].filter(Boolean).join(', ');
+      // v2.9.2 (S26): 🎁 red-flag badge; is_gift is enriched from sales_history in loadShippingTab
+      const giftBadge = r.is_gift ? `<span class="badge badge-gift" title="Gift order — remember to include gift slip${r.gift_message ? ' and message' : ''}">🎁</span> ` : '';
       const trackNum = r.tracking_number ? escHtml(r.tracking_number) : '—';
       return `<tr style="cursor:pointer;${r.is_hidden ? 'opacity:0.4;' : ''}" onclick="toggleGlobalShipDetail(${idx})" title="Click for details">
         <td class="mono" style="font-size:12px;">${date}</td>
@@ -7318,7 +7802,7 @@ function renderShippingTab() {
         <td style="font-size:12px;">${escHtml(r.carrier || '—')}</td>
         <td style="font-size:11px;">${escHtml(r.service_name || '—')}</td>
         <td id="gShipStatus_${idx}" style="font-size:11px;font-weight:600;color:${tsColor};">${escHtml(ts)}</td>
-        <td style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(recipientName + ', ' + recipientLoc)}">${recipientName}</td>
+        <td style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(recipientName + ', ' + recipientLoc)}">${giftBadge}${recipientName}</td>
         <td style="overflow:hidden;text-overflow:ellipsis;font-size:11px;" onclick="event.stopPropagation();">${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);">${trackNum}</a>` : '—'}</td>
         <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
       </tr>
@@ -7983,6 +8467,7 @@ async function openSlipFromShipping(idx) {
     $('slipType').value = 'standard';
     $('slipGiftField').style.display = 'none';
   }
+  populateSlipModalProfileSelect(); // v2.8.13
   $('slipModal').classList.add('active');
 }
 
@@ -9032,8 +9517,11 @@ async function loadSettings() {
     console.log('Email template load skipped:', e.message);
   }
 
-  // v2.8.11: Hydrate packing slip customization UI (localStorage, not Supabase)
-  try { hydratePslipSettingsUI(); } catch(e) { console.log('Pslip settings hydrate skipped:', e.message); }
+  // v2.8.13: Load packing slip profiles from Supabase, then hydrate UI
+  try {
+    await initPslipProfiles();
+    hydratePslipSettingsUI();
+  } catch(e) { console.log('Pslip profiles init skipped:', e.message); }
 }
 
 async function saveSettingsToDb() {
