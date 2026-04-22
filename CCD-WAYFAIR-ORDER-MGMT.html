@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.5.1</title>
+<title>CCD Wayfair Order Manager v1.5.3</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -193,7 +193,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.5.1</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.5.3</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
@@ -418,7 +418,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.5.1',
+      device: 'WF-OrderMgr-v1.5.3',
       user_name: localStorage.getItem('ccdUsername') || 'Paul',
       sku: sku || details?.sku || null
     });
@@ -1142,7 +1142,21 @@ async function registerCurrentOrder(packageUnits) {
     customerName: o.customerName || null,
     cartonCount: cartonCount,
     weight: weightLbs,
-    partNumbers: products.map(p => p.partNumber)
+    partNumbers: products.map(p => p.partNumber),
+    // v1.5.3 WF-040 URL persistence — cache the three document URLs and the
+    // registration timestamp so reprint via fetchShippingInfoFromAuditLog()
+    // works even when Wayfair's labelGenerationEvents endpoint lags (observed:
+    // multi-day indexing delay; today's registrations not visible until 4+ days
+    // later). Signed URLs themselves expire ~24-48 hours, but caching at least
+    // lets us try them as a first attempt before falling back to Partner Home.
+    documents: {
+      shippingLabel: r.documents?.shippingLabel || null,
+      // Per WF-032, packingSlipUrl lives on the top-level PO, not the register response
+      packingSlip: r.documents?.packingSlip || o.packingSlipUrl || null,
+      billOfLading: r.documents?.billOfLading || null
+    },
+    trackingInfo: r.trackingInfo || [],
+    registeredAt: new Date().toISOString()
   });
   toast('Registration complete — labels ready! Send ASN after shipping.', 'ok');
 }
@@ -1628,7 +1642,70 @@ async function fetchShippingInfo() {
     // Document cards → click Download on each card.
     markRegisteredInUI();
   } else {
-    log('No shipping events found for this PO', 'warn');
+    // v1.5.3 (WF-040 mitigation): Wayfair's labelGenerationEvents has a
+    // multi-day indexing lag — registrations from today (and sometimes the
+    // last several days) don't appear. Fall back to the order_registered
+    // audit row we wrote at registration time, which has the URLs cached.
+    log(`labelGenerationEvents returned empty for PO ${currentOrder.poNumber} — trying activity_log fallback (WF-040)`, 'warn');
+    await fetchShippingInfoFromAuditLog();
+  }
+}
+
+// v1.5.3 (WF-040): Reprint fallback via activity_log. Runs when Wayfair's
+// labelGenerationEvents endpoint returns empty for a PO we know is registered.
+// Reads the order_registered row this tool wrote at registration time.
+// Idempotent, no side effects beyond UI render.
+async function fetchShippingInfoFromAuditLog() {
+  if (!sb || !currentOrder) return;
+  try {
+    const { data, error } = await sb.from('activity_log')
+      .select('created_at, details')
+      .eq('category', 'order')
+      .eq('action', 'order_registered')
+      .eq('channel', 'wayfair')
+      .filter('details->>poNumber', 'eq', currentOrder.poNumber)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) { log('Audit log fallback query failed: ' + error.message, 'warn'); return; }
+    if (!data || data.length === 0) {
+      log(`No order_registered row found in activity_log for PO ${currentOrder.poNumber}. Reprint via API not possible — use Partner Home.`, 'warn');
+      return;
+    }
+    const row = data[0];
+    const d = row.details || {};
+    const registeredAt = d.registeredAt || row.created_at;
+    const hoursOld = Math.round((Date.now() - new Date(registeredAt).getTime()) / 1000 / 3600);
+
+    // Pre-v1.5.3 rows don't have the documents object cached. Exit gracefully.
+    const docs = d.documents;
+    if (!docs || (!docs.shippingLabel && !docs.packingSlip && !docs.billOfLading)) {
+      log(`Found order_registered row from ${hoursOld}h ago, but no cached URLs (pre-v1.5.3 row). Use Partner Home for reprint.`, 'warn');
+      return;
+    }
+
+    // Wayfair signs URLs for roughly 24-48 hours. Warn if stale — URLs may
+    // 403/404 when clicked, in which case operator falls back to Partner Home.
+    if (hoursOld > 24) {
+      log(`Cached URLs are ~${hoursOld}h old — may have expired. If downloads fail, use Partner Home.`, 'warn');
+    } else {
+      log(`Reprint via activity_log fallback — URLs cached ${hoursOld}h ago`, 'ok');
+    }
+
+    const tracking = d.trackingInfo || d.tracking || [];
+    renderDocuments(docs, tracking);
+    markRegisteredInUI();
+
+    // Also populate the ASN carrier/tracking fields in case the operator
+    // hasn't sent ASN yet (registered but ASN pending).
+    if (tracking.length > 0) {
+      const t = tracking[0];
+      const cEl = document.getElementById('asnCarrierCode');
+      const tEl = document.getElementById('asnTrackingNumber');
+      if (cEl && !cEl.value && t.carrierCode) cEl.value = t.carrierCode;
+      if (tEl && !tEl.value && t.trackingNumber) tEl.value = t.trackingNumber;
+    }
+  } catch (e) {
+    log('Audit log fallback error: ' + e.message, 'warn');
   }
 }
 
@@ -1731,9 +1808,13 @@ async function generateCCDManifest() {
       return;
     }
 
-    // Backfill pass: rows from before v1.3.1 lack customerName/cartonCount/weight.
-    // Best-effort: parse weight from items.wayfair_weight via partNumber lookup.
-    // customerName has no reliable DB source → stays null (operator writes by hand).
+    // Backfill pass for rows that predate the v1.5.1 audit-log enrichment.
+    // v1.5.2 two-pass backfill:
+    //   - Weight → parse items.wayfair_weight via partNumber lookup
+    //   - Customer name → sales_history.buyer_email (Sync Hub stores the
+    //     Wayfair customer NAME in buyer_email since Wayfair's API doesn't
+    //     expose the real email). ship_to_name is preferred if populated.
+    // Operator only writes a customer name by hand if both sources are empty.
     await backfillManifestRows(data);
 
     // Group by carrier
@@ -1775,38 +1856,82 @@ async function generateCCDManifest() {
 }
 
 async function backfillManifestRows(rows) {
-  const needs = rows.filter(r => {
+  // v1.5.2: Two-pass backfill for older activity_log rows:
+  //   Pass 1 — weight from items.wayfair_weight (text field, numeric parse)
+  //   Pass 2 — customer name from sales_history.buyer_email
+  //            Sync Hub v4.2.4+ writes Wayfair customer NAME into buyer_email
+  //            because Wayfair's API doesn't expose the real email address.
+  //            ship_to_name is a fallback if populated.
+  //
+  // Both passes are best-effort — failures log a warning but never throw,
+  // since the manifest is usable with "—" placeholders.
+
+  // Pass 1: Weight
+  const needsWeight = rows.filter(r => {
     const d = r.details || {};
     return d.weight == null && Array.isArray(d.partNumbers) && d.partNumbers.length > 0;
   });
-  if (needs.length === 0) return;
-
-  const allParts = [...new Set(needs.flatMap(r => r.details.partNumbers))];
-  if (allParts.length === 0) return;
-
-  try {
-    const { data: items, error } = await sb.from('items')
-      .select('wayfair_sku, wayfair_weight')
-      .in('wayfair_sku', allParts);
-    if (error) { log('Weight backfill query failed: ' + error.message, 'warn'); return; }
-
-    const weightByPart = {};
-    (items || []).forEach(i => {
-      const m = (i.wayfair_weight || '').toString().match(/([\d.]+)/);
-      weightByPart[i.wayfair_sku] = m ? parseFloat(m[1]) : null;
-    });
-
-    needs.forEach(r => {
-      const parts = r.details.partNumbers;
-      const vals = parts.map(p => weightByPart[p]).filter(v => isFinite(v) && v > 0);
-      if (vals.length === parts.length && vals.length > 0) {
-        const total = vals.reduce((a, b) => a + b, 0);
-        r.details.weight = Math.round(total * 100) / 100;
+  if (needsWeight.length > 0) {
+    const allParts = [...new Set(needsWeight.flatMap(r => r.details.partNumbers))];
+    try {
+      const { data: items, error } = await sb.from('items')
+        .select('wayfair_sku, wayfair_weight')
+        .in('wayfair_sku', allParts);
+      if (error) {
+        log('Weight backfill query failed: ' + error.message, 'warn');
+      } else {
+        const weightByPart = {};
+        (items || []).forEach(i => {
+          const m = (i.wayfair_weight || '').toString().match(/([\d.]+)/);
+          weightByPart[i.wayfair_sku] = m ? parseFloat(m[1]) : null;
+        });
+        needsWeight.forEach(r => {
+          const parts = r.details.partNumbers;
+          const vals = parts.map(p => weightByPart[p]).filter(v => isFinite(v) && v > 0);
+          if (vals.length === parts.length && vals.length > 0) {
+            const total = vals.reduce((a, b) => a + b, 0);
+            r.details.weight = Math.round(total * 100) / 100;
+          }
+        });
+        log(`Backfilled weight for ${needsWeight.length} row(s) from items.wayfair_weight`, 'info');
       }
-    });
-    if (needs.length > 0) log(`Backfilled weight for ${needs.length} older row(s) from items.wayfair_weight`, 'info');
-  } catch (e) {
-    log('Backfill error: ' + e.message, 'warn');
+    } catch (e) {
+      log('Weight backfill error: ' + e.message, 'warn');
+    }
+  }
+
+  // Pass 2: Customer name from sales_history
+  const needsCustomer = rows.filter(r => !(r.details || {}).customerName && (r.details || {}).poNumber);
+  if (needsCustomer.length > 0) {
+    const orderIds = needsCustomer.map(r => `WF-${r.details.poNumber}`);
+    try {
+      const { data: sales, error } = await sb.from('sales_history')
+        .select('order_id, buyer_email, ship_to_name')
+        .eq('sale_channel', 'wayfair')
+        .in('order_id', orderIds);
+      if (error) {
+        log('Customer name backfill query failed: ' + error.message, 'warn');
+      } else {
+        const nameByOrderId = {};
+        (sales || []).forEach(s => {
+          // Prefer ship_to_name if populated; fall back to buyer_email field
+          // (which Sync Hub stores the customer name in for Wayfair channel).
+          nameByOrderId[s.order_id] = s.ship_to_name || s.buyer_email || null;
+        });
+        let filled = 0;
+        needsCustomer.forEach(r => {
+          const key = `WF-${r.details.poNumber}`;
+          const name = nameByOrderId[key];
+          if (name) {
+            r.details.customerName = name;
+            filled++;
+          }
+        });
+        if (filled > 0) log(`Backfilled customer name for ${filled}/${needsCustomer.length} row(s) from sales_history`, 'info');
+      }
+    } catch (e) {
+      log('Customer name backfill error: ' + e.message, 'warn');
+    }
   }
 }
 
@@ -2031,7 +2156,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.5.1 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.5.3 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -2258,6 +2383,11 @@ function showStatus(id, msg, cls) {
 // =========================================================================
 autoConnect();
 checkProxyEnvironment();
+// v1.5.2: Sync the safety bar text with the checkbox state on load. v1.5.1
+// defaulted the checkbox to UNCHECKED for production, but updateSafetyBar()
+// was only wired to the onchange event — so the initial render still showed
+// "Log-Only Mode..." text even when the mode was off.
+updateSafetyBar();
 
 async function checkProxyEnvironment() {
   const proxy = proxyUrl();
