@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.6</title>
+<title>CCD Wayfair Order Manager v1.6.1</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -193,14 +193,14 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.1</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
   <div class="config-bar">
     <div class="cfg-field"><label>Supabase URL</label><input type="text" id="sbUrl"></div>
     <div class="cfg-field"><label>Supabase Key</label><input type="password" id="sbKey"></div>
-    <div class="cfg-field"><label>Order Proxy URL</label><input type="text" id="proxyUrl"></div>
+    <div class="cfg-field"><label>Order Proxy URL <span id="proxyUrlIndicator" style="font-size:9px;font-weight:500;color:var(--text-muted);margin-left:6px;"></span></label><input type="text" id="proxyUrl"><div id="proxyUrlReset" style="display:none;font-size:9px;margin-top:2px;"><a href="#" onclick="resetProxyUrl();return false;" style="color:var(--text-muted);text-decoration:underline;cursor:pointer;">Reset to default</a></div></div>
     <div class="cfg-field" style="max-width:240px;"><label>CCD API Key</label><input type="password" id="apiKey" value="ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF"></div>
     <button class="btn btn-primary btn-sm" onclick="connectAll()">Connect</button>
   </div>
@@ -438,7 +438,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6',
+      device: 'WF-OrderMgr-v1.6.1',
       user_name: localStorage.getItem('ccdUsername') || 'Paul',
       sku: sku || details?.sku || null
     });
@@ -458,8 +458,66 @@ function updateSafetyBar() {
 // =========================================================================
 // CONNECTIONS
 // =========================================================================
+
+// v1.6.1: Hardcoded production Order Proxy URL so fresh browsers and new
+// devices "just work" without per-device localStorage setup. This was a real
+// operational problem — Mary's machine hit Gate 7 with a stale sandbox URL in
+// localStorage, forcing a manual fix. With the default baked in, opening the
+// app on any new browser auto-populates the correct URL.
+//
+// The same GAS deployment serves both production and sandbox (environment is
+// flipped server-side via switchToProduction() / switchToSandbox() in the GAS
+// editor), so one URL covers both modes. checkProxyEnvironment() polls the
+// /health endpoint on load to surface the current environment in the badge.
+//
+// If the URL ever needs to change (new GAS deployment, not just a redeploy
+// of the existing one — that's rare), update DEFAULT_ORDER_PROXY_URL below and
+// redeploy this HTML. Operators can also type an override into the URL field
+// and click Connect to save it to localStorage for that browser only.
+const DEFAULT_ORDER_PROXY_URL = 'https://script.google.com/macros/s/AKfycbwvHpuvuCDjTCApLZOw3-58ew4T1dl3bQW2k-57BfCfRDphPEjDL5HMbQlLBQx_uCfJ7w/exec';
+
 function proxyUrl() { return document.getElementById('proxyUrl').value.trim(); }
 function apiKey() { return document.getElementById('apiKey').value.trim(); }
+
+// v1.6.1: Keep the small "(default)" / "(override)" indicator + Reset link
+// in sync with whatever URL is currently in the field. Called on page load
+// and whenever the URL changes.
+function updateProxyUrlIndicator() {
+  const ind = document.getElementById('proxyUrlIndicator');
+  const reset = document.getElementById('proxyUrlReset');
+  if (!ind || !reset) return;
+  const current = proxyUrl();
+  const override = localStorage.getItem('ccdWayfairOrderProxy');
+  if (!current) {
+    ind.textContent = '';
+    reset.style.display = 'none';
+  } else if (override && override === current && current !== DEFAULT_ORDER_PROXY_URL) {
+    ind.textContent = '(local override)';
+    ind.style.color = 'var(--warn)';
+    reset.style.display = 'block';
+  } else if (current === DEFAULT_ORDER_PROXY_URL) {
+    ind.textContent = '(default)';
+    ind.style.color = 'var(--text-muted)';
+    reset.style.display = 'none';
+  } else {
+    ind.textContent = '(unsaved edit)';
+    ind.style.color = 'var(--warn)';
+    reset.style.display = 'block';
+  }
+}
+
+// v1.6.1: Clear the localStorage override and restore the hardcoded default.
+// One-click recovery if an operator accidentally typed a bad URL or a stale
+// sandbox URL crept in.
+function resetProxyUrl() {
+  localStorage.removeItem('ccdWayfairOrderProxy');
+  document.getElementById('proxyUrl').value = DEFAULT_ORDER_PROXY_URL;
+  updateProxyUrlIndicator();
+  log('Order Proxy URL reset to default', 'ok');
+  toast('Proxy URL reset to default', 'ok');
+  // Re-check environment against the default
+  if (typeof checkProxyEnvironment === 'function') checkProxyEnvironment();
+}
 
 async function proxyGet(action, params = {}) {
   const qs = new URLSearchParams({ action, key: apiKey(), ...params });
@@ -483,7 +541,18 @@ function connectAll() {
     loadDbItems();
   }
   const px = proxyUrl();
-  if (px) localStorage.setItem('ccdWayfairOrderProxy', px);
+  if (px) {
+    // v1.6.1: Only save to localStorage if the URL differs from the hardcoded
+    // default. Storing the default would create a stale override that
+    // outlives future URL changes.
+    if (px !== DEFAULT_ORDER_PROXY_URL) {
+      localStorage.setItem('ccdWayfairOrderProxy', px);
+      log('Order Proxy URL saved as local override', 'info');
+    } else {
+      localStorage.removeItem('ccdWayfairOrderProxy');
+    }
+  }
+  updateProxyUrlIndicator();
   toast('Connected', 'ok');
   log('Connected — ready to fetch orders', 'info');
 }
@@ -491,11 +560,20 @@ function connectAll() {
 function autoConnect() {
   const sbUrl = localStorage.getItem('ccdSupabaseUrl');
   const sbKey = localStorage.getItem('ccdSupabaseKey');
-  const px = localStorage.getItem('ccdWayfairOrderProxy');
+  // v1.6.1: Order Proxy URL resolution — localStorage override wins, else
+  // hardcoded default. Fresh browsers on any device auto-populate the correct
+  // URL without requiring setup.
+  const pxOverride = localStorage.getItem('ccdWayfairOrderProxy');
+  const pxUrl = pxOverride || DEFAULT_ORDER_PROXY_URL;
   if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
   if (sbKey) document.getElementById('sbKey').value = sbKey;
-  if (px) document.getElementById('proxyUrl').value = px;
+  document.getElementById('proxyUrl').value = pxUrl;
+  updateProxyUrlIndicator();
   if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); loadDbItems(); }
+
+  // Keep indicator in sync if the operator edits the URL field manually
+  const pxEl = document.getElementById('proxyUrl');
+  if (pxEl) pxEl.addEventListener('input', updateProxyUrlIndicator);
 
   // v1.5.1: Restore go-live date from localStorage. Defaults to CCD's actual
   // go-live day (2026-04-22) so first-time loads in production don't show a
@@ -2215,7 +2293,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.1 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
