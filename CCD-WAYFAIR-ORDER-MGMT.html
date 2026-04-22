@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.3</title>
+<title>CCD Wayfair Order Manager v1.5</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -193,7 +193,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.3</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.5</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
@@ -218,8 +218,9 @@
   <div class="tabs">
     <div class="tab active" onclick="switchTab('queue',this)">Orders Queue</div>
     <div class="tab" onclick="switchTab('detail',this)">Order Detail</div>
-    <div class="tab" onclick="switchTab('ship',this)">Ship & Labels</div>
-    <div class="tab" onclick="switchTab('history',this)">History & Log</div>
+    <div class="tab" onclick="switchTab('ship',this)">Ship &amp; Labels</div>
+    <div class="tab" onclick="switchTab('manifest',this)">Manifest</div>
+    <div class="tab" onclick="switchTab('history',this)">History &amp; Log</div>
   </div>
 
   <!-- TAB 1: Orders Queue -->
@@ -253,7 +254,28 @@
     </div>
   </div>
 
-  <!-- TAB 4: History & Log -->
+  <!-- TAB 4: Manifest (v1.5) — CCD-native daily shipment manifest, not tied to any selected PO -->
+  <div class="tab-panel" id="tab-manifest">
+    <div style="margin-bottom:14px;">
+      <h3 style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Daily Shipment Manifest</h3>
+      <div style="font-size:11px;color:var(--text-muted);">
+        CCD's own shipment records, generated from <code style="font-family:'JetBrains Mono',monospace;color:var(--text-dim);">activity_log.asn_sent</code> rows. One page per carrier. Print one for the driver, keep one for the files.
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
+      <div class="field" style="margin-bottom:0;">
+        <label>Ship Date</label>
+        <input type="date" id="manifestDate" style="font-family:'JetBrains Mono',monospace;">
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="generateCCDManifest()" id="btnGenManifest">Load Shipments</button>
+      <button class="btn btn-success btn-sm" onclick="downloadCCDManifestPDF()" id="btnDlManifest" disabled>Download PDF</button>
+    </div>
+
+    <div id="manifestResult"></div>
+  </div>
+
+  <!-- TAB 5: History & Log -->
   <div class="tab-panel" id="tab-history">
     <div class="orders-toolbar">
       <button class="btn btn-primary btn-sm" onclick="loadHistory()">Load Sales History</button>
@@ -317,6 +339,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 // =========================================================================
 // STATE
@@ -395,7 +418,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.3',
+      device: 'WF-OrderMgr-v1.5',
       user_name: localStorage.getItem('ccdUsername') || 'Paul',
       sku: sku || details?.sku || null
     });
@@ -458,7 +481,7 @@ function autoConnect() {
 async function loadDbItems() {
   if (!sb) return;
   const { data, error } = await sb.from('items')
-    .select('id, sku, product_name, wayfair_sku, qty, wayfair_qty, wholesale_price')
+    .select('id, sku, product_name, wayfair_sku, qty, wayfair_qty, wholesale_price, wayfair_weight')
     .not('wayfair_sku', 'is', null)
     .order('sku').limit(5000);
   if (error) { log('DB error: ' + error.message, 'err'); return; }
@@ -512,7 +535,7 @@ function renderOrdersTable() {
     let shipClass = 'po-upcoming';
     if (shipBy && shipBy < today) shipClass = 'po-overdue';
     else if (shipBy === today) shipClass = 'po-today';
-    const items = (o.products || []).reduce((s, p) => s + (p.quantity || 1), 0);
+    const items = (o.products || []).reduce((s, p) => s + (parseInt(p.quantity) || 1), 0);
     const hasResp = currentFetchFilter === 'true';
     const cancelCount = cancellationFlags[o.poNumber] || 0;
     const rowClass = cancelCount > 0 ? 'cancelled' : '';
@@ -979,18 +1002,14 @@ function renderShipTab() {
       <button class="btn btn-success btn-sm" onclick="sendASNForCurrentOrder()" id="btnASN">Send ASN</button>
     </div>
     <div class="push-status" id="asnStatus"></div>
-
-    <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 8px;">Daily Manifest (Consolidated BOL)</h4>
-    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
-      <div class="field" style="margin-bottom:0;">
-        <label>Manifest Date</label>
-        <input type="date" id="manifestDate" value="${defaultPickup}" style="font-family:'JetBrains Mono',monospace;">
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="fetchManifest()">Get Manifest</button>
-    </div>
-    <div id="manifestResult" style="margin-top:10px;"></div>
   `;
   updateRegisterButton();
+
+  // v1.5: Auto-fetch shipping info on tab render so documents populate without
+  // a manual Refresh click. If the PO is already registered, docs appear
+  // immediately for reprint. If not registered yet, the call returns empty
+  // events and the placeholder cards stay (no error state).
+  fetchShippingInfo();
 }
 
 function updateRegisterButton() {
@@ -1119,9 +1138,50 @@ async function sendASNForCurrentOrder() {
 
   showStatus('asnStatus', `✓ ASN sent — handle: ${(r.handle||'').substring(0,12)}…, status: ${r.status}, errors: ${r.errorCount}`, r.errorCount > 0 ? 'warn' : 'ok');
   log(`ASN sent for PO ${o.poNumber} — handle: ${r.handle}, tracking: ${trackingNumber}`, 'ok');
+
+  // @invariant WF-038: asn_sent audit row must include customerName, cartonCount, and weight
+  // fields in details JSONB. These feed the CCD Manifest Generator tool. Backward-compatible
+  // with older rows that lack these fields (generator has live fallback), but all new rows
+  // must include them so end-of-day manifests don't require live API calls.
+  // Weight sources (in priority order):
+  //   1. Sum of weightValue across currentPackages[poNumber] if consolidation modal was used
+  //   2. Parse numeric from items.wayfair_weight if single-unit and DB has a weight string
+  //   3. null (operator writes by hand on the printed manifest)
+  const pkgs = currentPackages[o.poNumber] || [];
+  const cartonCount = pkgs.length > 0 ? pkgs.length : 1;
+  let weightLbs = null;
+  if (pkgs.length > 0) {
+    const summed = pkgs.reduce((s, p) => {
+      const v = parseFloat(p.weightValue);
+      if (!isFinite(v)) return s;
+      // normalize kilograms to pounds for manifest consistency
+      return s + (p.weightUnit === 'KILOGRAMS' ? v * 2.20462 : v);
+    }, 0);
+    if (summed > 0) weightLbs = Math.round(summed * 100) / 100;
+  } else if (products.length > 0) {
+    // single-unit or unconsolidated — try parsing items.wayfair_weight
+    const parts = products.map(p => p.partNumber);
+    const dbRows = parts.map(pn => dbItems.find(d => d.wayfair_sku === pn)).filter(Boolean);
+    if (dbRows.length > 0) {
+      const parsed = dbRows.map(d => {
+        const m = (d.wayfair_weight || '').toString().match(/([\d.]+)/);
+        return m ? parseFloat(m[1]) : null;
+      }).filter(v => isFinite(v) && v > 0);
+      if (parsed.length === products.length) {
+        const total = parsed.reduce((a, b) => a + b, 0);
+        weightLbs = Math.round(total * 100) / 100;
+      }
+    }
+  }
+
   await auditLog('asn_sent', `PO ${o.poNumber} ASN sent — carrier: ${carrierCode}, tracking: ${trackingNumber}`, {
     poNumber: o.poNumber, handle: r.handle, carrierCode: carrierCode,
-    trackingNumber: trackingNumber, shipSpeed: shipSpeed, errorCount: r.errorCount
+    trackingNumber: trackingNumber, shipSpeed: shipSpeed, errorCount: r.errorCount,
+    // v1.4 manifest-ready fields (WF-038)
+    customerName: o.customerName || null,
+    cartonCount: cartonCount,
+    weight: weightLbs,
+    partNumbers: products.map(p => p.partNumber)
   });
   toast('ASN sent successfully!', 'ok');
 }
@@ -1511,41 +1571,368 @@ async function fetchShippingInfo() {
   }
 }
 
-async function fetchManifest() {
+// =========================================================================
+// v1.4: CCD-NATIVE DAILY SHIPMENT MANIFEST
+// =========================================================================
+// @invariant WF-037 (mitigation): Wayfair's consolidatedBolDocument endpoint
+// requires a scope not granted to the CCD-Order-Mgmt production app. This
+// function replaces the former Wayfair-side fetchManifest with a CCD-native
+// generator that reads activity_log asn_sent rows directly. No Wayfair API
+// calls involved. Fully operator-controlled; survives Wayfair API outages;
+// CCD owns the PDF output format.
+//
+// Data flow: Supabase activity_log → group by carrier → render inline preview
+// + generate PDF via jsPDF (loaded from CDN in <head>).
+
+let currentManifestData = null; // { date, carriers: { CARRIER_CODE: [row, ...] } }
+
+// Carrier code → display name mapping for manifest header.
+// Wayfair's codes are Wayfair-specific; unknown codes render verbatim.
+const CARRIER_NAMES_MAP = {
+  'FDEG': 'FedEx', 'FDEH': 'FedEx', 'FDEE': 'FedEx',
+  'FDXG': 'FedEx', 'FDXE': 'FedEx', 'FEDX': 'FedEx',
+  'UPSN': 'UPS', 'UPSC': 'UPS', 'UPSG': 'UPS', 'UPSR': 'UPS',
+  'USPS': 'USPS', 'DHL': 'DHL'
+};
+function prettyCarrier(code) {
+  if (!code) return 'Unknown Carrier';
+  return CARRIER_NAMES_MAP[code.toUpperCase()] || code;
+}
+
+async function generateCCDManifest() {
+  if (!sb) { toast('Connect to Supabase first', 'err'); return; }
   const date = document.getElementById('manifestDate')?.value;
   if (!date) { toast('Select a manifest date', 'err'); return; }
 
-  log(`Fetching consolidated manifest for ${date}`, 'info');
-  const r = await proxyPost('getManifest', { date: date });
+  document.getElementById('btnGenManifest').disabled = true;
+  document.getElementById('btnDlManifest').disabled = true;
+  log(`Loading shipments for ${date}…`, 'info');
 
   const el = document.getElementById('manifestResult');
-  if (!el) return;
+  el.innerHTML = `<div style="padding:10px;font-size:12px;color:var(--text-dim);"><span class="spinner"></span> Loading ASN events for ${date}…</div>`;
 
-  if (!r.success) {
-    el.innerHTML = `<div style="padding:10px;background:var(--fail-bg);border:1px solid rgba(244,112,104,0.2);border-radius:7px;font-size:12px;color:var(--fail);">Failed: ${r.error}${r.graphqlErrors ? ' — ' + r.graphqlErrors.map(e => e.message).join('; ') : ''}</div>`;
-    log(`Manifest failed: ${r.error}`, 'err');
+  try {
+    // Timestamps in activity_log are UTC (Supabase default NOW()). Use wide
+    // UTC window to catch evening ASNs regardless of local timezone drift.
+    const startUtc = date + 'T00:00:00.000Z';
+    const endUtc = date + 'T23:59:59.999Z';
+
+    const { data, error } = await sb.from('activity_log')
+      .select('id, created_at, action, summary, details, device, user_name')
+      .eq('category', 'order')
+      .eq('action', 'asn_sent')
+      .eq('channel', 'wayfair')
+      .gte('created_at', startUtc)
+      .lte('created_at', endUtc)
+      .order('created_at', { ascending: true })
+      .limit(500);
+
+    if (error) throw error;
+
+    log(`Fetched ${data.length} asn_sent event(s)`, data.length > 0 ? 'ok' : 'warn');
+
+    if (data.length === 0) {
+      currentManifestData = null;
+      el.innerHTML = `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:7px;font-size:12px;color:var(--text-muted);text-align:center;">No shipments for ${date}. The tool reads asn_sent rows from activity_log — send an ASN via the section above, then reload.</div>`;
+      return;
+    }
+
+    // Backfill pass: rows from before v1.3.1 lack customerName/cartonCount/weight.
+    // Best-effort: parse weight from items.wayfair_weight via partNumber lookup.
+    // customerName has no reliable DB source → stays null (operator writes by hand).
+    await backfillManifestRows(data);
+
+    // Group by carrier
+    const byCarrier = {};
+    data.forEach(row => {
+      const d = row.details || {};
+      const code = (d.carrierCode || 'UNKNOWN').toUpperCase();
+      if (!byCarrier[code]) byCarrier[code] = [];
+      byCarrier[code].push({
+        id: row.id,
+        timestamp: row.created_at,
+        poNumber: d.poNumber || '—',
+        trackingNumber: d.trackingNumber || '—',
+        customerName: d.customerName || null,
+        cartonCount: d.cartonCount ?? null,
+        weight: (d.weight != null && isFinite(d.weight)) ? Number(d.weight) : null,
+        partNumbers: d.partNumbers || [],
+        _missingCustomer: !d.customerName,
+        _missingCarton: d.cartonCount == null,
+        _missingWeight: d.weight == null
+      });
+    });
+
+    currentManifestData = { date, carriers: byCarrier };
+    renderCCDManifestPreview();
+    document.getElementById('btnDlManifest').disabled = false;
+  } catch (e) {
+    log('Manifest load failed: ' + e.message, 'err');
+    el.innerHTML = `<div style="padding:10px;background:var(--fail-bg);border:1px solid rgba(244,112,104,0.2);border-radius:7px;font-size:12px;color:var(--fail);">Load failed: ${e.message}</div>`;
+    currentManifestData = null;
+  } finally {
+    document.getElementById('btnGenManifest').disabled = false;
+  }
+}
+
+async function backfillManifestRows(rows) {
+  const needs = rows.filter(r => {
+    const d = r.details || {};
+    return d.weight == null && Array.isArray(d.partNumbers) && d.partNumbers.length > 0;
+  });
+  if (needs.length === 0) return;
+
+  const allParts = [...new Set(needs.flatMap(r => r.details.partNumbers))];
+  if (allParts.length === 0) return;
+
+  try {
+    const { data: items, error } = await sb.from('items')
+      .select('wayfair_sku, wayfair_weight')
+      .in('wayfair_sku', allParts);
+    if (error) { log('Weight backfill query failed: ' + error.message, 'warn'); return; }
+
+    const weightByPart = {};
+    (items || []).forEach(i => {
+      const m = (i.wayfair_weight || '').toString().match(/([\d.]+)/);
+      weightByPart[i.wayfair_sku] = m ? parseFloat(m[1]) : null;
+    });
+
+    needs.forEach(r => {
+      const parts = r.details.partNumbers;
+      const vals = parts.map(p => weightByPart[p]).filter(v => isFinite(v) && v > 0);
+      if (vals.length === parts.length && vals.length > 0) {
+        const total = vals.reduce((a, b) => a + b, 0);
+        r.details.weight = Math.round(total * 100) / 100;
+      }
+    });
+    if (needs.length > 0) log(`Backfilled weight for ${needs.length} older row(s) from items.wayfair_weight`, 'info');
+  } catch (e) {
+    log('Backfill error: ' + e.message, 'warn');
+  }
+}
+
+function renderCCDManifestPreview() {
+  const { date, carriers } = currentManifestData;
+  const carrierCodes = Object.keys(carriers).sort();
+  const totalShipments = carrierCodes.reduce((s, c) => s + carriers[c].length, 0);
+  const totalCartons = carrierCodes.reduce((s, c) => s + carriers[c].reduce((ss, r) => ss + (r.cartonCount || 1), 0), 0);
+  const missingCount = carrierCodes.reduce((s, c) => s + carriers[c].filter(r => r._missingCustomer || r._missingCarton).length, 0);
+
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  let html = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px;">
+    <div class="detail-card"><div class="lbl">Shipments</div><div class="val">${totalShipments}</div></div>
+    <div class="detail-card"><div class="lbl">Cartons</div><div class="val">${totalCartons}</div></div>
+    <div class="detail-card"><div class="lbl">Carriers</div><div class="val">${carrierCodes.length}</div></div>
+    ${missingCount > 0 ? `<div class="detail-card" style="border-color:rgba(240,180,74,0.25);"><div class="lbl">Legacy rows</div><div class="val" style="color:var(--warn);">${missingCount}</div></div>` : ''}
+  </div>`;
+
+  if (missingCount > 0) {
+    html += `<div style="padding:8px 12px;background:var(--warn-bg);border:1px solid rgba(240,180,74,0.2);border-radius:7px;font-size:11px;color:var(--warn);margin-bottom:10px;">${missingCount} row(s) predate the manifest-ready audit-log enrichment and are missing customer name and/or carton count. These render as "—" on the printed manifest — operator can write by hand at drop-off.</div>`;
+  }
+
+  carrierCodes.forEach(code => {
+    const rows = carriers[code];
+    const carrierCartons = rows.reduce((s, r) => s + (r.cartonCount || 1), 0);
+    const carrierWeight = rows.reduce((s, r) => s + (r.weight || 0), 0);
+
+    html += `<div style="margin-bottom:14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <div style="padding:8px 12px;background:var(--surface-raised);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+        <span style="font-size:12px;font-weight:700;">${esc(prettyCarrier(code))} <span style="color:var(--text-muted);font-weight:500;font-family:'JetBrains Mono',monospace;font-size:11px;">(${esc(code)})</span></span>
+        <span style="font-size:10px;color:var(--text-dim);font-family:'JetBrains Mono',monospace;">${rows.length} shipment${rows.length !== 1 ? 's' : ''}</span>
+      </div>
+      <table class="items-table" style="margin:0;">
+        <thead><tr>
+          <th>PO Number</th>
+          <th>Tracking</th>
+          <th>Customer</th>
+          <th style="text-align:right;">Cartons</th>
+          <th style="text-align:right;">Weight (lb)</th>
+        </tr></thead>
+        <tbody>`;
+
+    rows.forEach(r => {
+      const cust = r.customerName ? esc(r.customerName) : `<span style="color:var(--text-muted);font-style:italic;">—</span>`;
+      const wt = r.weight != null
+        ? r.weight.toFixed(2)
+        : `<span style="color:var(--text-muted);font-style:italic;">—</span>`;
+      const cartons = r.cartonCount ?? 1;
+      html += `<tr>
+        <td>${esc(r.poNumber)}</td>
+        <td>${esc(r.trackingNumber)}</td>
+        <td style="font-family:'DM Sans',sans-serif;font-size:12px;">${cust}</td>
+        <td style="text-align:right;">${cartons}</td>
+        <td style="text-align:right;">${wt}</td>
+      </tr>`;
+    });
+
+    html += `<tr style="border-top:2px solid var(--border-focus);background:rgba(129,140,248,0.04);">
+      <td colspan="3" style="text-align:right;text-transform:uppercase;letter-spacing:0.4px;font-size:10px;color:var(--text-dim);font-weight:700;">Totals</td>
+      <td style="text-align:right;font-weight:700;">${carrierCartons}</td>
+      <td style="text-align:right;font-weight:700;">${carrierWeight > 0 ? carrierWeight.toFixed(2) : '—'}</td>
+    </tr></tbody></table></div>`;
+  });
+
+  document.getElementById('manifestResult').innerHTML = html;
+}
+
+function downloadCCDManifestPDF() {
+  if (!currentManifestData) { toast('Load shipments first', 'err'); return; }
+  const { date, carriers } = currentManifestData;
+  const carrierCodes = Object.keys(carriers).sort();
+  if (carrierCodes.length === 0) { toast('Nothing to generate', 'err'); return; }
+
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    toast('jsPDF not loaded — check internet connection', 'err');
+    log('jsPDF library missing — PDF generation unavailable', 'err');
     return;
   }
 
-  if (r.availability === 'NOT_AVAILABLE' || !r.url) {
-    el.innerHTML = `<div style="padding:10px;background:var(--warn-bg);border:1px solid rgba(240,180,74,0.2);border-radius:7px;font-size:12px;color:var(--warn);">No manifest available for ${date}. Status: ${r.availability || 'unknown'}. Register orders for this date first.</div>`;
-    log(`Manifest not available for ${date}: ${r.availability}`, 'warn');
-    return;
-  }
+  log(`Generating PDF for ${date}…`, 'info');
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
 
-  // Store URL for download
-  currentDocUrls.manifest = r.url;
+  carrierCodes.forEach((code, idx) => {
+    if (idx > 0) doc.addPage();
+    renderCCDManifestPage(doc, {
+      pageWidth, pageHeight,
+      date, carrierCode: code, carrierName: prettyCarrier(code),
+      rows: carriers[code]
+    });
+  });
 
-  el.innerHTML = `
-    <div class="doc-card available" style="display:inline-block;min-width:220px;">
-      <div class="doc-icon">📜</div>
-      <div class="doc-name">Manifest — ${date}</div>
-      <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px;">BOL #${r.bolNumber || '—'} | ${(r.shipmentReferences || []).length} shipments</div>
-      ${r.expiry ? `<div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;">Expires: ${r.expiry.substring(0, 19)}</div>` : ''}
-      <button class="btn btn-primary btn-sm" onclick="downloadDoc('manifest', 'Manifest-${date}')" style="width:100%;justify-content:center;">Download Manifest</button>
-    </div>
-  `;
-  log(`Manifest ready — BOL #${r.bolNumber}, ${(r.shipmentReferences || []).length} shipments, expires: ${r.expiry || 'unknown'}`, 'ok');
+  const fname = `CCD-Manifest-${date}.pdf`;
+  doc.save(fname);
+  log(`PDF saved: ${fname}`, 'ok');
+  toast('Manifest PDF downloaded', 'ok');
+  auditLog('manifest_generated', `Daily manifest generated for ${date} — ${carrierCodes.length} carrier(s)`, {
+    date, carrierCount: carrierCodes.length,
+    shipmentCount: carrierCodes.reduce((s, c) => s + carriers[c].length, 0),
+    carriers: carrierCodes
+  });
+}
+
+function renderCCDManifestPage(doc, ctx) {
+  const { pageWidth, pageHeight, date, carrierName, rows } = ctx;
+  const marginX = 40;
+  const marginY = 40;
+  let y = marginY;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.setTextColor(20, 20, 20);
+  doc.text('CCD Shipment Manifest', marginX, y);
+  y += 18;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.text(`Carrier: ${carrierName}`, marginX, y);
+  y += 14;
+  doc.text(`Shipment Manifest for ${date} (${rows.length} Shipment${rows.length !== 1 ? 's' : ''})`, marginX, y);
+  y += 20;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('Ship From:', marginX, y); y += 13;
+  doc.setFont('helvetica', 'normal');
+  doc.text('Country Charm Decor, LLC', marginX, y); y += 12;
+  doc.text('2300 Southeast 157th Lane Road', marginX, y); y += 12;
+  doc.text('Summerfield, FL 34491', marginX, y); y += 18;
+
+  const rowHeight = 22;
+  doc.setLineWidth(0.6);
+  doc.setDrawColor(80, 80, 80);
+  doc.rect(marginX, y, pageWidth - 2 * marginX, rowHeight);
+  const splitX = marginX + (pageWidth - 2 * marginX) / 2;
+  doc.line(splitX, y, splitX, y + rowHeight);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.text('Date:', marginX + 6, y + 14);
+  doc.text('Signature:', splitX + 6, y + 14);
+  y += rowHeight + 4;
+
+  const cols = [
+    { label: 'PO Number',              w: 90,  align: 'left'  },
+    { label: 'Wayfair/PRO/Tracking',   w: 150, align: 'left'  },
+    { label: 'Customer Name',          w: 160, align: 'left'  },
+    { label: 'Carton Count',           w: 70,  align: 'right' },
+    { label: 'Weight',                 w: 62,  align: 'right' }
+  ];
+  const tableW = cols.reduce((s, c) => s + c.w, 0);
+
+  doc.setFillColor(245, 245, 245);
+  doc.rect(marginX, y, tableW, 20, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setTextColor(40, 40, 40);
+  let cx = marginX;
+  cols.forEach(c => {
+    const tx = c.align === 'right' ? cx + c.w - 6 : cx + 6;
+    doc.text(c.label, tx, y + 13, { align: c.align === 'right' ? 'right' : 'left' });
+    cx += c.w;
+  });
+  doc.setDrawColor(150, 150, 150);
+  doc.setLineWidth(0.4);
+  doc.line(marginX, y + 20, marginX + tableW, y + 20);
+  y += 20;
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(20, 20, 20);
+  let totalCartons = 0;
+  let totalWeight = 0;
+
+  const truncate = (s, col) => {
+    const maxChars = Math.floor(col.w / 4.5);
+    const str = String(s ?? '');
+    return str.length > maxChars ? str.substring(0, maxChars - 1) + '…' : str;
+  };
+
+  rows.forEach(r => {
+    if (y > pageHeight - 80) { doc.addPage(); y = marginY; }
+    cx = marginX;
+    const cells = [
+      { v: r.poNumber || '—' },
+      { v: r.trackingNumber || '—' },
+      { v: r.customerName || '—' },
+      { v: r.cartonCount != null ? String(r.cartonCount) : '1' },
+      { v: r.weight != null ? r.weight.toFixed(2) : '' }
+    ];
+    cells.forEach((cell, i) => {
+      const col = cols[i];
+      const tx = col.align === 'right' ? cx + col.w - 6 : cx + 6;
+      doc.text(truncate(cell.v, col), tx, y + 12, { align: col.align === 'right' ? 'right' : 'left' });
+      cx += col.w;
+    });
+    doc.setDrawColor(220, 220, 220);
+    doc.setLineWidth(0.3);
+    doc.line(marginX, y + 18, marginX + tableW, y + 18);
+    y += 18;
+    totalCartons += (r.cartonCount ?? 1);
+    if (r.weight != null) totalWeight += r.weight;
+  });
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  doc.setDrawColor(80, 80, 80);
+  doc.setLineWidth(0.5);
+  doc.line(marginX, y, marginX + tableW, y);
+  y += 2;
+  cx = marginX;
+  // Totals: label in column 3 (right-aligned), values in cols 4 & 5
+  doc.text('Totals:', cx + cols[0].w + cols[1].w + cols[2].w - 6, y + 12, { align: 'right' });
+  cx += cols[0].w + cols[1].w + cols[2].w;
+  doc.text(String(totalCartons), cx + cols[3].w - 6, y + 12, { align: 'right' });
+  cx += cols[3].w;
+  doc.text(totalWeight > 0 ? totalWeight.toFixed(2) : '', cx + cols[4].w - 6, y + 12, { align: 'right' });
+  y += 18;
+
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(7);
+  doc.setTextColor(130, 130, 130);
+  doc.text(`Generated by CCD Order Manager v1.5 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -1555,10 +1942,15 @@ function renderDocuments(docs, tracking) {
   const grid = document.getElementById('docGrid');
   if (!grid) return;
 
+  // v1.3: packingSlip no longer comes via labelGenerationEvents (see proxy
+  // v1.1.6 / WF-032). Fall back to packingSlipUrl from the PO itself, which
+  // getDropshipPurchaseOrders returns natively.
+  const slipUrl = docs.packingSlip || (currentOrder && currentOrder.packingSlipUrl) || null;
+
   // Store URLs in variable instead of encoding in onclick attributes
   currentDocUrls = {
     label: docs.shippingLabel || null,
-    slip: docs.packingSlip || null,
+    slip: slipUrl,
     bol: docs.billOfLading || null
   };
 
@@ -1743,6 +2135,14 @@ function switchTab(name, el) {
     renderShipTab();
   }
   if (name === 'detail') updateAcceptButton();
+  // v1.5: Initialize Manifest tab date to today on first open (idempotent)
+  if (name === 'manifest') {
+    const dateInput = document.getElementById('manifestDate');
+    if (dateInput && !dateInput.value) {
+      const t = new Date();
+      dateInput.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+    }
+  }
   // History loads on explicit button click only, not on tab switch
 }
 
