@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.5</title>
+<title>CCD Wayfair Order Manager v1.5.1</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -193,7 +193,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.5</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.5.1</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
@@ -206,7 +206,7 @@
   </div>
 
   <div class="safety-bar" id="safetyBar">
-    <input type="checkbox" id="logOnlyMode" checked onchange="updateSafetyBar()">
+    <input type="checkbox" id="logOnlyMode" onchange="updateSafetyBar()">
     <label for="logOnlyMode" style="cursor:pointer;"><strong>Log-Only Mode</strong> — orders are visible but accept/register buttons are disabled</label>
     <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
       <label style="font-size:10px;font-weight:600;color:inherit;">GO-LIVE DATE</label>
@@ -418,7 +418,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.5',
+      device: 'WF-OrderMgr-v1.5.1',
       user_name: localStorage.getItem('ccdUsername') || 'Paul',
       sku: sku || details?.sku || null
     });
@@ -476,6 +476,21 @@ function autoConnect() {
   if (sbKey) document.getElementById('sbKey').value = sbKey;
   if (px) document.getElementById('proxyUrl').value = px;
   if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); loadDbItems(); }
+
+  // v1.5.1: Restore go-live date from localStorage. Defaults to CCD's actual
+  // go-live day (2026-04-22) so first-time loads in production don't show a
+  // blank field and accidentally fetch the 100-PO legacy queue.
+  const glEl = document.getElementById('goLiveDate');
+  if (glEl) {
+    const stored = localStorage.getItem('ccdWayfairGoLiveDate');
+    glEl.value = stored || '2026-04-22';
+    glEl.addEventListener('change', () => {
+      if (glEl.value) {
+        localStorage.setItem('ccdWayfairGoLiveDate', glEl.value);
+        log(`Go-live date saved: ${glEl.value}`, 'info');
+      }
+    });
+  }
 }
 
 async function loadDbItems() {
@@ -1084,10 +1099,50 @@ async function registerCurrentOrder(packageUnits) {
     if (trackEl && firstTrack.trackingNumber) trackEl.value = firstTrack.trackingNumber;
   }
   renderDocuments(r.documents, r.trackingInfo);
+
+  // v1.5.1 (WF-038): Compute manifest-ready fields from package state + items.
+  // The CCD Manifest tool queries order_registered events (not asn_sent) because
+  // operationally the manifest is handed to the driver at drop-off, which is
+  // AFTER registration but BEFORE ASN. Weight/carton/customer fields must be
+  // captured here for the manifest to work without live-API backfill.
+  const o = currentOrder;
+  const products = o.products || [];
+  const pkgs = currentPackages[o.poNumber] || [];
+  const cartonCount = pkgs.length > 0 ? pkgs.length : 1;
+  let weightLbs = null;
+  if (pkgs.length > 0) {
+    const summed = pkgs.reduce((s, p) => {
+      const v = parseFloat(p.weightValue);
+      if (!isFinite(v)) return s;
+      return s + (p.weightUnit === 'KILOGRAMS' ? v * 2.20462 : v);
+    }, 0);
+    if (summed > 0) weightLbs = Math.round(summed * 100) / 100;
+  } else if (products.length > 0) {
+    const parts = products.map(p => p.partNumber);
+    const dbRows = parts.map(pn => dbItems.find(d => d.wayfair_sku === pn)).filter(Boolean);
+    if (dbRows.length > 0) {
+      const parsed = dbRows.map(d => {
+        const m = (d.wayfair_weight || '').toString().match(/([\d.]+)/);
+        return m ? parseFloat(m[1]) : null;
+      }).filter(v => isFinite(v) && v > 0);
+      if (parsed.length === products.length) {
+        const total = parsed.reduce((a, b) => a + b, 0);
+        weightLbs = Math.round(total * 100) / 100;
+      }
+    }
+  }
+
   await auditLog('order_registered', `PO ${currentOrder.poNumber} registered for pickup — ${(r.trackingInfo||[]).length} tracking`, {
     poNumber: currentOrder.poNumber, pickupDate: r.pickupDate, registrationId: r.registrationId,
     hasLabel: !!r.documents?.shippingLabel, hasSlip: !!r.documents?.packingSlip, hasBOL: !!r.documents?.billOfLading,
-    tracking: r.trackingInfo || []
+    tracking: r.trackingInfo || [],
+    // v1.5.1 manifest-ready fields (WF-038)
+    carrierCode: (r.trackingInfo && r.trackingInfo[0]) ? r.trackingInfo[0].carrierCode : null,
+    trackingNumber: (r.trackingInfo && r.trackingInfo[0]) ? r.trackingInfo[0].trackingNumber : null,
+    customerName: o.customerName || null,
+    cartonCount: cartonCount,
+    weight: weightLbs,
+    partNumbers: products.map(p => p.partNumber)
   });
   toast('Registration complete — labels ready! Send ASN after shipping.', 'ok');
 }
@@ -1566,8 +1621,47 @@ async function fetchShippingInfo() {
     const evt = r.events[0];
     renderDocuments(evt.documents, evt.trackingInfo);
     log(`Shipping info loaded — ${(evt.trackingInfo||[]).length} tracking entries`, 'ok');
+    // v1.5.1 (WF-039): PO is already registered. Swap the "Register for Pickup"
+    // button for an unambiguous "Already Registered" state so the operator
+    // doesn't try to click Register (which would fail or double-register).
+    // Reprint flow becomes: click Refresh Shipping Info → fresh URLs populate
+    // Document cards → click Download on each card.
+    markRegisteredInUI();
   } else {
     log('No shipping events found for this PO', 'warn');
+  }
+}
+
+// v1.5.1: Helper to mutate the Ship & Labels tab when we know the PO is
+// already registered. Called after fetchShippingInfo returns at least one
+// labelGenerationEvent. Idempotent — safe to call multiple times.
+function markRegisteredInUI() {
+  const btn = document.getElementById('btnRegister');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '✓ Already Registered';
+    btn.classList.remove('btn-success');
+    btn.classList.add('btn-outline');
+    btn.onclick = null;
+  }
+  // Upgrade the Refresh Shipping Info button to be the primary reprint action
+  const actionRow = btn ? btn.closest('.action-row') : null;
+  if (actionRow) {
+    const refreshBtn = actionRow.querySelector('button[onclick="fetchShippingInfo()"]');
+    if (refreshBtn && !refreshBtn.dataset.upgraded) {
+      refreshBtn.classList.remove('btn-outline');
+      refreshBtn.classList.add('btn-primary');
+      refreshBtn.textContent = 'Reprint Documents';
+      refreshBtn.dataset.upgraded = 'true';
+    }
+    // Add a one-time inline status note if not already present
+    if (!actionRow.querySelector('.registered-note')) {
+      const note = document.createElement('span');
+      note.className = 'registered-note';
+      note.style.cssText = 'font-size:11px;color:var(--pass);font-weight:600;';
+      note.textContent = '✓ Labels generated — see Documents below';
+      actionRow.appendChild(note);
+    }
   }
 }
 
@@ -1620,7 +1714,7 @@ async function generateCCDManifest() {
     const { data, error } = await sb.from('activity_log')
       .select('id, created_at, action, summary, details, device, user_name')
       .eq('category', 'order')
-      .eq('action', 'asn_sent')
+      .eq('action', 'order_registered')
       .eq('channel', 'wayfair')
       .gte('created_at', startUtc)
       .lte('created_at', endUtc)
@@ -1629,11 +1723,11 @@ async function generateCCDManifest() {
 
     if (error) throw error;
 
-    log(`Fetched ${data.length} asn_sent event(s)`, data.length > 0 ? 'ok' : 'warn');
+    log(`Fetched ${data.length} order_registered event(s)`, data.length > 0 ? 'ok' : 'warn');
 
     if (data.length === 0) {
       currentManifestData = null;
-      el.innerHTML = `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:7px;font-size:12px;color:var(--text-muted);text-align:center;">No shipments for ${date}. The tool reads asn_sent rows from activity_log — send an ASN via the section above, then reload.</div>`;
+      el.innerHTML = `<div style="padding:14px;background:var(--surface);border:1px solid var(--border);border-radius:7px;font-size:12px;color:var(--text-muted);text-align:center;">No registered shipments for ${date}. The tool reads order_registered rows from activity_log — register a PO for pickup via the Ship &amp; Labels tab, then reload.</div>`;
       return;
     }
 
@@ -1646,13 +1740,18 @@ async function generateCCDManifest() {
     const byCarrier = {};
     data.forEach(row => {
       const d = row.details || {};
-      const code = (d.carrierCode || 'UNKNOWN').toUpperCase();
+      // v1.5.1: carrierCode/trackingNumber are at top level of details for new
+      // rows; legacy rows (v1.3) stored them in details.tracking[0].
+      const legacyTrack = Array.isArray(d.tracking) && d.tracking.length > 0 ? d.tracking[0] : null;
+      const carrierCode = d.carrierCode || (legacyTrack && legacyTrack.carrierCode) || 'UNKNOWN';
+      const trackingNumber = d.trackingNumber || (legacyTrack && legacyTrack.trackingNumber) || '—';
+      const code = carrierCode.toUpperCase();
       if (!byCarrier[code]) byCarrier[code] = [];
       byCarrier[code].push({
         id: row.id,
         timestamp: row.created_at,
         poNumber: d.poNumber || '—',
-        trackingNumber: d.trackingNumber || '—',
+        trackingNumber: trackingNumber,
         customerName: d.customerName || null,
         cartonCount: d.cartonCount ?? null,
         weight: (d.weight != null && isFinite(d.weight)) ? Number(d.weight) : null,
@@ -1932,7 +2031,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.5 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.5.1 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
