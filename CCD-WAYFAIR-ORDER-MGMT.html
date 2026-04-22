@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.5.3</title>
+<title>CCD Wayfair Order Manager v1.6</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -193,7 +193,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.5.3</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
@@ -219,6 +219,7 @@
     <div class="tab active" onclick="switchTab('queue',this)">Orders Queue</div>
     <div class="tab" onclick="switchTab('detail',this)">Order Detail</div>
     <div class="tab" onclick="switchTab('ship',this)">Ship &amp; Labels</div>
+    <div class="tab" onclick="switchTab('asns',this)">Pending ASNs <span id="asnTabBadge" style="display:none;margin-left:4px;padding:1px 6px;background:var(--warn);color:#000;border-radius:8px;font-size:10px;font-weight:700;">0</span></div>
     <div class="tab" onclick="switchTab('manifest',this)">Manifest</div>
     <div class="tab" onclick="switchTab('history',this)">History &amp; Log</div>
   </div>
@@ -254,12 +255,31 @@
     </div>
   </div>
 
-  <!-- TAB 4: Manifest (v1.5) — CCD-native daily shipment manifest, not tied to any selected PO -->
+  <!-- TAB 4: Pending ASNs (v1.6) — registered-but-not-yet-ASN'd orders for one-click close-out -->
+  <div class="tab-panel" id="tab-asns">
+    <div style="margin-bottom:14px;">
+      <h3 style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Pending ASNs</h3>
+      <div style="font-size:11px;color:var(--text-muted);">
+        Orders registered for pickup with labels printed, but the ASN hasn't been sent yet. Click Send ASN once the box is physically with the carrier. Carrier, tracking number, and ship speed are preserved from registration — no retyping.
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px;">
+      <button class="btn btn-primary btn-sm" onclick="loadPendingASNs()" id="btnLoadPending">Refresh List</button>
+      <span id="pendingASNCount" style="font-size:12px;color:var(--text-dim);">—</span>
+    </div>
+
+    <div id="pendingASNContent">
+      <div class="orders-empty">Click Refresh List to load pending ASNs</div>
+    </div>
+  </div>
+
+  <!-- TAB 5: Manifest (v1.5) — CCD-native daily shipment manifest, not tied to any selected PO -->
   <div class="tab-panel" id="tab-manifest">
     <div style="margin-bottom:14px;">
       <h3 style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Daily Shipment Manifest</h3>
       <div style="font-size:11px;color:var(--text-muted);">
-        CCD's own shipment records, generated from <code style="font-family:'JetBrains Mono',monospace;color:var(--text-dim);">activity_log.asn_sent</code> rows. One page per carrier. Print one for the driver, keep one for the files.
+        CCD's own shipment records, generated from <code style="font-family:'JetBrains Mono',monospace;color:var(--text-dim);">activity_log.order_registered</code> rows. One page per carrier. Print one for the driver, keep one for the files.
       </div>
     </div>
 
@@ -418,7 +438,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.5.3',
+      device: 'WF-OrderMgr-v1.6',
       user_name: localStorage.getItem('ccdUsername') || 'Paul',
       sku: sku || details?.sku || null
     });
@@ -538,6 +558,41 @@ async function fetchOrders(hasResponse) {
 
 let cancellationFlags = {}; // { poNumber: count } — tracks which POs have cancellations
 
+// v1.6 session-local state. Tracks POs that have been acted on THIS session so
+// the queue row reflects fresh status instead of the stale fetch-filter snapshot.
+// Does NOT persist across page reloads — refresh the queue to pick up Wayfair
+// state for POs acted on outside this session.
+// State values: 'accepted' | 'registered' | 'asned'
+let processedInSession = {};
+
+function getSessionStatus(poNumber) {
+  return processedInSession[poNumber] || null;
+}
+
+function markSessionStatus(poNumber, state) {
+  processedInSession[poNumber] = state;
+  // Update the DOM row immediately if it's visible
+  const idx = orders.findIndex(o => o.poNumber === poNumber);
+  if (idx >= 0) {
+    const cell = document.getElementById('status-' + idx);
+    if (cell) cell.innerHTML = statusHtmlFor(orders[idx], idx);
+    const row = document.getElementById('order-row-' + idx);
+    if (row && state === 'asned') row.style.opacity = '0.55';
+  }
+}
+
+function statusHtmlFor(o, i) {
+  const cancelCount = cancellationFlags[o.poNumber] || 0;
+  if (cancelCount > 0) return `<span class="cancel-badge">⚠ CANCELLED</span>`;
+  const sessionState = getSessionStatus(o.poNumber);
+  if (sessionState === 'asned')      return '<span style="color:var(--text-muted);text-decoration:line-through;">✓ Shipped</span>';
+  if (sessionState === 'registered') return '<span style="color:var(--pass)">✓ Ready to ship</span>';
+  if (sessionState === 'accepted')   return '<span style="color:var(--pass)">✓ Accepted</span>';
+  // Fall back to fetch-filter snapshot
+  const hasResp = currentFetchFilter === 'true';
+  return hasResp ? '<span style="color:var(--pass)">Accepted</span>' : '<span style="color:var(--warn)">Open</span>';
+}
+
 function renderOrdersTable() {
   const tbody = document.getElementById('ordersBody');
   if (orders.length === 0) {
@@ -551,13 +606,9 @@ function renderOrdersTable() {
     if (shipBy && shipBy < today) shipClass = 'po-overdue';
     else if (shipBy === today) shipClass = 'po-today';
     const items = (o.products || []).reduce((s, p) => s + (parseInt(p.quantity) || 1), 0);
-    const hasResp = currentFetchFilter === 'true';
     const cancelCount = cancellationFlags[o.poNumber] || 0;
     const rowClass = cancelCount > 0 ? 'cancelled' : '';
-    let statusHtml = hasResp ? '<span style="color:var(--pass)">Accepted</span>' : '<span style="color:var(--warn)">Open</span>';
-    if (cancelCount > 0) {
-      statusHtml = `<span class="cancel-badge">⚠ CANCELLED</span>`;
-    }
+    const rowStyle = getSessionStatus(o.poNumber) === 'asned' ? 'opacity:0.55;' : '';
     // v1.3: combinable/configured badge
     let pkgBadge = '';
     if (items >= 2) {
@@ -568,13 +619,13 @@ function renderOrdersTable() {
         pkgBadge = `<span class="pkg-badge pkg-badge-combinable">combinable</span>`;
       }
     }
-    return `<tr onclick="selectOrder(${i})" id="order-row-${i}" class="${rowClass}">
+    return `<tr onclick="selectOrder(${i})" id="order-row-${i}" class="${rowClass}" style="${rowStyle}">
       <td>${o.poNumber || '—'}</td>
       <td>${(o.poDate || '').substring(0, 10)}</td>
       <td style="font-family:'DM Sans',sans-serif;font-size:12px;">${o.customerName || '—'}</td>
       <td>${items}${pkgBadge}</td>
       <td class="${shipClass}">${shipBy || '—'}</td>
-      <td id="status-${i}">${statusHtml}</td>
+      <td id="status-${i}">${statusHtmlFor(o, i)}</td>
     </tr>`;
   }).join('');
 }
@@ -754,6 +805,7 @@ async function acceptCurrentOrder() {
     itemCount: products.length, items: products.map(p => ({ partNumber: p.partNumber, qty: p.quantity, price: p.price }))
   });
 
+  markSessionStatus(o.poNumber, 'accepted');  // v1.6: refresh queue row status
   renderShipTab();
   toast('Order accepted!', 'ok');
 }
@@ -1158,6 +1210,7 @@ async function registerCurrentOrder(packageUnits) {
     trackingInfo: r.trackingInfo || [],
     registeredAt: new Date().toISOString()
   });
+  markSessionStatus(currentOrder.poNumber, 'registered');  // v1.6: refresh queue row status
   toast('Registration complete — labels ready! Send ASN after shipping.', 'ok');
 }
 
@@ -1252,6 +1305,7 @@ async function sendASNForCurrentOrder() {
     weight: weightLbs,
     partNumbers: products.map(p => p.partNumber)
   });
+  markSessionStatus(o.poNumber, 'asned');  // v1.6: refresh queue row status (row greys out)
   toast('ASN sent successfully!', 'ok');
 }
 
@@ -1904,6 +1958,7 @@ async function backfillManifestRows(rows) {
   const needsCustomer = rows.filter(r => !(r.details || {}).customerName && (r.details || {}).poNumber);
   if (needsCustomer.length > 0) {
     const orderIds = needsCustomer.map(r => `WF-${r.details.poNumber}`);
+    log(`Customer name backfill: ${needsCustomer.length} row(s) need lookup — querying sales_history for order_ids: ${orderIds.join(', ')}`, 'info');
     try {
       const { data: sales, error } = await sb.from('sales_history')
         .select('order_id, buyer_email, ship_to_name')
@@ -1912,6 +1967,7 @@ async function backfillManifestRows(rows) {
       if (error) {
         log('Customer name backfill query failed: ' + error.message, 'warn');
       } else {
+        log(`Customer name backfill: sales_history returned ${(sales||[]).length} match(es). Sample: ${(sales||[]).slice(0,3).map(s => `${s.order_id}→${s.ship_to_name || s.buyer_email || '(empty)'}`).join(', ')}`, 'info');
         const nameByOrderId = {};
         (sales || []).forEach(s => {
           // Prefer ship_to_name if populated; fall back to buyer_email field
@@ -1919,15 +1975,18 @@ async function backfillManifestRows(rows) {
           nameByOrderId[s.order_id] = s.ship_to_name || s.buyer_email || null;
         });
         let filled = 0;
+        const missed = [];
         needsCustomer.forEach(r => {
           const key = `WF-${r.details.poNumber}`;
           const name = nameByOrderId[key];
           if (name) {
             r.details.customerName = name;
             filled++;
+          } else {
+            missed.push(key);
           }
         });
-        if (filled > 0) log(`Backfilled customer name for ${filled}/${needsCustomer.length} row(s) from sales_history`, 'info');
+        log(`Customer name backfill: filled ${filled}/${needsCustomer.length} row(s)${missed.length > 0 ? ' — no match for: ' + missed.join(', ') : ''}`, filled > 0 ? 'ok' : 'warn');
       }
     } catch (e) {
       log('Customer name backfill error: ' + e.message, 'warn');
@@ -2156,7 +2215,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.5.3 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -2367,6 +2426,14 @@ function switchTab(name, el) {
       dateInput.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
     }
   }
+  // v1.6: Auto-load Pending ASNs on tab switch if not yet loaded this session
+  if (name === 'asns' && sb && pendingASNs.length === 0) {
+    const content = document.getElementById('pendingASNContent');
+    // Only auto-load if the placeholder text is still showing (not if user already clicked Refresh)
+    if (content && content.querySelector('.orders-empty')) {
+      loadPendingASNs();
+    }
+  }
   // History loads on explicit button click only, not on tab switch
 }
 
@@ -2376,6 +2443,219 @@ function showStatus(id, msg, cls) {
   el.classList.add('visible');
   el.innerHTML = msg;
   el.style.color = cls === 'ok' ? 'var(--pass)' : cls === 'err' ? 'var(--fail)' : 'var(--warn)';
+}
+
+// =========================================================================
+// TAB 4: PENDING ASNs (v1.6)
+// =========================================================================
+// Shows orders that have been registered (labels printed, tracking assigned)
+// but haven't had an ASN sent yet. At end of day, operator opens this tab,
+// clicks Send ASN on each row to officially flip the PO to "Shipped" on
+// Wayfair's side. No retyping of carrier/tracking — all preserved from the
+// order_registered audit row.
+//
+// Data sources (joined client-side):
+//   - order_registered → poNumber, carrierCode, trackingNumber, customerName,
+//                        partNumbers, registeredAt
+//   - order_accepted   → shipSpeed, items[] (partNumber + qty)
+//   - asn_sent         → exclusion list
+//
+// Query window: last 30 days. POs older than that that still haven't been
+// ASN'd are probably stale / manually handled and can be cleaned up separately.
+
+let pendingASNs = [];
+
+async function loadPendingASNs() {
+  if (!sb) { log('Not connected to Supabase', 'err'); return; }
+  const btn = document.getElementById('btnLoadPending');
+  const countEl = document.getElementById('pendingASNCount');
+  const content = document.getElementById('pendingASNContent');
+  btn.disabled = true;
+  countEl.textContent = 'Loading…';
+
+  try {
+    const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString();
+
+    // Pull all three event types for the last 30 days in parallel
+    const [regRes, accRes, asnRes] = await Promise.all([
+      sb.from('activity_log')
+        .select('id, created_at, details')
+        .eq('category', 'order').eq('channel', 'wayfair').eq('action', 'order_registered')
+        .gte('created_at', cutoff).order('created_at', { ascending: false }).limit(200),
+      sb.from('activity_log')
+        .select('created_at, details')
+        .eq('category', 'order').eq('channel', 'wayfair').eq('action', 'order_accepted')
+        .gte('created_at', cutoff).order('created_at', { ascending: false }).limit(500),
+      sb.from('activity_log')
+        .select('details')
+        .eq('category', 'order').eq('channel', 'wayfair').eq('action', 'asn_sent')
+        .gte('created_at', cutoff).limit(500)
+    ]);
+
+    if (regRes.error) throw regRes.error;
+    if (accRes.error) throw accRes.error;
+    if (asnRes.error) throw asnRes.error;
+
+    log(`Pending ASNs query: ${regRes.data.length} registered, ${accRes.data.length} accepted, ${asnRes.data.length} already ASN'd`, 'info');
+
+    // Build lookups
+    const asnedPOs = new Set((asnRes.data || []).map(r => r.details && r.details.poNumber).filter(Boolean));
+    const acceptedByPO = {};  // poNumber → { shipSpeed, items }
+    (accRes.data || []).forEach(r => {
+      const d = r.details || {};
+      if (d.poNumber && !acceptedByPO[d.poNumber]) {
+        // Take the most recent order_accepted per PO (results are DESC-sorted)
+        acceptedByPO[d.poNumber] = {
+          shipSpeed: d.shipSpeed || 'GROUND',
+          items: Array.isArray(d.items) ? d.items : []
+        };
+      }
+    });
+
+    // Dedup order_registered by PO (most recent wins)
+    const regByPO = {};
+    (regRes.data || []).forEach(r => {
+      const d = r.details || {};
+      if (d.poNumber && !regByPO[d.poNumber]) {
+        regByPO[d.poNumber] = { id: r.id, created_at: r.created_at, details: d };
+      }
+    });
+
+    // Filter: registered AND accepted AND not yet asn'd
+    pendingASNs = Object.values(regByPO)
+      .filter(r => !asnedPOs.has(r.details.poNumber))
+      .map(r => {
+        const d = r.details;
+        const acc = acceptedByPO[d.poNumber];
+        // Legacy rows: carrier/tracking may be in details.tracking[0] array
+        const legacyTrack = Array.isArray(d.tracking) && d.tracking.length > 0 ? d.tracking[0] : null;
+        return {
+          poNumber: d.poNumber,
+          customerName: d.customerName || null,
+          carrierCode: d.carrierCode || (legacyTrack && legacyTrack.carrierCode) || '',
+          trackingNumber: d.trackingNumber || (legacyTrack && legacyTrack.trackingNumber) || '',
+          shipSpeed: (acc && acc.shipSpeed) || 'GROUND',
+          items: (acc && acc.items) || [],
+          registeredAt: d.registeredAt || r.created_at,
+          hasAcceptedRow: !!acc,
+          complete: !!(d.carrierCode || (legacyTrack && legacyTrack.carrierCode)) &&
+                    !!(d.trackingNumber || (legacyTrack && legacyTrack.trackingNumber)) &&
+                    !!(acc && acc.items && acc.items.length > 0)
+        };
+      })
+      .sort((a, b) => new Date(a.registeredAt) - new Date(b.registeredAt));  // oldest first
+
+    countEl.textContent = `${pendingASNs.length} pending`;
+    const badge = document.getElementById('asnTabBadge');
+    if (badge) {
+      if (pendingASNs.length > 0) { badge.style.display = 'inline-block'; badge.textContent = pendingASNs.length; }
+      else { badge.style.display = 'none'; }
+    }
+
+    renderPendingASNs();
+  } catch (e) {
+    log('Pending ASNs load failed: ' + e.message, 'err');
+    content.innerHTML = `<div style="padding:10px;background:var(--fail-bg);border:1px solid rgba(244,112,104,0.2);border-radius:7px;font-size:12px;color:var(--fail);">Load failed: ${e.message}</div>`;
+    countEl.textContent = 'error';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderPendingASNs() {
+  const content = document.getElementById('pendingASNContent');
+  if (pendingASNs.length === 0) {
+    content.innerHTML = '<div class="orders-empty">No pending ASNs. All registered orders have been shipped + notified — or nothing has been registered in the last 30 days.</div>';
+    return;
+  }
+
+  const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const today = new Date().toISOString().substring(0, 10);
+
+  const rows = pendingASNs.map((p, i) => {
+    const regDate = (p.registeredAt || '').substring(0, 10);
+    const ageDays = regDate ? Math.floor((new Date(today) - new Date(regDate)) / (1000 * 3600 * 24)) : null;
+    const ageClass = ageDays > 2 ? 'po-overdue' : (ageDays > 0 ? 'po-today' : 'po-upcoming');
+    const ageLabel = ageDays === 0 ? 'today' : ageDays === 1 ? '1 day ago' : `${ageDays} days ago`;
+    const btnDisabled = !p.complete;
+    const btnLabel = p.complete ? 'Send ASN' : (p.hasAcceptedRow ? 'Missing carrier/tracking' : 'Missing items — re-accept');
+    return `<tr id="pending-row-${i}">
+      <td style="font-family:'JetBrains Mono',monospace;">${esc(p.poNumber)}</td>
+      <td style="font-family:'DM Sans',sans-serif;font-size:12px;">${esc(p.customerName || '—')}</td>
+      <td style="font-family:'JetBrains Mono',monospace;">${esc(p.carrierCode || '—')}</td>
+      <td style="font-family:'JetBrains Mono',monospace;">${esc(p.trackingNumber || '—')}</td>
+      <td>${esc(p.shipSpeed)}</td>
+      <td class="${ageClass}">${ageLabel}</td>
+      <td><button class="btn btn-success btn-sm" onclick="sendQuickASN(${i})" ${btnDisabled ? 'disabled' : ''} id="sendQuickBtn-${i}" title="${btnDisabled ? btnLabel : ''}">${btnLabel}</button></td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = `
+    <div class="scroll-wrap">
+      <table class="orders-table">
+        <thead><tr><th>PO Number</th><th>Customer</th><th>Carrier</th><th>Tracking #</th><th>Ship Speed</th><th>Registered</th><th>Action</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function sendQuickASN(idx) {
+  const p = pendingASNs[idx];
+  if (!p) { toast('Invalid pending ASN index', 'err'); return; }
+  if (!p.complete) { toast('Missing required data for this PO', 'err'); return; }
+  if (isLogOnly()) { toast('Log-only mode — ASN disabled', 'err'); return; }
+
+  const btn = document.getElementById('sendQuickBtn-' + idx);
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  log(`Quick-ASN: sending for PO ${p.poNumber} — ${p.carrierCode}/${p.trackingNumber}, ${p.shipSpeed}, ${p.items.length} item(s)`, 'info');
+
+  // Proxy auto-fetches destinationAddress from the PO, so we only need to send
+  // the core fields. items[] format: {partNumber, quantity}. order_accepted
+  // stores qty as 'qty', proxy expects 'quantity' — normalize here.
+  const itemsForAsn = p.items.map(it => ({
+    partNumber: it.partNumber,
+    quantity: parseInt(it.qty || it.quantity || 1)
+  }));
+
+  const r = await proxyPost('sendASN', {
+    poNumber: p.poNumber,
+    carrierCode: p.carrierCode,
+    trackingNumber: p.trackingNumber,
+    shipSpeed: p.shipSpeed,
+    items: JSON.stringify(itemsForAsn)
+  });
+
+  if (!r.success) {
+    const gql = r.graphqlErrors ? r.graphqlErrors.map(e => e.message).join('; ') : '';
+    log(`Quick-ASN failed for ${p.poNumber}: ${r.error}${gql ? ' — ' + gql : ''}`, 'err');
+    toast('ASN failed: ' + r.error, 'err');
+    if (btn) { btn.disabled = false; btn.textContent = 'Send ASN'; }
+    return;
+  }
+
+  log(`Quick-ASN sent — handle: ${r.handle}`, 'ok');
+  await auditLog('asn_sent', `PO ${p.poNumber} ASN sent (quick) — carrier: ${p.carrierCode}, tracking: ${p.trackingNumber}`, {
+    poNumber: p.poNumber, handle: r.handle, carrierCode: p.carrierCode,
+    trackingNumber: p.trackingNumber, shipSpeed: p.shipSpeed, errorCount: r.errorCount,
+    customerName: p.customerName || null,
+    partNumbers: p.items.map(it => it.partNumber),
+    source: 'pending-asn-tab'
+  });
+  toast(`ASN sent for ${p.poNumber}!`, 'ok');
+
+  markSessionStatus(p.poNumber, 'asned');  // keep Orders Queue row in sync if visible
+
+  // Remove from pending list + re-render
+  pendingASNs.splice(idx, 1);
+  document.getElementById('pendingASNCount').textContent = `${pendingASNs.length} pending`;
+  const badge = document.getElementById('asnTabBadge');
+  if (badge) {
+    if (pendingASNs.length > 0) { badge.textContent = pendingASNs.length; }
+    else { badge.style.display = 'none'; }
+  }
+  renderPendingASNs();
 }
 
 // =========================================================================
