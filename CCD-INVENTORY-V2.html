@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.2</title>
+<title>CCD Inventory System v2.9.3</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.2 · Gift Order 🎁 Flags</div>
+    <div class="login-version">v2.9.3 · Packing Slip Fields + UX Polish</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.2</div>
+      <div class="topbar-version">v2.9.3</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -991,19 +991,26 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
           <div class="section-title" style="margin-bottom:0;">Sales Log</div>
           <span style="font-size:12px;color:var(--muted);" id="topSellersRange"></span>
         </div>
+        <!-- E19 (v2.9.3, S27): client-side search — filters Sales Log only, KPIs unaffected -->
+        <div class="search-box" style="margin-bottom:12px;max-width:420px;">
+          <input type="text" id="analyticsSearchInput" placeholder="Search SKU, product, brand, buyer, state..." oninput="onAnalyticsSearchDebounced()">
+          <button class="search-clear" id="analyticsSearchClear" onclick="clearAnalyticsSearch()" title="Clear search">✕</button>
+        </div>
         <div class="table-wrapper">
           <table>
             <thead><tr>
               <th onclick="setAnalyticsSort('date')">Date <span class="sort-arrow" data-col="date"></span></th>
               <th onclick="setAnalyticsSort('sku')">SKU <span class="sort-arrow" data-col="sku"></span></th>
               <th onclick="setAnalyticsSort('product')">Product <span class="sort-arrow" data-col="product"></span></th>
+              <th onclick="setAnalyticsSort('buyer')">Buyer <span class="sort-arrow" data-col="buyer"></span></th>
+              <th onclick="setAnalyticsSort('state')">State <span class="sort-arrow" data-col="state"></span></th>
               <th onclick="setAnalyticsSort('channel')">Channel <span class="sort-arrow" data-col="channel"></span></th>
               <th onclick="setAnalyticsSort('units')">Units <span class="sort-arrow" data-col="units"></span></th>
               <th onclick="setAnalyticsSort('revenue')">Revenue <span class="sort-arrow" data-col="revenue"></span></th>
               <th onclick="setAnalyticsSort('profit')">Profit <span class="sort-arrow" data-col="profit"></span></th>
               <th onclick="setAnalyticsSort('margin')">Margin <span class="sort-arrow" data-col="margin"></span></th>
             </tr></thead>
-            <tbody id="topSellersBody"><tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
+            <tbody id="topSellersBody"><tr><td colspan="10" style="text-align:center;padding:30px;color:var(--muted);">Loading...</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1209,6 +1216,44 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
               <button type="button" class="btn-card" onclick="previewPackingSlipSample()" style="flex:1;padding:8px 16px;font-size:13px;">👁 Preview Sample</button>
             </div>
             <div id="pslipSettingsStatus" style="margin-top:8px;font-size:12px;display:none;"></div>
+          </div>
+
+          <!-- Option B (v2.9.3, S27): Packing Slip Field Visibility -->
+          <!-- Global toggles — NOT per-profile. Two independent sets.        -->
+          <!-- Defaults preserve v2.9.2 behavior (new fields OFF, existing ON). -->
+          <div class="settings-section">
+            <div class="settings-section-title">👁 Packing Slip Field Visibility</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">Control which fields appear on printed slips. These apply to <em>all</em> profiles (they're global, not per-profile). Pricing columns are still chosen by the Slip Type dropdown at print time (Standard / Priced / Gift). When a sale has no price recorded, price cells render empty — never "$0.00" — so customers aren't confused.</div>
+
+            <!-- Standard + Priced panel -->
+            <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px;">
+              <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">Standard / Priced Slips</div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Applies to both Standard (no prices) and Priced (with prices) slip types.</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfSkuColumn" style="width:16px;height:16px;cursor:pointer;"> <span>Show SKU column <span style="color:var(--muted2);font-size:10px;">(new)</span></span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfOrderDate" style="width:16px;height:16px;cursor:pointer;"> <span>Show Order Date</span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfChannelLine" style="width:16px;height:16px;cursor:pointer;"> <span>Show Channel</span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfShippingLine" style="width:16px;height:16px;cursor:pointer;"> <span>Show Shipping: $0.00 line <span style="color:var(--muted2);font-size:10px;">(new, Priced only)</span></span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfOrderTotalRow" style="width:16px;height:16px;cursor:pointer;"> <span>Show Order Total row <span style="color:var(--muted2);font-size:10px;">(Priced only)</span></span></label>
+              </div>
+            </div>
+
+            <!-- Gift panel -->
+            <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px;">
+              <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">Gift Slips</div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Applies only when Gift is chosen from the Slip Type dropdown.</div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfGiftRecipient" style="width:16px;height:16px;cursor:pointer;"> <span>Show Recipient Name</span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfGiftMessage" style="width:16px;height:16px;cursor:pointer;"> <span>Show Gift Message</span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfGiftOrderDate" style="width:16px;height:16px;cursor:pointer;"> <span>Show Order Date</span></label>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:10px;margin-top:14px;">
+              <button type="button" class="btn-card btn-save" onclick="savePslipFieldVisibility()" style="flex:1;padding:8px 16px;font-size:13px;">💾 Save Field Visibility</button>
+              <button type="button" class="btn-card" onclick="resetPslipFieldVisibility()" style="flex:1;padding:8px 16px;font-size:13px;">↺ Reset to Defaults</button>
+            </div>
+            <div id="psfStatus" style="margin-top:8px;font-size:12px;display:none;"></div>
           </div>
 
           <!-- Data Maintenance -->
@@ -1531,10 +1576,11 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.2';
+const TOOL_VERSION = '2.9.3';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
+const ANALYTICS_SEARCH_DELAY = 250; // E19 (v2.9.3, S27) — Analytics tab client-side search debounce
 
 // ═══════════════════════════════════════════════════════════
 // CONFIGURABLE CHANNEL FEES (defaults — overridden by settings table)
@@ -1592,6 +1638,7 @@ let state = {
 };
 
 let searchTimer = null;
+let analyticsSearchTimer = null; // E19 (v2.9.3, S27) — Analytics tab search debounce timer
 let itemSubscription = null; // Supabase realtime subscription for current item
 
 // ═══════════════════════════════════════════════════════════
@@ -1706,6 +1753,10 @@ async function showApp() {
   // have the profile cache ready even if Settings tab is never opened.
   try { await initPslipProfiles(); }
   catch(e) { console.log('[pslip] showApp init skipped:', e.message); }
+
+  // Option B (v2.9.3, S27): Load packing slip field visibility at login.
+  try { await initPslipFields(); }
+  catch(e) { console.log('[pslip-fields] showApp init skipped:', e.message); }
 
   // Load brand list for filter dropdown
   await loadBrands();
@@ -2112,6 +2163,10 @@ async function onRowClick(itemId) {
   state.cardRendered = false;
   clearUnsavedMark();
 
+  // E18 (v2.9.3, S27): capture current scroll so _closeCard can restore it.
+  // Symmetric — works for any return tab (inventory/shipping/writeoffs/etc.).
+  state.priorScrollY = window.scrollY;
+
   // Show card, hide active top-view
   $qa('.top-view').forEach(v => v.classList.remove('active'));
   $('cardView').classList.add('visible');
@@ -2237,11 +2292,25 @@ function _closeCard() {
   state.activeTopTab = returnTab;
   state.currentItem = null;
   state.activePricingChannel = null;
+
+  // E18 (v2.9.3, S27): restore scroll position captured in onRowClick.
+  // Dirty path: wait for loadInventory() re-render before scrolling.
+  // Clean path: requestAnimationFrame to scroll after top-view lays out.
+  // .finally() guarantees restore even if loadInventory throws.
+  const restoreY = state.priorScrollY;
+  state.priorScrollY = null;
+
   if (state.cardDirty) {
-    loadInventory();
+    loadInventory()
+      .catch(e => console.error('[E18] loadInventory failed:', e))
+      .finally(() => {
+        if (restoreY != null) window.scrollTo(0, restoreY);
+      });
     loadStats();
     loadSaleCounts();
     state.cardDirty = false;
+  } else if (restoreY != null) {
+    requestAnimationFrame(() => window.scrollTo(0, restoreY));
   }
 }
 
@@ -6167,7 +6236,7 @@ async function openPackingSlip(idx) {
   const orderId = sale.order_id;
 
   // If there's an order_id, fetch ALL line items for this order
-  let orderItems = [{ product_name: item?.product_name || sale.product_name, qty_sold: sale.qty_sold || 1, sale_price: pf(sale.sale_price), total_revenue: pf(sale.total_revenue) }];
+  let orderItems = [{ sku: item?.sku || sale.sku || '', product_name: item?.product_name || sale.product_name, qty_sold: sale.qty_sold || 1, sale_price: pf(sale.sale_price), total_revenue: pf(sale.total_revenue) }];
 
   if (orderId && sb) {
     try {
@@ -6177,6 +6246,7 @@ async function openPackingSlip(idx) {
         .order('id');
       if (data && data.length > 1) {
         orderItems = data.map(r => ({
+          sku: r.sku || '',
           product_name: r.product_name || r.sku || 'Item',
           qty_sold: r.qty_sold || 1,
           sale_price: pf(r.sale_price),
@@ -6243,6 +6313,35 @@ const PSLIP_LEGACY_LOCAL_KEY = 'ccdPslipSettings';
 const PSLIP_MAX_PROFILES = 10;
 const PSLIP_MAX_NAME_LEN = 40;
 const PSLIP_MAX_STORE_BYTES = 4 * 1024 * 1024; // 4 MB safety cap on Supabase JSONB row
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Option B (v2.9.3, S27) — Packing Slip Field Visibility
+// ═══════════════════════════════════════════════════════════════════════════
+// Two GLOBAL toggle sets (NOT per-profile — profiles control branding only):
+//   - standard: applies to Standard + Priced slip types (they share the toggles)
+//   - gift:     applies to Gift slip type only
+// Pricing columns are NOT togglable — they are hardcoded by the slip-type
+// dropdown (Standard = no prices, Priced = prices). That choice preserves the
+// existing mental model for Mary and avoids collapsing Standard/Priced into
+// a single type.
+// Defaults preserve current (v2.9.2) rendering: new fields OFF, existing ON.
+// ═══════════════════════════════════════════════════════════════════════════
+const PSLIP_FIELDS_DEFAULTS = {
+  standard: {
+    sku_column:      false,  // NEW — shows SKU column in items table
+    order_date:      true,   // existing — header "Date: YYYY-MM-DD" line
+    channel_line:    true,   // existing — header "Channel: etsy" line
+    shipping_line:   false,  // NEW — adds "Shipping: $0.00" line before total
+    order_total_row: true    // existing — bottom Order Total row (priced only)
+  },
+  gift: {
+    order_date:      true,   // existing — date line at bottom of gift card
+    gift_message:    true,   // existing — renders the customer's gift message
+    recipient_name:  true    // existing — "Jane Smith" from ship_to first line
+  }
+};
+const PSLIP_FIELDS_SETTINGS_KEY = 'pslip_field_visibility';
+let _pslipFieldsCache = null;
 
 // Module-level state
 let _pslipStoreCache = null;
@@ -6342,6 +6441,60 @@ function getPslipProfile(id) {
   const store = getPslipStore();
   const p = store.profiles[id] || store.profiles[store.activeId] || Object.values(store.profiles)[0];
   return { ...PSLIP_DEFAULTS, ...p };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Option B (v2.9.3, S27) — Field visibility load/save/accessor
+// ═══════════════════════════════════════════════════════════════════════════
+// Mirrors the pslip_profiles pattern: cache on init, persist on save.
+// Defaults merged in getPslipFields() so missing keys from older saves don't
+// break render. Deep merge: defaults -> saved -> result, per sub-section.
+async function initPslipFields() {
+  if (!sb) { _pslipFieldsCache = null; return; }
+  try {
+    const { data, error } = await sb.from('settings')
+      .select('value').eq('key', PSLIP_FIELDS_SETTINGS_KEY).limit(1);
+    if (!error && data && data.length > 0 && data[0].value) {
+      const raw = data[0].value;
+      const v = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      if (v && typeof v === 'object') {
+        _pslipFieldsCache = v;
+        return;
+      }
+    }
+    _pslipFieldsCache = null; // Will fall through to defaults in getPslipFields
+  } catch(e) {
+    console.log('[pslip-fields] Init error:', e.message);
+    _pslipFieldsCache = null;
+  }
+}
+
+async function _persistPslipFields(fields) {
+  if (!sb) throw new Error('Not connected to Supabase');
+  const now = new Date().toISOString();
+  const { data: existing } = await sb.from('settings')
+    .select('key').eq('key', PSLIP_FIELDS_SETTINGS_KEY).limit(1);
+  if (existing && existing.length > 0) {
+    const { error } = await sb.from('settings')
+      .update({ value: fields, updated_at: now, updated_by: 'inventory_v2' })
+      .eq('key', PSLIP_FIELDS_SETTINGS_KEY);
+    if (error) throw error;
+  } else {
+    const { error } = await sb.from('settings')
+      .insert({ key: PSLIP_FIELDS_SETTINGS_KEY, value: fields, updated_at: now, updated_by: 'inventory_v2' });
+    if (error) throw error;
+  }
+  _pslipFieldsCache = fields;
+}
+
+function getPslipFields() {
+  // Deep-merge defaults with saved values so new keys added in future releases
+  // don't break existing saves (and vice versa).
+  const saved = _pslipFieldsCache || {};
+  return {
+    standard: { ...PSLIP_FIELDS_DEFAULTS.standard, ...(saved.standard || {}) },
+    gift:     { ...PSLIP_FIELDS_DEFAULTS.gift,     ...(saved.gift     || {}) }
+  };
 }
 
 // Backward-compat: returns the ACTIVE (⭐ default) profile.
@@ -6567,6 +6720,9 @@ function hydratePslipSettingsUI() {
     ac._bound = true;
     ac.addEventListener('input', () => { if (ge('pslipAccentText')) $('pslipAccentText').textContent = ac.value; });
   }
+
+  // Option B (v2.9.3, S27): also hydrate field-visibility checkboxes
+  populatePslipFieldVisibilityUI();
 }
 
 function renderPslipLogoPreview(dataUrl) {
@@ -6639,6 +6795,55 @@ async function savePackingSlipSettings() {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Option B (v2.9.3, S27) — Field visibility UI handlers
+// ═══════════════════════════════════════════════════════════════════════════
+function _setPsfStatus(msg, kind) {
+  const st = $('psfStatus');
+  if (!st) return;
+  let color = 'var(--green)';
+  if (kind === 'red') color = 'var(--red)';
+  else if (kind === 'muted' || kind === 'pending') color = 'var(--muted)';
+  st.style.display = 'block';
+  st.style.color = color;
+  st.textContent = msg;
+}
+
+// Populate the checkboxes from the currently loaded field-visibility settings.
+// Called when the Settings tab is opened and after a save/reset.
+function populatePslipFieldVisibilityUI() {
+  const f = getPslipFields();
+  const set = (id, val) => { const el = $(id); if (el) el.checked = !!val; };
+  set('psfSkuColumn',     f.standard.sku_column);
+  set('psfOrderDate',     f.standard.order_date);
+  set('psfChannelLine',   f.standard.channel_line);
+  set('psfShippingLine',  f.standard.shipping_line);
+  set('psfOrderTotalRow', f.standard.order_total_row);
+  set('psfGiftRecipient', f.gift.recipient_name);
+  set('psfGiftMessage',   f.gift.gift_message);
+  set('psfGiftOrderDate', f.gift.order_date);
+}
+
+async function savePslipFieldVisibility() {
+  const fields = _readPslipFieldsFromDOM();
+  const prev = _pslipFieldsCache;
+  _setPsfStatus('⏳ Saving field visibility…', 'pending');
+  try {
+    await _persistPslipFields(fields);
+    _setPsfStatus('✅ Field visibility saved.', 'green');
+  } catch(e) {
+    _pslipFieldsCache = prev;
+    _setPsfStatus(`❌ Save failed: ${e.message}`, 'red');
+  }
+}
+
+function resetPslipFieldVisibility() {
+  if (!confirm('Reset all packing slip field-visibility toggles to defaults?\n\n(Click Save afterward to persist.)')) return;
+  _pslipFieldsCache = null; // Revert cache to defaults
+  populatePslipFieldVisibilityUI();
+  _setPsfStatus('↺ Reset to defaults. Click Save to persist.', 'muted');
+}
+
 function previewPackingSlipSample() {
   // Build a sample packing slip using whatever's currently in the form
   // (not yet saved). Gives instant feedback while tweaking.
@@ -6657,20 +6862,52 @@ function previewPackingSlipSample() {
     logoData: (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : (existing.logoData || '')
   };
   const sampleItems = [
-    { product_name: 'Paisley Bird Rain Gauge', qty_sold: 1, sale_price: 22.99, total_revenue: 22.99 },
-    { product_name: 'Garden Gate Napkin Holder', qty_sold: 2, sale_price: 14.50, total_revenue: 29.00 }
+    // Option B (v2.9.3, S27): include SKU on sample items so preview renders
+    // the SKU column when that toggle is on. One item left with sale_price:0
+    // to demonstrate null-price suppression (empty cells, not "$0.00").
+    { sku: 'SAMPLE-001', product_name: 'Paisley Bird Rain Gauge',   qty_sold: 1, sale_price: 22.99, total_revenue: 22.99 },
+    { sku: 'SAMPLE-002', product_name: 'Garden Gate Napkin Holder', qty_sold: 2, sale_price: 14.50, total_revenue: 29.00 },
+    { sku: 'SAMPLE-FREE', product_name: 'Promotional Bonus Item',   qty_sold: 1, sale_price: 0,     total_revenue: 0 }
   ];
+  // Option B: Read field-visibility from DOM checkboxes so Preview reflects
+  // unsaved toggle changes (mirrors branding's unsaved-preview behavior).
+  const fieldsForPreview = _readPslipFieldsFromDOM();
   const html = _buildPackingSlipWith(s, 'priced', {
     orderId: 'SAMPLE-PREVIEW',
     orderDate: new Date().toISOString().slice(0,10),
     channel: 'Etsy',
     shipTo: 'Jane Sample\n123 Main Street\nAnytown, ST 12345',
     items: sampleItems
-  });
+  }, fieldsForPreview);
   const win = window.open('', '_blank', 'width=700,height=900');
   if (!win) { alert('Popup blocked — please allow popups to preview.'); return; }
   win.document.write(html);
   win.document.close();
+}
+
+// Option B (v2.9.3, S27): read field-visibility checkboxes live from DOM.
+// Falls back to saved values for any checkbox that doesn't exist yet (e.g.,
+// Settings tab hasn't been opened) so callers always get a complete object.
+function _readPslipFieldsFromDOM() {
+  const saved = getPslipFields();
+  const getCb = (id, fallback) => {
+    const el = $(id);
+    return el ? el.checked : fallback;
+  };
+  return {
+    standard: {
+      sku_column:      getCb('psfSkuColumn',     saved.standard.sku_column),
+      order_date:      getCb('psfOrderDate',     saved.standard.order_date),
+      channel_line:    getCb('psfChannelLine',   saved.standard.channel_line),
+      shipping_line:   getCb('psfShippingLine',  saved.standard.shipping_line),
+      order_total_row: getCb('psfOrderTotalRow', saved.standard.order_total_row)
+    },
+    gift: {
+      order_date:     getCb('psfGiftOrderDate',  saved.gift.order_date),
+      gift_message:   getCb('psfGiftMessage',    saved.gift.gift_message),
+      recipient_name: getCb('psfGiftRecipient',  saved.gift.recipient_name)
+    }
+  };
 }
 
 // Populate the slip modal's profile dropdown. Defaults to the ⭐ active profile.
@@ -6691,22 +6928,60 @@ function populateSlipModalProfileSelect() {
 
 // Internal builder that takes settings as a parameter (so preview can use
 // unsaved in-flight values). The existing buildPackingSlip reads saved settings.
-function _buildPackingSlipWith(s, type, d) {
+// Option B (v2.9.3, S27): `fields` param for field-visibility toggles. When
+// omitted, reads from saved settings. Null/zero sale_price renders as empty
+// cells (never "$0.00") regardless of toggles, to avoid customer confusion.
+function _buildPackingSlipWith(s, type, d, fields) {
+  const f = fields || getPslipFields();
+  const sf = f.standard; // Standard/Priced toggles (shared)
+
   const showPrice = type === 'priced';
   const items = d.items || [];
-  const orderTotal = items.reduce((acc, i) => acc + pf(i.total_revenue), 0);
   const totalQty = items.reduce((acc, i) => acc + (i.qty_sold || 1), 0);
+
+  // Null/zero price suppression: compute total from priced items only.
+  // If no items are priced, Order Total row is suppressed even if toggle is on.
+  const pricedItems = items.filter(i => pf(i.sale_price) > 0);
+  const orderTotal = pricedItems.reduce((acc, i) => acc + pf(i.total_revenue), 0);
+  const hasAnyPriced = pricedItems.length > 0;
+
+  // Column structure: Item [+SKU] Qty [+Unit Price +Total]
+  const skuCol   = sf.sku_column;
+  const cols     = 2 + (skuCol ? 1 : 0) + (showPrice ? 2 : 0);
+  const labelCS  = cols - 1; // Colspan for "Shipping"/"Order Total" label cell
+
   const accent = s.accent || '#d4a853';
   const logoBlock = s.logoData
     ? `<img src="${s.logoData}" style="max-height:60px;max-width:220px;object-fit:contain;display:block;margin-bottom:8px;">`
     : '';
   const shipFromHtml = escHtml(s.shipFrom || PSLIP_DEFAULTS.shipFrom);
+
+  // Per-row price cells: empty when sale_price <= 0 (no "$0.00" on slips).
+  const priceCells = (i) => {
+    if (!showPrice) return '';
+    const sp = pf(i.sale_price);
+    if (sp <= 0) return '<td class="text-right"></td><td class="text-right"></td>';
+    return `<td class="text-right">$${sp.toFixed(2)}</td><td class="text-right">$${pf(i.total_revenue).toFixed(2)}</td>`;
+  };
+  const skuCellFor = (i) => skuCol
+    ? `<td class="mono" style="font-size:11px;color:#666;">${escHtml(i.sku || '')}</td>`
+    : '';
   const itemRows = items.map(i => `
     <tr>
+      ${skuCellFor(i)}
       <td>${escHtml(i.product_name)}</td>
       <td class="text-right">${i.qty_sold || 1}</td>
-      ${showPrice ? `<td class="text-right">$${pf(i.sale_price).toFixed(2)}</td><td class="text-right">$${pf(i.total_revenue).toFixed(2)}</td>` : ''}
+      ${priceCells(i)}
     </tr>`).join('');
+
+  // Shipping line and Order Total row are both gated on showPrice AND having
+  // at least one priced item. Order Total additionally respects its own toggle.
+  const shippingRow = (showPrice && sf.shipping_line && hasAnyPriced)
+    ? `<tr><td colspan="${labelCS}" class="text-right" style="border-top:1px solid #eee;">Shipping</td><td class="text-right" style="border-top:1px solid #eee;">$0.00</td></tr>`
+    : '';
+  const totalRow = (showPrice && sf.order_total_row && hasAnyPriced)
+    ? `<tr class="total-row"><td colspan="${labelCS}" class="text-right">Order Total</td><td class="text-right">$${orderTotal.toFixed(2)}</td></tr>`
+    : '';
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Packing Slip</title>
 <style>
@@ -6730,6 +7005,7 @@ td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
 .summary{font-size:12px;color:#777;margin-bottom:16px;}
 .footer{text-align:center;padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;line-height:1.6;}
 .thank-you{font-size:16px;font-weight:700;color:${accent};margin-bottom:8px;}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
 @media print{body{padding:20px;}@page{margin:0.5in;}}
 </style></head><body>
 <div class="header">
@@ -6740,8 +7016,8 @@ td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
   </div>
   <div class="order-info">
     <div class="order-id">${escHtml(d.orderId)}</div>
-    <div>Date: ${escHtml(d.orderDate)}</div>
-    <div>Channel: ${escHtml(d.channel)}</div>
+    ${sf.order_date   ? `<div>Date: ${escHtml(d.orderDate)}</div>` : ''}
+    ${sf.channel_line ? `<div>Channel: ${escHtml(d.channel)}</div>` : ''}
   </div>
 </div>
 
@@ -6760,16 +7036,15 @@ td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
 
 <table>
   <thead><tr>
+    ${skuCol ? '<th>SKU</th>' : ''}
     <th>Item</th>
     <th class="text-right">Qty</th>
     ${showPrice ? '<th class="text-right">Unit Price</th><th class="text-right">Total</th>' : ''}
   </tr></thead>
   <tbody>
     ${itemRows}
-    ${showPrice ? `<tr class="total-row">
-      <td colspan="3" class="text-right">Order Total</td>
-      <td class="text-right">$${orderTotal.toFixed(2)}</td>
-    </tr>` : ''}
+    ${shippingRow}
+    ${totalRow}
   </tbody>
 </table>
 
@@ -6782,8 +7057,32 @@ td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
 </body></html>`;
 }
 
-function _buildGiftSlipWith(s, shipTo, giftMsg, orderDate) {
+// Option B (v2.9.3, S27): `fields` param for gift field-visibility toggles.
+// When omitted, reads from saved settings.
+function _buildGiftSlipWith(s, shipTo, giftMsg, orderDate, fields) {
+  const f = fields || getPslipFields();
+  const gf = f.gift;
+
   const accent = s.accent || '#d4a853';
+
+  // Recipient name: first line of shipTo, only if toggle is on AND shipTo set
+  const recipientBlock = (gf.recipient_name && shipTo)
+    ? `<div class="gift-name">${escHtml(shipTo.split('\n')[0])}</div>`
+    : '';
+
+  // Gift message block: hidden entirely when toggle is off.
+  // When toggle is on: show real message if present, or "— with love —" placeholder.
+  const messageBlock = gf.gift_message
+    ? (giftMsg
+        ? `<div class="gift-message">${escHtml(giftMsg)}</div>`
+        : `<div class="gift-message" style="color:#ccc;font-style:italic;">— with love —</div>`)
+    : '';
+
+  // Date footer
+  const dateBlock = gf.order_date
+    ? `<div class="gift-footer">${escHtml(orderDate)}</div>`
+    : '';
+
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gift Card</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
@@ -6807,9 +7106,9 @@ body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#1a1a2e;display:
   <div class="gift-brand">${escHtml(s.bizName || PSLIP_DEFAULTS.bizName)}</div>
   <div class="gift-sub">A Gift For You</div>
   <div class="gift-divider"></div>
-  ${shipTo ? `<div class="gift-name">${escHtml(shipTo.split('\n')[0])}</div>` : ''}
-  ${giftMsg ? `<div class="gift-message">${escHtml(giftMsg)}</div>` : `<div class="gift-message" style="color:#ccc;font-style:italic;">— with love —</div>`}
-  <div class="gift-footer">${escHtml(orderDate)}</div>
+  ${recipientBlock}
+  ${messageBlock}
+  ${dateBlock}
 </div>
 </body></html>`;
 }
@@ -7664,7 +7963,7 @@ async function loadShippingTab() {
             }
           }
           if (enriched > 0) console.log(`[Shipping] Enriched ${enriched} rows with SKUs from sales_history`);
-          if (giftsFlagged > 0) console.log(`[Shipping v2.9.2] Flagged ${giftsFlagged} rows as gift orders from sales_history`);
+          if (giftsFlagged > 0) console.log(`[Shipping v${TOOL_VERSION}] Flagged ${giftsFlagged} rows as gift orders from sales_history`);
         }
       } catch(e) { console.log('SKU enrichment error:', e.message); }
     }
@@ -8408,6 +8707,7 @@ async function openSlipFromShipping(idx) {
       if (data && data.length > 0) {
         saleRecord = data[0];
         orderItems = data.map(row => ({
+          sku: row.sku || '',
           product_name: row.product_name || row.sku || 'Item',
           qty_sold: row.qty_sold || 1,
           sale_price: pf(row.sale_price),
@@ -8427,14 +8727,14 @@ async function openSlipFromShipping(idx) {
         .limit(1);
       if (data && data.length > 0) {
         saleRecord = data[0];
-        orderItems = [{ product_name: data[0].product_name || r.sku || 'Item', qty_sold: data[0].qty_sold || 1, sale_price: pf(data[0].sale_price), total_revenue: pf(data[0].total_revenue) }];
+        orderItems = [{ sku: data[0].sku || r.sku || '', product_name: data[0].product_name || r.sku || 'Item', qty_sold: data[0].qty_sold || 1, sale_price: pf(data[0].sale_price), total_revenue: pf(data[0].total_revenue) }];
       }
     } catch(e) { /* skip */ }
   }
 
   // Fallback: use metadata / SKU for a basic slip
   if (orderItems.length === 0) {
-    orderItems = [{ product_name: r.sku || r.item_description || 'Item', qty_sold: 1, sale_price: 0, total_revenue: 0 }];
+    orderItems = [{ sku: r.sku || '', product_name: r.sku || r.item_description || 'Item', qty_sold: 1, sale_price: 0, total_revenue: 0 }];
   }
 
   // Build fake sale for the modal
@@ -9246,7 +9546,7 @@ async function loadAnalytics() {
   const range = getAnalyticsDateRange();
   try {
     const { data, error } = await sb.from('sales_history')
-      .select('sku,product_name,brand_name,sale_channel,qty_sold,sale_price,total_revenue,net_profit,profit_margin,sale_date,order_id')
+      .select('sku,product_name,brand_name,sale_channel,qty_sold,sale_price,total_revenue,net_profit,profit_margin,sale_date,order_id,ship_to_name,ship_to_address')
       .eq('status', 'active')
       .gte('sale_date', range.from)
       .lte('sale_date', range.to)
@@ -9308,7 +9608,13 @@ async function loadAnalytics() {
       units: pi(r.qty_sold) || 1,
       revenue: pf(r.total_revenue) || pf(r.sale_price),
       profit: pf(r.net_profit),
-      margin: pf(r.profit_margin) * 100
+      margin: pf(r.profit_margin) * 100,
+      // E19 (v2.9.3, S27): displayed columns + hidden search fields.
+      // buyer + state render in their own columns; brand + address search-only.
+      buyer:   r.ship_to_name || '',
+      state:   _extractUsState(r.ship_to_address),
+      brand:   r.brand_name || '',
+      address: r.ship_to_address || ''
     }));
     state.analyticsSortCol = 'date';
     state.analyticsSortAsc = false; // default newest first
@@ -9327,19 +9633,47 @@ async function loadAnalytics() {
 const ANALYTICS_DESC_DEFAULT_COLS = new Set(['date', 'units', 'revenue', 'profit', 'margin']);
 const ANALYTICS_NUMERIC_COMPARE_COLS = new Set(['units', 'revenue', 'profit', 'margin']);
 
+// E19 (v2.9.3, S27): Parse US 2-letter state code from concatenated address strings.
+// sales_history.ship_to_address is a single string like "123 Main St, Miami, FL 33101".
+// No separate ship_to_state column exists, so we regex for the state+ZIP pattern.
+// International / malformed addresses return '' (rendered as — in table).
+function _extractUsState(addr) {
+  if (!addr) return '';
+  const m = String(addr).match(/\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\b/);
+  return m ? m[1] : '';
+}
+
 function renderAnalyticsSalesLog() {
     const sales = state.analyticsSales || [];
     const col = state.analyticsSortCol || 'date';
     const asc = !!state.analyticsSortAsc;
 
-    const sorted = [...sales].sort((a, b) => {
+    // E19 (v2.9.3, S27): client-side search filter — applies to Sales Log only.
+    // Matches case-insensitive contains against: sku, product, brand, buyer
+    // (ship_to_name), state (parsed 2-letter code), and address (full ship_to_address).
+    // KPIs and channel cards are NOT recalculated — search is a "find this sale"
+    // operation, not a metrics-recalc.
+    const searchTerm = (state.analyticsSearch || '').toLowerCase();
+    const filtered = searchTerm
+      ? sales.filter(s =>
+          (s.sku     || '').toLowerCase().includes(searchTerm) ||
+          (s.product || '').toLowerCase().includes(searchTerm) ||
+          (s.brand   || '').toLowerCase().includes(searchTerm) ||
+          (s.buyer   || '').toLowerCase().includes(searchTerm) ||
+          (s.state   || '').toLowerCase().includes(searchTerm) ||
+          (s.address || '').toLowerCase().includes(searchTerm)
+        )
+      : sales;
+
+    const sorted = [...filtered].sort((a, b) => {
         const av = a[col];
         const bv = b[col];
         let cmp;
         if (ANALYTICS_NUMERIC_COMPARE_COLS.has(col)) {
             cmp = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
         } else {
-            // date, sku, product, channel — lexicographic (date strings are YYYY-MM-DD so this works)
+            // date, sku, product, buyer, state, channel — lexicographic
+            // (date strings are YYYY-MM-DD so this works)
             cmp = String(av || '').localeCompare(String(bv || ''), undefined, { sensitivity: 'base' });
         }
         return asc ? cmp : -cmp;
@@ -9363,19 +9697,29 @@ function renderAnalyticsSalesLog() {
     $('topSellersRange').textContent = `${range.from} to ${range.to}`;
 
     if (sorted.length === 0) {
-      $('topSellersBody').innerHTML = '<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--muted);">No sales in this period.</td></tr>';
+      // E19 (v2.9.3, S27): differentiate between "no sales in period" and "search zero match"
+      const msg = searchTerm
+        ? `No sales match <em style="color:var(--text);">"${escHtml(state.analyticsSearch)}"</em> in this period.`
+        : 'No sales in this period.';
+      $('topSellersBody').innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--muted);">${msg}</td></tr>`;
     } else {
       $('topSellersBody').innerHTML = sorted.map(s => {
         const chColor = { etsy:'var(--etsy)', wix:'var(--wix)', wayfair:'var(--wayfair)', treasuremarts:'var(--tm)' }[s.channel] || 'var(--muted)';
+        // E19 (v2.9.3, S27): Buyer column truncates long names via CSS ellipsis;
+        // State column renders — when no US state could be parsed (international, etc.)
+        // width:1%; white-space:nowrap forces narrow columns to content size so
+        // Product + Buyer absorb the extra horizontal space (no more SKU/Product gap).
         return `<tr>
-          <td class="mono">${s.date}</td>
-          <td><span class="sku-cell">${escHtml(s.sku)}</span></td>
+          <td class="mono" style="width:1%;white-space:nowrap;">${s.date}</td>
+          <td style="width:1%;white-space:nowrap;"><span class="sku-cell">${escHtml(s.sku)}</span></td>
           <td class="product-cell">${escHtml(s.product)}</td>
-          <td style="color:${chColor};font-weight:600;font-size:12px;">${escHtml(s.channel || '—')}</td>
-          <td class="mono">${s.units}</td>
-          <td class="mono" style="color:var(--gold);">$${s.revenue.toFixed(2)}</td>
-          <td class="mono" style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'};">$${s.profit.toFixed(2)}</td>
-          <td style="color:${s.margin >= 0 ? 'var(--green)' : 'var(--red)'};">${s.margin.toFixed(1)}%</td>
+          <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(s.buyer)}">${escHtml(s.buyer) || '<span style="color:var(--muted2);">—</span>'}</td>
+          <td class="mono" style="width:1%;white-space:nowrap;text-align:center;">${escHtml(s.state) || '<span style="color:var(--muted2);">—</span>'}</td>
+          <td style="color:${chColor};font-weight:600;font-size:12px;width:1%;white-space:nowrap;">${escHtml(s.channel || '—')}</td>
+          <td class="mono" style="width:1%;white-space:nowrap;">${s.units}</td>
+          <td class="mono" style="color:var(--gold);width:1%;white-space:nowrap;">$${s.revenue.toFixed(2)}</td>
+          <td class="mono" style="color:${s.profit >= 0 ? 'var(--green)' : 'var(--red)'};width:1%;white-space:nowrap;">$${s.profit.toFixed(2)}</td>
+          <td style="color:${s.margin >= 0 ? 'var(--green)' : 'var(--red)'};width:1%;white-space:nowrap;">${s.margin.toFixed(1)}%</td>
         </tr>`;
       }).join('');
     }
@@ -9394,6 +9738,28 @@ function setAnalyticsSort(col) {
         state.analyticsSortAsc = !ANALYTICS_DESC_DEFAULT_COLS.has(col);
     }
     renderAnalyticsSalesLog();
+}
+
+// E19 (v2.9.3, S27): Analytics search — debounced 250ms, client-side filter only.
+// Search string persists across date-range changes until user clears it.
+function onAnalyticsSearchDebounced() {
+  const val = $('analyticsSearchInput').value;
+  const clearBtn = $('analyticsSearchClear');
+  if (clearBtn) clearBtn.style.display = val.length > 0 ? 'block' : 'none';
+  clearTimeout(analyticsSearchTimer);
+  analyticsSearchTimer = setTimeout(() => {
+    state.analyticsSearch = val.trim();
+    renderAnalyticsSalesLog();
+  }, ANALYTICS_SEARCH_DELAY);
+}
+
+function clearAnalyticsSearch() {
+  const inp = $('analyticsSearchInput');
+  if (inp) { inp.value = ''; inp.focus(); }
+  const clearBtn = $('analyticsSearchClear');
+  if (clearBtn) clearBtn.style.display = 'none';
+  state.analyticsSearch = '';
+  renderAnalyticsSalesLog();
 }
 
 // Back-compat shim in case any legacy code still calls toggleAnalyticsSort()
