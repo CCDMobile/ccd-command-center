@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.13</title>
+    <title>CCD Sync Hub v4.4.16</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.13 — Clean Build Styles
+           CCD SYNC HUB v4.4.16 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.13 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.16 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -456,6 +456,7 @@
         <button class="tab-btn active" onclick="switchTab('orders')" id="tabOrders">📦 Orders <span class="badge" id="ordersBadge" style="display:none">0</span></button>
         <button class="tab-btn" onclick="switchTab('queue')" id="tabQueue">📤 Push Queue <span class="badge" id="queueBadge" style="display:none">0</span></button>
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
+        <button class="tab-btn" onclick="switchTab('wayfair')" id="tabWayfair">🏠 Wayfair</button>
         <button class="tab-btn" onclick="switchTab('settings')" id="tabSettings">⚙️ Settings</button>
         <button class="tab-btn" onclick="switchTab('shippo')" id="tabShippo">📦 Shippo</button>
         <button class="tab-btn" onclick="switchTab('log')" id="tabLog">📋 Log</button>
@@ -557,6 +558,97 @@
                 </div>
             </div>
             <button class="btn btn-primary" onclick="autoTestAllConnections()" style="margin-top: 8px;">🔄 Test All Connections</button>
+        </div>
+        
+        <!-- ==================== WAYFAIR TAB (v4.4.16 — TRUE_UP control) ==================== -->
+        <!-- ╔══════════════════════════════════════════════════════════════════════════╗ -->
+        <!-- ║ @invariant       ECOSYSTEM-010 — TRUE_UP HEARTBEAT CONTRACT               ║ -->
+        <!-- ║ @added           v4.4.16 (S28, 2026-04-23)                                ║ -->
+        <!-- ║ @intent          SH UI for Wayfair scheduled TRUE_UP + manual DIFFERENTIAL ║ -->
+        <!-- ║                  push. Proxy v1.3.1+ engine already built; this exposes    ║ -->
+        <!-- ║                  toggle/cadence/status/Run-Now + selective push controls.  ║ -->
+        <!-- ║                                                                           ║ -->
+        <!-- ║ @rule            "Run Full TRUE_UP Now" sends NO skus → feedKind=TRUE_UP. ║ -->
+        <!-- ║                  "Push Selected DIFFERENTIAL" sends SKU list → DIFFERENTIAL.║ -->
+        <!-- ║                  NEVER modify runTrueUpNow call paths to send TRUE_UP with ║ -->
+        <!-- ║                  a SKU list — Wayfair would zero every unincluded item.    ║ -->
+        <!-- ║                                                                           ║ -->
+        <!-- ║ @urls            wayfairProxyUrl comes from state.settings (loaded from   ║ -->
+        <!-- ║                  settings.proxy_urls.wayfair in Supabase). NEVER hardcode. ║ -->
+        <!-- ║                                                                           ║ -->
+        <!-- ║ DO NOT REMOVE — removing this card without replacement breaks Wayfair     ║ -->
+        <!-- ║ feed-compliance control (24h TRUE_UP requirement).                        ║ -->
+        <!-- ╚══════════════════════════════════════════════════════════════════════════╝ -->
+        <div class="tab-content" id="tab-wayfair">
+            <!-- Card 1: Scheduled TRUE_UP -->
+            <div class="card" style="margin-bottom: 16px;">
+                <div class="card-header">
+                    <h3>🔄 Scheduled TRUE_UP Feed</h3>
+                    <button class="btn btn-sm btn-secondary" onclick="refreshTrueUpStatus()" id="btnRefreshTrueUp">↻ Refresh</button>
+                </div>
+                <div class="card-body">
+                    <div id="trueUpNotConfigured" style="display:none; padding: 16px; background: #2d1515; border: 1px solid #7f1d1d; border-radius: 6px; color: #fca5a5; font-size: 0.85rem; margin-bottom: 12px;">
+                        ⚠️ Wayfair proxy URL or CCD API key is not configured. Set both under Settings → Proxy URLs and API Keys before using this panel.
+                    </div>
+                    
+                    <div id="trueUpControls">
+                        <!-- Toggle + Cadence row -->
+                        <div style="display: flex; gap: 24px; align-items: center; flex-wrap: wrap; padding: 12px; background: var(--bg-input); border-radius: 8px; margin-bottom: 12px;">
+                            <div>
+                                <label style="font-size: 0.85rem; color: var(--text-dim); display: block; margin-bottom: 4px;">Scheduled feed</label>
+                                <label style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <input type="checkbox" id="trueUpEnabledToggle" onchange="handleTrueUpToggle()" style="width: 18px; height: 18px; cursor: pointer;">
+                                    <span id="trueUpEnabledLabel" style="font-weight: 600;">Disabled</span>
+                                </label>
+                            </div>
+                            <div>
+                                <label style="font-size: 0.85rem; color: var(--text-dim); display: block; margin-bottom: 4px;">Cadence</label>
+                                <select id="trueUpCadence" onchange="handleTrueUpCadenceChange()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.9rem;">
+                                    <option value="6">Every 6 hours</option>
+                                    <option value="8" selected>Every 8 hours (default)</option>
+                                    <option value="24">Every 24 hours</option>
+                                </select>
+                            </div>
+                            <div style="flex: 1; text-align: right;">
+                                <button class="btn btn-primary" onclick="runFullTrueUpNow()" id="btnRunTrueUpNow" title="Sends a full TRUE_UP feed to Wayfair immediately. Safe to run anytime; idempotent.">🟢 Run Full TRUE_UP Now</button>
+                            </div>
+                        </div>
+                        
+                        <!-- Last run status -->
+                        <div style="background: var(--bg-input); padding: 12px 14px; border-radius: 8px; font-size: 0.85rem;">
+                            <div style="font-weight: 600; color: var(--text-dim); margin-bottom: 8px; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em;">Last Run</div>
+                            <div id="trueUpLastRun" style="color: var(--text-dim);">No runs yet.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Card 2: Manual DIFFERENTIAL Push -->
+            <div class="card">
+                <div class="card-header">
+                    <h3>📤 Manual DIFFERENTIAL Push</h3>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span id="wfDiffSelectedCount" style="font-size: 0.85rem; color: var(--text-dim);">0 selected</span>
+                        <button class="btn btn-sm btn-secondary" onclick="loadWayfairItemsForDiff()" id="btnLoadWfItems">↻ Reload Items</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div style="padding: 10px 12px; background: #1e2a3f; border: 1px solid #3b82f6; border-radius: 6px; font-size: 0.8rem; color: #93c5fd; margin-bottom: 12px;">
+                        ℹ️ <strong>DIFFERENTIAL</strong> pushes update only the selected SKUs — unselected items are unaffected. For full-catalog heartbeat use <strong>Run Full TRUE_UP Now</strong> above.
+                    </div>
+                    
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
+                        <input type="text" id="wfDiffSearch" placeholder="Search SKU, wayfair_sku, or product name..." oninput="filterWayfairItems()" style="flex: 1; min-width: 200px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.85rem;">
+                        <button class="btn btn-sm btn-secondary" onclick="selectAllWayfairVisible()">Select Visible</button>
+                        <button class="btn btn-sm btn-secondary" onclick="selectNoneWayfair()">Clear</button>
+                        <button class="btn btn-primary" onclick="pushDifferentialSelected()" id="btnPushDiff" disabled>📤 Push Selected as DIFFERENTIAL</button>
+                    </div>
+                    
+                    <div id="wfDiffItemList" style="max-height: 520px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px;">
+                        <div style="text-align: center; color: var(--text-dim); padding: 30px 0; font-size: 0.9rem;">Click "Reload Items" to load Wayfair-mapped inventory.</div>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <!-- ==================== SETTINGS TAB ==================== -->
@@ -720,11 +812,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.13 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.16 — SUPABASE-NATIVE PUSH BUILD
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.15';
+    const SH_VERSION = 'v4.4.16';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1522,7 +1614,7 @@
     }
     
     function getAppIdentifier() {
-        return 'SyncHub-v4.4.13-' + (localStorage.getItem('ccd_hostname') || 'Unknown');
+        return `SyncHub-${SH_VERSION}-` + (localStorage.getItem('ccd_hostname') || 'Unknown');
     }
     
     function isFeatureEnabled(featureName) {
@@ -1746,7 +1838,7 @@
             await persistProcessedOrderToDb(order.id, order.channel, {
                 totalAmount: order.total || 0,
                 itemCount: order.items?.length || 0,
-                processedBy: 'Sync Hub v4.4.13',
+                processedBy: `Sync Hub ${SH_VERSION}`,
                 device: localStorage.getItem('ccd_hostname') || 'Unknown'
             });
         }
@@ -5988,6 +6080,11 @@
         const btnEl = document.getElementById('tab' + tabName.charAt(0).toUpperCase() + tabName.slice(1));
         if (tabEl) tabEl.classList.add('active');
         if (btnEl) btnEl.classList.add('active');
+
+        // v4.4.16 (S28): lazy-load Wayfair tab on first activation
+        if (tabName === 'wayfair' && typeof _maybeInitWayfairTab === 'function') {
+            _maybeInitWayfairTab();
+        }
     }
     
     // ============================================================
@@ -7182,12 +7279,565 @@
     function loadSkuMappings() { loadSkuMappingsFromDb(); }
 
     // ============================================================
+    // WAYFAIR TRUE_UP CONTROL (v4.4.16 — S28)
+    // ============================================================
+    // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║ @invariant       ECOSYSTEM-010 — TRUE_UP HEARTBEAT CONTRACT               ║
+    // ║ @added           v4.4.16 (S28, 2026-04-23)                                ║
+    // ║ @depends-on      Wayfair Proxy v1.3.1+ actions:                           ║
+    // ║                    - getTrueUpStatus    → read config                     ║
+    // ║                    - setupTrueUpTrigger → enable + install GAS trigger    ║
+    // ║                    - disableTrueUpTrigger → remove trigger + disable      ║
+    // ║                    - runTrueUpNow       → manual fire                     ║
+    // ║                                                                           ║
+    // ║ @critical-rule   runFullTrueUpNow()        → NO skus → feedKind=TRUE_UP   ║
+    // ║                  pushDifferentialSelected() → skus list → feedKind=DIFF   ║
+    // ║                  NEVER pass partial SKU list on a TRUE_UP path —          ║
+    // ║                  Wayfair would zero every unincluded item.                ║
+    // ║                                                                           ║
+    // ║ @urls            state.settings.wayfairProxyUrl (from settings.proxy_urls)║
+    // ║                  state.settings.ccdApiKey       (from settings.api_keys)  ║
+    // ║                  NEVER hardcode URLs — they live in Supabase settings.    ║
+    // ║                                                                           ║
+    // ║ @touches         Zero existing code paths. Reads items + settings via     ║
+    // ║                  existing sbClient. All writes go to Wayfair Proxy.       ║
+    // ║                  Order processing, cascade, push queue — all untouched.   ║
+    // ║                                                                           ║
+    // ║ DO NOT REMOVE — removing this breaks Wayfair 24h TRUE_UP compliance.      ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    state.trueUp = state.trueUp || {
+        config: null,
+        items: [],
+        loaded: false,
+        itemsLoaded: false
+    };
+
+    // v4.4.16: defensive HTML-escape helper. Any value from a remote source
+    // (Wayfair proxy, Wayfair API passthrough errors, Supabase items like
+    // product_name) MUST be escaped before going into innerHTML/attribute
+    // interpolation. Prevents both rendering accidents (names with 5" or &)
+    // and low-sev XSS if a value is ever adversarial.
+    function _escHtml(v) {
+        if (v == null) return '';
+        return String(v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function _trueUpIsConfigured() {
+        return !!(state.settings.wayfairProxyUrl && state.settings.ccdApiKey);
+    }
+
+    function _trueUpFormatTimestamp(iso) {
+        if (!iso) return '—';
+        try {
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return '—';  // bug #1: invalid dates → em-dash, not "Invalid Date"
+            return d.toLocaleString();
+        } catch (e) {
+            return '—';
+        }
+    }
+
+    function _trueUpFormatNextRun(cfg) {
+        if (!cfg || !cfg.enabled || !cfg.last_run_at || !cfg.cadence_hours) return '—';
+        try {
+            const last = new Date(cfg.last_run_at);
+            if (isNaN(last.getTime())) return '—';  // bug #1 extension
+            const next = new Date(last.getTime() + (cfg.cadence_hours * 3600 * 1000));
+            return next.toLocaleString();
+        } catch (e) {
+            return '—';
+        }
+    }
+
+    async function refreshTrueUpStatus() {
+        const notConfigured = document.getElementById('trueUpNotConfigured');
+        const controls = document.getElementById('trueUpControls');
+        if (!notConfigured || !controls) return;
+
+        if (!_trueUpIsConfigured()) {
+            notConfigured.style.display = 'block';
+            controls.style.opacity = '0.5';
+            controls.style.pointerEvents = 'none';
+            return;
+        }
+        notConfigured.style.display = 'none';
+        controls.style.opacity = '1';
+        controls.style.pointerEvents = 'auto';
+
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+
+        try {
+            addLog('🔄 Loading TRUE_UP config...', 'info');
+            const res = await fetchOrJsonp(url, { action: 'getTrueUpStatus', key: key });
+            if (!res || !res.success) {
+                const errText = (res && res.error) || 'unknown';
+                addLog('⚠️ Could not load TRUE_UP config: ' + errText, 'warning');
+                const lastRun = document.getElementById('trueUpLastRun');
+                if (lastRun) lastRun.innerHTML = `<span style="color:#ef4444;">Failed to load: ${_escHtml(errText)}</span>`;
+                return;
+            }
+            state.trueUp.config = res.config || {};
+            state.trueUp.loaded = true;
+            _renderTrueUpStatus(state.trueUp.config);
+        } catch (err) {
+            console.error('[TRUE_UP] refresh failed:', err);
+            addLog('❌ TRUE_UP refresh failed: ' + err.message, 'error');
+            const lastRun = document.getElementById('trueUpLastRun');
+            if (lastRun) lastRun.innerHTML = `<span style="color:#ef4444;">Error: ${_escHtml(err.message)}</span>`;
+        }
+    }
+
+    function _renderTrueUpStatus(cfg) {
+        const toggle = document.getElementById('trueUpEnabledToggle');
+        const label = document.getElementById('trueUpEnabledLabel');
+        const cadence = document.getElementById('trueUpCadence');
+        const lastRun = document.getElementById('trueUpLastRun');
+        if (!toggle || !label || !cadence || !lastRun) return;
+
+        toggle.checked = !!cfg.enabled;
+        label.textContent = cfg.enabled ? 'Enabled' : 'Disabled';
+        label.style.color = cfg.enabled ? '#22c55e' : 'var(--text-dim)';
+
+        const allowedCadences = ['6', '8', '24'];
+        const c = String(cfg.cadence_hours || 8);
+        cadence.value = allowedCadences.includes(c) ? c : '8';
+
+        if (!cfg.last_run_at) {
+            lastRun.innerHTML = '<span style="color: var(--text-dim);">No runs yet.</span>';
+            return;
+        }
+
+        const status = cfg.last_run_status || 'unknown';
+        const feedKind = cfg.last_run_feed_kind || '—';
+        const triggeredBy = cfg.last_run_triggered_by || '—';
+        const itemCount = (cfg.last_run_item_count != null) ? cfg.last_run_item_count : '—';
+        const handle = cfg.last_run_handle || '—';
+        const duration = (cfg.last_run_duration_ms != null) ? (cfg.last_run_duration_ms + 'ms') : '—';
+        const errMsg = cfg.last_run_error || null;
+
+        const statusColor = status === 'success' ? '#22c55e' : (status === 'failed' ? '#ef4444' : '#eab308');
+        const statusIcon = status === 'success' ? '✅' : (status === 'failed' ? '❌' : '⏳');
+
+        let html = `
+            <div style="display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; align-items: baseline;">
+                <div style="color: var(--text-dim);">Status:</div>
+                <div><span style="color:${statusColor}; font-weight: 600;">${statusIcon} ${_escHtml(status)}</span> • ${_escHtml(feedKind)} • triggered by ${_escHtml(triggeredBy)}</div>
+                <div style="color: var(--text-dim);">Ran at:</div>
+                <div>${_escHtml(_trueUpFormatTimestamp(cfg.last_run_at))}</div>
+                <div style="color: var(--text-dim);">Items sent:</div>
+                <div>${_escHtml(itemCount)}</div>
+                <div style="color: var(--text-dim);">Handle:</div>
+                <div style="font-family: monospace; font-size: 0.8rem;">${_escHtml(handle)}</div>
+                <div style="color: var(--text-dim);">Duration:</div>
+                <div>${_escHtml(duration)}</div>
+                <div style="color: var(--text-dim);">Next run:</div>
+                <div>${_escHtml(_trueUpFormatNextRun(cfg))}</div>
+        `;
+        if (errMsg) {
+            html += `
+                <div style="color: var(--text-dim);">Error:</div>
+                <div style="color:#fca5a5; font-family: monospace; font-size: 0.8rem;">${_escHtml(errMsg)}</div>
+            `;
+        }
+        html += `</div>
+            <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 0.75rem; color: var(--text-dim);">
+                Full history available in the Log tab (search "wayfair_trueup").
+            </div>
+        `;
+        lastRun.innerHTML = html;
+    }
+
+    async function handleTrueUpToggle() {
+        const toggle = document.getElementById('trueUpEnabledToggle');
+        const cadence = document.getElementById('trueUpCadence');
+        if (!toggle || !cadence) return;
+
+        if (!_trueUpIsConfigured()) {
+            addLog('⚠️ Wayfair proxy/API key not configured', 'warning');
+            toggle.checked = !toggle.checked; // revert
+            return;
+        }
+
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+        const wantEnabled = toggle.checked;
+        const hours = parseInt(cadence.value) || 8;
+
+        // Q3 decision: confirm on ON, no confirm on OFF
+        if (wantEnabled) {
+            const confirmed = confirm(
+                `Enable scheduled Wayfair TRUE_UP feed every ${hours} hours?\n\n` +
+                `This will install a server-side trigger in the Wayfair Proxy that pushes your full ` +
+                `authoritative inventory to Wayfair on every cadence tick.\n\n` +
+                `Wayfair requires at least one TRUE_UP every 24 hours for compliance.`
+            );
+            if (!confirmed) {
+                toggle.checked = false;
+                return;
+            }
+        }
+
+        // Disable the toggle while the async call is in flight
+        toggle.disabled = true;
+        try {
+            if (wantEnabled) {
+                addLog(`🔄 Enabling scheduled TRUE_UP (every ${hours}h)...`, 'info');
+                const res = await fetchOrJsonp(url, { action: 'setupTrueUpTrigger', key: key, hours: hours });
+                if (!res || !res.success) {
+                    throw new Error((res && res.error) || 'Unknown error');
+                }
+                addLog(`✅ Scheduled TRUE_UP enabled — cadence ${hours}h`, 'success');
+                logActivity('sync', 'wayfair_trueup_enabled', 'wayfair',
+                    `Scheduled TRUE_UP enabled (cadence ${hours}h)`,
+                    { cadence_hours: hours, source: 'sh_toggle' });
+            } else {
+                addLog('🛑 Disabling scheduled TRUE_UP...', 'info');
+                const res = await fetchOrJsonp(url, { action: 'disableTrueUpTrigger', key: key });
+                if (!res || !res.success) {
+                    throw new Error((res && res.error) || 'Unknown error');
+                }
+                addLog(`✅ Scheduled TRUE_UP disabled (${res.removedTriggers || 0} trigger(s) removed)`, 'success');
+                logActivity('sync', 'wayfair_trueup_disabled', 'wayfair',
+                    'Scheduled TRUE_UP disabled',
+                    { removedTriggers: res.removedTriggers, source: 'sh_toggle' });
+            }
+            // Re-read config to reflect persisted state
+            await refreshTrueUpStatus();
+        } catch (err) {
+            console.error('[TRUE_UP] toggle failed:', err);
+            addLog('❌ Toggle failed: ' + err.message, 'error');
+            alert('Failed to ' + (wantEnabled ? 'enable' : 'disable') + ' scheduled TRUE_UP:\n\n' + err.message);
+            toggle.checked = !wantEnabled; // revert
+        } finally {
+            toggle.disabled = false;
+        }
+    }
+
+    async function handleTrueUpCadenceChange() {
+        const toggle = document.getElementById('trueUpEnabledToggle');
+        const cadence = document.getElementById('trueUpCadence');
+        if (!toggle || !cadence) return;
+
+        const hours = parseInt(cadence.value) || 8;
+
+        // Only take action if scheduled feed is currently enabled
+        if (!toggle.checked) {
+            addLog(`📝 Cadence changed to ${hours}h (will apply when enabled)`, 'info');
+            return;
+        }
+
+        if (!_trueUpIsConfigured()) return;
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+
+        cadence.disabled = true;
+        try {
+            addLog(`🔄 Updating TRUE_UP cadence to ${hours}h...`, 'info');
+            const res = await fetchOrJsonp(url, { action: 'setupTrueUpTrigger', key: key, hours: hours });
+            if (!res || !res.success) {
+                throw new Error((res && res.error) || 'Unknown error');
+            }
+            addLog(`✅ Cadence updated to ${hours}h (trigger replaced)`, 'success');
+            logActivity('sync', 'wayfair_trueup_cadence_changed', 'wayfair',
+                `TRUE_UP cadence changed to ${hours}h`,
+                { cadence_hours: hours });
+            await refreshTrueUpStatus();
+        } catch (err) {
+            console.error('[TRUE_UP] cadence change failed:', err);
+            addLog('❌ Cadence update failed: ' + err.message, 'error');
+            alert('Failed to update cadence:\n\n' + err.message);
+            // Bug #4 fix: proxy call failed, so the dropdown value is out of sync
+            // with the actual installed trigger cadence. Refresh from proxy to
+            // reset the dropdown to the true state.
+            await refreshTrueUpStatus();
+        } finally {
+            cadence.disabled = false;
+        }
+    }
+
+    async function runFullTrueUpNow() {
+        if (!_trueUpIsConfigured()) {
+            alert('Wayfair proxy URL or CCD API key is not configured. Set them under Settings first.');
+            return;
+        }
+
+        // D4 (S28): show item count in confirm dialog when known
+        const itemCountHint = (state.trueUp.itemsLoaded && state.trueUp.items)
+            ? `\n\nThis will push all ${state.trueUp.items.length} active Wayfair-mapped items.`
+            : '\n\nThis will push all active Wayfair-mapped items.';
+
+        const confirmed = confirm(
+            `Run a full Wayfair TRUE_UP feed now?` +
+            itemCountHint +
+            `\n\nIdempotent — safe to run anytime.\n\n` +
+            `Typical completion in Wayfair's pipeline: 30–60 minutes (verify in Partner Home).`
+        );
+        if (!confirmed) return;
+
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+        const btn = document.getElementById('btnRunTrueUpNow');
+
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Running...'; }
+        try {
+            addLog('🟢 Running manual TRUE_UP feed...', 'info');
+            // ECOSYSTEM-010: no skus param → full TRUE_UP heartbeat
+            const res = await fetchOrJsonp(url, { action: 'runTrueUpNow', key: key });
+            if (!res || !res.success) {
+                throw new Error((res && res.error) || 'Unknown error');
+            }
+            const kind = res.feedKind || 'TRUE_UP';
+            const items = res.itemCount || '?';
+            const handle = res.handle || '—';
+            addLog(`✅ ${kind} feed accepted by Wayfair — ${items} items, handle ${handle}`, 'success');
+            alert(`✅ ${kind} feed submitted successfully\n\nItems: ${items}\nHandle: ${handle}\nDuration: ${res.durationMs || '?'}ms\n\nWayfair typically takes 30–60 min to process. Check Partner Home or the Feed Status panel on the Connections tab.`);
+            await refreshTrueUpStatus();
+        } catch (err) {
+            console.error('[TRUE_UP] run now failed:', err);
+            addLog('❌ TRUE_UP run failed: ' + err.message, 'error');
+            alert('TRUE_UP run failed:\n\n' + err.message);
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = '🟢 Run Full TRUE_UP Now'; }
+        }
+    }
+
+    // ------------------------------------------------------------
+    // DIFFERENTIAL push — item list + selective submission
+    // ------------------------------------------------------------
+
+    async function loadWayfairItemsForDiff() {
+        const listEl = document.getElementById('wfDiffItemList');
+        if (!listEl) return;
+
+        if (!sbConnected) {
+            listEl.innerHTML = '<div style="text-align:center; color:#fca5a5; padding: 30px 0; font-size: 0.9rem;">⚠️ Supabase not connected. Connect first under Settings.</div>';
+            return;
+        }
+
+        listEl.innerHTML = '<div style="text-align:center; color: var(--text-dim); padding: 30px 0; font-size: 0.9rem;">Loading Wayfair-mapped items...</div>';
+
+        try {
+            const { data, error } = await sbClient
+                .from('items')
+                .select('sku, wayfair_sku, product_name, qty, wayfair_qty, treasuremarts_qty, is_active')
+                .not('wayfair_sku', 'is', null)
+                .order('sku')
+                .limit(5000);
+
+            if (error) throw new Error(error.message);
+
+            // Bug #6 fix: match proxy's fetchActiveWayfairItems filter exactly.
+            // Proxy uses PostgREST `is_active=eq.true`, which excludes NULL. Our
+            // UI must match or items can appear checkable here while being silently
+            // dropped from the push set.
+            const rows = (data || []).filter(r => r.is_active === true && r.wayfair_sku && String(r.wayfair_sku).trim());
+
+            state.trueUp.items = rows;
+            state.trueUp.itemsLoaded = true;
+            _renderWayfairItemList(rows);
+            addLog(`📋 Loaded ${rows.length} Wayfair-mapped items`, 'info');
+        } catch (err) {
+            console.error('[TRUE_UP] item load failed:', err);
+            listEl.innerHTML = `<div style="text-align:center; color:#fca5a5; padding: 30px 0; font-size: 0.9rem;">❌ Failed to load: ${_escHtml(err.message)}</div>`;
+            addLog('❌ Wayfair item load failed: ' + err.message, 'error');
+        }
+    }
+
+    function _renderWayfairItemList(items) {
+        const listEl = document.getElementById('wfDiffItemList');
+        if (!listEl) return;
+
+        if (!items || items.length === 0) {
+            listEl.innerHTML = '<div style="text-align:center; color: var(--text-dim); padding: 30px 0; font-size: 0.9rem;">No Wayfair-mapped items found.</div>';
+            _updateWfDiffSelectedCount();
+            return;
+        }
+
+        let html = `
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+                <thead style="position: sticky; top: 0; background: var(--bg-input); z-index: 1;">
+                    <tr style="border-bottom: 1px solid var(--border);">
+                        <th style="padding: 8px 10px; text-align: center; width: 32px;"><input type="checkbox" id="wfDiffSelectAllCheckbox" onchange="_wfDiffSelectAllToggle(this.checked)"></th>
+                        <th style="padding: 8px 10px; text-align: left;">Internal SKU</th>
+                        <th style="padding: 8px 10px; text-align: left;">Wayfair SKU</th>
+                        <th style="padding: 8px 10px; text-align: left;">Product</th>
+                        <th style="padding: 8px 10px; text-align: right; width: 70px;" title="Warehouse total quantity (authoritative inventory in CCD)">Total Qty</th>
+                        <th style="padding: 8px 10px; text-align: right; width: 70px; cursor: help;" title="Last-known Wayfair-allocated qty from CCD (display only). The proxy recomputes the authoritative push value at submission time from the warehouse total minus TM qty.">WF Qty</th>
+                        <th style="padding: 8px 10px; text-align: right; width: 70px;" title="Reserved TreasureMarts inventory (physical store) — excluded from Wayfair-available stock">TM Qty</th>
+                    </tr>
+                </thead>
+                <tbody id="wfDiffTableBody">
+        `;
+        items.forEach((item, idx) => {
+            const sku = item.sku || '';
+            const wfSku = item.wayfair_sku || '';
+            const name = item.product_name || '—';
+            const qty = (item.qty != null) ? item.qty : '—';
+            const wfQty = (item.wayfair_qty != null) ? item.wayfair_qty : '—';
+            const tmQty = (item.treasuremarts_qty != null) ? item.treasuremarts_qty : 0;
+            const rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
+            // Bug #3 fix: escape all values used in attributes AND cells. A product
+            // name like `5" Vintage Vase` would break the data-search attribute.
+            const sku_esc = _escHtml(sku);
+            const wfSku_esc = _escHtml(wfSku);
+            const name_esc = _escHtml(name);
+            const search_esc = _escHtml((sku + ' ' + wfSku + ' ' + name).toLowerCase());
+            html += `
+                <tr class="wf-diff-row" data-sku="${sku_esc}" data-wayfair-sku="${wfSku_esc}" data-search="${search_esc}" style="background: ${rowBg}; border-bottom: 1px solid rgba(255,255,255,0.04);">
+                    <td style="padding: 6px 10px; text-align: center;"><input type="checkbox" class="wf-diff-cb" onchange="_updateWfDiffSelectedCount()"></td>
+                    <td style="padding: 6px 10px; font-family: monospace; font-size: 0.78rem;">${sku_esc}</td>
+                    <td style="padding: 6px 10px; font-family: monospace; font-size: 0.78rem; color: var(--text-dim);">${wfSku_esc}</td>
+                    <td style="padding: 6px 10px;">${name_esc}</td>
+                    <td style="padding: 6px 10px; text-align: right;">${_escHtml(qty)}</td>
+                    <td style="padding: 6px 10px; text-align: right;">${_escHtml(wfQty)}</td>
+                    <td style="padding: 6px 10px; text-align: right; color: var(--text-dim);">${_escHtml(tmQty)}</td>
+                </tr>
+            `;
+        });
+        html += '</tbody></table>';
+        listEl.innerHTML = html;
+        _updateWfDiffSelectedCount();
+    }
+
+    function filterWayfairItems() {
+        const search = (document.getElementById('wfDiffSearch') || {}).value || '';
+        const q = search.trim().toLowerCase();
+        const rows = document.querySelectorAll('.wf-diff-row');
+        rows.forEach(row => {
+            if (!q || (row.dataset.search || '').includes(q)) {
+                row.style.display = '';
+            } else {
+                row.style.display = 'none';
+                // Uncheck hidden rows so they can't be silently pushed
+                const cb = row.querySelector('.wf-diff-cb');
+                if (cb && cb.checked) cb.checked = false;
+            }
+        });
+        _updateWfDiffSelectedCount();
+    }
+
+    function _wfDiffSelectAllToggle(checked) {
+        // Only toggle VISIBLE rows (respects active filter)
+        document.querySelectorAll('.wf-diff-row').forEach(row => {
+            if (row.style.display !== 'none') {
+                const cb = row.querySelector('.wf-diff-cb');
+                if (cb) cb.checked = !!checked;
+            }
+        });
+        _updateWfDiffSelectedCount();
+    }
+
+    function selectAllWayfairVisible() {
+        const headerCb = document.getElementById('wfDiffSelectAllCheckbox');
+        if (headerCb) headerCb.checked = true;
+        _wfDiffSelectAllToggle(true);
+    }
+
+    function selectNoneWayfair() {
+        const headerCb = document.getElementById('wfDiffSelectAllCheckbox');
+        if (headerCb) headerCb.checked = false;
+        document.querySelectorAll('.wf-diff-cb').forEach(cb => { cb.checked = false; });
+        _updateWfDiffSelectedCount();
+    }
+
+    function _updateWfDiffSelectedCount() {
+        const count = document.querySelectorAll('.wf-diff-cb:checked').length;
+        const label = document.getElementById('wfDiffSelectedCount');
+        if (label) label.textContent = `${count} selected`;
+        const btn = document.getElementById('btnPushDiff');
+        if (btn) btn.disabled = count === 0;
+    }
+
+    function _getSelectedWayfairSkus() {
+        const skus = [];
+        document.querySelectorAll('.wf-diff-row').forEach(row => {
+            const cb = row.querySelector('.wf-diff-cb');
+            if (cb && cb.checked) {
+                // Use wayfair_sku (what Wayfair recognizes); proxy v1.3.1 matches either column
+                const wfSku = row.dataset.wayfairSku || row.dataset.sku;
+                if (wfSku) skus.push(wfSku);
+            }
+        });
+        return skus;
+    }
+
+    async function pushDifferentialSelected() {
+        if (!_trueUpIsConfigured()) {
+            alert('Wayfair proxy URL or CCD API key is not configured.');
+            return;
+        }
+
+        const skus = _getSelectedWayfairSkus();
+        if (skus.length === 0) {
+            alert('No items selected.');
+            return;
+        }
+
+        const sample = skus.slice(0, 5).join(', ') + (skus.length > 5 ? ` … (+${skus.length - 5} more)` : '');
+        const confirmed = confirm(
+            `Push DIFFERENTIAL feed for ${skus.length} SKU${skus.length === 1 ? '' : 's'}?\n\n` +
+            `Sample: ${sample}\n\n` +
+            `⚠️ This is NOT a TRUE_UP. Unselected items are unaffected.\n` +
+            `Wayfair typically takes 30–60 min to process the update.`
+        );
+        if (!confirmed) return;
+
+        const url = state.settings.wayfairProxyUrl;
+        const key = state.settings.ccdApiKey;
+        const btn = document.getElementById('btnPushDiff');
+
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Pushing...'; }
+        try {
+            addLog(`📤 Pushing DIFFERENTIAL: ${skus.length} SKU(s)`, 'info');
+            // ECOSYSTEM-010: skus param present → proxy sends feedKind=DIFFERENTIAL (NOT TRUE_UP)
+            const res = await fetchOrJsonp(url, {
+                action: 'runTrueUpNow',
+                key: key,
+                skus: skus.join(',')
+            });
+            if (!res || !res.success) {
+                throw new Error((res && res.error) || 'Unknown error');
+            }
+            const kind = res.feedKind || 'DIFFERENTIAL';
+            const items = res.itemCount || skus.length;
+            const handle = res.handle || '—';
+            addLog(`✅ ${kind} feed accepted — ${items} items, handle ${handle}`, 'success');
+            alert(`✅ ${kind} feed submitted\n\nItems: ${items}\nHandle: ${handle}\n\nWayfair typically takes 30–60 min to process. Check Feed Status on the Connections tab or Partner Home.`);
+            await refreshTrueUpStatus();
+        } catch (err) {
+            console.error('[TRUE_UP] differential push failed:', err);
+            addLog('❌ DIFFERENTIAL push failed: ' + err.message, 'error');
+            alert('DIFFERENTIAL push failed:\n\n' + err.message);
+        } finally {
+            if (btn) { btn.textContent = '📤 Push Selected as DIFFERENTIAL'; }
+            _updateWfDiffSelectedCount(); // re-enables based on selection
+        }
+    }
+
+    // Lazy-load hook: first switchTab('wayfair') triggers config + items load
+    async function _maybeInitWayfairTab() {
+        if (!state.trueUp.loaded) {
+            await refreshTrueUpStatus();
+        }
+        if (!state.trueUp.itemsLoaded && sbConnected) {
+            await loadWayfairItemsForDiff();
+        }
+    }
+
+    // ============================================================
     // INIT
     // ============================================================
     
     async function init() {
         try {
-            console.log('[Init] CCD Sync Hub v4.4.13 — Supabase-Native Push Build');
+            console.log(`[Init] CCD Sync Hub ${SH_VERSION} — Supabase-Native Push Build`);
             
             ensureHostnameSet();
             
