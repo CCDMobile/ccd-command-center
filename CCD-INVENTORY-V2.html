@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.3</title>
+<title>CCD Inventory System v2.9.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.3 · Packing Slip Fields + UX Polish</div>
+    <div class="login-version">v2.9.4 · Packing Slip Closeout (Discount + Returns + Preview)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.3</div>
+      <div class="topbar-version">v2.9.4</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1211,8 +1211,14 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             </div>
 
             <!-- Save + Preview -->
-            <div style="display:flex;gap:10px;margin-top:14px;">
+            <div style="display:flex;gap:10px;margin-top:14px;align-items:center;">
               <button type="button" class="btn-card btn-save" onclick="savePackingSlipSettings()" style="flex:1;padding:8px 16px;font-size:13px;">💾 Save Packing Slip Settings</button>
+              <!-- v2.9.4 (S29): preview slip-type selector — choose which template to preview. -->
+              <select id="pslipPreviewType" style="padding:8px 10px;font-size:12px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;color:var(--text);cursor:pointer;" title="Choose which slip type to preview">
+                <option value="priced">Priced</option>
+                <option value="standard">Standard</option>
+                <option value="gift">Gift</option>
+              </select>
               <button type="button" class="btn-card" onclick="previewPackingSlipSample()" style="flex:1;padding:8px 16px;font-size:13px;">👁 Preview Sample</button>
             </div>
             <div id="pslipSettingsStatus" style="margin-top:8px;font-size:12px;display:none;"></div>
@@ -1235,7 +1241,16 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
                 <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfChannelLine" style="width:16px;height:16px;cursor:pointer;"> <span>Show Channel</span></label>
                 <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfShippingLine" style="width:16px;height:16px;cursor:pointer;"> <span>Show Shipping: $0.00 line <span style="color:var(--muted2);font-size:10px;">(new, Priced only)</span></span></label>
                 <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfOrderTotalRow" style="width:16px;height:16px;cursor:pointer;"> <span>Show Order Total row <span style="color:var(--muted2);font-size:10px;">(Priced only)</span></span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfDiscountLine" style="width:16px;height:16px;cursor:pointer;"> <span>Show Discount line <span style="color:var(--muted2);font-size:10px;">(v2.9.4 — Priced only, when discount &gt; 0)</span></span></label>
+                <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;"><input type="checkbox" id="psfReturnInstructions" style="width:16px;height:16px;cursor:pointer;"> <span>Show Return Instructions block <span style="color:var(--muted2);font-size:10px;">(v2.9.4 — text below)</span></span></label>
               </div>
+            </div>
+
+            <!-- Return Instructions text panel (v2.9.4, S29) — global text, applies to all profiles -->
+            <div style="background:var(--bg1);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:10px;">
+              <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">Return Instructions Text <span style="font-weight:400;color:var(--muted2);font-size:10px;">(v2.9.4)</span></div>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Global text shown on Standard / Priced slips when "Show Return Instructions block" is on. One text applies to all profiles. Leave empty to suppress (block won't render even if toggle is on).</div>
+              <textarea id="pslipReturnText" rows="3" style="width:100%;padding:9px 12px;background:var(--bg0);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--font);resize:vertical;" placeholder="e.g., Returns accepted within 14 days of delivery. Email us at hello@example.com to start a return."></textarea>
             </div>
 
             <!-- Gift panel -->
@@ -1497,8 +1512,8 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     <div class="modal-field">
       <label>Slip Type</label>
       <select id="slipType" onchange="$('slipGiftField').style.display=this.value==='gift'?'block':'none'">
-        <option value="standard">Standard — no SKU, no pricing</option>
-        <option value="priced">With Pricing — no SKU, includes prices</option>
+        <option value="standard">Standard — no pricing</option>
+        <option value="priced">Priced — includes prices</option>
         <option value="gift">Gift — message card only</option>
       </select>
     </div>
@@ -1566,6 +1581,16 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 // CONFIG
 // ═══════════════════════════════════════════════════════════
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.9.4 (S29, 2026-04-25) — Packing slip closeout. Adds (a) Discount line on
+//   Priced slips when sales_history.discount_amount > 0 (Subtotal → Discount →
+//   Shipping → Order Total breakdown), (b) global Return Instructions text
+//   block (one text, all profiles), (c) reworded Slip Type labels (the stale
+//   "no SKU" wording from v2.9.3 was inaccurate after SKU column became
+//   togglable), (d) preview slip-type selector in Settings (choose Standard /
+//   Priced / Gift to preview without printing). Two new field-visibility
+//   toggles: psfDiscountLine (default ON), psfReturnInstructions (default OFF).
+//   Additive UI only; no semantic changes to sell/sync/TM/cascade paths.
 // v2.9.2 (S26, 2026-04-22) — Gift order 🎁 red-flag indicators in Sales tab
 //   (order_id cell) and Shipping tab (recipient cell). Additive UI only;
 //   no change to sales, sync, or TM paths. Shipping tab enriches is_gift
@@ -1576,7 +1601,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.3';
+const TOOL_VERSION = '2.9.4';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -6236,12 +6261,14 @@ async function openPackingSlip(idx) {
   const orderId = sale.order_id;
 
   // If there's an order_id, fetch ALL line items for this order
-  let orderItems = [{ sku: item?.sku || sale.sku || '', product_name: item?.product_name || sale.product_name, qty_sold: sale.qty_sold || 1, sale_price: pf(sale.sale_price), total_revenue: pf(sale.total_revenue) }];
+  // v2.9.4 (S29): now also pulls discount_amount so Priced slips can render
+  // the Subtotal → Discount → Order Total breakdown.
+  let orderItems = [{ sku: item?.sku || sale.sku || '', product_name: item?.product_name || sale.product_name, qty_sold: sale.qty_sold || 1, sale_price: pf(sale.sale_price), total_revenue: pf(sale.total_revenue), discount_amount: pf(sale.discount_amount) }];
 
   if (orderId && sb) {
     try {
       const { data } = await sb.from('sales_history')
-        .select('product_name, sku, qty_sold, sale_price, total_revenue')
+        .select('product_name, sku, qty_sold, sale_price, total_revenue, discount_amount')
         .eq('order_id', orderId)
         .order('id');
       if (data && data.length > 1) {
@@ -6250,7 +6277,8 @@ async function openPackingSlip(idx) {
           product_name: r.product_name || r.sku || 'Item',
           qty_sold: r.qty_sold || 1,
           sale_price: pf(r.sale_price),
-          total_revenue: pf(r.total_revenue)
+          total_revenue: pf(r.total_revenue),
+          discount_amount: pf(r.discount_amount)
         }));
       }
     } catch(e) { console.log('Order items lookup:', e.message); }
@@ -6328,17 +6356,21 @@ const PSLIP_MAX_STORE_BYTES = 4 * 1024 * 1024; // 4 MB safety cap on Supabase JS
 // ═══════════════════════════════════════════════════════════════════════════
 const PSLIP_FIELDS_DEFAULTS = {
   standard: {
-    sku_column:      false,  // NEW — shows SKU column in items table
-    order_date:      true,   // existing — header "Date: YYYY-MM-DD" line
-    channel_line:    true,   // existing — header "Channel: etsy" line
-    shipping_line:   false,  // NEW — adds "Shipping: $0.00" line before total
-    order_total_row: true    // existing — bottom Order Total row (priced only)
+    sku_column:          false,  // NEW — shows SKU column in items table
+    order_date:          true,   // existing — header "Date: YYYY-MM-DD" line
+    channel_line:        true,   // existing — header "Channel: etsy" line
+    shipping_line:       false,  // NEW — adds "Shipping: $0.00" line before total
+    order_total_row:     true,   // existing — bottom Order Total row (priced only)
+    discount_line:       true,   // v2.9.4 (S29) — Discount row when discount_amount > 0 (Priced only)
+    return_instructions: false   // v2.9.4 (S29) — Return Instructions block (renders when toggle on AND text non-empty)
   },
   gift: {
     order_date:      true,   // existing — date line at bottom of gift card
     gift_message:    true,   // existing — renders the customer's gift message
     recipient_name:  true    // existing — "Jane Smith" from ship_to first line
-  }
+  },
+  // v2.9.4 (S29) — global text shared across profiles. Empty default; Paul edits in Settings.
+  return_instructions_text: ''
 };
 const PSLIP_FIELDS_SETTINGS_KEY = 'pslip_field_visibility';
 let _pslipFieldsCache = null;
@@ -6493,7 +6525,11 @@ function getPslipFields() {
   const saved = _pslipFieldsCache || {};
   return {
     standard: { ...PSLIP_FIELDS_DEFAULTS.standard, ...(saved.standard || {}) },
-    gift:     { ...PSLIP_FIELDS_DEFAULTS.gift,     ...(saved.gift     || {}) }
+    gift:     { ...PSLIP_FIELDS_DEFAULTS.gift,     ...(saved.gift     || {}) },
+    // v2.9.4 (S29) — global return-instructions text (top-level, applies across profiles)
+    return_instructions_text: (typeof saved.return_instructions_text === 'string')
+      ? saved.return_instructions_text
+      : PSLIP_FIELDS_DEFAULTS.return_instructions_text
   };
 }
 
@@ -6814,14 +6850,19 @@ function _setPsfStatus(msg, kind) {
 function populatePslipFieldVisibilityUI() {
   const f = getPslipFields();
   const set = (id, val) => { const el = $(id); if (el) el.checked = !!val; };
-  set('psfSkuColumn',     f.standard.sku_column);
-  set('psfOrderDate',     f.standard.order_date);
-  set('psfChannelLine',   f.standard.channel_line);
-  set('psfShippingLine',  f.standard.shipping_line);
-  set('psfOrderTotalRow', f.standard.order_total_row);
-  set('psfGiftRecipient', f.gift.recipient_name);
-  set('psfGiftMessage',   f.gift.gift_message);
-  set('psfGiftOrderDate', f.gift.order_date);
+  set('psfSkuColumn',          f.standard.sku_column);
+  set('psfOrderDate',          f.standard.order_date);
+  set('psfChannelLine',        f.standard.channel_line);
+  set('psfShippingLine',       f.standard.shipping_line);
+  set('psfOrderTotalRow',      f.standard.order_total_row);
+  set('psfDiscountLine',       f.standard.discount_line);          // v2.9.4 (S29)
+  set('psfReturnInstructions', f.standard.return_instructions);    // v2.9.4 (S29)
+  set('psfGiftRecipient',      f.gift.recipient_name);
+  set('psfGiftMessage',        f.gift.gift_message);
+  set('psfGiftOrderDate',      f.gift.order_date);
+  // v2.9.4 (S29) — return instructions text (global, separate from per-profile branding)
+  const rt = $('pslipReturnText');
+  if (rt) rt.value = f.return_instructions_text || '';
 }
 
 async function savePslipFieldVisibility() {
@@ -6847,6 +6888,9 @@ function resetPslipFieldVisibility() {
 function previewPackingSlipSample() {
   // Build a sample packing slip using whatever's currently in the form
   // (not yet saved). Gives instant feedback while tweaking.
+  // v2.9.4 (S29) — slip-type now driven by #pslipPreviewType selector (Standard /
+  // Priced / Gift). One sample item carries discount_amount so the v2.9.4
+  // discount breakdown is visible in the Priced preview.
   const store = getPslipStore();
   const id = _pslipCurrentEditingId();
   const existing = store.profiles[id] || {};
@@ -6865,20 +6909,40 @@ function previewPackingSlipSample() {
     // Option B (v2.9.3, S27): include SKU on sample items so preview renders
     // the SKU column when that toggle is on. One item left with sale_price:0
     // to demonstrate null-price suppression (empty cells, not "$0.00").
-    { sku: 'SAMPLE-001', product_name: 'Paisley Bird Rain Gauge',   qty_sold: 1, sale_price: 22.99, total_revenue: 22.99 },
-    { sku: 'SAMPLE-002', product_name: 'Garden Gate Napkin Holder', qty_sold: 2, sale_price: 14.50, total_revenue: 29.00 },
-    { sku: 'SAMPLE-FREE', product_name: 'Promotional Bonus Item',   qty_sold: 1, sale_price: 0,     total_revenue: 0 }
+    // v2.9.4 (S29): SAMPLE-001 carries discount_amount so the Priced preview
+    // shows the Subtotal → Discount → Order Total breakdown when the toggle is on.
+    { sku: 'SAMPLE-001', product_name: 'Paisley Bird Rain Gauge',   qty_sold: 1, sale_price: 22.99, total_revenue: 22.99, discount_amount: 3.00 },
+    { sku: 'SAMPLE-002', product_name: 'Garden Gate Napkin Holder', qty_sold: 2, sale_price: 14.50, total_revenue: 29.00, discount_amount: 0 },
+    { sku: 'SAMPLE-FREE', product_name: 'Promotional Bonus Item',   qty_sold: 1, sale_price: 0,     total_revenue: 0,     discount_amount: 0 }
   ];
-  // Option B: Read field-visibility from DOM checkboxes so Preview reflects
-  // unsaved toggle changes (mirrors branding's unsaved-preview behavior).
+  // Read field-visibility from DOM checkboxes so Preview reflects unsaved
+  // toggle changes (mirrors branding's unsaved-preview behavior).
   const fieldsForPreview = _readPslipFieldsFromDOM();
-  const html = _buildPackingSlipWith(s, 'priced', {
-    orderId: 'SAMPLE-PREVIEW',
-    orderDate: new Date().toISOString().slice(0,10),
-    channel: 'Etsy',
-    shipTo: 'Jane Sample\n123 Main Street\nAnytown, ST 12345',
-    items: sampleItems
-  }, fieldsForPreview);
+
+  // v2.9.4 (S29) — read selected slip type; default 'priced' when selector missing.
+  const sel = $('pslipPreviewType');
+  const slipType = (sel && sel.value) ? sel.value : 'priced';
+
+  const orderDate = new Date().toISOString().slice(0,10);
+  let html;
+  if (slipType === 'gift') {
+    // Sample gift message + recipient demonstrate gift-card layout.
+    html = _buildGiftSlipWith(
+      s,
+      'Jane Sample\n123 Main Street\nAnytown, ST 12345',
+      'Wishing you a wonderful birthday — enjoy!',
+      orderDate,
+      fieldsForPreview
+    );
+  } else {
+    html = _buildPackingSlipWith(s, slipType, {
+      orderId: 'SAMPLE-PREVIEW',
+      orderDate,
+      channel: 'Etsy',
+      shipTo: 'Jane Sample\n123 Main Street\nAnytown, ST 12345',
+      items: sampleItems
+    }, fieldsForPreview);
+  }
   const win = window.open('', '_blank', 'width=700,height=900');
   if (!win) { alert('Popup blocked — please allow popups to preview.'); return; }
   win.document.write(html);
@@ -6888,25 +6952,31 @@ function previewPackingSlipSample() {
 // Option B (v2.9.3, S27): read field-visibility checkboxes live from DOM.
 // Falls back to saved values for any checkbox that doesn't exist yet (e.g.,
 // Settings tab hasn't been opened) so callers always get a complete object.
+// v2.9.4 (S29) — extended for discount_line, return_instructions toggle,
+// and the global return_instructions_text textarea.
 function _readPslipFieldsFromDOM() {
   const saved = getPslipFields();
   const getCb = (id, fallback) => {
     const el = $(id);
     return el ? el.checked : fallback;
   };
+  const rt = $('pslipReturnText');
   return {
     standard: {
-      sku_column:      getCb('psfSkuColumn',     saved.standard.sku_column),
-      order_date:      getCb('psfOrderDate',     saved.standard.order_date),
-      channel_line:    getCb('psfChannelLine',   saved.standard.channel_line),
-      shipping_line:   getCb('psfShippingLine',  saved.standard.shipping_line),
-      order_total_row: getCb('psfOrderTotalRow', saved.standard.order_total_row)
+      sku_column:          getCb('psfSkuColumn',          saved.standard.sku_column),
+      order_date:          getCb('psfOrderDate',          saved.standard.order_date),
+      channel_line:        getCb('psfChannelLine',        saved.standard.channel_line),
+      shipping_line:       getCb('psfShippingLine',       saved.standard.shipping_line),
+      order_total_row:     getCb('psfOrderTotalRow',      saved.standard.order_total_row),
+      discount_line:       getCb('psfDiscountLine',       saved.standard.discount_line),
+      return_instructions: getCb('psfReturnInstructions', saved.standard.return_instructions)
     },
     gift: {
       order_date:     getCb('psfGiftOrderDate',  saved.gift.order_date),
       gift_message:   getCb('psfGiftMessage',    saved.gift.gift_message),
       recipient_name: getCb('psfGiftRecipient',  saved.gift.recipient_name)
-    }
+    },
+    return_instructions_text: rt ? rt.value : (saved.return_instructions_text || '')
   };
 }
 
@@ -6939,16 +7009,25 @@ function _buildPackingSlipWith(s, type, d, fields) {
   const items = d.items || [];
   const totalQty = items.reduce((acc, i) => acc + (i.qty_sold || 1), 0);
 
-  // Null/zero price suppression: compute total from priced items only.
-  // If no items are priced, Order Total row is suppressed even if toggle is on.
+  // v2.9.4 (S29) — totals breakdown: Subtotal → Discount → Shipping → Order Total.
+  // - subtotalAmt: sums per-line total_revenue (matches the line Total cells; total_revenue
+  //   is recorded gross / pre-discount in sales_history per FR P&L convention).
+  // - totalDiscount: sums sales_history.discount_amount across all items (NULL → 0 via pf).
+  // - shippingAmt: 0 today; placeholder for future real shipping integration.
+  // - finalTotal: ALWAYS subtotal − discount + shipping. The discount_line toggle controls
+  //   whether the breakdown is *visible*, not the math. Order Total always reflects what
+  //   the customer actually paid, even if the breakdown rows are hidden.
   const pricedItems = items.filter(i => pf(i.sale_price) > 0);
-  const orderTotal = pricedItems.reduce((acc, i) => acc + pf(i.total_revenue), 0);
+  const subtotalAmt = pricedItems.reduce((acc, i) => acc + pf(i.total_revenue), 0);
+  const totalDiscount = items.reduce((acc, i) => acc + pf(i.discount_amount), 0);
+  const shippingAmt = 0; // Future: real shipping cost when available
+  const finalTotal = subtotalAmt - totalDiscount + shippingAmt;
   const hasAnyPriced = pricedItems.length > 0;
 
   // Column structure: Item [+SKU] Qty [+Unit Price +Total]
   const skuCol   = sf.sku_column;
   const cols     = 2 + (skuCol ? 1 : 0) + (showPrice ? 2 : 0);
-  const labelCS  = cols - 1; // Colspan for "Shipping"/"Order Total" label cell
+  const labelCS  = cols - 1; // Colspan for "Subtotal"/"Discount"/"Shipping"/"Order Total" label cell
 
   const accent = s.accent || '#d4a853';
   const logoBlock = s.logoData
@@ -6974,13 +7053,32 @@ function _buildPackingSlipWith(s, type, d, fields) {
       ${priceCells(i)}
     </tr>`).join('');
 
+  // v2.9.4 (S29) — Subtotal + Discount rows render only when discount > 0 AND toggle on.
+  // When discount = 0, today's pre-v2.9.4 layout is preserved exactly (no breakdown rows).
+  const showDiscountBreakdown = showPrice && hasAnyPriced && totalDiscount > 0 && sf.discount_line;
+  const subtotalRow = showDiscountBreakdown
+    ? `<tr><td colspan="${labelCS}" class="text-right" style="border-top:1px solid #eee;color:#555;">Subtotal</td><td class="text-right" style="border-top:1px solid #eee;color:#555;">$${subtotalAmt.toFixed(2)}</td></tr>`
+    : '';
+  const discountRow = showDiscountBreakdown
+    ? `<tr><td colspan="${labelCS}" class="text-right" style="color:#c0392b;">Discount</td><td class="text-right" style="color:#c0392b;">−$${totalDiscount.toFixed(2)}</td></tr>`
+    : '';
+
   // Shipping line and Order Total row are both gated on showPrice AND having
   // at least one priced item. Order Total additionally respects its own toggle.
+  // v2.9.4 (S29): Order Total now uses finalTotal (= subtotal − discount + shipping),
+  // not the raw subtotalAmt, so it matches the customer-paid amount.
   const shippingRow = (showPrice && sf.shipping_line && hasAnyPriced)
-    ? `<tr><td colspan="${labelCS}" class="text-right" style="border-top:1px solid #eee;">Shipping</td><td class="text-right" style="border-top:1px solid #eee;">$0.00</td></tr>`
+    ? `<tr><td colspan="${labelCS}" class="text-right" style="border-top:1px solid #eee;">Shipping</td><td class="text-right" style="border-top:1px solid #eee;">$${shippingAmt.toFixed(2)}</td></tr>`
     : '';
   const totalRow = (showPrice && sf.order_total_row && hasAnyPriced)
-    ? `<tr class="total-row"><td colspan="${labelCS}" class="text-right">Order Total</td><td class="text-right">$${orderTotal.toFixed(2)}</td></tr>`
+    ? `<tr class="total-row"><td colspan="${labelCS}" class="text-right">Order Total</td><td class="text-right">$${finalTotal.toFixed(2)}</td></tr>`
+    : '';
+
+  // v2.9.4 (S29) — Return Instructions block. Renders when toggle is on AND text is non-empty.
+  // Global text (f.return_instructions_text) — applies to all profiles.
+  const returnText = (f.return_instructions_text || '').trim();
+  const returnBlock = (sf.return_instructions && returnText)
+    ? `<div class="return-block"><div class="return-label">Returns</div><div class="return-text">${escHtml(returnText)}</div></div>`
     : '';
 
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Packing Slip</title>
@@ -7003,6 +7101,9 @@ td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
 .text-right{text-align:right;}
 .total-row td{font-weight:700;border-top:2px solid ${accent};border-bottom:none;font-size:14px;}
 .summary{font-size:12px;color:#777;margin-bottom:16px;}
+.return-block{margin:24px 0;padding:14px 18px;background:#fafaf5;border-left:3px solid ${accent};border-radius:4px;}
+.return-label{font-size:10px;font-weight:700;color:#999;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
+.return-text{font-size:12px;line-height:1.6;color:#444;white-space:pre-line;}
 .footer{text-align:center;padding-top:20px;border-top:1px solid #eee;font-size:11px;color:#999;line-height:1.6;}
 .thank-you{font-size:16px;font-weight:700;color:${accent};margin-bottom:8px;}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;}
@@ -7043,10 +7144,14 @@ td{padding:10px 14px;border-bottom:1px solid #eee;font-size:13px;}
   </tr></thead>
   <tbody>
     ${itemRows}
+    ${subtotalRow}
+    ${discountRow}
     ${shippingRow}
     ${totalRow}
   </tbody>
 </table>
+
+${returnBlock}
 
 <div class="footer">
   ${s.thankYou ? `<div class="thank-you">${escHtml(s.thankYou)}</div>` : ''}
@@ -8701,7 +8806,7 @@ async function openSlipFromShipping(idx) {
   if (orderId && sb) {
     try {
       const { data } = await sb.from('sales_history')
-        .select('product_name, sku, qty_sold, sale_price, total_revenue, sale_date, sale_channel, order_id, ship_to_name, ship_to_address, is_gift, gift_message')
+        .select('product_name, sku, qty_sold, sale_price, total_revenue, sale_date, sale_channel, order_id, ship_to_name, ship_to_address, is_gift, gift_message, discount_amount')
         .eq('order_id', orderId)
         .order('id');
       if (data && data.length > 0) {
@@ -8711,7 +8816,8 @@ async function openSlipFromShipping(idx) {
           product_name: row.product_name || row.sku || 'Item',
           qty_sold: row.qty_sold || 1,
           sale_price: pf(row.sale_price),
-          total_revenue: pf(row.total_revenue)
+          total_revenue: pf(row.total_revenue),
+          discount_amount: pf(row.discount_amount)
         }));
       }
     } catch(e) { console.log('Sale lookup for slip:', e.message); }
@@ -8721,20 +8827,20 @@ async function openSlipFromShipping(idx) {
   if (orderItems.length === 0 && r.sku) {
     try {
       const { data } = await sb.from('sales_history')
-        .select('product_name, sku, qty_sold, sale_price, total_revenue, sale_date, sale_channel, order_id, ship_to_name, ship_to_address, is_gift, gift_message')
+        .select('product_name, sku, qty_sold, sale_price, total_revenue, sale_date, sale_channel, order_id, ship_to_name, ship_to_address, is_gift, gift_message, discount_amount')
         .eq('sku', r.sku)
         .order('sale_date', { ascending: false })
         .limit(1);
       if (data && data.length > 0) {
         saleRecord = data[0];
-        orderItems = [{ sku: data[0].sku || r.sku || '', product_name: data[0].product_name || r.sku || 'Item', qty_sold: data[0].qty_sold || 1, sale_price: pf(data[0].sale_price), total_revenue: pf(data[0].total_revenue) }];
+        orderItems = [{ sku: data[0].sku || r.sku || '', product_name: data[0].product_name || r.sku || 'Item', qty_sold: data[0].qty_sold || 1, sale_price: pf(data[0].sale_price), total_revenue: pf(data[0].total_revenue), discount_amount: pf(data[0].discount_amount) }];
       }
     } catch(e) { /* skip */ }
   }
 
   // Fallback: use metadata / SKU for a basic slip
   if (orderItems.length === 0) {
-    orderItems = [{ sku: r.sku || '', product_name: r.sku || r.item_description || 'Item', qty_sold: 1, sale_price: 0, total_revenue: 0 }];
+    orderItems = [{ sku: r.sku || '', product_name: r.sku || r.item_description || 'Item', qty_sold: 1, sale_price: 0, total_revenue: 0, discount_amount: 0 }];
   }
 
   // Build fake sale for the modal
