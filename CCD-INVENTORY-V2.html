@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.4</title>
+<title>CCD Inventory System v2.9.7</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.4 · Packing Slip Closeout (Discount + Returns + Preview)</div>
+    <div class="login-version">v2.9.7 · Gift Slip Brand-Text De-Duplication</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.4</div>
+      <div class="topbar-version">v2.9.7</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1111,7 +1111,15 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             <div class="settings-section-title">📧 Shipping Notification Email</div>
             <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">HTML template with {{variables}}. Sent to customers after label purchase.</div>
             <div style="font-size:10px;color:var(--gold);margin-bottom:6px;font-family:monospace;">
-              Variables: {{recipientName}} {{trackingNumber}} {{trackingUrl}} {{carrier}} {{serviceName}} {{productName}} {{sku}}
+              Variables: {{logoBlock}} {{recipientName}} {{trackingNumber}} {{trackingUrl}} {{carrier}} {{serviceName}} {{productName}} {{sku}}
+            </div>
+            <!-- v2.9.5 (S29) — Email logo upload. Stored separately from packing slip logo. -->
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;padding:8px 10px;background:var(--bg1);border:1px solid var(--border);border-radius:4px;">
+              <div style="font-size:11px;font-weight:600;color:var(--gold);">Email Logo:</div>
+              <div id="emailLogoPreview" style="width:90px;height:50px;border:1px dashed var(--border);background:var(--bg0);display:flex;align-items:center;justify-content:center;color:var(--muted2);font-size:10px;overflow:hidden;">No logo</div>
+              <input type="file" id="emailLogoInput" accept="image/png,image/jpeg,image/webp" onchange="onEmailLogoSelected(event)" style="font-size:11px;color:var(--muted);flex:1;">
+              <button type="button" class="btn-card" onclick="clearEmailLogo()" style="padding:4px 10px;font-size:11px;">Clear</button>
+              <button type="button" class="btn-card btn-push" onclick="saveEmailLogo()" style="padding:4px 12px;font-size:11px;">💾 Save Logo</button>
             </div>
             <div class="setting-row" style="flex-direction:column;align-items:stretch;">
               <div class="setting-label" style="margin-bottom:4px;">Subject Line</div>
@@ -1180,7 +1188,20 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
               </div>
               <div style="display:flex;align-items:center;gap:14px;">
                 <div id="pslipLogoPreview" style="width:120px;height:80px;border:1px dashed var(--border);border-radius:6px;background:var(--bg1);display:flex;align-items:center;justify-content:center;color:var(--muted2);font-size:10px;overflow:hidden;">No logo</div>
-                <div style="font-size:11px;color:var(--muted);flex:1;">Recommended: PNG with transparent background, ~200–400px wide. Large files are base64-encoded and may slow print. Stays on this device.</div>
+                <div style="font-size:11px;color:var(--muted);flex:1;">Used on Standard / Priced slips. Recommended: PNG with transparent background, ~200–400px wide. Large files are base64-encoded and may slow print.</div>
+              </div>
+            </div>
+
+            <!-- v2.9.5 (S29) — separate logo for Gift slips. Falls back to standard Logo above when empty. -->
+            <div class="setting-row" style="flex-direction:column;align-items:stretch;gap:8px;">
+              <div style="display:flex;align-items:center;gap:10px;">
+                <div class="setting-label" style="width:auto;">Gift Slip Logo</div>
+                <input type="file" id="pslipGiftLogoInput" accept="image/png,image/jpeg,image/svg+xml,image/webp" onchange="onPslipGiftLogoSelected(event)" style="font-size:11px;color:var(--muted);">
+                <button type="button" class="btn-card" onclick="clearPslipGiftLogo()" style="padding:4px 10px;font-size:11px;">Clear</button>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;">
+                <div id="pslipGiftLogoPreview" style="width:120px;height:80px;border:1px dashed var(--border);border-radius:6px;background:var(--bg1);display:flex;align-items:center;justify-content:center;color:var(--muted2);font-size:10px;overflow:hidden;">No gift logo</div>
+                <div style="font-size:11px;color:var(--muted);flex:1;"><strong>v2.9.5</strong> — Optional separate logo for Gift slips only. Falls back to standard Logo above when empty.</div>
               </div>
             </div>
 
@@ -1582,6 +1603,31 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 // ═══════════════════════════════════════════════════════════
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// v2.9.7 (S29, 2026-04-26) — Gift slip brand-text de-duplication. The logo
+//   already carries the "Country Charm Decor" wordmark, so showing the
+//   gift-brand <div> below was a duplication. Now: brand text is suppressed
+//   when ANY logo is rendered (giftLogoData OR fallback to logoData), and
+//   shown only when neither logo is set (✦ ornament fallback) — preserves
+//   brand identification on logo-less profiles. Single-line conditional
+//   change in _buildGiftSlipWith. No toggle (this is a logic rule, not a
+//   preference). Standard / Priced slips unchanged.
+// v2.9.6 (S29, 2026-04-26) — Logo sizing fix. v2.9.5 sized the email and gift
+//   slip logos too conservatively (max-height 90px / 48px), making them look
+//   like postage stamps relative to the H1 text. Bumped to 180px / 160px
+//   respectively so the watercolor logo reads at intended weight. CSS-only
+//   change. No new toggles, no schema changes, no data path touches.
+// v2.9.5 (S29, 2026-04-26) — Gift slip logo + email logo. Adds (a) separate
+//   giftLogoData field on packing slip profile so Gift slips can carry a
+//   different logo than Standard/Priced — _buildGiftSlipWith uses
+//   s.giftLogoData || s.logoData (fallback preserves existing single-logo
+//   profiles); (b) Email Logo upload control on the Email Shipping
+//   Notification settings panel — stored as settings.email_logo_shipping;
+//   {{logoUrl}} template variable substituted at send time; default email
+//   template updated with logo block above the H1. Additive UI only; no
+//   semantic changes to sell/sync/TM/cascade paths.
 // v2.9.4 (S29, 2026-04-25) — Packing slip closeout. Adds (a) Discount line on
 //   Priced slips when sales_history.discount_amount > 0 (Subtotal → Discount →
 //   Shipping → Order Total breakdown), (b) global Return Instructions text
@@ -1601,7 +1647,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.4';
+const TOOL_VERSION = '2.9.7';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -6333,7 +6379,8 @@ const PSLIP_DEFAULTS = {
   footerWeb: 'www.countrycharm.com',
   footerNote: '',
   accent: '#d4a853',
-  logoData: '' // data URL
+  logoData: '',     // data URL — used on Standard/Priced slips
+  giftLogoData: ''  // v2.9.5 (S29) data URL — Gift slips only; falls back to logoData when empty
 };
 
 const PSLIP_STORE_SETTINGS_KEY = 'pslip_profiles';
@@ -6591,6 +6638,7 @@ function onPslipProfileSwitch() {
   if (!sel) return;
   _pslipEditingId = sel.value;
   window._pendingPslipLogo = undefined;  // discard any unsaved logo swap when switching
+  window._pendingPslipGiftLogo = undefined; // v2.9.5 (S29) — same for gift logo
   hydratePslipSettingsUI();
 }
 
@@ -6614,6 +6662,7 @@ async function createPslipProfile() {
     await _persistPslipStore(store);
     _pslipEditingId = id;
     window._pendingPslipLogo = undefined;
+    window._pendingPslipGiftLogo = undefined; // v2.9.5 (S29)
     rebuildPslipProfileSelect();
     hydratePslipSettingsUI();
     setPslipStatus(`✅ Created "${trimmed}".`, 'green');
@@ -6673,6 +6722,7 @@ async function duplicatePslipProfile() {
     await _persistPslipStore(store);
     _pslipEditingId = newId;
     window._pendingPslipLogo = undefined;
+    window._pendingPslipGiftLogo = undefined; // v2.9.5 (S29)
     rebuildPslipProfileSelect();
     hydratePslipSettingsUI();
     setPslipStatus(`✅ Duplicated — now editing "${trimmed}".`, 'green');
@@ -6703,6 +6753,7 @@ async function deletePslipProfile() {
     await _persistPslipStore(store);
     _pslipEditingId = store.activeId;
     window._pendingPslipLogo = undefined;
+    window._pendingPslipGiftLogo = undefined; // v2.9.5 (S29)
     rebuildPslipProfileSelect();
     hydratePslipSettingsUI();
     setPslipStatus(`🗑 Deleted "${p.name}".`, 'green');
@@ -6750,6 +6801,7 @@ function hydratePslipSettingsUI() {
     if (ge('pslipAccentText')) $('pslipAccentText').textContent = s.accent || '#d4a853';
   }
   renderPslipLogoPreview(s.logoData);
+  renderPslipGiftLogoPreview(s.giftLogoData); // v2.9.5 (S29)
   // Live accent color readout
   const ac = $('pslipAccent');
   if (ac && !ac._bound) {
@@ -6799,11 +6851,55 @@ function clearPslipLogo() {
   if (input) input.value = '';
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// v2.9.5 (S29) — Gift slip logo handlers — mirror the standard logo above.
+// Stored on the same profile under giftLogoData (separate field). Used only
+// by _buildGiftSlipWith; falls back to logoData when empty so existing
+// single-logo profiles continue to work unchanged.
+// ═══════════════════════════════════════════════════════════════════════════
+function renderPslipGiftLogoPreview(dataUrl) {
+  const prev = $('pslipGiftLogoPreview');
+  if (!prev) return;
+  if (dataUrl) {
+    prev.innerHTML = `<img src="${dataUrl}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+  } else {
+    prev.innerHTML = 'No gift logo';
+  }
+}
+
+function onPslipGiftLogoSelected(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  if (file.size > 500 * 1024) {
+    if (!confirm(`Gift logo is ${(file.size/1024).toFixed(0)} KB. Large logos slow print and bloat the Supabase row (4 MB cap across all profiles). Continue?`)) {
+      ev.target.value = '';
+      return;
+    }
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    renderPslipGiftLogoPreview(dataUrl);
+    window._pendingPslipGiftLogo = dataUrl;
+  };
+  reader.onerror = () => { alert('Could not read gift logo file.'); };
+  reader.readAsDataURL(file);
+}
+
+function clearPslipGiftLogo() {
+  window._pendingPslipGiftLogo = '';
+  renderPslipGiftLogoPreview('');
+  const input = $('pslipGiftLogoInput');
+  if (input) input.value = '';
+}
+
 async function savePackingSlipSettings() {
   const store = getPslipStore();
   const id = _pslipCurrentEditingId();
   const existing = store.profiles[id] || _pslipBlankProfile(id, 'Profile');
   const logoData = (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : existing.logoData;
+  // v2.9.5 (S29) — gift logo: use pending value if user touched the input, else preserve existing
+  const giftLogoData = (window._pendingPslipGiftLogo !== undefined) ? window._pendingPslipGiftLogo : (existing.giftLogoData || '');
   const updated = {
     ...existing,
     id,
@@ -6816,7 +6912,8 @@ async function savePackingSlipSettings() {
     footerWeb: ($('pslipFooterWeb').value || '').trim(),
     footerNote: ($('pslipFooterNote').value || '').trim(),
     accent: ($('pslipAccent').value || '#d4a853'),
-    logoData: logoData || ''
+    logoData: logoData || '',
+    giftLogoData: giftLogoData || ''  // v2.9.5 (S29)
   };
   const prev = store.profiles[id];
   store.profiles[id] = updated;
@@ -6824,6 +6921,7 @@ async function savePackingSlipSettings() {
   try {
     await _persistPslipStore(store);
     delete window._pendingPslipLogo;
+    delete window._pendingPslipGiftLogo; // v2.9.5 (S29)
     setPslipStatus(`✅ Saved "${updated.name}".`, 'green');
   } catch(e) {
     store.profiles[id] = prev;
@@ -6903,7 +7001,9 @@ function previewPackingSlipSample() {
     footerWeb: ($('pslipFooterWeb').value || PSLIP_DEFAULTS.footerWeb).trim(),
     footerNote: ($('pslipFooterNote').value || '').trim(),
     accent: ($('pslipAccent').value || PSLIP_DEFAULTS.accent),
-    logoData: (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : (existing.logoData || '')
+    logoData: (window._pendingPslipLogo !== undefined) ? window._pendingPslipLogo : (existing.logoData || ''),
+    // v2.9.5 (S29) — preview honors unsaved gift-logo selection too
+    giftLogoData: (window._pendingPslipGiftLogo !== undefined) ? window._pendingPslipGiftLogo : (existing.giftLogoData || '')
   };
   const sampleItems = [
     // Option B (v2.9.3, S27): include SKU on sample items so preview renders
@@ -7188,6 +7288,10 @@ function _buildGiftSlipWith(s, shipTo, giftMsg, orderDate, fields) {
     ? `<div class="gift-footer">${escHtml(orderDate)}</div>`
     : '';
 
+  // v2.9.5 (S29) — Gift slip uses its own logo when set; falls back to standard logoData.
+  // This lets one profile carry two distinct logos (e.g., a quieter mark for the standard
+  // slip and a gift-themed mark for the gift card).
+  const giftLogo = s.giftLogoData || s.logoData;
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Gift Card</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&display=swap');
@@ -7203,12 +7307,12 @@ body{font-family:'Plus Jakarta Sans',system-ui,sans-serif;color:#1a1a2e;display:
 .gift-message{font-family:'Instrument Serif',serif;font-size:18px;font-style:italic;color:#555;line-height:1.7;padding:20px 24px;background:#faf8f3;border-radius:12px;margin-bottom:24px;min-height:80px;white-space:pre-line;border-left:3px solid ${accent};}
 .gift-from{font-size:13px;color:#888;margin-bottom:16px;}
 .gift-footer{font-size:10px;color:#bbb;margin-top:20px;}
-.gift-logo{max-height:48px;max-width:180px;object-fit:contain;margin:0 auto 12px;display:block;}
+.gift-logo{max-height:160px;max-width:340px;object-fit:contain;margin:0 auto 16px;display:block;}
 @media print{body{background:#fff;padding:20px;}.gift-card{box-shadow:none;border:1px solid #ddd;}@page{margin:0.5in;}}
 </style></head><body>
 <div class="gift-card">
-  ${s.logoData ? `<img src="${s.logoData}" class="gift-logo">` : `<div class="gift-ornament">✦ ✦ ✦</div>`}
-  <div class="gift-brand">${escHtml(s.bizName || PSLIP_DEFAULTS.bizName)}</div>
+  ${giftLogo ? `<img src="${giftLogo}" class="gift-logo">` : `<div class="gift-ornament">✦ ✦ ✦</div>`}
+  ${giftLogo ? '' : `<div class="gift-brand">${escHtml(s.bizName || PSLIP_DEFAULTS.bizName)}</div>`}
   <div class="gift-sub">A Gift For You</div>
   <div class="gift-divider"></div>
   ${recipientBlock}
@@ -9989,6 +10093,21 @@ async function loadSettings() {
     console.log('Email template load skipped:', e.message);
   }
 
+  // v2.9.5 (S29) — Load email logo (separate row, separate UI control)
+  try {
+    const { data } = await sb.from('settings').select('value').eq('key', 'email_logo_shipping').limit(1);
+    if (data && data[0] && data[0].value) {
+      const lv = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+      state.emailLogo = lv.dataUrl || '';
+      if ($('emailLogoPreview')) renderEmailLogoPreview(state.emailLogo);
+    } else {
+      state.emailLogo = '';
+    }
+  } catch(e) {
+    state.emailLogo = '';
+    console.log('Email logo load skipped:', e.message);
+  }
+
   // v2.8.13: Load packing slip profiles from Supabase, then hydrate UI
   try {
     await initPslipProfiles();
@@ -10085,7 +10204,11 @@ async function saveSettingsToDb() {
 }
 
 // v2.8.7: Email Template System
+// v2.9.5 (S29): Added {{logoBlock}} — conditionally substituted to a logo <div> when
+// an email logo is configured, or empty string when not. Keeps the customer's email
+// from showing a broken-image icon when no logo is set.
 const DEFAULT_EMAIL_TEMPLATE = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333;">
+{{logoBlock}}
 <div style="text-align:center;padding:20px 0;border-bottom:2px solid #d4a853;">
   <h1 style="color:#d4a853;margin:0;font-size:24px;">Country Charm Decor</h1>
 </div>
@@ -10121,7 +10244,17 @@ function buildTrackingUrl(trackingNumber, carrier) {
 
 function renderEmailTemplate(vars) {
   let html = state.emailTemplate || DEFAULT_EMAIL_TEMPLATE;
+  // v2.9.5 (S29) — {{logoBlock}}: render a centered <img> when a logo is set,
+  // else empty string. Uses inline styles only (email-client friendly).
+  // v2.9.6 (S29) — bumped sizes from 90/240 to 180/400 so the logo reads at
+  // appropriate weight against the H1 text. Many email clients honor max-width
+  // but ignore max-height on images, so width is the primary control.
+  const logoUrl = (vars && vars.logoUrl) || state.emailLogo || '';
+  const logoBlock = logoUrl
+    ? `<div style="text-align:center;padding:24px 0 8px 0;"><img src="${logoUrl}" alt="" style="max-height:180px;max-width:400px;width:auto;height:auto;display:inline-block;"></div>`
+    : '';
   const replacements = {
+    '{{logoBlock}}': logoBlock,
     '{{recipientName}}': vars.recipientName || 'Customer',
     '{{trackingNumber}}': vars.trackingNumber || '',
     '{{trackingUrl}}': vars.trackingUrl || '',
@@ -10207,6 +10340,71 @@ function resetEmailTemplate() {
   state.emailSubject = 'Your order has shipped! — Country Charm Decor';
   const frame = $('emailPreviewFrame');
   if (frame) frame.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v2.9.5 (S29) — Email logo upload/save handlers. Stored in settings table
+// under key 'email_logo_shipping' as { dataUrl }. Rendered into the email
+// via {{logoBlock}} substitution (see renderEmailTemplate).
+// ═══════════════════════════════════════════════════════════════════════════
+function renderEmailLogoPreview(dataUrl) {
+  const prev = $('emailLogoPreview');
+  if (!prev) return;
+  if (dataUrl) {
+    prev.innerHTML = `<img src="${dataUrl}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+  } else {
+    prev.innerHTML = 'No logo';
+  }
+}
+
+function onEmailLogoSelected(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  if (file.size > 500 * 1024) {
+    if (!confirm(`Email logo is ${(file.size/1024).toFixed(0)} KB. Large logos slow email delivery and may be blocked by some clients. Continue?`)) {
+      ev.target.value = '';
+      return;
+    }
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    renderEmailLogoPreview(dataUrl);
+    state.emailLogo = dataUrl; // live; "Save Logo" persists
+    const st = $('emailTemplateStatus');
+    if (st) { st.className = 'inline-status show'; st.textContent = 'Logo loaded — click 💾 Save Logo to persist.'; }
+  };
+  reader.onerror = () => { alert('Could not read email logo file.'); };
+  reader.readAsDataURL(file);
+}
+
+function clearEmailLogo() {
+  state.emailLogo = '';
+  renderEmailLogoPreview('');
+  const input = $('emailLogoInput');
+  if (input) input.value = '';
+  const st = $('emailTemplateStatus');
+  if (st) { st.className = 'inline-status show'; st.textContent = 'Logo cleared — click 💾 Save Logo to persist.'; }
+}
+
+async function saveEmailLogo() {
+  if (!sb) { alert('Not connected'); return; }
+  const dataUrl = state.emailLogo || '';
+  const value = JSON.stringify({ dataUrl });
+  const now = new Date().toISOString();
+  const st = $('emailTemplateStatus');
+  if (st) { st.className = 'inline-status show'; st.textContent = '⏳ Saving logo...'; }
+  try {
+    const { data: existing } = await sb.from('settings').select('key').eq('key', 'email_logo_shipping').limit(1);
+    if (existing && existing.length > 0) {
+      await sb.from('settings').update({ value, updated_at: now, updated_by: 'inventory_v2' }).eq('key', 'email_logo_shipping');
+    } else {
+      await sb.from('settings').insert({ key: 'email_logo_shipping', value, updated_at: now, updated_by: 'inventory_v2' });
+    }
+    if (st) { st.className = 'inline-status show ok'; st.textContent = dataUrl ? '✓ Email logo saved.' : '✓ Email logo cleared.'; }
+  } catch(e) {
+    if (st) { st.className = 'inline-status show error'; st.textContent = 'Save failed: ' + e.message; }
+  }
 }
 
 async function sendTestEmail() {
