@@ -754,10 +754,11 @@
                     <div id="queueStatusPanel" style="font-size:0.8rem;color:var(--text-dim);"></div>
                 </div>
                 <!-- v4.4.17 (S31, B-S30-01): Cancellation Reconciliation -->
+                <!-- v4.4.18 (B-S30-02): expanded to cover both Etsy and Wix -->
                 <div class="settings-group">
                     <h4>🚫 Cancellation Reconciliation</h4>
                     <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:10px;">
-                        Polls Etsy on the auto-process tick (every 5 min) to detect cancelled orders and reverse-cascade them. Mirrors V2 reverseSale logic exactly.
+                        Polls Etsy and Wix on the auto-process tick (every 5 min) to detect cancelled orders and reverse-cascade them. Mirrors V2 reverseSale logic exactly.
                     </div>
                     <div style="margin-bottom:10px;">
                         <label class="checkbox-label">
@@ -841,7 +842,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.17';
+    const SH_VERSION = 'v4.4.18';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -2469,11 +2470,20 @@
         // manual click = pull + reconcile (process is a separate button).
         // Wrapped in its own try/catch so the reconciler can never block
         // the pull's finally cleanup.
+        //
+        // v4.4.18 (B-S30-02): Wix reconciler added under same !isAuto gate.
+        // Each call is independently try/caught so an Etsy proxy outage
+        // cannot prevent the Wix reconciler from running and vice versa.
         if (!isAuto) {
             try {
                 await reconcileEtsyCancellations({ manual: false });
             } catch (e) {
-                console.warn(`[Pull All ${SH_VERSION}] Cancel recon threw:`, e.message);
+                console.warn(`[Pull All ${SH_VERSION}] Etsy cancel recon threw:`, e.message);
+            }
+            try {
+                await reconcileWixCancellations({ manual: false });
+            } catch (e) {
+                console.warn(`[Pull All ${SH_VERSION}] Wix cancel recon threw:`, e.message);
             }
         }
         } finally {
@@ -2923,6 +2933,204 @@
     }
     
     // ────────────────────────────────────────────────────────────────────
+    // reconcileWixCancellations (v4.4.18, B-S30-02)
+    // ────────────────────────────────────────────────────────────────────
+    // Direct mirror of reconcileEtsyCancellations with Wix-specific
+    // substitutions. Same shape: query active Wix sales <30d using the
+    // idempotency-via-status-filter pattern, strip 'WIX-' prefix from
+    // order_ids, batch-call Wix proxy in chunks of 100, invoke
+    // reverseCancelledSale per cancelled order.
+    //
+    // Differences from the Etsy reconciler:
+    //   - Channel filter: sale_channel='wix' (was 'etsy')
+    //   - Order ID prefix: 'WIX-' (was 'ETSY-')
+    //   - Proxy URL setting: wixProxyUrl (was etsyProxyUrl)
+    //   - Proxy action: 'getOrderStatuses' returns statuses array with
+    //     was_cancelled field (double-L, Wix proxy contract). Etsy
+    //     returns was_canceled (single-L, mirroring Etsy's API).
+    //   - Param name: order_ids (was receipt_ids)
+    //   - Activity log channel field: 'wix'
+    //
+    // Same: 30-day cutoff, 500-row limit, .or() filter for active rows,
+    // chunks of 100, idempotent re-runs, manual/auto trigger paths.
+    //
+    // Locked invariant ETSY ORDER_ID PREFIXING (S31) extends to Wix:
+    // strip 'WIX-' before calling proxy. See PI Updates S31 for context.
+    // ────────────────────────────────────────────────────────────────────
+    async function reconcileWixCancellations(opts) {
+        opts = opts || {};
+        const isManual = !!opts.manual;
+        
+        if (!sbConnected || !sbClient) {
+            if (isManual) addLog('Wix cancel recon: not connected to Supabase', 'error');
+            return { skipped: 'no_supabase' };
+        }
+        if (!state.settings.wixProxyUrl) {
+            if (isManual) addLog('Wix cancel recon: no Wix proxy URL configured', 'warning');
+            return { skipped: 'no_proxy' };
+        }
+        if (!isManual && !state.settings.cancelReconEnabled) {
+            return { skipped: 'disabled' };
+        }
+        
+        const startedAt = new Date().toISOString();
+        console.log(`[Wix Cancel Recon ${SH_VERSION}] Starting${isManual ? ' (manual)' : ''}...`);
+        
+        // ── 1. Query active Wix sales <30d ──
+        const cutoff = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+        let activeSales;
+        try {
+            const { data, error } = await sbClient.from('sales_history')
+                .select('id, order_id, sku, qty_sold, sale_price, sale_date, sale_channel, ship_to_name, item_id, notes, status, product_name')
+                .eq('sale_channel', 'wix')
+                .gte('sale_date', cutoff)
+                .or('status.is.null,status.not.in.(reversed,cancelled,shipped)')
+                .order('sale_date', { ascending: false })
+                .limit(500);
+            if (error) throw error;
+            activeSales = data || [];
+        } catch (e) {
+            const msg = `Wix cancel recon: query failed: ${e.message}`;
+            addLog(msg, 'error');
+            return { error: e.message };
+        }
+        
+        if (activeSales.length === 0) {
+            if (isManual) addLog('Wix cancel recon: 0 active Wix sales in last 30 days', 'info');
+            const result = { checked: 0, cancelled: 0, reversed: 0, errors: [], startedAt };
+            state.settings.cancelReconLastRunWix = startedAt;
+            state.settings.cancelReconLastResultWix = result;
+            return result;
+        }
+        
+        // ── 2. Build order-id → sale map (strip 'WIX-' prefix) ──
+        const saleByOrderId = new Map();
+        for (const sale of activeSales) {
+            const raw = String(sale.order_id || '');
+            const oid = raw.replace(/^WIX-/, '');
+            if (oid.length > 0) {
+                // Multiple sales can share an order_id (multi-line orders).
+                // Keep an array per order_id.
+                if (!saleByOrderId.has(oid)) saleByOrderId.set(oid, []);
+                saleByOrderId.get(oid).push(sale);
+            }
+        }
+        
+        const orderIds = [...saleByOrderId.keys()];
+        if (orderIds.length === 0) {
+            if (isManual) addLog(`Wix cancel recon: ${activeSales.length} sales have no parsable order IDs`, 'warning');
+            return { checked: activeSales.length, cancelled: 0, reversed: 0, errors: [], startedAt, skipped: 'no_order_ids' };
+        }
+        
+        // ── 3. Batch-call Wix proxy in chunks of 100 ──
+        const proxyUrl = state.settings.wixProxyUrl;
+        const apiKey = state.settings.ccdApiKey || '';
+        const cancelledOrderIds = [];
+        const statusByOrderId = new Map();
+        
+        for (let i = 0; i < orderIds.length; i += 100) {
+            const chunk = orderIds.slice(i, i + 100);
+            try {
+                const fetchUrl = `${proxyUrl}?action=getOrderStatuses&key=${encodeURIComponent(apiKey)}&order_ids=${chunk.map(encodeURIComponent).join(',')}`;
+                const resp = await fetch(fetchUrl);
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    throw new Error(`HTTP ${resp.status}: ${String(txt).substring(0, 200)}`);
+                }
+                const j = await resp.json();
+                if (j.success && Array.isArray(j.statuses)) {
+                    for (const s of j.statuses) {
+                        const oid = String(s.order_id);
+                        statusByOrderId.set(oid, s);
+                        if (s.was_cancelled === true) cancelledOrderIds.push(oid);
+                    }
+                    if (Array.isArray(j.failed) && j.failed.length > 0) {
+                        console.warn(`[Wix Cancel Recon ${SH_VERSION}] ${j.failed.length} orders failed in chunk ${i}-${i + chunk.length}`, j.failed.slice(0, 3));
+                    }
+                } else {
+                    console.warn(`[Wix Cancel Recon ${SH_VERSION}] Bad response for chunk ${i}-${i + chunk.length}:`, j);
+                }
+            } catch (e) {
+                addLog(`Wix cancel recon batch ${i}-${i + chunk.length} failed: ${e.message}`, 'error');
+            }
+        }
+        
+        if (cancelledOrderIds.length === 0) {
+            const msg = `Wix cancel recon: ${activeSales.length} active sales checked, 0 cancelled`;
+            if (isManual) addLog(msg, 'success');
+            else console.log(`[Wix Cancel Recon ${SH_VERSION}] ${msg}`);
+            const result = { checked: activeSales.length, cancelled: 0, reversed: 0, errors: [], startedAt };
+            state.settings.cancelReconLastRunWix = startedAt;
+            state.settings.cancelReconLastResultWix = result;
+            return result;
+        }
+        
+        // ── 4. Reverse-cascade each cancelled sale ──
+        let reversedCount = 0;
+        const reversalErrors = [];
+        const reversedDetails = [];
+        
+        for (const oid of cancelledOrderIds) {
+            const salesForOrder = saleByOrderId.get(oid) || [];
+            const status = statusByOrderId.get(oid) || {};
+            const reason = status.status || 'cancelled_via_wix';
+            
+            for (const sale of salesForOrder) {
+                try {
+                    const detail = await reverseCancelledSale(sale, reason);
+                    reversedCount++;
+                    reversedDetails.push(detail);
+                    addLog(`🚫 Cancellation: ${detail.sku} x${detail.qty} on Wix — Order ${sale.order_id} reversed (${detail.syncRowsQueued} channel pushes queued)`, 'warning');
+                } catch (e) {
+                    reversalErrors.push({
+                        sale_id: sale.id,
+                        order_id: sale.order_id,
+                        sku: sale.sku,
+                        error: e.message
+                    });
+                    addLog(`❌ Wix cancel reverse failed: ${sale.sku} order ${sale.order_id} — ${e.message}`, 'error');
+                }
+            }
+        }
+        
+        const summary = `Wix cancel recon: ${activeSales.length} checked, ${cancelledOrderIds.length} cancelled orders, ${reversedCount} sale-row(s) reversed${reversalErrors.length > 0 ? `, ${reversalErrors.length} errors` : ''}`;
+        addLog(summary, reversedCount > 0 ? 'success' : 'info');
+        
+        // ── 5. Activity log entry (rollup) ──
+        try {
+            logActivity('sync', 'cancellation_recon_complete', 'wix', summary, {
+                checked: activeSales.length,
+                cancelled: cancelledOrderIds.length,
+                reversed: reversedCount,
+                errors: reversalErrors.length,
+                trigger: isManual ? 'manual' : 'auto',
+                tool_version: SH_VERSION,
+                startedAt
+            });
+        } catch (e) { console.warn('[Wix Cancel Recon] Activity log failed:', e.message); }
+        
+        // ── 6. Email alert (DEFERRED — gated on E6/E7 DKIM live, same as Etsy path) ──
+        if (state.settings.notifyCancellationsEmail && reversedCount > 0) {
+            console.log(`[Wix Cancel Recon ${SH_VERSION}] Email alert requested but path not yet wired — see B-S30-01-email follow-up.`);
+            // TODO(B-S30-01-email): wire alongside the Etsy email path. Both
+            // reconcilers should funnel into a single email helper that
+            // batches per-channel cancellation summaries.
+        }
+        
+        const result = {
+            checked: activeSales.length,
+            cancelled: cancelledOrderIds.length,
+            reversed: reversedCount,
+            errors: reversalErrors,
+            details: reversedDetails,
+            startedAt
+        };
+        state.settings.cancelReconLastRunWix = startedAt;
+        state.settings.cancelReconLastResultWix = result;
+        return result;
+    }
+    
+    // ────────────────────────────────────────────────────────────────────
     // reverseCancelledSale — mirror of V2 reverseSale, single-sale scope
     // ────────────────────────────────────────────────────────────────────
     // CONTRACT (do not deviate from V2 reverseSale around line 3216):
@@ -2940,16 +3148,28 @@
     // Differences from V2 reverseSale:
     //   - status='cancelled' (not 'reversed') — distinct terminal state
     //   - cancellation_reason populated, reversed_at NOT set
-    //   - notes annotation reads "CANCELLED via Etsy" + tool tag
+    //   - notes annotation reads "CANCELLED via {Channel}" + tool tag
     //   - sync_queue trigger field = 'sale_cancellation' (not 'sale_reversal')
     //   - No UI refresh (this runs server-side during recon)
     //   - No confirm() dialog (auto-flow)
     //
     // Same cascade math, same peer-increment rules, same sync_queue shape.
+    //
+    // v4.4.18 (B-S30-02): generalized for any channel. Three messaging
+    // strings that previously hardcoded "Etsy" now key off the channel
+    // variable extracted from sale.sale_channel. Cascade math was already
+    // channel-agnostic via chQtyMap/listingIdMap/onlineChannelsForReverse;
+    // only the human-readable strings needed parameterization. Callers
+    // (reconcileEtsyCancellations, reconcileWixCancellations) pass the
+    // sale row and a reason string.
     // ────────────────────────────────────────────────────────────────────
     async function reverseCancelledSale(sale, reason) {
         const qty = parseInt(sale.qty_sold) || 1;
         const channel = sale.sale_channel || 'unknown';
+        // v4.4.18: channelLabel for messaging strings (notes, activity log).
+        // Capitalizes the channel name for human-readable output:
+        //   'etsy' → 'Etsy', 'wix' → 'Wix', 'wayfair' → 'Wayfair'.
+        const channelLabel = channel.charAt(0).toUpperCase() + channel.slice(1);
         const orderId = sale.order_id || '—';
         const itemId = sale.item_id;
         
@@ -2960,8 +3180,8 @@
         const { error: saleErr } = await sbClient.from('sales_history').update({
             status: 'cancelled',
             cancelled_at: nowIso,
-            cancellation_reason: reason || 'cancelled_via_etsy',
-            notes: (sale.notes || '') + ` | CANCELLED via Etsy ${nowIso.substring(0, 10)} (auto-reverse by SH ${SH_VERSION})`
+            cancellation_reason: reason || ('cancelled_via_' + channel),
+            notes: (sale.notes || '') + ` | CANCELLED via ${channelLabel} ${nowIso.substring(0, 10)} (auto-reverse by SH ${SH_VERSION})`
         }).eq('id', sale.id);
         if (saleErr) throw new Error(`Failed to mark sale cancelled: ${saleErr.message}`);
         
@@ -3044,13 +3264,13 @@
         
         // ── 6. Activity log (per-sale) ──
         logActivity('sale', 'sale_cancelled', channel,
-            `Sale auto-cancelled (Etsy): ${freshItem.sku} x${qty} — Order #${orderId} — qty restored (${parseInt(freshItem.qty) || 0} → ${qtyUpdates.qty})`,
+            `Sale auto-cancelled (${channelLabel}): ${freshItem.sku} x${qty} — Order #${orderId} — qty restored (${parseInt(freshItem.qty) || 0} → ${qtyUpdates.qty})`,
             {
                 sale_id: sale.id,
                 order_id: orderId,
                 qty,
                 channel,
-                reason: reason || 'cancelled_via_etsy',
+                reason: reason || ('cancelled_via_' + channel),
                 sku: freshItem.sku,
                 new_warehouse_qty: qtyUpdates.qty,
                 tool_version: SH_VERSION
@@ -3069,22 +3289,37 @@
     // ────────────────────────────────────────────────────────────────────
     // Manual handlers (Settings → Cancellation Reconciliation buttons)
     // ────────────────────────────────────────────────────────────────────
+    // v4.4.18 (B-S30-02): both Etsy and Wix reconcilers run from a single
+    // pair of buttons. The cancelReconEnabled toggle gates BOTH paths.
+    // The status panel reports per-channel results so an operator can tell
+    // at a glance which channel had cancellations.
+    // ────────────────────────────────────────────────────────────────────
     async function previewCancelRecon() {
         const panel = document.getElementById('cancelReconStatusPanel');
-        if (panel) panel.innerHTML = '⏳ Counting active Etsy sales in last 30 days…';
+        if (panel) panel.innerHTML = '⏳ Counting active Etsy + Wix sales in last 30 days…';
         if (!sbConnected || !sbClient) {
             if (panel) panel.innerHTML = '<span style="color:var(--error);">❌ Not connected to Supabase.</span>';
             return;
         }
         try {
             const cutoff = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
-            const { count, error } = await sbClient.from('sales_history')
+            // Etsy count
+            const etsyResp = await sbClient.from('sales_history')
                 .select('*', { count: 'exact', head: true })
                 .eq('sale_channel', 'etsy')
                 .gte('sale_date', cutoff)
                 .or('status.is.null,status.not.in.(reversed,cancelled,shipped)');
-            if (error) throw error;
-            if (panel) panel.innerHTML = `<span style="color:var(--success);">✅ ${count || 0} active Etsy sale-row(s) in last 30 days. Click <b>Run Once</b> to check each against Etsy and reverse any cancellations.</span>`;
+            if (etsyResp.error) throw etsyResp.error;
+            const etsyCount = etsyResp.count || 0;
+            // Wix count
+            const wixResp = await sbClient.from('sales_history')
+                .select('*', { count: 'exact', head: true })
+                .eq('sale_channel', 'wix')
+                .gte('sale_date', cutoff)
+                .or('status.is.null,status.not.in.(reversed,cancelled,shipped)');
+            if (wixResp.error) throw wixResp.error;
+            const wixCount = wixResp.count || 0;
+            if (panel) panel.innerHTML = `<span style="color:var(--success);">✅ ${etsyCount} active Etsy sale-row(s) and ${wixCount} active Wix sale-row(s) in last 30 days. Click <b>Run Once</b> to check each against its channel and reverse any cancellations.</span>`;
         } catch (e) {
             if (panel) panel.innerHTML = `<span style="color:var(--error);">❌ Preview failed: ${e.message}</span>`;
         }
@@ -3092,23 +3327,27 @@
     
     async function runCancelReconOnce() {
         const panel = document.getElementById('cancelReconStatusPanel');
-        if (panel) panel.innerHTML = '⏳ Running cancellation reconciliation…';
+        if (panel) panel.innerHTML = '⏳ Running Etsy + Wix cancellation reconciliation…';
         try {
-            const r = await reconcileEtsyCancellations({ manual: true });
-            if (r.skipped) {
-                if (panel) panel.innerHTML = `<span style="color:var(--text-dim);">⚠ Skipped: ${r.skipped}</span>`;
-                return;
-            }
-            if (r.error) {
-                if (panel) panel.innerHTML = `<span style="color:var(--error);">❌ ${r.error}</span>`;
-                return;
-            }
-            const errCount = Array.isArray(r.errors) ? r.errors.length : 0;
+            // Run Etsy first, then Wix sequentially. Each is independently
+            // gated on its own proxy URL being configured; the function
+            // returns {skipped:'no_proxy'} cleanly if not. Errors in one
+            // do NOT block the other.
+            const etsyR = await reconcileEtsyCancellations({ manual: true }).catch(e => ({ error: e.message }));
+            const wixR  = await reconcileWixCancellations({ manual: true }).catch(e => ({ error: e.message }));
+            
+            const fmtChannel = (label, r) => {
+                if (!r) return `<div>${label}: (no result)</div>`;
+                if (r.skipped) return `<div style="color:var(--text-dim);">${label}: skipped (${r.skipped})</div>`;
+                if (r.error)   return `<div style="color:var(--error);">${label}: ❌ ${r.error}</div>`;
+                const errCount = Array.isArray(r.errors) ? r.errors.length : 0;
+                const color = (r.cancelled > 0) ? 'var(--warning)' : 'var(--success)';
+                return `<div style="color:${color};">${label}: checked ${r.checked}, detected ${r.cancelled} cancelled, reversed ${r.reversed}${errCount > 0 ? `, ${errCount} error(s)` : ''}.</div>`;
+            };
+            
             if (panel) {
-                panel.innerHTML = `<span style="color:${r.cancelled > 0 ? 'var(--warning)' : 'var(--success)'};">` +
-                    `✅ Done. Checked ${r.checked} active sale-row(s); detected ${r.cancelled} cancelled receipt(s); reversed ${r.reversed} sale-row(s)` +
-                    (errCount > 0 ? `; ${errCount} error(s) (see Activity Log).` : '.') +
-                    `</span>`;
+                panel.innerHTML = `<div style="margin-bottom:4px;">✅ Done.</div>` +
+                    fmtChannel('Etsy', etsyR) + fmtChannel('Wix', wixR);
             }
         } catch (e) {
             if (panel) panel.innerHTML = `<span style="color:var(--error);">❌ ${e.message}</span>`;
@@ -3117,6 +3356,7 @@
     
     // Globals for inline onclick + auto-process timer hook
     window.reconcileEtsyCancellations = reconcileEtsyCancellations;
+    window.reconcileWixCancellations = reconcileWixCancellations;
     window.previewCancelRecon = previewCancelRecon;
     window.runCancelReconOnce = runCancelReconOnce;
 
@@ -6656,8 +6896,15 @@
             `).join('');
             
             // Show warehouse qty for each item
+            // v4.4.18 (B-S31-04): Use resolvedSku fallback so Wayfair orders
+            // (where order SKU ≠ master SKU) resolve correctly. Without this,
+            // Wayfair line stock showed "? in stock" — the lookup keyed off the
+            // raw vendor SKU (e.g. CCDPD21425) instead of the master SKU on the
+            // items table. Same pattern as processOrder() line ~4861, added
+            // there in v4.3.5. The display label stays item.sku so Mary still
+            // sees the channel-side SKU she'd match against externally.
             const stockHtml = (order.items || []).map(item => {
-                const product = getMasterJsonProduct(item.sku);
+                const product = getMasterJsonProduct(item.resolvedSku || item.sku);
                 const inStock = product ? (product.qty || 0) : '?';
                 const stockColor = product && product.qty >= (item.qty || 1) ? 'var(--success)' : 'var(--error)';
                 return `<span style="font-size: 0.75rem; color: ${stockColor};">${item.sku}: ${inStock} in stock</span>`;
@@ -6832,10 +7079,20 @@
             //   - Manual:    pull(isAuto=false, recon there) → no process → no recon here
             // Do NOT remove the !isAuto gate without removing this hook,
             // or the reconciler will run twice per auto tick.
+            //
+            // v4.4.18 (B-S30-02): Wix reconciler runs after Etsy. Each call
+            // is independently try/caught — a failure in one channel does
+            // not block the other. Both share the cancelReconEnabled flag
+            // and the auto-process timer.
             try {
                 await reconcileEtsyCancellations({ manual: false });
             } catch (e) {
-                console.warn(`[Auto-Process ${SH_VERSION}] Cancel recon threw:`, e.message);
+                console.warn(`[Auto-Process ${SH_VERSION}] Etsy cancel recon threw:`, e.message);
+            }
+            try {
+                await reconcileWixCancellations({ manual: false });
+            } catch (e) {
+                console.warn(`[Auto-Process ${SH_VERSION}] Wix cancel recon threw:`, e.message);
             }
         }, 5 * 60 * 1000); // Every 5 minutes
         addLog('Auto-process started (every 5 minutes)', 'success');
