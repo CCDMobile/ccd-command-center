@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.16</title>
+    <title>CCD Sync Hub v4.4.17</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.16 — Clean Build Styles
+           CCD SYNC HUB v4.4.17 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.16 • Supabase-Native Push • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.17 • Cancellation Recon • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -753,6 +753,31 @@
                     </div>
                     <div id="queueStatusPanel" style="font-size:0.8rem;color:var(--text-dim);"></div>
                 </div>
+                <!-- v4.4.17 (S31, B-S30-01): Cancellation Reconciliation -->
+                <div class="settings-group">
+                    <h4>🚫 Cancellation Reconciliation</h4>
+                    <div style="font-size:0.8rem;color:var(--text-dim);margin-bottom:10px;">
+                        Polls Etsy on the auto-process tick (every 5 min) to detect cancelled orders and reverse-cascade them. Mirrors V2 reverseSale logic exactly.
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="cancelReconEnabled" />
+                            Run on auto-process tick
+                        </label>
+                    </div>
+                    <div style="margin-bottom:10px;">
+                        <label class="checkbox-label" title="Requires DKIM/SPF live for countrycharmdecor.com — gated until E6/E7 complete">
+                            <input type="checkbox" id="notifyCancellationsEmail" />
+                            Email Mary + Paul on detected cancellations
+                            <span style="font-size:0.7rem;color:var(--text-dim);margin-left:6px;">(deferred — DKIM not yet live)</span>
+                        </label>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button class="btn btn-secondary" onclick="previewCancelRecon()" style="font-size:0.8rem;">🔍 Preview Active Sales</button>
+                        <button class="btn btn-secondary" onclick="runCancelReconOnce()" style="font-size:0.8rem;border-color:rgba(34,197,94,0.4);color:var(--success);">▶ Run Once</button>
+                    </div>
+                    <div id="cancelReconStatusPanel" style="font-size:0.8rem;color:var(--text-dim);"></div>
+                </div>
             </div>
             <div style="margin-top: 16px; display: flex; gap: 10px;">
                 <button class="btn btn-success" onclick="saveSettings()">💾 Save Settings</button>
@@ -812,11 +837,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.16 — SUPABASE-NATIVE PUSH BUILD
+    // CCD SYNC HUB v4.4.17 — CANCELLATION RECONCILIATION (B-S30-01)
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.16';
+    const SH_VERSION = 'v4.4.17';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -871,7 +896,12 @@
             emailEnabled: false,
             digestFrequency: 'daily',
             digestHour: 8,
-            eventNotifications: {}
+            eventNotifications: {},
+            // v4.4.17 (B-S30-01): cancellation reconciliation
+            cancelReconEnabled: true,        // run reconciler on auto-process tick
+            notifyCancellationsEmail: false, // email Mary+Paul on detected cancellations — gated on E6/E7 (DKIM live)
+            cancelReconLastRun: null,        // ISO timestamp of last run
+            cancelReconLastResult: null      // { checked, cancelled, reversed, errors }
         },
         connections: { etsy: null, wix: null, wayfair: null },
         skuMappings: { mappings: {}, totalMappings: 0 },
@@ -2671,6 +2701,408 @@
         
         return { success: true, orders: orders, items: itemCount, details: orderDetails };
     }
+
+
+    // ============================================================
+    // CANCELLATION RECONCILIATION — v4.4.17 (S31, B-S30-01)
+    // ============================================================
+    // Detects orders cancelled at the channel after SH ingested them, and
+    // reverse-cascades the sale exactly like V2's reverseSale. Closes the
+    // gap revealed in S30 where an Etsy non-payment cancellation almost
+    // resulted in shipping a non-paid product.
+    //
+    // Architecture (per S30 lock):
+    //   - DETECTION: Polling. Etsy webhooks released 2025 expose only
+    //     ORDER_PAID and are commercial-app-only; ORDER_CANCELED not yet
+    //     released. Polling is the working path today.
+    //   - REVERSE: Mirror V2 reverseSale exactly. Mark sale_history row,
+    //     restore qty, ECOSYSTEM-011 peer-increment for online channels,
+    //     queue sync_queue rows, log activity.
+    //   - IDEMPOTENCY: Status filter excludes already-cancelled rows; safe
+    //     to re-run on any cadence.
+    //
+    // CRITICAL: SH stores Etsy order_ids prefixed with 'ETSY-'. The Etsy
+    // proxy expects bare numeric receipt IDs, so we strip the prefix
+    // before calling getReceiptStatuses.
+    // ============================================================
+    
+    async function reconcileEtsyCancellations(opts) {
+        opts = opts || {};
+        const isManual = !!opts.manual;
+        
+        if (!sbConnected || !sbClient) {
+            if (isManual) addLog('Cancel recon: not connected to Supabase', 'error');
+            return { skipped: 'no_supabase' };
+        }
+        if (!state.settings.etsyProxyUrl) {
+            if (isManual) addLog('Cancel recon: no Etsy proxy URL configured', 'warning');
+            return { skipped: 'no_proxy' };
+        }
+        if (!isManual && !state.settings.cancelReconEnabled) {
+            return { skipped: 'disabled' };
+        }
+        
+        const startedAt = new Date().toISOString();
+        console.log(`[Cancel Recon ${SH_VERSION}] Starting${isManual ? ' (manual)' : ''}...`);
+        
+        // ── 1. Query active Etsy sales <30d ──
+        const cutoff = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+        let activeSales;
+        try {
+            const { data, error } = await sbClient.from('sales_history')
+                .select('id, order_id, sku, qty_sold, sale_price, sale_date, sale_channel, ship_to_name, item_id, notes, status, product_name')
+                .eq('sale_channel', 'etsy')
+                .gte('sale_date', cutoff)
+                .or('status.is.null,status.not.in.(reversed,cancelled,shipped)')
+                .order('sale_date', { ascending: false })
+                .limit(500);
+            if (error) throw error;
+            activeSales = data || [];
+        } catch (e) {
+            const msg = `Cancel recon: query failed: ${e.message}`;
+            addLog(msg, 'error');
+            return { error: e.message };
+        }
+        
+        if (activeSales.length === 0) {
+            if (isManual) addLog('Cancel recon: 0 active Etsy sales in last 30 days', 'info');
+            const result = { checked: 0, cancelled: 0, reversed: 0, errors: [], startedAt };
+            state.settings.cancelReconLastRun = startedAt;
+            state.settings.cancelReconLastResult = result;
+            return result;
+        }
+        
+        // ── 2. Build receipt-id → sale map (strip 'ETSY-' prefix) ──
+        const saleByReceiptId = new Map();
+        for (const sale of activeSales) {
+            const raw = String(sale.order_id || '');
+            const receiptId = raw.replace(/^ETSY-/, '');
+            if (/^\d+$/.test(receiptId)) {
+                // Multiple sales can share a receipt_id (multi-line orders).
+                // Keep an array per receipt_id.
+                if (!saleByReceiptId.has(receiptId)) saleByReceiptId.set(receiptId, []);
+                saleByReceiptId.get(receiptId).push(sale);
+            }
+        }
+        
+        const receiptIds = [...saleByReceiptId.keys()];
+        if (receiptIds.length === 0) {
+            if (isManual) addLog(`Cancel recon: ${activeSales.length} sales have no parsable receipt IDs`, 'warning');
+            return { checked: activeSales.length, cancelled: 0, reversed: 0, errors: [], startedAt, skipped: 'no_receipt_ids' };
+        }
+        
+        // ── 3. Batch-call Etsy proxy in chunks of 100 ──
+        const proxyUrl = state.settings.etsyProxyUrl;
+        const apiKey = state.settings.etsyApiKey || state.settings.ccdApiKey || '';
+        const cancelledReceiptIds = [];
+        const statusByReceiptId = new Map();
+        
+        for (let i = 0; i < receiptIds.length; i += 100) {
+            const chunk = receiptIds.slice(i, i + 100);
+            try {
+                const fetchUrl = `${proxyUrl}?action=getReceiptStatuses&key=${encodeURIComponent(apiKey)}&receipt_ids=${chunk.join(',')}`;
+                const resp = await fetch(fetchUrl);
+                if (!resp.ok) {
+                    const txt = await resp.text();
+                    throw new Error(`HTTP ${resp.status}: ${String(txt).substring(0, 200)}`);
+                }
+                const j = await resp.json();
+                if (j.success && Array.isArray(j.statuses)) {
+                    for (const s of j.statuses) {
+                        const rid = String(s.receipt_id);
+                        statusByReceiptId.set(rid, s);
+                        if (s.was_canceled === true) cancelledReceiptIds.push(rid);
+                    }
+                    if (Array.isArray(j.failed) && j.failed.length > 0) {
+                        console.warn(`[Cancel Recon ${SH_VERSION}] ${j.failed.length} receipts failed in chunk ${i}-${i + chunk.length}`, j.failed.slice(0, 3));
+                    }
+                } else {
+                    console.warn(`[Cancel Recon ${SH_VERSION}] Bad response for chunk ${i}-${i + chunk.length}:`, j);
+                }
+            } catch (e) {
+                addLog(`Cancel recon batch ${i}-${i + chunk.length} failed: ${e.message}`, 'error');
+            }
+        }
+        
+        if (cancelledReceiptIds.length === 0) {
+            const msg = `Cancel recon: ${activeSales.length} active sales checked, 0 cancelled`;
+            if (isManual) addLog(msg, 'success');
+            else console.log(`[Cancel Recon ${SH_VERSION}] ${msg}`);
+            const result = { checked: activeSales.length, cancelled: 0, reversed: 0, errors: [], startedAt };
+            state.settings.cancelReconLastRun = startedAt;
+            state.settings.cancelReconLastResult = result;
+            return result;
+        }
+        
+        // ── 4. Reverse-cascade each cancelled sale ──
+        let reversedCount = 0;
+        const reversalErrors = [];
+        const reversedDetails = [];
+        
+        for (const rid of cancelledReceiptIds) {
+            const salesForReceipt = saleByReceiptId.get(rid) || [];
+            const status = statusByReceiptId.get(rid) || {};
+            const reason = status.status || 'cancelled_via_etsy';
+            
+            for (const sale of salesForReceipt) {
+                try {
+                    const detail = await reverseCancelledSale(sale, reason);
+                    reversedCount++;
+                    reversedDetails.push(detail);
+                    addLog(`🚫 Cancellation: ${detail.sku} x${detail.qty} on Etsy — Order ${sale.order_id} reversed (${detail.syncRowsQueued} channel pushes queued)`, 'warning');
+                } catch (e) {
+                    reversalErrors.push({
+                        sale_id: sale.id,
+                        order_id: sale.order_id,
+                        sku: sale.sku,
+                        error: e.message
+                    });
+                    addLog(`❌ Cancel reverse failed: ${sale.sku} order ${sale.order_id} — ${e.message}`, 'error');
+                }
+            }
+        }
+        
+        const summary = `Cancel recon: ${activeSales.length} checked, ${cancelledReceiptIds.length} cancelled receipts, ${reversedCount} sale-row(s) reversed${reversalErrors.length > 0 ? `, ${reversalErrors.length} errors` : ''}`;
+        addLog(summary, reversedCount > 0 ? 'success' : 'info');
+        
+        // ── 5. Activity log entry (rollup) ──
+        try {
+            logActivity('sync', 'cancellation_recon_complete', 'etsy', summary, {
+                checked: activeSales.length,
+                cancelled: cancelledReceiptIds.length,
+                reversed: reversedCount,
+                errors: reversalErrors.length,
+                trigger: isManual ? 'manual' : 'auto',
+                tool_version: SH_VERSION,
+                startedAt
+            });
+        } catch (e) { console.warn('[Cancel Recon] Activity log failed:', e.message); }
+        
+        // ── 6. Email alert (DEFERRED — gated on E6/E7 DKIM live) ──
+        // When DKIM/SPF for countrycharmdecor.com lands, wire to Shippo
+        // Proxy generic sendEmail action (next minor bump v1.9.5) or
+        // duplicate Graph helpers in SH. Until then this branch is a
+        // no-op so the path can be flipped on with a single setting.
+        // See CCD-S30-Handoff.md "Junk folder routing" + parking-lot E6/E7.
+        if (state.settings.notifyCancellationsEmail && reversedCount > 0) {
+            console.log(`[Cancel Recon ${SH_VERSION}] Email alert requested but path not yet wired — see B-S30-01 follow-up.`);
+            // TODO(B-S30-01-email): once DKIM live, send via Shippo proxy
+            //   sendEmail action OR build inline Graph helpers.
+            //   Recipients: state.settings.emailAddresses (split by comma/semicolon).
+            //   Subject: `🚫 ${reversedCount} cancelled order${reversedCount === 1 ? '' : 's'} auto-reversed (${SH_VERSION})`
+            //   Body: per-cancellation list + reversed_at timestamps.
+        }
+        
+        const result = {
+            checked: activeSales.length,
+            cancelled: cancelledReceiptIds.length,
+            reversed: reversedCount,
+            errors: reversalErrors,
+            details: reversedDetails,
+            startedAt
+        };
+        state.settings.cancelReconLastRun = startedAt;
+        state.settings.cancelReconLastResult = result;
+        return result;
+    }
+    
+    // ────────────────────────────────────────────────────────────────────
+    // reverseCancelledSale — mirror of V2 reverseSale, single-sale scope
+    // ────────────────────────────────────────────────────────────────────
+    // CONTRACT (do not deviate from V2 reverseSale around line 3216):
+    //   1. Mark sale_history row: status='cancelled', cancelled_at,
+    //      cancellation_reason, append to notes.
+    //   2. Fetch fresh items row.
+    //   3. Restore qty: warehouse += qty, source-channel allocation += qty.
+    //   4. ECOSYSTEM-011 peer-increment: for online channels with listing
+    //      IDs, peer_qty += qty (skip bundles, skip peers without listing).
+    //   5. Write items update.
+    //   6. Queue sync_queue rows for each online channel that received qty
+    //      change AND has a listing.
+    //   7. Activity log.
+    //
+    // Differences from V2 reverseSale:
+    //   - status='cancelled' (not 'reversed') — distinct terminal state
+    //   - cancellation_reason populated, reversed_at NOT set
+    //   - notes annotation reads "CANCELLED via Etsy" + tool tag
+    //   - sync_queue trigger field = 'sale_cancellation' (not 'sale_reversal')
+    //   - No UI refresh (this runs server-side during recon)
+    //   - No confirm() dialog (auto-flow)
+    //
+    // Same cascade math, same peer-increment rules, same sync_queue shape.
+    // ────────────────────────────────────────────────────────────────────
+    async function reverseCancelledSale(sale, reason) {
+        const qty = parseInt(sale.qty_sold) || 1;
+        const channel = sale.sale_channel || 'unknown';
+        const orderId = sale.order_id || '—';
+        const itemId = sale.item_id;
+        
+        if (!itemId) throw new Error(`No item_id on sale ${sale.id} — cannot cascade`);
+        
+        // ── 1. Mark sale cancelled ──
+        const nowIso = new Date().toISOString();
+        const { error: saleErr } = await sbClient.from('sales_history').update({
+            status: 'cancelled',
+            cancelled_at: nowIso,
+            cancellation_reason: reason || 'cancelled_via_etsy',
+            notes: (sale.notes || '') + ` | CANCELLED via Etsy ${nowIso.substring(0, 10)} (auto-reverse by SH ${SH_VERSION})`
+        }).eq('id', sale.id);
+        if (saleErr) throw new Error(`Failed to mark sale cancelled: ${saleErr.message}`);
+        
+        // ── 2. Fetch fresh item data ──
+        const { data: freshItem, error: fetchErr } = await sbClient.from('items')
+            .select('id,sku,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,is_bundle')
+            .eq('id', itemId).single();
+        if (fetchErr || !freshItem) throw new Error('Could not fetch current item data');
+        
+        // ── 3. Restore quantities (mirror V2 reverseSale exactly) ──
+        const qtyUpdates = { qty: (parseInt(freshItem.qty) || 0) + qty };
+        const chQtyMap = { etsy: 'etsy_qty', wix: 'wix_qty', wayfair: 'wayfair_qty', treasuremarts: 'treasuremarts_qty' };
+        if (chQtyMap[channel]) {
+            qtyUpdates[chQtyMap[channel]] = (parseInt(freshItem[chQtyMap[channel]]) || 0) + qty;
+        }
+        
+        // ╔════════════════════════════════════════════════════════════════════════════╗
+        // ║   🔒 PROTECTED BUSINESS LOGIC — DO NOT REMOVE OR MODIFY WITHOUT REVIEW    ║
+        // ║   @invariant  ECOSYSTEM-011 — Peer-increment on cancellation reverse      ║
+        // ║               (symmetric to confirmSell peer-decrement). Mirrors V2        ║
+        // ║               reverseSale ECOSYSTEM-011 block at line ~3289.               ║
+        // ║   @added      v4.4.17 (S31, 2026-04-27, B-S30-01)                          ║
+        // ║                                                                            ║
+        // ║   On reverse of a cancelled online sale, every non-source online peer     ║
+        // ║   that has a channel listing gets +qty restored. Symmetric to the         ║
+        // ║   peer-decrement that ran when the sale was originally ingested.          ║
+        // ║                                                                            ║
+        // ║   Exceptions match V2 reverseSale exactly:                                 ║
+        // ║   - Source channel: restored at line above (chQtyMap[channel])            ║
+        // ║   - Peer without channel listing ID: skipped                              ║
+        // ║   - Bundle parents: skipped                                                ║
+        // ╚════════════════════════════════════════════════════════════════════════════╝
+        const onlineChannelsForReverse = ['etsy', 'wix', 'wayfair'];
+        const listingIdMap = { etsy: 'etsy_listing_id', wix: 'wix_product_id', wayfair: 'wayfair_sku' };
+        if (onlineChannelsForReverse.includes(channel) && !freshItem.is_bundle) {
+            for (const peer of onlineChannelsForReverse) {
+                if (peer === channel) continue;
+                const peerCol = chQtyMap[peer];
+                const listingIdCol = listingIdMap[peer];
+                if (!freshItem[listingIdCol]) {
+                    console.log(`[ECOSYSTEM-011 ${SH_VERSION} cancel-reverse] ${peer}: skipped (no ${listingIdCol})`);
+                    continue;
+                }
+                const peerOld = parseInt(freshItem[peerCol]) || 0;
+                qtyUpdates[peerCol] = peerOld + qty;
+                console.log(`[ECOSYSTEM-011 ${SH_VERSION} cancel-reverse] ${peer}: ${peerOld}→${peerOld + qty} (peer-increment on ${channel} cancellation, qty ${qty})`);
+            }
+        } else if (onlineChannelsForReverse.includes(channel) && freshItem.is_bundle) {
+            console.log(`[ECOSYSTEM-011 ${SH_VERSION} cancel-reverse] Bundle skip: ${freshItem.sku} peer-increment bypassed`);
+        }
+        
+        // ── 4. Write qty update ──
+        const { error: qtyErr } = await sbClient.from('items').update(qtyUpdates).eq('id', itemId);
+        if (qtyErr) throw new Error(`Qty restore failed (sale IS marked cancelled): ${qtyErr.message}`);
+        
+        // ── 5. Queue sync_queue rows (mirror V2 reverseSale exactly) ──
+        const syncRows = [];
+        if (freshItem.etsy_listing_id && qtyUpdates.etsy_qty !== undefined) {
+            syncRows.push({ item_id: itemId, channel: 'etsy', operation: 'update', fields: {
+                sku: freshItem.sku, quantity: qtyUpdates.etsy_qty, listingId: freshItem.etsy_listing_id,
+                etsyVariantId: freshItem.etsy_variant_id || null, fieldTypes: ['quantity'], trigger: 'sale_cancellation'
+            }});
+        }
+        if (freshItem.wix_product_id && qtyUpdates.wix_qty !== undefined) {
+            syncRows.push({ item_id: itemId, channel: 'wix', operation: 'update', fields: {
+                sku: freshItem.sku, quantity: qtyUpdates.wix_qty, productId: freshItem.wix_product_id,
+                wixVariantId: freshItem.wix_variant_id || null, fieldTypes: ['quantity'], trigger: 'sale_cancellation'
+            }});
+        }
+        if (freshItem.wayfair_sku && qtyUpdates.wayfair_qty !== undefined) {
+            syncRows.push({ item_id: itemId, channel: 'wayfair', operation: 'update', fields: {
+                sku: freshItem.sku, quantity: qtyUpdates.wayfair_qty, wayfairSku: freshItem.wayfair_sku,
+                fieldTypes: ['quantity'], trigger: 'sale_cancellation'
+            }});
+        }
+        if (syncRows.length > 0) {
+            const { error: syncErr } = await sbClient.from('sync_queue').insert(syncRows);
+            if (syncErr) console.warn(`[Cancel Reverse ${SH_VERSION}] sync_queue insert failed:`, syncErr.message);
+        }
+        
+        // ── 6. Activity log (per-sale) ──
+        logActivity('sale', 'sale_cancelled', channel,
+            `Sale auto-cancelled (Etsy): ${freshItem.sku} x${qty} — Order #${orderId} — qty restored (${parseInt(freshItem.qty) || 0} → ${qtyUpdates.qty})`,
+            {
+                sale_id: sale.id,
+                order_id: orderId,
+                qty,
+                channel,
+                reason: reason || 'cancelled_via_etsy',
+                sku: freshItem.sku,
+                new_warehouse_qty: qtyUpdates.qty,
+                tool_version: SH_VERSION
+            });
+        
+        return {
+            sku: freshItem.sku,
+            qty,
+            channel,
+            orderId,
+            syncRowsQueued: syncRows.length,
+            newWarehouseQty: qtyUpdates.qty
+        };
+    }
+    
+    // ────────────────────────────────────────────────────────────────────
+    // Manual handlers (Settings → Cancellation Reconciliation buttons)
+    // ────────────────────────────────────────────────────────────────────
+    async function previewCancelRecon() {
+        const panel = document.getElementById('cancelReconStatusPanel');
+        if (panel) panel.innerHTML = '⏳ Counting active Etsy sales in last 30 days…';
+        if (!sbConnected || !sbClient) {
+            if (panel) panel.innerHTML = '<span style="color:var(--error);">❌ Not connected to Supabase.</span>';
+            return;
+        }
+        try {
+            const cutoff = new Date(Date.now() - 30 * 86400 * 1000).toISOString();
+            const { count, error } = await sbClient.from('sales_history')
+                .select('*', { count: 'exact', head: true })
+                .eq('sale_channel', 'etsy')
+                .gte('sale_date', cutoff)
+                .or('status.is.null,status.not.in.(reversed,cancelled,shipped)');
+            if (error) throw error;
+            if (panel) panel.innerHTML = `<span style="color:var(--success);">✅ ${count || 0} active Etsy sale-row(s) in last 30 days. Click <b>Run Once</b> to check each against Etsy and reverse any cancellations.</span>`;
+        } catch (e) {
+            if (panel) panel.innerHTML = `<span style="color:var(--error);">❌ Preview failed: ${e.message}</span>`;
+        }
+    }
+    
+    async function runCancelReconOnce() {
+        const panel = document.getElementById('cancelReconStatusPanel');
+        if (panel) panel.innerHTML = '⏳ Running cancellation reconciliation…';
+        try {
+            const r = await reconcileEtsyCancellations({ manual: true });
+            if (r.skipped) {
+                if (panel) panel.innerHTML = `<span style="color:var(--text-dim);">⚠ Skipped: ${r.skipped}</span>`;
+                return;
+            }
+            if (r.error) {
+                if (panel) panel.innerHTML = `<span style="color:var(--error);">❌ ${r.error}</span>`;
+                return;
+            }
+            const errCount = Array.isArray(r.errors) ? r.errors.length : 0;
+            if (panel) {
+                panel.innerHTML = `<span style="color:${r.cancelled > 0 ? 'var(--warning)' : 'var(--success)'};">` +
+                    `✅ Done. Checked ${r.checked} active sale-row(s); detected ${r.cancelled} cancelled receipt(s); reversed ${r.reversed} sale-row(s)` +
+                    (errCount > 0 ? `; ${errCount} error(s) (see Activity Log).` : '.') +
+                    `</span>`;
+            }
+        } catch (e) {
+            if (panel) panel.innerHTML = `<span style="color:var(--error);">❌ ${e.message}</span>`;
+        }
+    }
+    
+    // Globals for inline onclick + auto-process timer hook
+    window.reconcileEtsyCancellations = reconcileEtsyCancellations;
+    window.previewCancelRecon = previewCancelRecon;
+    window.runCancelReconOnce = runCancelReconOnce;
 
 
     // ============================================================
@@ -6270,6 +6702,11 @@
         document.getElementById('enableWayfairSync').checked = state.settings.enableWayfairSync;
         document.getElementById('emailAddresses').value = state.settings.emailAddresses || '';
         document.getElementById('emailEnabled').checked = state.settings.emailEnabled || false;
+        // v4.4.17 (B-S30-01): cancellation reconciliation toggles
+        const cre = document.getElementById('cancelReconEnabled');
+        if (cre) cre.checked = state.settings.cancelReconEnabled !== false;  // default ON
+        const nce = document.getElementById('notifyCancellationsEmail');
+        if (nce) nce.checked = state.settings.notifyCancellationsEmail === true;  // default OFF
     }
     
     async function saveSettings() {
@@ -6288,6 +6725,11 @@
         state.settings.enableWayfairSync = document.getElementById('enableWayfairSync').checked;
         state.settings.emailAddresses = document.getElementById('emailAddresses').value;
         state.settings.emailEnabled = document.getElementById('emailEnabled').checked;
+        // v4.4.17 (B-S30-01): cancellation reconciliation toggles
+        const _cre = document.getElementById('cancelReconEnabled');
+        const _nce = document.getElementById('notifyCancellationsEmail');
+        if (_cre) state.settings.cancelReconEnabled = _cre.checked;
+        if (_nce) state.settings.notifyCancellationsEmail = _nce.checked;
         
         // Save to Supabase
         if (sbConnected && sbClient) {
@@ -6311,6 +6753,8 @@
                     enableEtsySync: state.settings.enableEtsySync,
                     enableWixSync: state.settings.enableWixSync,
                     enableWayfairSync: state.settings.enableWayfairSync,
+                    cancelReconEnabled: state.settings.cancelReconEnabled !== false,
+                    notifyCancellationsEmail: state.settings.notifyCancellationsEmail === true,
                 }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
             } catch (e) { console.error('[Settings] Supabase save error:', e); }
         }
@@ -6357,6 +6801,18 @@
             // poller (pollSyncQueue) picks them up and pushes to channels.
             // This ensures one push path for everything.
             console.log('[Auto-Process] Complete. Cascade rows in sync_queue for poller.');
+            
+            // v4.4.17 (B-S30-01): Cancellation reconciliation. Runs AFTER
+            // processAllOrders so any sale just inserted gets a fresh status
+            // from the same poll cycle if Etsy already cancelled it. Gated
+            // internally on state.settings.cancelReconEnabled — silent no-op
+            // if disabled. Errors are caught by the function; never block
+            // the auto-process loop.
+            try {
+                await reconcileEtsyCancellations({ manual: false });
+            } catch (e) {
+                console.warn(`[Auto-Process ${SH_VERSION}] Cancel recon threw:`, e.message);
+            }
         }, 5 * 60 * 1000); // Every 5 minutes
         addLog('Auto-process started (every 5 minutes)', 'success');
         toast('⚡ Auto-process ON — pulling & processing every 5 minutes', 'success');

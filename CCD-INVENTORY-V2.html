@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.7</title>
+<title>CCD Inventory System v2.9.9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.7 · Gift Slip Brand-Text De-Duplication</div>
+    <div class="login-version">v2.9.9 · Cancellation UI Defenses</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.7</div>
+      <div class="topbar-version">v2.9.9</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1606,6 +1606,26 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
 // ─────────────────────────────────────────────────────────────────────────────
+// v2.9.9 (S31, 2026-04-27, B-S30-01) — Cancellation UI defenses. Closes the
+//   V2 surface gap revealed in S30 where a cancelled-at-channel order would
+//   still appear in active sales views and "📦 Ship" was clickable. Three
+//   surfaces hardened: (a) per-item Sales History — adds CANCELLED badge
+//   and excludes status='cancelled' from the active KPI rollup parallel to
+//   reversed; (b) Shipping tab renderUnshippedOrders — the function that
+//   would have surfaced the cancelled order as "ready to ship" — now filters
+//   out status IN ('reversed','cancelled') instead of just reversed; (c)
+//   shipFromSale and openPackingSlip guard against status='cancelled' rows
+//   defensively (the row shouldn't be reachable if filters work, but a
+//   stale local salesRows array could surface it). Schema dependency:
+//   sales_history.cancelled_at + cancellation_reason columns added by
+//   companion S31 schema migration. UI-only; the cancellation cascade
+//   itself runs server-side in SH v4.4.17 reconcileEtsyCancellations.
+// v2.9.8 (S30, 2026-04-27) — Email logo sizing fix. CSS-only: reduced
+//   renderEmailTemplate logoBlock max-height/max-width from 180/400 to
+//   100/280. v2.9.6 had overcorrected v2.9.5's too-small sizing; in
+//   production rendering the watercolor wordmark dominated the message
+//   body. 100/280 puts it in commerce-email-typical range. No data-path
+//   touches.
 // v2.9.7 (S29, 2026-04-26) — Gift slip brand-text de-duplication. The logo
 //   already carries the "Country Charm Decor" wordmark, so showing the
 //   gift-brand <div> below was a duplication. Now: brand text is suppressed
@@ -1647,7 +1667,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.7';
+const TOOL_VERSION = '2.9.9';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -3116,7 +3136,10 @@ async function renderSales(item) {
     const rows = data || [];
     state.salesRows = rows; // Packing slips depend on this
 
-    const activeRows = rows.filter(r => r.status !== 'reversed');
+    // v2.9.9 (B-S30-01): exclude both reversed AND cancelled from active KPI
+    // rollup. Cancelled rows are auto-reversed by SH reconcileEtsyCancellations
+    // but kept on the row with status='cancelled' for audit trail.
+    const activeRows = rows.filter(r => r.status !== 'reversed' && r.status !== 'cancelled');
     const totalQty = activeRows.reduce((s,r) => s + (parseInt(r.qty_sold) || 0), 0);
     const totalRev = activeRows.reduce((s,r) => s + (parseFloat(r.sale_price) || 0), 0);
 
@@ -3132,9 +3155,18 @@ async function renderSales(item) {
       const margin = (parseFloat(r.profit_margin) || 0) * 100;
       const profitColor = profit >= 0 ? 'var(--green)' : 'var(--red)';
       const isReversed = r.status === 'reversed';
-      const rowStyle = isReversed ? 'opacity:0.45;text-decoration:line-through;' : '';
+      // v2.9.9 (B-S30-01): cancelled = reversed-equivalent terminal state.
+      // Same visual treatment (line-through, dimmed, no Slip/Ship/Reverse
+      // buttons), distinct red CANCELLED badge with cancellation_reason
+      // tooltip when present.
+      const isCancelled = r.status === 'cancelled';
+      const isTerminal = isReversed || isCancelled;
+      const rowStyle = isTerminal ? 'opacity:0.45;text-decoration:line-through;' : '';
       // v2.9.2 (S26): 🎁 red-flag badge for gift orders; is_gift is already in sales_history select('*')
       const giftBadge = r.is_gift ? `<span class="badge badge-gift" title="Gift order — remember to include gift slip${r.gift_message ? ' and message' : ''}">🎁</span> ` : '';
+      const cancelTooltip = isCancelled
+        ? `Cancelled ${(r.cancelled_at || '').substring(0,10)}${r.cancellation_reason ? ' — ' + escHtml(r.cancellation_reason) : ''}`
+        : '';
       return `<tr style="${rowStyle}">
         <td class="mono">${(r.sale_date || '').substring(0,10)}</td>
         <td>${chDot}</td>
@@ -3145,7 +3177,9 @@ async function renderSales(item) {
         <td style="color:${profitColor};">${margin.toFixed(1)}%</td>
         <td>${isReversed
           ? '<span style="font-size:10px;color:var(--red);font-weight:600;">REVERSED</span>'
-          : `<button class="btn-packing" onclick="openPackingSlip(${idx})">🖨 Slip</button><button class="btn-packing" onclick="shipFromSale(${idx})">📦 Ship</button><button class="btn-packing" style="color:var(--red);" onclick="reverseSale(${idx})">↩ Reverse</button>`}</td>
+          : isCancelled
+            ? `<span style="font-size:10px;color:var(--red);font-weight:600;" title="${cancelTooltip}">CANCELLED</span>`
+            : `<button class="btn-packing" onclick="openPackingSlip(${idx})">🖨 Slip</button><button class="btn-packing" onclick="shipFromSale(${idx})">📦 Ship</button><button class="btn-packing" style="color:var(--red);" onclick="reverseSale(${idx})">↩ Reverse</button>`}</td>
         <td><button class="expand-btn" onclick="toggleFeeDetail(this,${idx})">▶</button></td>
       </tr>`;
     }).join('');
@@ -3361,6 +3395,20 @@ function shipFromSale(idx) {
   if (!sale) return;
   const item = state.currentItem;
   if (!item) return;
+
+  // v2.9.9 (B-S30-01): defensive guard. Filter at line ~3139 should
+  // already prevent these terminal-state rows from showing the 📦 Ship
+  // button, but a stale local state.salesRows could still surface one.
+  // Block here as the last line of defense — never let Mary ship a
+  // cancelled or reversed sale.
+  if (sale.status === 'cancelled') {
+    showCardStatus(`Cannot ship: order ${sale.order_id || sale.id} was cancelled${sale.cancellation_reason ? ' (' + sale.cancellation_reason + ')' : ''}`, 'error');
+    return;
+  }
+  if (sale.status === 'reversed') {
+    showCardStatus(`Cannot ship: sale ${sale.id} was reversed`, 'error');
+    return;
+  }
 
   // Parse ship_to_address — typically "123 Main St, City, ST, 12345" or "123 Main St, City, ST 12345"
   const name = sale.ship_to_name || '';
@@ -6306,6 +6354,18 @@ async function openPackingSlip(idx) {
   const item = state.currentItem;
   const orderId = sale.order_id;
 
+  // v2.9.9 (B-S30-01): defensive guard against printing a packing slip
+  // for a terminal-state sale. Filter at line ~3139 already hides the
+  // 🖨 Slip button on these rows, so this is a defense-in-depth check
+  // for stale state.salesRows. Confirm before printing rather than hard-
+  // block — operators occasionally need a reference slip for a cancelled
+  // order to attach to refund paperwork.
+  if (sale.status === 'cancelled') {
+    if (!confirm(`⚠️ This order was CANCELLED${sale.cancellation_reason ? ' (' + sale.cancellation_reason + ')' : ''}.\n\nDo NOT ship. Continue to print a reference slip anyway?`)) return;
+  } else if (sale.status === 'reversed') {
+    if (!confirm(`⚠️ This sale was REVERSED.\n\nDo NOT ship. Continue to print a reference slip anyway?`)) return;
+  }
+
   // If there's an order_id, fetch ALL line items for this order
   // v2.9.4 (S29): now also pulls discount_amount so Priced slips can render
   // the Subtotal → Discount → Order Total breakdown.
@@ -8735,14 +8795,20 @@ async function hideShipment(idx) {
 }
 
 // v2.8.7: Unshipped orders view — sales without matching labels
+// v2.9.9 (S31, B-S30-01): filter extended from .neq('status','reversed') to
+// .not('status','in','("reversed","cancelled")'). This is the function that
+// would have surfaced the S30 cancelled-but-not-paid Etsy order as "ready to
+// ship". Cancelled rows are auto-marked by SH reconcileEtsyCancellations()
+// every 5 min on the auto-process tick — V2 now respects that terminal state
+// the same way it respects 'reversed'.
 async function renderUnshippedOrders(container, fromDate, toDate) {
   container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">⏳ Checking for unshipped orders...</div>';
   try {
     // Fetch recent online sales (Etsy, Wix, Wayfair — not TM)
     let query = sb.from('sales_history')
-      .select('id,sku,product_name,order_id,order_number,sale_date,sale_channel,ship_to_name,ship_to_address,buyer_email,qty_sold,sale_price,total_revenue')
+      .select('id,sku,product_name,order_id,order_number,sale_date,sale_channel,ship_to_name,ship_to_address,buyer_email,qty_sold,sale_price,total_revenue,status')
       .in('sale_channel', ['etsy','wix','wayfair'])
-      .neq('status', 'reversed')
+      .not('status', 'in', '(reversed,cancelled)')
       .order('sale_date', { ascending: false })
       .limit(500);
     if (fromDate) query = query.gte('sale_date', fromDate);
@@ -10249,9 +10315,14 @@ function renderEmailTemplate(vars) {
   // v2.9.6 (S29) — bumped sizes from 90/240 to 180/400 so the logo reads at
   // appropriate weight against the H1 text. Many email clients honor max-width
   // but ignore max-height on images, so width is the primary control.
+  // v2.9.8 (S30, 2026-04-27) — reduced from 180/400 to 100/280. v2.9.6 over-
+  // corrected: at 180px tall, a wider-than-tall watercolor wordmark dominated
+  // the message body. 100px puts it in commerce-email-typical range (Etsy,
+  // Shopify defaults sit around 80-120px tall). Width 280px keeps the
+  // wordmark readable on narrow mobile clients without forcing zoom.
   const logoUrl = (vars && vars.logoUrl) || state.emailLogo || '';
   const logoBlock = logoUrl
-    ? `<div style="text-align:center;padding:24px 0 8px 0;"><img src="${logoUrl}" alt="" style="max-height:180px;max-width:400px;width:auto;height:auto;display:inline-block;"></div>`
+    ? `<div style="text-align:center;padding:24px 0 8px 0;"><img src="${logoUrl}" alt="" style="max-height:100px;max-width:280px;width:auto;height:auto;display:inline-block;"></div>`
     : '';
   const replacements = {
     '{{logoBlock}}': logoBlock,
