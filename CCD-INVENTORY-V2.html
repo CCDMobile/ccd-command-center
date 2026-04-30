@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.9</title>
+<title>CCD Inventory System v2.9.11</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.9 · Cancellation UI Defenses</div>
+    <div class="login-version">v2.9.11 · Structured ship-to reader</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.9</div>
+      <div class="topbar-version">v2.9.11</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1667,7 +1667,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.9';
+const TOOL_VERSION = '2.9.11';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -3410,38 +3410,55 @@ function shipFromSale(idx) {
     return;
   }
 
-  // Parse ship_to_address — typically "123 Main St, City, ST, 12345" or "123 Main St, City, ST 12345"
+  // v2.9.11 (B1, B-S31-03): prefer structured ship_to_* columns over the legacy
+  // ship_to_address glob. SH v4.4.19+ writes structured columns directly. Older
+  // rows (pre-v4.4.19) still fall through to the glob parser below. This closes
+  // B-S31-03 — the rate-quote panel was mangling the glob string because the
+  // parser couldn't reliably split "City, ST 12345-6789, US"-style globs that
+  // had embedded commas. Structured read avoids the parsing problem entirely.
   const name = sale.ship_to_name || '';
-  const addrRaw = sale.ship_to_address || '';
-  let street = '', city = '', st = '', zip = '';
-
-  if (addrRaw) {
-    const parts = addrRaw.split(',').map(s => s.trim());
-    if (parts.length >= 3) {
-      street = parts[0];
-      city = parts[1];
-      // Last part may be "OR, 97214" or "OR 97214"
-      const stateZip = parts.slice(2).join(' ').trim();
-      const szMatch = stateZip.match(/([A-Z]{2})\s*(\d{5})/i);
-      if (szMatch) {
-        st = szMatch[1].toUpperCase();
-        zip = szMatch[2];
-      } else {
-        st = parts[2] || '';
-        zip = parts[3] || '';
-      }
-    } else if (parts.length === 2) {
-      street = parts[0];
-      const szMatch = parts[1].match(/(.+?)\s+([A-Z]{2})\s*(\d{5})/i);
-      if (szMatch) {
-        city = szMatch[1];
-        st = szMatch[2].toUpperCase();
-        zip = szMatch[3];
-      } else {
+  let street = sale.ship_to_street1 || '';
+  const street2 = sale.ship_to_street2 || '';
+  let city = sale.ship_to_city || '';
+  let st = sale.ship_to_state || '';
+  let zip = sale.ship_to_zip || '';
+  
+  // If structured columns are populated, append street2 onto street1 if present.
+  // Otherwise fall through to the legacy glob parser for old rows.
+  const hasStructured = !!(street || city || st || zip);
+  if (hasStructured) {
+    if (street2) street = street ? `${street} ${street2}` : street2;
+  } else {
+    // Legacy fallback: parse ship_to_address — typically "123 Main St, City, ST, 12345" or "123 Main St, City, ST 12345"
+    const addrRaw = sale.ship_to_address || '';
+    if (addrRaw) {
+      const parts = addrRaw.split(',').map(s => s.trim());
+      if (parts.length >= 3) {
+        street = parts[0];
         city = parts[1];
+        // Last part may be "OR, 97214" or "OR 97214"
+        const stateZip = parts.slice(2).join(' ').trim();
+        const szMatch = stateZip.match(/([A-Z]{2})\s*(\d{5})/i);
+        if (szMatch) {
+          st = szMatch[1].toUpperCase();
+          zip = szMatch[2];
+        } else {
+          st = parts[2] || '';
+          zip = parts[3] || '';
+        }
+      } else if (parts.length === 2) {
+        street = parts[0];
+        const szMatch = parts[1].match(/(.+?)\s+([A-Z]{2})\s*(\d{5})/i);
+        if (szMatch) {
+          city = szMatch[1];
+          st = szMatch[2].toUpperCase();
+          zip = szMatch[3];
+        } else {
+          city = parts[1];
+        }
+      } else {
+        street = addrRaw;
       }
-    } else {
-      street = addrRaw;
     }
   }
 
@@ -3972,16 +3989,21 @@ async function loadShippingHistory(sku) {
       <button class="btn-card" onclick="refreshTrackingStatuses()" id="btnRefreshTracking" style="padding:4px 12px;font-size:11px;">🔄 Refresh Tracking</button>
     </div>`;
     html += `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
-      <colgroup><col style="width:100px"><col style="width:80px"><col style="width:90px"><col style="width:85px"><col style="width:auto"><col style="width:80px"><col style="width:80px"></colgroup>
-      <thead><tr><th>Date</th><th>Carrier</th><th>Service</th><th>Status</th><th>Tracking</th><th>Cost</th><th>vs OB</th></tr></thead>
+      <colgroup><col style="width:100px"><col style="width:130px"><col style="width:80px"><col style="width:90px"><col style="width:85px"><col style="width:auto"><col style="width:80px"><col style="width:80px"></colgroup>
+      <thead><tr><th>Date</th><th>Recipient</th><th>Carrier</th><th>Service</th><th>Status</th><th>Tracking</th><th>Cost</th><th>vs OB</th></tr></thead>
       <tbody>${rows.map((r, idx) => {
         const date = (r.shippo_created_at || r.synced_at || r.created_at || '').substring(0,10);
         const cost = pf(r.label_cost || r.rate_amount);
         const diff = cost > 0 ? currentOB - cost : 0;
         const diffColor = diff >= 0 ? 'var(--green)' : 'var(--red)';
         const ts = trackingStatusDisplay(r);
+        // v2.9.10 (B-S31-02): Recipient column at the top level. Ellipsizes on
+        // overflow with full name in title attribute. Detail row keeps its
+        // Recipient field for context in the expanded view.
+        const recipName = r.recipient_name || '—';
         return `<tr style="cursor:pointer;" onclick="toggleShipDetail(${idx})" title="Click for details">
         <td class="mono">${date}</td>
+        <td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;" title="${escAttr(recipName)}">${escHtml(recipName)}</td>
         <td>${escHtml(r.carrier || '—')}</td>
         <td style="font-size:12px;">${escHtml(r.service_name || '—')}</td>
         <td id="shipStatus_${idx}" style="font-size:11px;font-weight:600;color:${ts.color};">${escHtml(ts.status)}</td>
@@ -3990,7 +4012,7 @@ async function loadShippingHistory(sku) {
         <td class="mono" style="color:${cost > 0 ? diffColor : 'var(--muted)'};text-align:right;">${cost > 0 ? (diff >= 0 ? '+' : '') + '$' + diff.toFixed(2) : '—'}</td>
       </tr>
       <tr id="shipDetail_${idx}" style="display:none;">
-        <td colspan="7" style="padding:0;">
+        <td colspan="8" style="padding:0;">
           <div style="padding:12px 16px;background:var(--bg3);border-left:3px solid var(--gold);">
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px 20px;font-size:12px;">
               <div><span style="color:var(--muted2);">Recipient:</span> ${escHtml(r.recipient_name || '—')}</div>
