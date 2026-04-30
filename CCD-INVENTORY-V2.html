@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.11</title>
+<title>CCD Inventory System v2.9.12</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.11 · Structured ship-to reader</div>
+    <div class="login-version">v2.9.12 · Invoice import schema fix</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.11</div>
+      <div class="topbar-version">v2.9.12</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1667,7 +1667,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.11';
+const TOOL_VERSION = '2.9.12';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -8049,14 +8049,15 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
     }).eq('id', ex.id);
     if (error) throw error;
 
-    // Write invoice_item
+    // Write invoice_item — schema columns are qty_ordered + unit_wholesale_price (B-S33-01)
     if (invoiceId) {
-      await sb.from('invoice_items').insert({
+      const { error: liErr } = await sb.from('invoice_items').insert({
         invoice_id: invoiceId, item_id: ex.id, sku: item.sku,
         product_name: item.description.substring(0, 100),
-        quantity: newQty, unit_price: newWs, ib_shipping_pct: ibPct,
+        qty_ordered: newQty, unit_wholesale_price: newWs, ib_shipping_pct: ibPct,
         line_tariff: item.perUnitTariff || 0, receiving_status: 'received'
       });
+      if (liErr) throw new Error('Invoice line insert failed: ' + liErr.message);
     }
     item._imported = true;
     console.log(`[Import] Merged ${item.sku}: +${newQty} → ${totalQty}, ws $${avgWs.toFixed(2)}`);
@@ -8070,14 +8071,15 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
     }).select('id').single();
     if (error) throw error;
 
-    // Write invoice_item
+    // Write invoice_item — schema columns are qty_ordered + unit_wholesale_price (B-S33-01)
     if (invoiceId && newItem) {
-      await sb.from('invoice_items').insert({
+      const { error: liErr } = await sb.from('invoice_items').insert({
         invoice_id: invoiceId, item_id: newItem.id, sku: item.sku,
         product_name: item.description.substring(0, 100),
-        quantity: item.qty, unit_price: item.unitPrice, ib_shipping_pct: ibPct,
+        qty_ordered: item.qty, unit_wholesale_price: item.unitPrice, ib_shipping_pct: ibPct,
         line_tariff: item.perUnitTariff || 0, receiving_status: 'received'
       });
+      if (liErr) throw new Error('Invoice line insert failed: ' + liErr.message);
     }
     item._imported = true;
     console.log(`[Import] Created ${item.sku}: qty=${item.qty}, ws $${item.unitPrice.toFixed(2)}`);
