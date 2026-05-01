@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.19</title>
+    <title>CCD Sync Hub v4.4.20</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.19 — Clean Build Styles
+           CCD SYNC HUB v4.4.20 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.19 • Cancellation Recon • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.20 • Push Retry Backoff • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -454,7 +454,7 @@
     <!-- TAB BAR -->
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('orders')" id="tabOrders">📦 Orders <span class="badge" id="ordersBadge" style="display:none">0</span></button>
-        <button class="tab-btn" onclick="switchTab('queue')" id="tabQueue">📤 Push Queue <span class="badge" id="queueBadge" style="display:none">0</span></button>
+        <button class="tab-btn" onclick="switchTab('queue')" id="tabQueue">📤 Push Queue <span class="badge" id="queueBadge" style="display:none">0</span><span class="badge" id="failedBadge" style="display:none;background:var(--error);color:#fff;margin-left:4px;" title="Pushes that permanently failed in the last 24h — click Push Queue tab to review">0</span></button>
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
         <button class="tab-btn" onclick="switchTab('wayfair')" id="tabWayfair">🏠 Wayfair</button>
         <button class="tab-btn" onclick="switchTab('settings')" id="tabSettings">⚙️ Settings</button>
@@ -838,11 +838,11 @@
     <script>
 
     // ============================================================
-    // CCD SYNC HUB v4.4.19 — Structured ship-to columns (B-S31-01, B1, B-S31-03)
+    // CCD SYNC HUB v4.4.20 — Push retry exponential backoff + failed-push surface (B-S31-06)
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.19';
+    const SH_VERSION = 'v4.4.20';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -6867,6 +6867,45 @@
             if (queuePending > 0) { queueBadge.textContent = queuePending; queueBadge.style.display = 'inline'; }
             else { queueBadge.style.display = 'none'; }
         }
+        
+        // v4.4.20 (B-S31-06): refresh failed-push badge alongside pending badge.
+        // Fire-and-forget — it's an async DB count query, no need to await.
+        updateFailedPushBadge();
+    }
+    
+    // v4.4.20 (B-S31-06): failed-push attention badge.
+    // Counts sync_queue rows where status='failed' AND updated_at >= 24h ago.
+    // 24h rolloff is automatic — older failures fall out of the window naturally,
+    // no acknowledge logic needed. If this turns out to under-surface in practice,
+    // a future iteration can add header-level placement and/or longer windows.
+    async function updateFailedPushBadge() {
+        const badge = document.getElementById('failedBadge');
+        if (!badge) return;
+        if (!sbClient || !sbConnected) {
+            badge.style.display = 'none';
+            return;
+        }
+        try {
+            const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const { count, error } = await sbClient
+                .from('sync_queue')
+                .select('*', { count: 'exact', head: true })
+                .eq('status', 'failed')
+                .gte('updated_at', cutoff);
+            if (error) {
+                console.warn('[Failed Badge] Count query error:', error.message);
+                return;
+            }
+            if (count && count > 0) {
+                badge.textContent = '⚠ ' + count;
+                badge.style.display = 'inline';
+                badge.title = `${count} push${count === 1 ? '' : 'es'} failed in the last 24h — click Push Queue tab to review`;
+            } else {
+                badge.style.display = 'none';
+            }
+        } catch (e) {
+            console.warn('[Failed Badge] Exception:', e.message);
+        }
     }
     
     // ============================================================
@@ -7221,6 +7260,17 @@
     const SYNC_QUEUE_POLL_MS = 15000; // 15 seconds
     const SYNC_QUEUE_MAX_RETRIES = 3;
     
+    // v4.4.20 (B-S31-06): exponential backoff for retries.
+    // Indexed by retry_count (the count BEFORE the next attempt).
+    //   retry_count=0 → first attempt, no wait
+    //   retry_count=1 → 30s minimum since last failure
+    //   retry_count=2 → 2 min minimum since last failure
+    //   retry_count=3 → terminal (no further attempts; status='failed')
+    // Total recovery window: ~10.5 min from first failure to terminal.
+    // Anchor field is sync_queue.updated_at — stamped on every retry_count
+    // increment by the existing failure handler. No schema change required.
+    const RETRY_BACKOFF_MS = [0, 30000, 120000, 480000];
+    
     function startSyncQueuePolling() {
         if (_syncQueueInterval) clearInterval(_syncQueueInterval);
         _syncQueueInterval = setInterval(pollSyncQueue, SYNC_QUEUE_POLL_MS);
@@ -7430,6 +7480,37 @@
                 _syncQueueProcessing = false;
                 return;
             }
+            
+            // ── v4.4.20 (B-S31-06): backoff filter ──
+            // Skip rows whose last attempt was too recent given retry_count.
+            // updated_at is stamped on every status update including failed-retry
+            // increments (see line ~7600 failure handler). For brand-new rows
+            // (retry_count = 0) backoff is 0 so they pass through immediately.
+            const _now = Date.now();
+            const _backoffSkipped = [];
+            const _readyToProcess = pending.filter(row => {
+                const rc = row.retry_count || 0;
+                const minWait = RETRY_BACKOFF_MS[rc] || 0;
+                if (minWait === 0) return true;
+                const lastAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+                const elapsed = _now - lastAt;
+                if (elapsed < minWait) {
+                    _backoffSkipped.push({ sku: row.fields?.sku, channel: row.channel, rc, waitMs: minWait - elapsed });
+                    return false;
+                }
+                return true;
+            });
+            if (_backoffSkipped.length > 0) {
+                console.log(`[Sync Queue ${SH_VERSION}] Backoff skipped ${_backoffSkipped.length} row(s) not yet ready:`, _backoffSkipped);
+            }
+            if (_readyToProcess.length === 0) {
+                _syncQueueProcessing = false;
+                return;
+            }
+            // From here, operate on _readyToProcess — preserve original variable
+            // name `pending` for the dedup/process loop below by reassigning.
+            pending.length = 0;
+            pending.push(..._readyToProcess);
             
             // ── v4.3.7: DEDUP CASCADE ROWS ──
             // If back-to-back orders wrote multiple cascade rows for the same item+channel,
