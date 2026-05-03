@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.14</title>
+<title>CCD Inventory System v2.9.15</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.14 · Import escape hatch</div>
+    <div class="login-version">v2.9.15 · IP-S1 engine (flag OFF)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.14</div>
+      <div class="topbar-version">v2.9.15</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1673,7 +1673,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.14';
+const TOOL_VERSION = '2.9.15';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1731,7 +1731,14 @@ let state = {
   stats: {},               // Computed stats
   activeTopTab: 'inventory', // Currently active top-level tab
   shippingFilters: null,     // Loaded from settings; null = use defaults
-  hasUnsavedEdits: false     // True when user has edited fields without saving
+  hasUnsavedEdits: false,    // True when user has edited fields without saving
+  // v2.9.15 (IP-S1): data-driven invoice parser cache + feature flag.
+  // Hydrated at boot from invoice_parsers table and settings.use_data_driven_parsers.
+  // When useDataDrivenParsers=false (default) the import path runs legacy
+  // parseInvoiceText with zero behavior change. Flip to true after IP-S2
+  // Test All workflow validates parity.
+  invoiceParsers: [],        // Array of parser configs, ordered by sort_order
+  useDataDrivenParsers: false
 };
 
 let searchTimer = null;
@@ -1819,7 +1826,7 @@ async function showApp() {
 
   // Hydrate localStorage with proxy URLs, API keys, and shipping filters from Supabase settings
   try {
-    const { data } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters','channel_fees']);
+    const { data } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters','channel_fees','use_data_driven_parsers']);
     if (data) {
       for (const row of data) {
         const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
@@ -1842,9 +1849,19 @@ async function showApp() {
           }
           console.log('[Fees] Loaded channel fees from settings');
         }
+        // v2.9.15 (IP-S1): data-driven parser feature flag
+        if (row.key === 'use_data_driven_parsers' && val) {
+          state.useDataDrivenParsers = val.enabled === true;
+          console.log(`[IP-S1] Feature flag use_data_driven_parsers = ${state.useDataDrivenParsers}`);
+        }
       }
     }
   } catch(e) { console.log('Settings hydration skipped:', e.message); }
+
+  // v2.9.15 (IP-S1): load invoice parser configs (independent of flag — we
+  // load them either way so the engine is ready the moment the flag flips).
+  try { await loadInvoiceParsers(); }
+  catch(e) { console.log('[IP-S1] Parser load skipped:', e.message); }
 
   // v2.8.13: Load packing slip profiles from Supabase at login so print paths
   // have the profile cache ready even if Settings tab is never opened.
@@ -7663,7 +7680,11 @@ async function handleInvoicePDF(file) {
     if (lineCount < 10) pdfText = preprocessText(pdfText);
 
     setProgress('Parsing invoice data...', 50);
-    importData = parseInvoiceText(pdfText);
+    // v2.9.15 (IP-S1): dispatch through parseInvoiceTextDispatched, which
+    // routes to legacy parseInvoiceText (default) or data-driven engine
+    // when state.useDataDrivenParsers is true. Default-OFF posture means
+    // zero behavior change vs v2.9.14.
+    importData = parseInvoiceTextDispatched(pdfText);
     setProgress('Checking existing items...', 80);
     await checkImportDuplicates();
     setProgress('Ready for review', 100);
@@ -7725,6 +7746,256 @@ function preprocessText(text) {
 }
 
 // ── Invoice Parser (vendor detection + dispatch) ──
+// ════════════════════════════════════════════════════════════════════════════
+// v2.9.15 (IP-S1): DATA-DRIVEN INVOICE PARSER ENGINE
+// ════════════════════════════════════════════════════════════════════════════
+// Replaces 8 hardcoded vendor parsers with a configurable engine driven by
+// the invoice_parsers Supabase table (seeded by IP-S1 migration on 2026-05-03).
+//
+// Behavior gating: state.useDataDrivenParsers (loaded from settings.use_data_driven_parsers).
+// Default OFF — parseInvoiceTextDispatched routes to legacy parseInvoiceText
+// for zero behavior change vs v2.9.14. Flip the flag (Supabase settings UPDATE
+// or future IP-S2 admin UI) to route through parseInvoiceTextDataDriven.
+//
+// Engine output shape mirrors legacy parseInvoiceText exactly:
+//   { supplierName, invoiceNumber, invoiceDate, shippingCost, items[] }
+// Items shape: { sku, description, qty, unitPrice, lineTotal, confidence,
+//                perUnitTariff? }
+//
+// Vendor detection / invoice number / date / shipping all use the SAME global
+// regex lists as legacy parseInvoiceText. Only line-item parsing is data-driven.
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadInvoiceParsers() {
+  if (!sb) { state.invoiceParsers = []; return; }
+  try {
+    const { data, error } = await sb.from('invoice_parsers')
+      .select('*')
+      .eq('enabled', true)
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    state.invoiceParsers = data || [];
+    console.log(`[IP-S1] Loaded ${state.invoiceParsers.length} invoice parser config(s)`);
+  } catch (e) {
+    console.warn('[IP-S1] Parser load failed:', e.message);
+    state.invoiceParsers = [];
+  }
+}
+
+function parseInvoiceTextDispatched(text) {
+  if (state.useDataDrivenParsers && state.invoiceParsers && state.invoiceParsers.length > 0) {
+    console.log(`[IP-S1] Routing through data-driven engine (${state.invoiceParsers.length} parsers loaded)`);
+    return parseInvoiceTextDataDriven(text);
+  }
+  return parseInvoiceText(text);
+}
+
+function parseInvoiceTextDataDriven(text) {
+  const inv = { supplierName:'', invoiceNumber:'', invoiceDate:'', shippingCost:0, items:[] };
+
+  // ── Vendor detection (data-driven, ordered by sort_order ASC) ──
+  let matchedParser = null;
+  for (const parser of state.invoiceParsers) {
+    try {
+      const re = new RegExp(parser.detection_pattern, parser.detection_flags || 'i');
+      if (re.test(text)) {
+        inv.supplierName = parser.display_name;
+        matchedParser = parser;
+        break;
+      }
+    } catch (e) {
+      console.warn(`[IP-S1] Detection regex error for ${parser.vendor_key}: ${e.message}`);
+    }
+  }
+
+  // ── Invoice number / date / shipping (same global logic as legacy) ──
+  const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
+    /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
+    /(INV-\d{6,})/, /(SO-\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
+  const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
+  for (const p of invPatterns) {
+    const m = text.match(p);
+    if (m && m[1].length > 3 && !falsePosSet.has(m[1].toLowerCase())) {
+      inv.invoiceNumber = m[1].trim();
+      break;
+    }
+  }
+  const datePatterns = [/Invoice Date:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i, /Date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i, /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/];
+  for (const p of datePatterns) {
+    const m = text.match(p);
+    if (m) { inv.invoiceDate = fmtDate(m[1]); break; }
+  }
+  const shipPatterns = [/FRT\d+\s+([\d,]+\.[\d]{2})/i, /Freight[:\s]+\$?([\d,]+\.?\d*)/i, /Shipping[:\s&]+[Hh]andling[:\s]+\$?([\d,]+\.?\d*)/i,
+    /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i];
+  for (const p of shipPatterns) {
+    const m = text.match(p);
+    if (m) { inv.shippingCost = parseFloat(m[1].replace(/,/g,'')); break; }
+  }
+
+  // ── Line items (data-driven dispatch via runLineItemParser) ──
+  if (matchedParser) {
+    inv.items = runLineItemParser(text, matchedParser);
+  } else {
+    // No vendor matched — Adams seed has the generic-pattern, so a fully
+    // unrecognized invoice falls through to legacy parseGeneric. Preserves
+    // v2.9.14 behavior for invoices that match no detection pattern at all.
+    inv.items = parseGeneric(text);
+  }
+
+  console.log(`[IP-S1 Engine] ${inv.supplierName || 'Unknown'} #${inv.invoiceNumber}: ${inv.items.length} items, shipping $${inv.shippingCost}`);
+  return inv;
+}
+
+// Run the configured patterns for a parser against text. Returns items[] array.
+// Patterns are tried in order; the first pattern that yields any items wins
+// (mirrors legacy "primary regex with fallback regexes" pattern in every
+// hand-coded parser).
+function runLineItemParser(text, parser) {
+  const items = [];
+  const patterns = Array.isArray(parser.patterns) ? parser.patterns : [];
+
+  for (const pattern of patterns) {
+    const mode = pattern.iteration_mode_override || parser.iteration_mode || 'flat_text';
+
+    let regex;
+    try {
+      regex = new RegExp(pattern.regex, pattern.flags || '');
+    } catch (e) {
+      console.warn(`[IP-S1] Pattern regex error for ${parser.vendor_key}: ${e.message}`);
+      continue;
+    }
+
+    const skipRe = pattern.skip_keywords_regex
+      ? safeRegex(pattern.skip_keywords_regex, 'i')
+      : null;
+
+    if (mode === 'line_by_line') {
+      const lines = text.split('\n');
+      for (const line of lines) {
+        // Reset lastIndex when the regex has /g, since match() on a sticky/global
+        // regex respects lastIndex. We use match (non-global) in line mode anyway.
+        const m = line.match(regex);
+        if (!m) continue;
+        const item = extractItemFromMatch(m, line, pattern, parser, skipRe);
+        if (item) items.push(item);
+      }
+    } else {
+      // flat_text: collapse whitespace then iterate global matches
+      const flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
+      regex.lastIndex = 0;
+      if (regex.global) {
+        let m;
+        while ((m = regex.exec(flat)) !== null) {
+          const item = extractItemFromMatch(m, flat, pattern, parser, skipRe);
+          if (item) items.push(item);
+          if (m.index === regex.lastIndex) regex.lastIndex++;  // safety against zero-width
+        }
+      } else {
+        const m = flat.match(regex);
+        if (m) {
+          const item = extractItemFromMatch(m, flat, pattern, parser, skipRe);
+          if (item) items.push(item);
+        }
+      }
+    }
+
+    if (items.length > 0) break;  // primary pattern won; skip fallbacks
+  }
+
+  return items;
+}
+
+function safeRegex(source, flags) {
+  try { return new RegExp(source, flags || ''); }
+  catch (e) { console.warn(`[IP-S1] Bad regex source: ${source} — ${e.message}`); return null; }
+}
+
+// Build a single item from a regex match + pattern config. Returns null when
+// the match should be skipped (skip_keywords hit, validation failed, etc.).
+function extractItemFromMatch(match, lineOrFlat, pattern, parser, skipRe) {
+  const groups = pattern.groups || {};
+  const extras = parser.extras || {};
+
+  let sku         = groups.sku         ? String(match[groups.sku] || '')         : '';
+  let qty         = groups.qty         ? parseInt(match[groups.qty])             : null;
+  let description = groups.description ? String(match[groups.description] || '').trim() : '';
+  let unitPrice   = groups.unit_price  ? parseFloat(String(match[groups.unit_price]  || '0').replace(/,/g,'')) : 0;
+  let lineTotal   = groups.line_total  ? parseFloat(String(match[groups.line_total]  || '0').replace(/,/g,'')) : 0;
+
+  // SKU char strip (Foreside leading-quote case)
+  if (extras.sku_strip_chars && sku) {
+    for (const c of String(extras.sku_strip_chars)) sku = sku.split(c).join('');
+  }
+
+  // Description derivation from raw line (PBK case)
+  if (extras.derive_description_from_line) {
+    let derived = String(lineOrFlat || '');
+    if (sku) derived = derived.replace(sku, '');
+    if (extras.derive_description_strip_regex) {
+      const stripRe = safeRegex(extras.derive_description_strip_regex, '');
+      if (stripRe) derived = derived.replace(stripRe, '');
+    }
+    description = derived.trim();
+  }
+
+  // Description regex replacements
+  if (Array.isArray(pattern.description_replacements)) {
+    for (const r of pattern.description_replacements) {
+      const re = safeRegex(r.regex, r.flags || '');
+      if (re) description = description.replace(re, r.replacement || '');
+    }
+  }
+  description = description.trim();
+
+  // Skip via skip_keywords_regex
+  if (skipRe && skipRe.test(description)) return null;
+
+  // Min description length (Adams / generic case)
+  if (extras.min_description_length && description.length < extras.min_description_length) return null;
+
+  // Validations
+  if (extras.validate_qty_positive && (!qty || qty <= 0)) return null;
+  if (extras.validate_price_positive && (!unitPrice || unitPrice <= 0)) return null;
+
+  // CTW: derive qty from line_total / unit_price when configured
+  if (extras.qty_from_amount_div_price) {
+    if (unitPrice > 0) qty = Math.round(lineTotal / unitPrice);
+    else if (qty === null || isNaN(qty)) return null;
+  }
+
+  if (qty === null || isNaN(qty)) qty = 1;
+
+  // Fallback description from template (e.g. "CWI {sku}")
+  if (!description && extras.fallback_description_template) {
+    description = String(extras.fallback_description_template).replace('{sku}', sku);
+  }
+
+  const item = {
+    sku,
+    description: description || sku,
+    qty,
+    unitPrice,
+    lineTotal,
+    confidence: pattern.confidence || 'high'
+  };
+
+  // K&K: per-line tariff capture
+  if (extras.extract_tariff_pattern) {
+    const tRe = safeRegex(extras.extract_tariff_pattern.regex, extras.extract_tariff_pattern.flags || '');
+    if (tRe) {
+      const tm = String(lineOrFlat || '').match(tRe);
+      if (tm && tm[1]) item.perUnitTariff = parseFloat(tm[1]);
+    }
+  }
+
+  return item;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// END v2.9.15 IP-S1 ENGINE — legacy parseInvoiceText follows below, preserved
+// verbatim. The dispatcher above routes to it whenever the feature flag is OFF.
+// ════════════════════════════════════════════════════════════════════════════
+
 function parseInvoiceText(text) {
   const inv = { supplierName:'', invoiceNumber:'', invoiceDate:'', shippingCost:0, items:[] };
 
