@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.20</title>
+    <title>CCD Sync Hub v4.4.21</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.20 — Clean Build Styles
+           CCD SYNC HUB v4.4.21 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.20 • Push Retry Backoff • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.21 • Push Retry Backoff (fixed) • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -838,11 +838,28 @@
     <script>
 
     // ============================================================
+    // CCD SYNC HUB v4.4.21 — Backoff/badge schema fix (B-S34-01)
+    // Repairs v4.4.20's two flagship features which were dead-on-arrival:
+    //   1. Backoff filter and failed-push badge queried sync_queue.updated_at
+    //      — column does not exist in this schema (no triggers either; see
+    //      Image 2 of S34 schema audit). Both queries silently fell over:
+    //      badge query threw 42703 caught in try/catch, backoff read undefined
+    //      → lastAt=0 → elapsed always exceeded any window → backoff inert.
+    //   2. Retry-path UPDATEs at lines 7680/7699 stamped status, retry_count,
+    //      error_message — but no timestamp at all. So even with column
+    //      renamed to processed_at, retry-pending rows had stale or NULL
+    //      processed_at → lastAt=0 → backoff still bypassed.
+    //
+    // v4.4.21 fix: anchor on processed_at (which exists, is stamped on every
+    // success in this codebase, and now also on every retry/failure update).
+    // Both retry handlers and the terminal-failure handler now write
+    // processed_at: new Date().toISOString().
+    //
     // CCD SYNC HUB v4.4.20 — Push retry exponential backoff + failed-push surface (B-S31-06)
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.20';
+    const SH_VERSION = 'v4.4.21';
     const SH_VERSION_KEY = 'synchub';
 
     async function registerToolVersion(client, toolKey, toolVersion) {
@@ -6874,7 +6891,9 @@
     }
     
     // v4.4.20 (B-S31-06): failed-push attention badge.
-    // Counts sync_queue rows where status='failed' AND updated_at >= 24h ago.
+    // v4.4.21 (B-S34-01): anchors on processed_at, not updated_at (which
+    // does not exist on sync_queue). Counts sync_queue rows where
+    // status='failed' AND processed_at >= 24h ago.
     // 24h rolloff is automatic — older failures fall out of the window naturally,
     // no acknowledge logic needed. If this turns out to under-surface in practice,
     // a future iteration can add header-level placement and/or longer windows.
@@ -6891,7 +6910,7 @@
                 .from('sync_queue')
                 .select('*', { count: 'exact', head: true })
                 .eq('status', 'failed')
-                .gte('updated_at', cutoff);
+                .gte('processed_at', cutoff);
             if (error) {
                 console.warn('[Failed Badge] Count query error:', error.message);
                 return;
@@ -7261,14 +7280,18 @@
     const SYNC_QUEUE_MAX_RETRIES = 3;
     
     // v4.4.20 (B-S31-06): exponential backoff for retries.
+    // v4.4.21 (B-S34-01): corrected anchor column from updated_at (which
+    // does not exist) to processed_at (which exists and is now stamped on
+    // every retry-path UPDATE — see lines ~7682 and ~7701).
     // Indexed by retry_count (the count BEFORE the next attempt).
     //   retry_count=0 → first attempt, no wait
     //   retry_count=1 → 30s minimum since last failure
     //   retry_count=2 → 2 min minimum since last failure
     //   retry_count=3 → terminal (no further attempts; status='failed')
     // Total recovery window: ~10.5 min from first failure to terminal.
-    // Anchor field is sync_queue.updated_at — stamped on every retry_count
-    // increment by the existing failure handler. No schema change required.
+    // Anchor field is sync_queue.processed_at — stamped on every status
+    // change (success, failure, retry) by the success handler at ~7665 and
+    // the failure handlers at ~7682/7701. No schema change required.
     const RETRY_BACKOFF_MS = [0, 30000, 120000, 480000];
     
     function startSyncQueuePolling() {
@@ -7482,17 +7505,19 @@
             }
             
             // ── v4.4.20 (B-S31-06): backoff filter ──
+            // ── v4.4.21 (B-S34-01): anchor on processed_at, not updated_at ──
             // Skip rows whose last attempt was too recent given retry_count.
-            // updated_at is stamped on every status update including failed-retry
-            // increments (see line ~7600 failure handler). For brand-new rows
-            // (retry_count = 0) backoff is 0 so they pass through immediately.
+            // processed_at is stamped on every status update — by the success
+            // handler at ~7665 and (after v4.4.21) by the retry handlers at
+            // ~7682 and ~7701. For brand-new rows (retry_count = 0) backoff
+            // is 0 so they pass through immediately even when processed_at is NULL.
             const _now = Date.now();
             const _backoffSkipped = [];
             const _readyToProcess = pending.filter(row => {
                 const rc = row.retry_count || 0;
                 const minWait = RETRY_BACKOFF_MS[rc] || 0;
                 if (minWait === 0) return true;
-                const lastAt = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+                const lastAt = row.processed_at ? new Date(row.processed_at).getTime() : 0;
                 const elapsed = _now - lastAt;
                 if (elapsed < minWait) {
                     _backoffSkipped.push({ sku: row.fields?.sku, channel: row.channel, rc, waitMs: minWait - elapsed });
@@ -7677,10 +7702,15 @@
                 const newRetry = (row.retry_count || 0) + 1;
                 const newStatus = newRetry >= SYNC_QUEUE_MAX_RETRIES ? 'failed' : 'pending';
                 
+                // v4.4.21 (B-S34-01): stamp processed_at on every retry write so
+                // the backoff filter at ~7518 can anchor on last-attempt time.
+                // Without this, retry-pending rows have NULL processed_at →
+                // lastAt=0 → backoff bypassed (the v4.4.20 silent regression).
                 await sbClient.from('sync_queue').update({
                     status: newStatus,
                     retry_count: newRetry,
-                    error_message: result?.error || 'Unknown error'
+                    error_message: result?.error || 'Unknown error',
+                    processed_at: new Date().toISOString()
                 }).eq('id', row.id);
                 
                 console.warn(`⚠️ [Sync Queue] ${channel} push failed for ${fields.sku}: ${result?.error} (retry ${newRetry}/${SYNC_QUEUE_MAX_RETRIES})`);
@@ -7695,11 +7725,13 @@
             }
         } catch (e) {
             // Exception — increment retry
+            // v4.4.21 (B-S34-01): stamp processed_at (see ~7705 for rationale).
             const newRetry = (row.retry_count || 0) + 1;
             await sbClient.from('sync_queue').update({
                 status: newRetry >= SYNC_QUEUE_MAX_RETRIES ? 'failed' : 'pending',
                 retry_count: newRetry,
-                error_message: e.message
+                error_message: e.message,
+                processed_at: new Date().toISOString()
             }).eq('id', row.id);
             
             console.error(`❌ [Sync Queue] Exception processing ${fields.sku}:`, e.message);
