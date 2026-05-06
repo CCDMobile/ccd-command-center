@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.21</title>
+<title>CCD Inventory System v2.9.22</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.21 · IP-S2 parser fix (B-S35-04 K&amp;K)</div>
+    <div class="login-version">v2.9.22 · IP-S2 close-out (Foreside + cleanup)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.21</div>
+      <div class="topbar-version">v2.9.22</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1696,7 +1696,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.21';
+const TOOL_VERSION = '2.9.22';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -7855,7 +7855,7 @@ function parseInvoiceTextDataDriven(text) {
   // ── Invoice number / date / shipping (same global logic as legacy) ──
   const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
-    /(INV-\d{6,})/, /(SO-\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
+    /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
   const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
   for (const p of invPatterns) {
     const m = text.match(p);
@@ -8059,7 +8059,7 @@ function parseInvoiceText(text) {
   // Invoice number
   const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
-    /(INV-\d{6,})/, /(SO-\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
+    /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
   const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
   for (const p of invPatterns) { const m = text.match(p); if (m && m[1].length > 3 && !falsePosSet.has(m[1].toLowerCase())) { inv.invoiceNumber = m[1].trim(); break; } }
 
@@ -8165,13 +8165,38 @@ function parsePBK(text) {
 }
 
 function parseForeside(text) {
+  // v2.9.22 (B-S35-05): rewritten to match REAL Foreside format. Foreside
+  // (C&F Enterprises / Shopify) switched to email confirmation delivery
+  // with per-item block:
+  //   <description, 2-3 lines>
+  //   $<unit_price>
+  //   SKU: FD<sku>
+  //   Vendor: Foreside Home & Garden
+  //   Quantity: <n>
+  //   Total: $<line_total>
+  // The old tabular regex returned 0 items on every real Foreside email
+  // since the format change. Surfaced via Test All harness in v2.9.18 (S35).
+  //
+  // Approach: flat_text mode + lookbehind anchored on the previous-item
+  // terminator (Total: $X.XX) OR the "Order Details:" prelude (first item).
+  // Description lazy-captured then cleaned of Outlook page-break artifacts
+  // (URL + date stamp + "Inbox - ... - Outlook" header) and the Shopify
+  // template "line.title " prefix that occasionally leaks into descriptions.
+  //
+  // Validated against fixture in Node: 8 items / $245.75 = Subtotal.
+  // Lookbehind requires Chrome 62+ / Safari 16.4+ / Firefox 78+ (all current).
   const items = [], flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
-  const p = /\b("?[A-Z]{2,}\d{3,}[A-Z0-9]*)\s+(.*?)\s+(\d+)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
+  const p = /(?<=Total: \$[\d.]+ |Order Details: )(.+?) \$([\d.]+) SKU: (FD\w+) Vendor: Foreside Home & Garden Quantity: (\d+) Total: \$([\d.]+)/g;
   let m;
   while ((m = p.exec(flat)) !== null) {
-    const desc = m[2].trim();
+    const desc = m[1]
+      .replace(/https?:\/\/\S+\s+\d+\/\d+\s+\d+\/\d+\/\d+,?\s+\d+:\d+\s*[AP]M\s+Inbox[^O]*?Outlook/gi, '')
+      .replace(/^\s*line\.title\s+/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (/Subtotal|Shipping|Total|Item#/i.test(desc)) continue;
-    items.push({ sku:m[1].replace(/"/g,''), description:desc, qty:parseInt(m[3]), unitPrice:parseFloat(m[4].replace(/,/g,'')), lineTotal:parseFloat(m[5].replace(/,/g,'')), confidence:'high' });
+    items.push({ sku:m[3], description:desc, qty:parseInt(m[4]), unitPrice:parseFloat(m[2]), lineTotal:parseFloat(m[5]), confidence:'high' });
+    if (m.index === p.lastIndex) p.lastIndex++;
   }
   return items;
 }
@@ -11061,7 +11086,14 @@ function renderCutoverPanel(results) {
 
   if (noteEl) {
     if (qualityIssues > 0 && regressed === 0) {
-      noteEl.innerHTML = `<span style="color:var(--gold);">Note: ${qualityIssues} parser(s) return zero items in both engines (e.g. K&K, Foreside). Flipping is parity-safe but those parsers remain broken — fix separately.</span>`;
+      // v2.9.22 (B-S35-09): vendor list dynamically computed from results
+      // (was hardcoded "K&K, Foreside" pre-S36). Self-corrects as parsers
+      // get fixed; the outer if-gate hides the whole note when list is empty.
+      const brokenList = results
+        .filter(r => r.hasFixture && r.legacyCount === 0 && r.ddCount === 0)
+        .map(r => r.display_name)
+        .join(', ');
+      noteEl.innerHTML = `<span style="color:var(--gold);">Note: ${qualityIssues} parser(s) return zero items in both engines (${brokenList}). Flipping is parity-safe but those parsers remain broken — fix separately.</span>`;
     } else {
       noteEl.textContent = '';
     }
