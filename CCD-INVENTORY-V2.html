@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.22</title>
+<title>CCD Inventory System v2.9.23</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.22 · IP-S2 close-out (Foreside + cleanup)</div>
+    <div class="login-version">v2.9.23 · Sunset Vista smoke fix (Inv# + discount)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.22</div>
+      <div class="topbar-version">v2.9.23</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1696,7 +1696,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.22';
+const TOOL_VERSION = '2.9.23';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -7853,9 +7853,14 @@ function parseInvoiceTextDataDriven(text) {
   }
 
   // ── Invoice number / date / shipping (same global logic as legacy) ──
+  // v2.9.23 (B-S36-01): added /Invoice No\.?:?\s+(...)/i (Sunset Vista
+  // labeled form) and /\*(\d{5,})\*/ (barcode-bracket fallback for
+  // vendors who print the invoice # bracketed by asterisks).
   const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
+    /Invoice No\.?:?\s+([A-Z0-9-]+)/i,
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
-    /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
+    /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i,
+    /\*(\d{5,})\*/];
   const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
   for (const p of invPatterns) {
     const m = text.match(p);
@@ -7884,6 +7889,34 @@ function parseInvoiceTextDataDriven(text) {
     // unrecognized invoice falls through to legacy parseGeneric. Preserves
     // v2.9.14 behavior for invoices that match no detection pattern at all.
     inv.items = parseGeneric(text);
+  }
+
+  // ── v2.9.23 (B-S36-02): Invoice-level percentage discount post-processing ──
+  // Some vendors (Sunset Vista observed) apply a percentage discount at the
+  // invoice level rather than per-line. When extras.apply_invoice_discount
+  // is true, scan the raw text for a "Discount X.XX%" line and apply that
+  // percentage to each item's unitPrice (recompute lineTotal). The percentage
+  // varies per invoice — sometimes absent, sometimes 10%, possibly higher —
+  // so it's read live from text on every import. No hardcoded value.
+  // Sanity-bounded 0-50% to reject pathological matches. Math: line_total is
+  // computed from unrounded discounted unit price, then both rounded to 2dp
+  // independently — matches the supplier-side invoice math (e.g. SV invoice
+  // 232735: 60 × $3.375 = $202.50, displayed unit $3.38, sum = $694.98).
+  if (matchedParser && matchedParser.extras && matchedParser.extras.apply_invoice_discount && inv.items.length > 0) {
+    const dm = text.match(/Discount\s+(\d+(?:\.\d+)?)\s*%/i);
+    if (dm) {
+      const pct = parseFloat(dm[1]);
+      if (pct > 0 && pct < 50) {
+        const factor = 1 - pct / 100;
+        inv.items.forEach(it => {
+          const newUnit = it.unitPrice * factor;
+          const newLine = it.qty * newUnit;
+          it.unitPrice = Math.round(newUnit * 100) / 100;
+          it.lineTotal = Math.round(newLine * 100) / 100;
+        });
+        console.log(`[IP-S1 Engine] ${inv.supplierName}: applied ${pct}% invoice-level discount to ${inv.items.length} items`);
+      }
+    }
   }
 
   console.log(`[IP-S1 Engine] ${inv.supplierName || 'Unknown'} #${inv.invoiceNumber}: ${inv.items.length} items, shipping $${inv.shippingCost}`);
@@ -8056,10 +8089,13 @@ function parseInvoiceText(text) {
   ];
   for (const v of vendors) { if (v.p.test(text)) { inv.supplierName = v.name; break; } }
 
-  // Invoice number
+  // Invoice number — v2.9.23 (B-S36-01): added "Invoice No." labeled form
+  // (Sunset Vista) and \*(\d{5,})\* barcode-bracket fallback.
   const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
+    /Invoice No\.?:?\s+([A-Z0-9-]+)/i,
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
-    /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i];
+    /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i,
+    /\*(\d{5,})\*/];
   const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
   for (const p of invPatterns) { const m = text.match(p); if (m && m[1].length > 3 && !falsePosSet.has(m[1].toLowerCase())) { inv.invoiceNumber = m[1].trim(); break; } }
 
@@ -8214,6 +8250,13 @@ function parseSunsetVista(text) {
   //   "24 24 RP92375 8.25\" x 1.25\" Rain Gauge Glass Tube 1.55 37.20"
   // SKU pattern: optional letters + 4+ digits + optional alphanumeric.
   // Use ship_qty (group 2) as inventory qty.
+  //
+  // v2.9.23 (B-S36-02): Sunset Vista applies a percentage discount at
+  // invoice level (not per-line). Real wholesale = list × (1 - pct/100).
+  // Discount line in invoice: "Discount X.XX%: -<amount>". Pct varies
+  // per invoice (sometimes absent, sometimes 10%, possibly higher) — read
+  // live, no hardcoded value. Mirrors the DD engine's invoice-level discount
+  // post-processing path (gated there by extras.apply_invoice_discount).
   const items = [], lines = text.split('\n');
   const lineP = /^\s*(\d+)\s+(\d+)\s+([A-Z]*\d{4,}[A-Z0-9-]*)\s+(.+?)\s+([\d.]+)\s+([\d,.]+)\s*$/;
   for (const line of lines) {
@@ -8227,6 +8270,20 @@ function parseSunsetVista(text) {
     if (shipQty <= 0 || unitPrice <= 0) continue;
     if (/Subtotal|Shipping|Total|Tax|Discount|Payment|Balance/i.test(desc)) continue;
     items.push({ sku, description: desc, qty: shipQty, unitPrice, lineTotal, confidence:'high' });
+  }
+  // v2.9.23 (B-S36-02): apply invoice-level percentage discount if present
+  const dm = text.match(/Discount\s+(\d+(?:\.\d+)?)\s*%/i);
+  if (dm) {
+    const pct = parseFloat(dm[1]);
+    if (pct > 0 && pct < 50) {
+      const factor = 1 - pct / 100;
+      items.forEach(it => {
+        const newUnit = it.unitPrice * factor;
+        const newLine = it.qty * newUnit;
+        it.unitPrice = Math.round(newUnit * 100) / 100;
+        it.lineTotal = Math.round(newLine * 100) / 100;
+      });
+    }
   }
   return items;
 }
