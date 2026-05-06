@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.15</title>
+<title>CCD Inventory System v2.9.21</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -230,7 +230,7 @@ tbody td{padding:10px 14px;white-space:nowrap;}
 .card-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 .card-field{display:flex;flex-direction:column;gap:3px;}
 .card-field-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.3px;}
-.card-field-value{font-size:13px;color:var(--text);font-weight:500;}
+.card-field-value{font-size:13px;color:var(--text);font-weight:500;padding:7px 10px;border:1px solid transparent;}
 .card-field-input{padding:7px 10px;background:var(--bg1);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--font);outline:none;transition:var(--transition);}
 .card-field-input:focus{border-color:var(--gold);}
 .card-field-input.mono{font-family:var(--mono);}
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.15 · IP-S1 engine (flag OFF)</div>
+    <div class="login-version">v2.9.21 · IP-S2 parser fix (B-S35-04 K&amp;K)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.15</div>
+      <div class="topbar-version">v2.9.21</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1077,6 +1077,28 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
               <div id="shiptoFilterChecks" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;"></div>
             </div>
           </div>
+          <!-- Invoice Parsers (v2.9.17, IP-S2 step 2: index UI; v2.9.18 step 3-4: Test All + Cutover) -->
+          <div class="settings-section">
+            <div class="settings-section-title">🧾 Invoice Parsers</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:12px;">
+              Configurable parsers backing the Invoice Import tool. Engine status:
+              <span id="settingsParserMode" style="font-weight:600;color:var(--text);">—</span>
+            </div>
+            <!-- v2.9.18: Test All + Back-to-index toolbar -->
+            <div id="parsersToolbar" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+              <button class="btn-card" onclick="runAndRenderTestAll()" id="btnTestAll" style="font-size:12px;padding:6px 12px;">🧪 Test All</button>
+              <button class="btn-card" onclick="backToParsersIndex()" id="btnBackToIndex" style="font-size:12px;padding:6px 12px;display:none;">← Back to Index</button>
+            </div>
+            <div id="settingsParsersList" style="font-size:12px;color:var(--muted);">Loading parsers...</div>
+            <div id="settingsParsersFooter" style="margin-top:10px;font-size:11px;color:var(--muted);"></div>
+            <!-- v2.9.18: Cutover support -->
+            <div id="parsersCutover" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);display:none;">
+              <div style="font-size:11px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">⚙ Cutover Control</div>
+              <div id="parsersCutoverStatus" style="font-size:11px;color:var(--muted);margin-bottom:10px;">Run Test All to see cutover readiness.</div>
+              <button class="btn-card" onclick="flipDataDrivenFlag()" id="btnFlipFlag" style="font-size:12px;padding:6px 12px;" disabled>Flip Flag</button>
+              <div id="parsersCutoverNote" style="margin-top:8px;font-size:10px;color:var(--muted);"></div>
+            </div>
+          </div>
         </div>
         <!-- RIGHT COLUMN -->
         <div>
@@ -1490,8 +1512,9 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         </div>
       </div>
       <!-- v2.9.14 (B-S33-08): parse-failure warning banner. Surfaces when parseInvoiceText returns 0 items. -->
-      <div id="importParseWarning" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(220,38,38,0.08);border:1px solid var(--error);border-radius:var(--radius);">
-        <div style="font-size:13px;font-weight:600;color:var(--error);margin-bottom:4px;">⚠️ Could not parse line items from this invoice.</div>
+      <!-- v2.9.16 (B-S35-01): switched var(--error) → var(--red); --error was never defined, banner had silently rendered without colored border/text since v2.9.14 ship. -->
+      <div id="importParseWarning" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(220,38,38,0.08);border:1px solid var(--red);border-radius:var(--radius);">
+        <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:4px;">⚠️ Could not parse line items from this invoice.</div>
         <div style="font-size:12px;color:var(--text-dim);">The parser for <span id="impParseFailVendor" style="font-weight:600;">this vendor</span> may be out of date. Add line items manually below using <strong>+ Add Row</strong>, or upload a different PDF.</div>
       </div>
       <!-- Review table -->
@@ -1673,7 +1696,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.15';
+const TOOL_VERSION = '2.9.21';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1738,7 +1761,19 @@ let state = {
   // parseInvoiceText with zero behavior change. Flip to true after IP-S2
   // Test All workflow validates parity.
   invoiceParsers: [],        // Array of parser configs, ordered by sort_order
-  useDataDrivenParsers: false
+  useDataDrivenParsers: false,
+  // v2.9.17 (IP-S2): test fixtures for parity-validation harness.
+  // Hydrated at boot from settings.invoice_parser_fixtures (single JSONB row,
+  // shape: { vendor_key: "<raw text>", ... }). Empty object until fixtures
+  // are pasted in per-vendor.
+  invoiceParserFixtures: {},
+  // v2.9.18 (IP-S2 step 3-4): Test All harness + cutover state.
+  // testAllResults: array of per-vendor result objects, populated when
+  // runAndRenderTestAll() runs. Cleared when backToParsersIndex() is called.
+  // testAllExpanded: Set of vendor_keys whose detail rows are expanded
+  // in the Test All result table.
+  testAllResults: null,
+  testAllExpanded: new Set()
 };
 
 let searchTimer = null;
@@ -1826,7 +1861,7 @@ async function showApp() {
 
   // Hydrate localStorage with proxy URLs, API keys, and shipping filters from Supabase settings
   try {
-    const { data } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters','channel_fees','use_data_driven_parsers']);
+    const { data } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters','channel_fees','use_data_driven_parsers','invoice_parser_fixtures']);
     if (data) {
       for (const row of data) {
         const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
@@ -1853,6 +1888,12 @@ async function showApp() {
         if (row.key === 'use_data_driven_parsers' && val) {
           state.useDataDrivenParsers = val.enabled === true;
           console.log(`[IP-S1] Feature flag use_data_driven_parsers = ${state.useDataDrivenParsers}`);
+        }
+        // v2.9.17 (IP-S2): test fixtures for parity-validation harness
+        if (row.key === 'invoice_parser_fixtures' && val && typeof val === 'object') {
+          state.invoiceParserFixtures = val;
+          const fixtureCount = Object.keys(val).length;
+          console.log(`[IP-S2] Loaded ${fixtureCount} invoice parser fixture(s)`);
         }
       }
     }
@@ -5103,7 +5144,9 @@ async function renderWriteoff(item) {
 async function renderActivityTab(item) {
   $('sub-activity').innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading activity...</div>';
   try {
-    const { data, error } = await sb.from('activity_log').select('*').eq('sku', item.sku).order('created_at', { ascending: false }).limit(30);
+    // v2.9.16 (B-S34-03): order by `timestamp` (canonical NOT NULL column with now() default).
+    // `created_at` is nullable in this schema — sorting on it triggered REST 400 / left rows orphaned.
+    const { data, error } = await sb.from('activity_log').select('*').eq('sku', item.sku).order('timestamp', { ascending: false }).limit(30);
     if (error) throw error;
     const rows = data || [];
 
@@ -5120,7 +5163,8 @@ async function renderActivityTab(item) {
       else if (action.includes('error') || action.includes('fail')) dotClass = 'error';
       const device = r.details?.source || r.device || 'Desktop';
       const deviceLabel = device.charAt(0).toUpperCase() + device.slice(1).replace(/_/g,' ');
-      const ts = r.created_at ? new Date(r.created_at).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '';
+      // v2.9.16 (B-S34-03): read `timestamp` (canonical NOT NULL column).
+      const ts = r.timestamp ? new Date(r.timestamp).toLocaleString('en-US', { month:'short', day:'numeric', year:'numeric', hour:'numeric', minute:'2-digit' }) : '';
       return `<div class="activity-item">
         <div class="activity-dot ${dotClass}"></div>
         <div>
@@ -8093,15 +8137,29 @@ function parseCTW(text) {
 }
 
 function parsePBK(text) {
+  // v2.9.19 (B-S35-07): rewritten to match REAL PBK format which is qty-first.
+  // Old regex `^\s*([A-Z0-9]{4,}-?\d*)\s+...` expected SKU-first and never
+  // matched a real PBK invoice — silently failed on every import since at
+  // least v2.9.14. Surfaced via Test All harness in v2.9.18 (S35).
+  // Real PBK line format:
+  //   <qty> <item#> <description> <UPC 12 digits> <page#> $<reg> $<sale> EACH $<ext>
+  // Example:
+  //   "4 102398 Spiral Notebook - Best Life 190134023980 294 $6.00 $3.60 EACH $14.40"
+  // Use sale price (group 5) as unit_price since that's the actually-charged
+  // price (qty × salePrice = ext, NOT qty × regPrice = ext).
   const items = [], lines = text.split('\n');
-  const lineP = /^\s*([A-Z0-9]{4,}-?\d*)\s+.*?(\d+)\s+\$?([\d.]+)\s+\$?([\d.]+)/;
+  const lineP = /^\s*(\d+)\s+([A-Z0-9]{4,}-?\d*)\s+(.+?)\s+\d{8,}\s+\S+\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})\s+EACH\s+\$?([\d,]+\.[\d]{2})/i;
   for (const line of lines) {
     const m = line.match(lineP);
     if (!m) continue;
-    const sku = m[1], qty = parseInt(m[2]), price = parseFloat(m[3]), total = parseFloat(m[4]);
-    if (qty <= 0 || price <= 0) continue;
-    const desc = line.replace(sku,'').replace(/\d+\s+\$?[\d.]+\s+\$?[\d.]+/,'').trim();
-    items.push({ sku, description:desc||`PBK ${sku}`, qty, unitPrice:price, lineTotal:total, confidence:'high' });
+    const qty = parseInt(m[1]);
+    const sku = m[2];
+    const desc = m[3].trim();
+    const salePrice = parseFloat(m[5].replace(/,/g,''));
+    const lineTotal = parseFloat(m[6].replace(/,/g,''));
+    if (qty <= 0 || salePrice < 0) continue;
+    if (/Subtotal|Total|Tax|Freight/i.test(desc)) continue;
+    items.push({ sku, description: desc || `PBK ${sku}`, qty, unitPrice: salePrice, lineTotal, confidence:'high' });
   }
   return items;
 }
@@ -8119,52 +8177,99 @@ function parseForeside(text) {
 }
 
 function parseSunsetVista(text) {
-  const items = [], flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
-  const p = /\b(\d{5,})\s+(.*?)\s+(\d+)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
-  let m;
-  while ((m = p.exec(flat)) !== null) {
-    if (/Subtotal|Shipping|Total/i.test(m[2])) continue;
-    items.push({ sku:m[1], description:m[2].trim(), qty:parseInt(m[3]), unitPrice:parseFloat(m[4].replace(/,/g,'')), lineTotal:parseFloat(m[5].replace(/,/g,'')), confidence:'high' });
+  // v2.9.19 (B-S35-07): rewritten to match REAL Sunset Vista format.
+  // Old flat-text regex `\b(\d{5,})\s+(.*?)\s+(\d+)\s+\$?(...)\s+\$?(...)`
+  // expected SKU-then-qty layout; real format is qty-then-SKU. Old regex
+  // either matched zero lines or matched lines incorrectly with shifted
+  // field assignments. Surfaced via Test All harness in v2.9.18 (S35).
+  // Real Sunset Vista line format:
+  //   <ord_qty> <ship_qty> <sku> <description> <unit_price> <ext_amount>
+  // Example:
+  //   "24 24 90015 Bluebird Sign 8.50 204.00"
+  //   "24 24 RP92375 8.25\" x 1.25\" Rain Gauge Glass Tube 1.55 37.20"
+  // SKU pattern: optional letters + 4+ digits + optional alphanumeric.
+  // Use ship_qty (group 2) as inventory qty.
+  const items = [], lines = text.split('\n');
+  const lineP = /^\s*(\d+)\s+(\d+)\s+([A-Z]*\d{4,}[A-Z0-9-]*)\s+(.+?)\s+([\d.]+)\s+([\d,.]+)\s*$/;
+  for (const line of lines) {
+    const m = line.match(lineP);
+    if (!m) continue;
+    const shipQty = parseInt(m[2]);
+    const sku = m[3];
+    const desc = m[4].trim();
+    const unitPrice = parseFloat(m[5]);
+    const lineTotal = parseFloat(m[6].replace(/,/g,''));
+    if (shipQty <= 0 || unitPrice <= 0) continue;
+    if (/Subtotal|Shipping|Total|Tax|Discount|Payment|Balance/i.test(desc)) continue;
+    items.push({ sku, description: desc, qty: shipQty, unitPrice, lineTotal, confidence:'high' });
   }
   return items;
 }
 
 function parseKK(text) {
-  const items = [], lines = text.split('\n');
-  // K&K format: SKU (like KK-XXXXX) qty description price total [tariff]
-  for (const line of lines) {
-    const m = line.match(/\b(KK-?\d{3,}[A-Z]*)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/i);
-    if (!m) continue;
-    let desc = m[3].trim();
+  // v2.9.21 (B-S35-04): rewritten to match REAL K&K format. Old regex
+  // `\b(KK-?\d{3,}[A-Z]*)` required SKUs starting with "KK"; real K&K
+  // SKUs are digit-prefixed (e.g. "15195A", "15352A-WH", "17987B-YE",
+  // "18653A"). Old parser silently returned 0 items on every K&K import
+  // since at least v2.9.14 — Mary has been re-typing K&K invoices manually.
+  // Surfaced via Test All harness in v2.9.18 (S35).
+  //
+  // Real K&K item line format:
+  //   <qty_shp> <qty_bo> <sku> UPC:<digits> <m/d/yyyy> <unit_price> <UOM> <ext>
+  // Example:
+  //   "12 0 15195A UPC:842657169712 3/9/2026 5.99 EA 71.88"
+  // Description on next 1-2 lines, then "Approximate Unit Price with Tariff: $X.XX"
+  //
+  // SET items (e.g. 18653A) have sub-SKU breakouts (18653A-1, -2, -3) on
+  // following lines without qty/price — these are skipped (parent SET item
+  // is the one Mary imports).
+  //
+  // Approach: flat_text mode with multi-line spanning regex. Description
+  // lazy-captured until next item / sub-SKU / "Approximate" line / page
+  // break / footer marker.
+  const items = [];
+  const flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
+  const p = /(\d+)\s+(\d+)\s+([A-Z0-9]+(?:-[A-Z0-9]+)?)\s+UPC:\d+\s+\d+\/\d+\/\d+\s+([\d.]+)\s+(?:EA|SET|PR|PC|CS|DZ|EACH)\s+([\d,.]+)\s+(.+?)(?=\s+Approximate Unit Price with Tariff|\s+\d+\s+\d+\s+[A-Z0-9]+(?:-[A-Z0-9]+)?\s+UPC:|\s+[A-Z0-9]+-\d+\s+UPC:|\s+Invoice continued|\s+TRF\d+|\s+FRT\d+|\s+Subtotal)/g;
+  let m;
+  while ((m = p.exec(flat)) !== null) {
+    const qty = parseInt(m[1]);
+    const sku = m[3];
+    const unitPrice = parseFloat(m[4]);
+    const lineTotal = parseFloat(m[5].replace(/,/g,''));
+    const desc = m[6] ? m[6].trim() : '';
+    if (qty <= 0 || unitPrice <= 0) continue;
     if (/Subtotal|Freight|Total|Tariff/i.test(desc)) continue;
-    const item = { sku:m[1], description:desc, qty:parseInt(m[2]), unitPrice:parseFloat(m[4].replace(/,/g,'')), lineTotal:parseFloat(m[5].replace(/,/g,'')), confidence:'high' };
-    // Check for tariff on same or next line
-    const tariffMatch = line.match(/(?:Tariff|Duty)\s*\$?([\d.]+)/i);
-    if (tariffMatch) item.perUnitTariff = parseFloat(tariffMatch[1]);
-    items.push(item);
-  }
-  // Fallback: broader pattern
-  if (!items.length) {
-    const flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
-    const p = /\b([A-Z]{1,3}-?\d{3,}[A-Z]*)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
-    let m2;
-    while ((m2 = p.exec(flat)) !== null) {
-      if (/Subtotal|Freight|FRT|Total/i.test(m2[3])) continue;
-      items.push({ sku:m2[1], description:m2[3].trim(), qty:parseInt(m2[2]), unitPrice:parseFloat(m2[4].replace(/,/g,'')), lineTotal:parseFloat(m2[5].replace(/,/g,'')), confidence:'medium' });
-    }
+    items.push({ sku, description: desc || `K&K ${sku}`, qty, unitPrice, lineTotal, confidence: 'high' });
   }
   return items;
 }
 
 function parseParkDesigns(text) {
-  const items = [], flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
-  // Park Designs: "CS" or alpha-numeric SKU, qty, description, price, extension
-  const p = /\b([A-Z]{1,3}\d{3,}[A-Z0-9-]*)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
-  let m;
-  while ((m = p.exec(flat)) !== null) {
-    const desc = m[3].trim();
-    if (/Subtotal|Shipping|Total|Invoice|Handling/i.test(desc)) continue;
-    items.push({ sku:m[1], description:desc, qty:parseInt(m[2]), unitPrice:parseFloat(m[4].replace(/,/g,'')), lineTotal:parseFloat(m[5].replace(/,/g,'')), confidence:'high' });
+  // v2.9.20 (B-S35-07): rewritten to match REAL Park Designs format.
+  // Old regex `\b([A-Z]{1,3}\d{3,}[A-Z0-9-]*)` required SKU starting
+  // with letters; real Park Designs SKUs are digit-prefixed with hyphen
+  // (e.g. "23-706A", "4996-820", "380-623"). The old pattern accidentally
+  // matched the page-header Sales Order # ("SO1582708") and extracted
+  // it as a single bogus item. Surfaced via Test All harness in v2.9.18 (S35).
+  // Real Park Designs line format:
+  //   <sku> <ord> <bo_qty> <shipped> <UOM> <description> <unit_price> <amount>
+  // Example:
+  //   "23-706A 5 0 5 EACH GARDEN GATE NAPKIN 8.00 40.00"
+  //   (continuation line "HLDR CRM" wraps onto next line — naturally skipped)
+  // Use shipped qty (group 4) for inventory; skip BO-only rows (amount=0).
+  const items = [], lines = text.split('\n');
+  const lineP = /^(\d+-[A-Z0-9]+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(?:EACH|SET|PR|PC|CS|DZ|EA)\s+(.+?)\s+([\d.]+)\s+([\d,.]+)\s*$/i;
+  for (const line of lines) {
+    const m = line.match(lineP);
+    if (!m) continue;
+    const sku = m[1];
+    const shipped = parseInt(m[4]);
+    const desc = m[5].trim();
+    const unitPrice = parseFloat(m[6]);
+    const amount = parseFloat(m[7].replace(/,/g,''));
+    if (shipped <= 0 || amount <= 0) continue;
+    if (/Subtotal|Shipping|Total|Tax/i.test(desc)) continue;
+    items.push({ sku, description: desc, qty: shipped, unitPrice, lineTotal: amount, confidence: 'high' });
   }
   return items;
 }
@@ -8258,7 +8363,7 @@ function renderImportTable() {
       <td class="mono" style="font-size:11px;color:var(--blue);">${ibPct > 0 ? ibPct.toFixed(1)+'%' : '—'}</td>
       <td class="mono" style="font-size:11px;color:${item.perUnitTariff ? 'var(--etsy)' : 'var(--muted)'};">${item.perUnitTariff ? '$'+item.perUnitTariff.toFixed(2) : '—'}</td>
       <td class="mono" style="font-size:11px;font-weight:600;">$${item.lineTotal.toFixed(2)}</td>
-      <td style="white-space:nowrap;">${item._imported ? '<span style="color:var(--green);font-weight:700;">✓</span>' : `<button class="btn-card btn-push" style="padding:3px 6px;font-size:10px;" onclick="importSingleItem(${idx})" title="Import this row">⬇</button> <button class="btn-card" style="padding:3px 6px;font-size:10px;background:var(--bg3);color:var(--error);" onclick="importDeleteRow(${idx})" title="Remove this row">🗑</button>`}</td>
+      <td style="white-space:nowrap;">${item._imported ? '<span style="color:var(--green);font-weight:700;">✓</span>' : `<button class="btn-card btn-push" style="padding:3px 6px;font-size:10px;" onclick="importSingleItem(${idx})" title="Import this row">⬇</button> <button class="btn-card" style="padding:3px 6px;font-size:10px;background:var(--bg3);color:var(--red);" onclick="importDeleteRow(${idx})" title="Remove this row">🗑</button>`}</td>
     </tr>`;
   }).join('');
 }
@@ -8323,9 +8428,21 @@ async function importAllItems() {
   if (state.saving) return;
   state.saving = true;
   const status = $('impStatus');
+  // v2.9.16 (B-S33-03): require Invoice # before any import. Defense-in-depth on H1 path.
+  // Without an invoice number, imported items can't be associated to an invoice record (loose import),
+  // and the `invoices` table dedup check at line ~8337 silently skips creating a record.
+  const invoiceNumberCheck = $('impInvNum').value.trim();
+  if (!invoiceNumberCheck) {
+    status.textContent = '⚠ Invoice # is required before importing.';
+    status.style.color = 'var(--red)';
+    $('impInvNum').focus();
+    state.saving = false;
+    return;
+  }
+  status.style.color = '';
   status.textContent = 'Importing...';
   const ibPct = parseFloat($('impIBPct').value) || 0;
-  const invoiceNumber = $('impInvNum').value.trim();
+  const invoiceNumber = invoiceNumberCheck;
   const invoiceDate = $('impInvDate').value.trim();
   const vendor = importData.supplierName || '';
   let imported = 0, errors = 0;
@@ -8370,9 +8487,19 @@ async function importAllItems() {
 
 async function importSingleItem(idx) {
   if (state.saving) return;
+  // v2.9.16 (B-S33-03): require Invoice # before any import. Same guard as importAllItems.
+  const invoiceNumberCheck = $('impInvNum').value.trim();
+  if (!invoiceNumberCheck) {
+    const status = $('impStatus');
+    status.textContent = '⚠ Invoice # is required before importing.';
+    status.style.color = 'var(--red)';
+    $('impInvNum').focus();
+    return;
+  }
+  $('impStatus').style.color = '';
   state.saving = true;
   const ibPct = parseFloat($('impIBPct').value) || 0;
-  const invoiceNumber = $('impInvNum').value.trim();
+  const invoiceNumber = invoiceNumberCheck;
   const vendor = importData.supplierName || '';
   try {
     // Find or create invoice
@@ -10565,6 +10692,417 @@ async function loadSettings() {
     await initPslipProfiles();
     hydratePslipSettingsUI();
   } catch(e) { console.log('Pslip profiles init skipped:', e.message); }
+
+  // v2.9.17 (IP-S2): render Invoice Parsers index. Reads from cached state
+  // (parsers loaded at boot via loadInvoiceParsers; fixtures loaded via
+  // settings hydration above). Pure render — no async DB calls here.
+  try { renderParsersIndex(); }
+  catch(e) { console.log('[IP-S2] renderParsersIndex skipped:', e.message); }
+}
+
+// ═══════════════════════════════════════════════════════════
+// v2.9.17 (IP-S2): INVOICE PARSERS INDEX UI
+// ═══════════════════════════════════════════════════════════
+// Renders the Settings → Invoice Parsers section as an 8-row table.
+// Source data: state.invoiceParsers (cached at boot from invoice_parsers
+// table) + state.invoiceParserFixtures (cached at boot from settings).
+// No DB calls. Re-call after fixture changes to refresh the column.
+function renderParsersIndex() {
+  const listEl = $('settingsParsersList');
+  const modeEl = $('settingsParserMode');
+  const footEl = $('settingsParsersFooter');
+  if (!listEl) return;
+
+  // Engine status banner
+  if (modeEl) {
+    if (state.useDataDrivenParsers) {
+      modeEl.textContent = 'Data-driven engine ACTIVE';
+      modeEl.style.color = 'var(--green)';
+    } else {
+      modeEl.textContent = 'Legacy engine (data-driven flag OFF)';
+      modeEl.style.color = 'var(--muted)';
+    }
+  }
+
+  const parsers = state.invoiceParsers || [];
+  const fixtures = state.invoiceParserFixtures || {};
+
+  if (parsers.length === 0) {
+    listEl.innerHTML = '<span style="color:var(--muted);">No parsers loaded. Run IP-S1 migration first, or refresh.</span>';
+    if (footEl) footEl.textContent = '';
+    return;
+  }
+
+  // Compact table: # | Vendor | Mode | Patt. | Fixt.
+  const rowsHtml = parsers.map(p => {
+    const hasFixture = !!(fixtures[p.vendor_key] && String(fixtures[p.vendor_key]).trim().length > 0);
+    const fixBadge = hasFixture
+      ? '<span style="color:var(--green);font-weight:700;" title="Fixture present">✓</span>'
+      : '<span style="color:var(--muted);" title="No fixture — Test All will skip">—</span>';
+    const patternCount = Array.isArray(p.patterns) ? p.patterns.length : 0;
+    const modeShort = p.iteration_mode === 'line_by_line' ? 'lines' : 'flat';
+    return `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+      <td style="padding:5px 4px;color:var(--muted);text-align:right;">${p.sort_order}</td>
+      <td style="padding:5px 4px;color:var(--text);font-weight:500;">${escHtml(p.display_name || p.vendor_key)}</td>
+      <td style="padding:5px 4px;color:var(--muted);font-family:var(--mono);font-size:10px;">${modeShort}</td>
+      <td style="padding:5px 4px;color:var(--muted);text-align:center;">${patternCount}</td>
+      <td style="padding:5px 4px;text-align:center;">${fixBadge}</td>
+    </tr>`;
+  }).join('');
+
+  listEl.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="padding:5px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">#</th>
+          <th style="padding:5px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:left;">Vendor</th>
+          <th style="padding:5px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:left;">Mode</th>
+          <th style="padding:5px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:center;">Patt.</th>
+          <th style="padding:5px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:center;">Fixt.</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+
+  // Footer: fixture coverage
+  const fixtureCount = parsers.filter(p => fixtures[p.vendor_key] && String(fixtures[p.vendor_key]).trim().length > 0).length;
+  if (footEl) {
+    footEl.innerHTML = `Fixture coverage: <span style="color:${fixtureCount === parsers.length ? 'var(--green)' : 'var(--muted)'};font-weight:600;">${fixtureCount} / ${parsers.length}</span> · <span style="color:var(--muted);">Click 🧪 Test All to validate parity.</span>`;
+  }
+
+  // v2.9.18 (IP-S2 step 4): show cutover panel only when on the index view
+  const cutoverPanel = $('parsersCutover');
+  if (cutoverPanel) cutoverPanel.style.display = 'block';
+  // Reset toolbar state
+  const btnTest = $('btnTestAll'); const btnBack = $('btnBackToIndex');
+  if (btnTest) btnTest.style.display = '';
+  if (btnBack) btnBack.style.display = 'none';
+  // Reset cutover button state to flag-current
+  renderCutoverPanel(null);
+}
+
+// ═══════════════════════════════════════════════════════════
+// v2.9.18 (IP-S2 step 3): TEST ALL HARNESS
+// ═══════════════════════════════════════════════════════════
+// Runs both engines (legacy parseInvoiceText + data-driven
+// parseInvoiceTextDataDriven) against each loaded fixture and produces
+// a per-vendor parity report. Pure local computation — no DB calls,
+// no flag state mutation. Safe to run repeatedly.
+//
+// Result shape per vendor:
+//   {
+//     vendor_key, display_name,
+//     hasFixture: bool,
+//     legacy:       { supplierName, invoiceNumber, invoiceDate,
+//                     shippingCost, items[], error? },
+//     dataDriven:   { same shape, error? },
+//     legacyCount, ddCount,
+//     parityStatus: 'pass' | 'improved' | 'regressed' | 'both_empty' | 'mismatch' | 'no_fixture' | 'error',
+//     skusMatch:    bool (true when SKU SETs are equal),
+//     cutoverSafe:  bool (data-driven items count >= legacy items count)
+//   }
+function runTestAll() {
+  const parsers = state.invoiceParsers || [];
+  const fixtures = state.invoiceParserFixtures || {};
+  const out = [];
+
+  for (const parser of parsers) {
+    const fixture = fixtures[parser.vendor_key];
+    if (!fixture || !String(fixture).trim()) {
+      out.push({
+        vendor_key: parser.vendor_key,
+        display_name: parser.display_name || parser.vendor_key,
+        hasFixture: false,
+        parityStatus: 'no_fixture',
+        legacyCount: 0, ddCount: 0,
+        cutoverSafe: true,  // vacuously safe — no data to regress
+        skusMatch: true
+      });
+      continue;
+    }
+
+    let legacy, dataDriven;
+    try { legacy = parseInvoiceText(fixture); }
+    catch (e) { legacy = { error: e.message, items: [] }; }
+    try { dataDriven = parseInvoiceTextDataDriven(fixture); }
+    catch (e) { dataDriven = { error: e.message, items: [] }; }
+
+    const legacyItems = Array.isArray(legacy.items) ? legacy.items : [];
+    const ddItems     = Array.isArray(dataDriven.items) ? dataDriven.items : [];
+    const legacyCount = legacyItems.length;
+    const ddCount     = ddItems.length;
+
+    const legacySkus = new Set(legacyItems.map(i => String(i.sku || '')));
+    const ddSkus     = new Set(ddItems.map(i => String(i.sku || '')));
+    const skusMatch  = legacySkus.size === ddSkus.size &&
+                       [...legacySkus].every(s => ddSkus.has(s));
+
+    let parityStatus;
+    if (legacy.error || dataDriven.error)        parityStatus = 'error';
+    else if (legacyCount === 0 && ddCount === 0) parityStatus = 'both_empty';
+    else if (ddCount > legacyCount)              parityStatus = 'improved';
+    else if (ddCount < legacyCount)              parityStatus = 'regressed';
+    else if (skusMatch)                          parityStatus = 'pass';
+    else                                         parityStatus = 'mismatch';
+
+    out.push({
+      vendor_key: parser.vendor_key,
+      display_name: parser.display_name || parser.vendor_key,
+      hasFixture: true,
+      legacy, dataDriven,
+      legacyCount, ddCount,
+      parityStatus,
+      skusMatch,
+      cutoverSafe: ddCount >= legacyCount
+    });
+  }
+  return out;
+}
+
+function runAndRenderTestAll() {
+  if (!state.invoiceParsers || state.invoiceParsers.length === 0) {
+    alert('No parsers loaded. Cannot run Test All.');
+    return;
+  }
+  const t0 = performance.now();
+  state.testAllResults = runTestAll();
+  state.testAllExpanded = new Set();  // collapse all on fresh run
+  const t1 = performance.now();
+  console.log(`[IP-S2] Test All completed in ${(t1-t0).toFixed(1)}ms — ${state.testAllResults.length} parser(s) tested`);
+  renderTestAllResults();
+}
+
+function backToParsersIndex() {
+  state.testAllResults = null;
+  state.testAllExpanded = new Set();
+  renderParsersIndex();
+}
+
+// Render the Test All results table (replaces the index view).
+// Each parser row shows: vendor / parity / quality / counts / expand-toggle.
+// Expanded rows show a side-by-side legacy vs data-driven items table.
+function renderTestAllResults() {
+  const listEl = $('settingsParsersList');
+  const footEl = $('settingsParsersFooter');
+  if (!listEl) return;
+  const results = state.testAllResults || [];
+  if (results.length === 0) {
+    listEl.innerHTML = '<span style="color:var(--muted);">No parsers to test.</span>';
+    return;
+  }
+
+  // Toolbar state: hide Test All, show Back
+  const btnTest = $('btnTestAll'); const btnBack = $('btnBackToIndex');
+  if (btnTest) btnTest.style.display = 'none';
+  if (btnBack) btnBack.style.display = '';
+
+  const expanded = state.testAllExpanded;
+  const rowsHtml = results.map(r => {
+    const parityBadge = parityBadgeHtml(r.parityStatus);
+    const qualityBadge = qualityBadgeHtml(r);
+    const isOpen = expanded.has(r.vendor_key);
+    const expandIcon = r.hasFixture ? (isOpen ? '▼' : '▶') : '';
+    const cursor = r.hasFixture ? 'cursor:pointer;' : '';
+    const onclickAttr = r.hasFixture ? `onclick="toggleTestAllRow('${escAttr(r.vendor_key)}')"` : '';
+    const headerRow = `<tr ${onclickAttr} style="${cursor}border-bottom:1px solid rgba(255,255,255,0.04);">
+      <td style="padding:6px 4px;color:var(--muted);text-align:center;width:18px;">${expandIcon}</td>
+      <td style="padding:6px 4px;color:var(--text);font-weight:500;">${escHtml(r.display_name)}</td>
+      <td style="padding:6px 4px;text-align:center;">${parityBadge}</td>
+      <td style="padding:6px 4px;text-align:center;">${qualityBadge}</td>
+      <td style="padding:6px 4px;color:var(--muted);text-align:right;font-family:var(--mono);font-size:11px;">${r.hasFixture ? r.legacyCount : '—'}</td>
+      <td style="padding:6px 4px;color:var(--muted);text-align:right;font-family:var(--mono);font-size:11px;">${r.hasFixture ? r.ddCount : '—'}</td>
+    </tr>`;
+    let detailRow = '';
+    if (isOpen && r.hasFixture) {
+      detailRow = `<tr><td colspan="6" style="padding:8px 8px 12px 26px;background:var(--bg1);">${renderTestAllDetail(r)}</td></tr>`;
+    }
+    return headerRow + detailRow;
+  }).join('');
+
+  listEl.innerHTML = `
+    <table style="width:100%;border-collapse:collapse;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border);">
+          <th style="padding:6px 4px;width:18px;"></th>
+          <th style="padding:6px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:left;">Vendor</th>
+          <th style="padding:6px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:center;">Parity</th>
+          <th style="padding:6px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:center;">Quality</th>
+          <th style="padding:6px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">Legacy</th>
+          <th style="padding:6px 4px;color:var(--muted);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;text-align:right;">Data-Driven</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>`;
+
+  // Footer: summary
+  const cutoverSafeCount = results.filter(r => r.cutoverSafe).length;
+  const qualityIssueCount = results.filter(r => r.hasFixture && r.legacyCount === 0 && r.ddCount === 0).length;
+  const improvedCount = results.filter(r => r.parityStatus === 'improved').length;
+  if (footEl) {
+    let summary = `<span style="color:${cutoverSafeCount === results.length ? 'var(--green)' : 'var(--red)'};font-weight:600;">${cutoverSafeCount} / ${results.length} cutover-safe</span>`;
+    if (improvedCount > 0) summary += ` · <span style="color:var(--gold);">${improvedCount} improved</span>`;
+    if (qualityIssueCount > 0) summary += ` · <span style="color:var(--red);">⚠ ${qualityIssueCount} parser(s) returning zero items in both engines</span>`;
+    footEl.innerHTML = summary;
+  }
+
+  // Update cutover panel
+  renderCutoverPanel(results);
+}
+
+function parityBadgeHtml(status) {
+  const map = {
+    pass:        ['PASS',     'var(--green)'],
+    improved:    ['IMPROVED', 'var(--gold)'],
+    regressed:   ['REGRESS',  'var(--red)'],
+    both_empty:  ['EMPTY',    'var(--muted)'],
+    mismatch:    ['MISMATCH', 'var(--red)'],
+    error:       ['ERROR',    'var(--red)'],
+    no_fixture:  ['—',        'var(--muted)']
+  };
+  const [label, color] = map[status] || ['?', 'var(--muted)'];
+  return `<span style="display:inline-block;padding:2px 6px;font-size:10px;font-weight:700;color:${color};border:1px solid ${color};border-radius:3px;letter-spacing:0.3px;">${label}</span>`;
+}
+
+function qualityBadgeHtml(r) {
+  if (!r.hasFixture) return `<span style="color:var(--muted);">—</span>`;
+  if (r.parityStatus === 'error') return `<span style="color:var(--red);">⚠ err</span>`;
+  if (r.legacyCount === 0 && r.ddCount === 0) return `<span style="color:var(--red);font-weight:600;" title="Both engines returned 0 items — parser likely broken">⚠</span>`;
+  if (r.ddCount > 0) return `<span style="color:var(--green);">✓</span>`;
+  return `<span style="color:var(--muted);">—</span>`;
+}
+
+// Render side-by-side legacy vs data-driven items detail for one vendor.
+// Used in the expanded row.
+function renderTestAllDetail(r) {
+  if (r.legacy && r.legacy.error) {
+    return `<div style="color:var(--red);font-size:11px;">Legacy error: ${escHtml(r.legacy.error)}</div>`;
+  }
+  if (r.dataDriven && r.dataDriven.error) {
+    return `<div style="color:var(--red);font-size:11px;">Data-driven error: ${escHtml(r.dataDriven.error)}</div>`;
+  }
+  const meta = (eng) => {
+    if (!eng) return '<span style="color:var(--muted);">—</span>';
+    return `supplier: <span style="color:var(--text);">${escHtml(eng.supplierName || '—')}</span> · 
+            inv#: <span style="color:var(--text);">${escHtml(eng.invoiceNumber || '—')}</span> · 
+            date: <span style="color:var(--text);">${escHtml(eng.invoiceDate || '—')}</span> · 
+            ship$: <span style="color:var(--text);font-family:var(--mono);">${(eng.shippingCost || 0).toFixed(2)}</span>`;
+  };
+  const itemsTable = (items, label) => {
+    if (!items || items.length === 0) return `<div style="color:var(--muted);font-size:11px;font-style:italic;">${label}: no items</div>`;
+    const rows = items.map(it => `<tr>
+      <td style="padding:2px 6px;font-family:var(--mono);font-size:10px;color:var(--text);">${escHtml(String(it.sku || ''))}</td>
+      <td style="padding:2px 6px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--muted);">${it.qty || 0}</td>
+      <td style="padding:2px 6px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--muted);">${(it.unitPrice || 0).toFixed(2)}</td>
+      <td style="padding:2px 6px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--muted);">${(it.lineTotal || 0).toFixed(2)}</td>
+      <td style="padding:2px 6px;font-size:10px;color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(String(it.description || ''))}">${escHtml(String(it.description || ''))}</td>
+    </tr>`).join('');
+    return `<div style="font-size:10px;color:var(--gold);text-transform:uppercase;letter-spacing:0.5px;font-weight:700;margin-bottom:4px;">${label} · ${items.length} item(s)</div>
+      <table style="width:100%;border-collapse:collapse;background:var(--bg2);">
+        <thead><tr style="border-bottom:1px solid var(--border);"><th style="padding:2px 6px;text-align:left;font-size:9px;color:var(--muted);">SKU</th><th style="padding:2px 6px;text-align:right;font-size:9px;color:var(--muted);">QTY</th><th style="padding:2px 6px;text-align:right;font-size:9px;color:var(--muted);">UNIT</th><th style="padding:2px 6px;text-align:right;font-size:9px;color:var(--muted);">TOTAL</th><th style="padding:2px 6px;text-align:left;font-size:9px;color:var(--muted);">DESC</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  };
+  return `
+    <div style="margin-bottom:6px;font-size:10px;color:var(--muted);"><b style="color:var(--gold);">LEGACY:</b> ${meta(r.legacy)}</div>
+    <div style="margin-bottom:10px;">${itemsTable(r.legacy && r.legacy.items, 'Legacy')}</div>
+    <div style="margin-bottom:6px;font-size:10px;color:var(--muted);"><b style="color:var(--gold);">DATA-DRIVEN:</b> ${meta(r.dataDriven)}</div>
+    <div>${itemsTable(r.dataDriven && r.dataDriven.items, 'Data-driven')}</div>`;
+}
+
+function toggleTestAllRow(vendor_key) {
+  if (!state.testAllExpanded) state.testAllExpanded = new Set();
+  if (state.testAllExpanded.has(vendor_key)) state.testAllExpanded.delete(vendor_key);
+  else state.testAllExpanded.add(vendor_key);
+  renderTestAllResults();
+}
+
+// ═══════════════════════════════════════════════════════════
+// v2.9.18 (IP-S2 step 4): CUTOVER CONTROL
+// ═══════════════════════════════════════════════════════════
+// Renders the cutover panel showing readiness summary + flip button.
+// When called with `results` from a Test All run, shows full readiness.
+// When called with null (initial state / index view), shows "run Test
+// All" prompt and disables the flip button.
+function renderCutoverPanel(results) {
+  const statusEl = $('parsersCutoverStatus');
+  const btn = $('btnFlipFlag');
+  const noteEl = $('parsersCutoverNote');
+  if (!statusEl || !btn) return;
+
+  const flagOn = state.useDataDrivenParsers;
+  const flagLabel = flagOn ? 'ON (data-driven)' : 'OFF (legacy)';
+
+  // Always update the button label based on current flag state
+  btn.textContent = flagOn ? 'Flip Flag → OFF (legacy)' : 'Flip Flag → ON (data-driven)';
+
+  if (!results) {
+    statusEl.innerHTML = `Flag is currently <span style="color:${flagOn ? 'var(--green)' : 'var(--muted)'};font-weight:600;">${flagLabel}</span>. Run 🧪 Test All to evaluate cutover readiness.`;
+    btn.disabled = true;
+    if (noteEl) noteEl.textContent = '';
+    return;
+  }
+
+  const total = results.length;
+  const safe = results.filter(r => r.cutoverSafe).length;
+  const regressed = results.filter(r => r.parityStatus === 'regressed').length;
+  const errored = results.filter(r => r.parityStatus === 'error').length;
+  const qualityIssues = results.filter(r => r.hasFixture && r.legacyCount === 0 && r.ddCount === 0).length;
+
+  let statusHtml = `Flag: <span style="color:${flagOn ? 'var(--green)' : 'var(--muted)'};font-weight:600;">${flagLabel}</span> · `;
+  if (regressed === 0 && errored === 0) {
+    statusHtml += `<span style="color:var(--green);font-weight:600;">✓ ${safe}/${total} cutover-safe</span>`;
+  } else {
+    statusHtml += `<span style="color:var(--red);font-weight:600;">⚠ ${regressed} regressed / ${errored} errored — flip blocked</span>`;
+  }
+  statusEl.innerHTML = statusHtml;
+
+  // Enable button only when no regressions / errors
+  btn.disabled = !(regressed === 0 && errored === 0);
+
+  if (noteEl) {
+    if (qualityIssues > 0 && regressed === 0) {
+      noteEl.innerHTML = `<span style="color:var(--gold);">Note: ${qualityIssues} parser(s) return zero items in both engines (e.g. K&K, Foreside). Flipping is parity-safe but those parsers remain broken — fix separately.</span>`;
+    } else {
+      noteEl.textContent = '';
+    }
+  }
+}
+
+async function flipDataDrivenFlag() {
+  if (!sb) { alert('Not connected to Supabase.'); return; }
+  const target = !state.useDataDrivenParsers;
+  const targetLabel = target ? 'ON (data-driven engine ACTIVE)' : 'OFF (legacy engine)';
+  if (!confirm(`Flip use_data_driven_parsers to ${targetLabel}?\n\nThis updates the settings row in Supabase and takes effect for all V2 instances on next page refresh.`)) {
+    return;
+  }
+  const btn = $('btnFlipFlag');
+  if (btn) { btn.disabled = true; btn.textContent = 'Flipping…'; }
+  try {
+    const newValue = {
+      enabled: target,
+      ip_s1_seeded_at: '2026-05-03',
+      flipped_at: new Date().toISOString(),
+      flipped_by: 'inventory_v2'
+    };
+    const { error } = await sb.from('settings').update({
+      value: newValue,
+      updated_at: new Date().toISOString(),
+      updated_by: 'inventory_v2'
+    }).eq('key', 'use_data_driven_parsers');
+    if (error) throw error;
+    state.useDataDrivenParsers = target;
+    logActivity('SYSTEM', 'PARSER_FLAG_FLIPPED', null, `use_data_driven_parsers flipped to ${target ? 'ON' : 'OFF'}`);
+    console.log(`[IP-S2] Flag flipped to ${target ? 'ON' : 'OFF'}`);
+    // Re-render the panel + index/results to show new flag state
+    if (state.testAllResults) renderTestAllResults();
+    else renderParsersIndex();
+    alert(`Flag is now ${targetLabel}.\n\nFor full effect across the app, hard-refresh V2 (Ctrl+F5).`);
+  } catch (e) {
+    console.error('[IP-S2] Flag flip failed:', e);
+    alert(`Flag flip failed: ${e.message || e}`);
+    if (btn) { btn.disabled = false; }
+    renderCutoverPanel(state.testAllResults);
+  }
 }
 
 async function saveSettingsToDb() {
