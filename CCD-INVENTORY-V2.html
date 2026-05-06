@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.23</title>
+<title>CCD Inventory System v2.9.24</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.23 · Sunset Vista smoke fix (Inv# + discount)</div>
+    <div class="login-version">v2.9.24 · Park Designs shipping smoke fix (B-S36-03)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.23</div>
+      <div class="topbar-version">v2.9.24</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1696,7 +1696,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.23';
+const TOOL_VERSION = '2.9.24';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -7874,8 +7874,12 @@ function parseInvoiceTextDataDriven(text) {
     const m = text.match(p);
     if (m) { inv.invoiceDate = fmtDate(m[1]); break; }
   }
+  // v2.9.24 (B-S36-03): added /Shipping Cost (...) X.XX/ for Park Designs
+  // and any vendor that prints "Shipping Cost" with optional carrier-name
+  // parens. Once shippingCost is non-zero, IB% auto-computes downstream.
   const shipPatterns = [/FRT\d+\s+([\d,]+\.[\d]{2})/i, /Freight[:\s]+\$?([\d,]+\.?\d*)/i, /Shipping[:\s&]+[Hh]andling[:\s]+\$?([\d,]+\.?\d*)/i,
-    /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i];
+    /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i,
+    /Shipping Cost\s*(?:\([^)]+\))?\s*[:\s]*\$?([\d,]+\.[\d]{2})/i];
   for (const p of shipPatterns) {
     const m = text.match(p);
     if (m) { inv.shippingCost = parseFloat(m[1].replace(/,/g,'')); break; }
@@ -8103,9 +8107,12 @@ function parseInvoiceText(text) {
   const datePatterns = [/Invoice Date:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i, /Date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i, /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/];
   for (const p of datePatterns) { const m = text.match(p); if (m) { inv.invoiceDate = fmtDate(m[1]); break; } }
 
-  // Shipping
+  // Shipping — v2.9.24 (B-S36-03): added /Shipping Cost (...) X.XX/ for
+  // Park Designs and any vendor that prints "Shipping Cost" with optional
+  // carrier-name parens.
   const shipPatterns = [/FRT\d+\s+([\d,]+\.[\d]{2})/i, /Freight[:\s]+\$?([\d,]+\.?\d*)/i, /Shipping[:\s&]+[Hh]andling[:\s]+\$?([\d,]+\.?\d*)/i,
-    /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i];
+    /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i,
+    /Shipping Cost\s*(?:\([^)]+\))?\s*[:\s]*\$?([\d,]+\.[\d]{2})/i];
   for (const p of shipPatterns) { const m = text.match(p); if (m) { inv.shippingCost = parseFloat(m[1].replace(/,/g,'')); break; } }
 
   // Parse items by vendor
