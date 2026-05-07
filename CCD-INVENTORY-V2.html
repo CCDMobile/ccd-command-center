@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.24</title>
+<title>CCD Inventory System v2.9.25</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.24 · Park Designs shipping smoke fix (B-S36-03)</div>
+    <div class="login-version">v2.9.25 · Standalone Label email fix + Customer Email field (B-S37-03/-04)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.24</div>
+      <div class="topbar-version">v2.9.25</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1346,6 +1346,8 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px 14px;margin-bottom:10px;">
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Recipient Name</div><input class="form-input" id="nlName" style="width:100%;text-align:left;" placeholder="Customer name"></div>
+          <!-- v2.9.25 B-S37-04: Customer Email input. Wired to address_to.email via proxy v1.9.5 toEmail param, persisted to shippo_transactions.recipient_email, and used by Auto-prompt Send Notification post-purchase. -->
+          <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Customer Email</div><input class="form-input" id="nlEmail" type="email" style="width:100%;text-align:left;" placeholder="customer@example.com"></div>
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Street Address</div><input class="form-input" id="nlStreet" style="width:100%;text-align:left;" placeholder="123 Main St"></div>
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">City</div><input class="form-input" id="nlCity" style="width:100%;text-align:left;" placeholder="City"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -1696,7 +1698,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.24';
+const TOOL_VERSION = '2.9.25';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -9063,7 +9065,8 @@ async function getNewLabelRates() {
       toStreet: ($('nlStreet')?.value) || '',
       toCity: ($('nlCity')?.value) || '',
       toState: ($('nlState')?.value) || '',
-      toZip: zip.trim()
+      toZip: zip.trim(),
+      toEmail: ($('nlEmail')?.value || '').trim()  // v2.9.25 B-S37-04 — proxy v1.9.5 routes to address_to.email
     });
 
     if (!result.success) {
@@ -9096,6 +9099,7 @@ async function buyNewLabel(rateIndex) {
   if (!rate || !rate.objectId) return;
   const sku = ($('nlSku')?.value || '').trim();
   const name = ($('nlName')?.value || '');
+  const email = ($('nlEmail')?.value || '').trim();  // v2.9.25 B-S37-04
 
   if (!confirm(`Buy shipping label?\n\n${rate.provider} — ${rate.service}\nCost: $${pf(rate.amount).toFixed(2)}${sku ? '\nRef: ' + sku : ''}\n\nThis will charge your Shippo account.`)) return;
 
@@ -9128,6 +9132,7 @@ async function buyNewLabel(rateIndex) {
         status: result.status || 'SUCCESS',
         label_cost: pf(result.amount || rate.amount),
         recipient_name: name || null,
+        recipient_email: email || null,  // v2.9.25 B-S37-04
         recipient_street: ($('nlStreet')?.value) || null,
         recipient_city: ($('nlCity')?.value) || null,
         recipient_state: ($('nlState')?.value) || null,
@@ -9149,6 +9154,36 @@ async function buyNewLabel(rateIndex) {
     </div>`;
 
     logActivity('SHIPPING','LABEL_PURCHASED',null,`Standalone label: ${sku || 'no SKU'} via ${rate.provider} $${pf(rate.amount).toFixed(2)}`,{},sku || null);
+
+    // v2.9.25 B-S37-04: Auto-prompt Send Notification using captured Customer Email.
+    // Mirrors item-card pattern (line ~3883) but skips the prompt() since we
+    // already have the email from the form. No-op if email is empty/invalid.
+    if (result.trackingNumber && email && email.includes('@')) {
+      setTimeout(async () => {
+        if (confirm(`Label purchased! Send tracking notification to ${email}?\n\nTracking: ${result.trackingNumber}`)) {
+          try {
+            const notifyResult = await fetchOrJsonp(shippoUrl, {
+              action: 'sendNotification', key: apiKey,
+              email: email,
+              recipientName: name || 'Customer',
+              trackingNumber: result.trackingNumber,
+              carrier: result.carrier || rate.provider,
+              serviceName: result.service || rate.service,
+              sku: sku || ''
+            });
+            if (notifyResult.success) {
+              if (container) container.innerHTML += `<div style="margin-top:8px;padding:8px;background:rgba(45,212,160,0.06);border:1px solid rgba(45,212,160,0.2);border-radius:var(--radius);font-size:12px;color:var(--green);">✉️ Notification sent to ${escHtml(email)}</div>`;
+              logActivity('SHIPPING','NOTIFICATION_SENT',null,`Standalone notification → ${email} (${result.trackingNumber})`,{},sku || null);
+            } else {
+              alert(`Notification failed: ${notifyResult.error || 'unknown error'}`);
+            }
+          } catch(notifyErr) {
+            console.warn('Notification send failed:', notifyErr.message);
+            alert('Notification send failed: ' + notifyErr.message);
+          }
+        }
+      }, 500);
+    }
 
     // Reload shipping data to show the new label
     setTimeout(() => loadShippingTab(), 1000);
