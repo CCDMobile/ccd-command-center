@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.26</title>
+<title>CCD Inventory System v2.9.27</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.26 · Standalone Label phone field + sender phone (B-S38-05)</div>
+    <div class="login-version">v2.9.27 · Shippo auto-sync polish — silent mode + 10-min throttle (H-S1)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.26</div>
+      <div class="topbar-version">v2.9.27</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1700,7 +1700,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.26';
+const TOOL_VERSION = '2.9.27';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1932,8 +1932,20 @@ async function showApp() {
   await loadStats();
 
   // v2.8.7 H-S1: Auto-sync Shippo on load (fire-and-forget, silent if no proxy)
+  // v2.9.27 H-S1 polish: 10-min throttle via localStorage prevents thrash on
+  // every page load. Silent flag suppresses alerts and button-text changes
+  // during background sync. Manual button click still calls syncShippoGlobal()
+  // with default silent=false and behaves exactly as before.
   if (localStorage.getItem('ccdShippoProxy')) {
-    syncShippoGlobal().catch(e => console.log('[Shippo Auto-Sync] Skipped:', e.message));
+    const lastAutoSync = parseInt(localStorage.getItem('ccdShippoLastAutoSync') || '0', 10);
+    const tenMinutesMs = 10 * 60 * 1000;
+    if ((Date.now() - lastAutoSync) > tenMinutesMs) {
+      syncShippoGlobal(true)
+        .then(() => { localStorage.setItem('ccdShippoLastAutoSync', String(Date.now())); })
+        .catch(e => console.log('[Shippo Auto-Sync] Skipped:', e.message));
+    } else {
+      console.log('[Shippo Auto-Sync] Throttled — last run', Math.round((Date.now() - lastAutoSync)/60000), 'min ago');
+    }
   }
 }
 
@@ -9689,12 +9701,18 @@ async function openSlipFromShipping(idx) {
   $('slipModal').classList.add('active');
 }
 
-async function syncShippoGlobal() {
+// v2.9.27 H-S1 polish: silent param suppresses alerts and button text changes
+// for background auto-sync use. Defaults to false so manual button-click
+// behavior is unchanged (full UI feedback as before).
+async function syncShippoGlobal(silent = false) {
   const shippoUrl = localStorage.getItem('ccdShippoProxy') || '';
   const apiKey = localStorage.getItem('ccdApiKey') || '';
-  if (!shippoUrl) { alert('Shippo proxy not configured. Go to Settings.'); return; }
+  if (!shippoUrl) {
+    if (!silent) alert('Shippo proxy not configured. Go to Settings.');
+    return;
+  }
   const btn = $('btnSyncShippoGlobal');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing...'; }
+  if (btn && !silent) { btn.disabled = true; btn.textContent = '⏳ Syncing...'; }
   try {
     const result = await fetchOrJsonp(shippoUrl, { action: 'fetchAllForCache', key: apiKey, months: '2' });
     if (!result.success && !result.transactions) throw new Error(result.error || 'No data');
@@ -9762,7 +9780,7 @@ async function syncShippoGlobal() {
         if (error) { skipped++; } else { inserted++; }
       } catch(e) { skipped++; }
     }
-    if (btn) { btn.textContent = `✅ ${inserted} new, ${skipped} existing`; }
+    if (btn && !silent) { btn.textContent = `✅ ${inserted} new, ${skipped} existing`; }
 
     // Backfill: update existing rows that have null SKU but have metadata we can match
     try {
@@ -9779,10 +9797,16 @@ async function syncShippoGlobal() {
     } catch(e) { console.warn('SKU backfill error:', e.message); }
 
     loadShippingTab();
-    setTimeout(() => { if (btn) btn.textContent = '📦 Sync from Shippo'; btn.disabled = false; }, 4000);
+    if (btn && !silent) {
+      setTimeout(() => { btn.textContent = '📦 Sync from Shippo'; btn.disabled = false; }, 4000);
+    }
   } catch(e) {
-    if (btn) { btn.textContent = '❌ Sync failed'; btn.disabled = false; }
-    alert('Shippo sync failed: ' + e.message);
+    if (btn && !silent) { btn.textContent = '❌ Sync failed'; btn.disabled = false; }
+    if (silent) {
+      console.warn('[Shippo Auto-Sync] Failed silently:', e.message);
+    } else {
+      alert('Shippo sync failed: ' + e.message);
+    }
   }
 }
 
