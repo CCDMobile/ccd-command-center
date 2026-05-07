@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.25</title>
+<title>CCD Inventory System v2.9.26</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.25 · Standalone Label email fix + Customer Email field (B-S37-03/-04)</div>
+    <div class="login-version">v2.9.26 · Standalone Label phone field + sender phone (B-S38-05)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.25</div>
+      <div class="topbar-version">v2.9.26</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1348,6 +1348,8 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Recipient Name</div><input class="form-input" id="nlName" style="width:100%;text-align:left;" placeholder="Customer name"></div>
           <!-- v2.9.25 B-S37-04: Customer Email input. Wired to address_to.email via proxy v1.9.5 toEmail param, persisted to shippo_transactions.recipient_email, and used by Auto-prompt Send Notification post-purchase. -->
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Customer Email</div><input class="form-input" id="nlEmail" type="email" style="width:100%;text-align:left;" placeholder="customer@example.com"></div>
+          <!-- v2.9.26 B-S38-05: Customer Phone input. Wired to address_to.phone via proxy v1.9.6 toPhone param, persisted to shippo_transactions.recipient_phone. Optional but recommended for UPS/FedEx residential delivery. -->
+          <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Customer Phone</div><input class="form-input" id="nlPhone" type="tel" style="width:100%;text-align:left;" placeholder="(optional, recommended for UPS/FedEx)"></div>
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">Street Address</div><input class="form-input" id="nlStreet" style="width:100%;text-align:left;" placeholder="123 Main St"></div>
           <div><div style="font-size:10px;color:var(--muted2);text-transform:uppercase;margin-bottom:4px;">City</div><input class="form-input" id="nlCity" style="width:100%;text-align:left;" placeholder="City"></div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
@@ -1698,7 +1700,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.25';
+const TOOL_VERSION = '2.9.26';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -9066,7 +9068,8 @@ async function getNewLabelRates() {
       toCity: ($('nlCity')?.value) || '',
       toState: ($('nlState')?.value) || '',
       toZip: zip.trim(),
-      toEmail: ($('nlEmail')?.value || '').trim()  // v2.9.25 B-S37-04 — proxy v1.9.5 routes to address_to.email
+      toEmail: ($('nlEmail')?.value || '').trim(),  // v2.9.25 B-S37-04 — proxy v1.9.5 routes to address_to.email
+      toPhone: ($('nlPhone')?.value || '').trim()   // v2.9.26 B-S38-05 — proxy v1.9.6 routes to address_to.phone
     });
 
     if (!result.success) {
@@ -9100,6 +9103,7 @@ async function buyNewLabel(rateIndex) {
   const sku = ($('nlSku')?.value || '').trim();
   const name = ($('nlName')?.value || '');
   const email = ($('nlEmail')?.value || '').trim();  // v2.9.25 B-S37-04
+  const phone = ($('nlPhone')?.value || '').trim();  // v2.9.26 B-S38-05
 
   if (!confirm(`Buy shipping label?\n\n${rate.provider} — ${rate.service}\nCost: $${pf(rate.amount).toFixed(2)}${sku ? '\nRef: ' + sku : ''}\n\nThis will charge your Shippo account.`)) return;
 
@@ -9133,6 +9137,7 @@ async function buyNewLabel(rateIndex) {
         label_cost: pf(result.amount || rate.amount),
         recipient_name: name || null,
         recipient_email: email || null,  // v2.9.25 B-S37-04
+        recipient_phone: phone || null,  // v2.9.26 B-S38-05
         recipient_street: ($('nlStreet')?.value) || null,
         recipient_city: ($('nlCity')?.value) || null,
         recipient_state: ($('nlState')?.value) || null,
