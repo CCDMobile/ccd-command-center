@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.29</title>
+<title>CCD Inventory System v2.9.30</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.29 · Legacy parsePBK mirror — UPC+Page# column-overflow tolerance (B-S38-11)</div>
+    <div class="login-version">v2.9.30 · Shipping tab — Overdue status filter + delivery date in row expansion</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.29</div>
+      <div class="topbar-version">v2.9.30</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1382,6 +1382,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
           <option value="all">All Statuses</option>
           <option value="DELIVERED">Delivered</option>
           <option value="TRANSIT">In Transit</option>
+          <option value="OVERDUE">⚠️ Overdue</option>
           <option value="PRE_TRANSIT">Pre-Transit</option>
           <option value="SUCCESS">Label Created</option>
           <option value="VOIDED">Voided</option>
@@ -1700,7 +1701,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.29';
+const TOOL_VERSION = '2.9.30';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -8906,9 +8907,38 @@ function renderShippingTab() {
     return;
   }
 
+  // v2.9.28 B-S38-10 helpers (moved up in v2.9.30 so OVERDUE filter branch can use them).
+  // Overdue = in-transit longer than carrier-typical SLA buffer.
+  // USPS / DHL / unknown → 14 days. UPS / FedEx → 10 days. PRE_TRANSIT also flags
+  // since "label printed but never moved" past the threshold is operationally
+  // identical to "stuck in transit" — Mary needs to investigate either way.
+  // Stale-data rows (NULL tracking_status with old shippo_created_at) are NOT
+  // flagged because Bucket A in FH-4 showed those are mostly already-delivered.
+  const _nowMs = Date.now();
+  function _overdueThresholdDays(carrier) {
+    const c = (carrier || '').toUpperCase();
+    if (c === 'UPS' || c === 'FEDEX') return 10;
+    return 14; // USPS, DHL, blank, anything else
+  }
+  function _isRowOverdue(r) {
+    const ts = r.tracking_status || '';
+    if (!['TRANSIT', 'IN_TRANSIT', 'PRE_TRANSIT'].includes(ts)) return false;
+    if (!r.shippo_created_at) return false;
+    const days = Math.floor((_nowMs - new Date(r.shippo_created_at).getTime()) / 86400000);
+    return days > _overdueThresholdDays(r.carrier);
+  }
+  function _daysInTransit(r) {
+    if (!r.shippo_created_at) return 0;
+    return Math.floor((_nowMs - new Date(r.shippo_created_at).getTime()) / 86400000);
+  }
+
   let rows = shipTabData;
   if (carrier !== 'all') rows = rows.filter(r => (r.carrier || '').toUpperCase().includes(carrier.toUpperCase()));
-  if (status !== 'all') {
+  // v2.9.30: OVERDUE is a computed flag (not a stored tracking_status value).
+  // Handle before the standard status equality check.
+  if (status === 'OVERDUE') {
+    rows = rows.filter(_isRowOverdue);
+  } else if (status !== 'all') {
     rows = rows.filter(r => {
       const s = r.tracking_status || r.label_status || r.status || '';
       return s === status;
@@ -8963,29 +8993,8 @@ function renderShippingTab() {
   const delivered = rows.filter(r => (r.tracking_status || '') === 'DELIVERED').length;
   const inTransit = rows.filter(r => ['TRANSIT','IN_TRANSIT'].includes(r.tracking_status || '')).length;
 
-  // v2.9.28 B-S38-10: Overdue = in-transit longer than carrier-typical SLA buffer.
-  // USPS / DHL / unknown → 14 days. UPS / FedEx → 10 days. PRE_TRANSIT also flags
-  // since "label printed but never moved" past the threshold is operationally
-  // identical to "stuck in transit" — Mary needs to investigate either way.
-  // Stale-data rows (NULL tracking_status with old shippo_created_at) are NOT
-  // flagged because Bucket A in FH-4 showed those are mostly already-delivered.
-  const _nowMs = Date.now();
-  function _overdueThresholdDays(carrier) {
-    const c = (carrier || '').toUpperCase();
-    if (c === 'UPS' || c === 'FEDEX') return 10;
-    return 14; // USPS, DHL, blank, anything else
-  }
-  function _isRowOverdue(r) {
-    const ts = r.tracking_status || '';
-    if (!['TRANSIT', 'IN_TRANSIT', 'PRE_TRANSIT'].includes(ts)) return false;
-    if (!r.shippo_created_at) return false;
-    const days = Math.floor((_nowMs - new Date(r.shippo_created_at).getTime()) / 86400000);
-    return days > _overdueThresholdDays(r.carrier);
-  }
-  function _daysInTransit(r) {
-    if (!r.shippo_created_at) return 0;
-    return Math.floor((_nowMs - new Date(r.shippo_created_at).getTime()) / 86400000);
-  }
+  // v2.9.30: Overdue helpers (_nowMs / _overdueThresholdDays / _isRowOverdue / _daysInTransit)
+  // are now defined at the top of renderShippingTab so the OVERDUE filter branch can use them.
   const overdueCount = rows.filter(_isRowOverdue).length;
 
   const sortIcon = (col) => shipSortCol === col ? (shipSortDir === 'asc' ? ' ▲' : ' ▼') : '';
@@ -9060,6 +9069,7 @@ function renderShippingTab() {
               <div><span style="color:var(--muted2);">Order:</span> ${escHtml(r.order_id || r.order_number_raw || '—')}</div>
               <div><span style="color:var(--muted2);">Metadata:</span> ${escHtml(r.raw_metadata || r.item_description || '—')}</div>
               <div><span style="color:var(--muted2);">Synced:</span> ${(r.synced_at || '').substring(0,10)}</div>
+              <div><span style="color:var(--muted2);">Delivered:</span> ${r.delivery_date ? '<span style="color:var(--green);">' + escHtml(String(r.delivery_date).substring(0,10)) + '</span>' : '—'}</div>
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
               <button class="btn-card" onclick="event.stopPropagation();gDuplicateShipment(${idx})" style="padding:6px 16px;font-size:12px;">📋 Reship to Same Address</button>
