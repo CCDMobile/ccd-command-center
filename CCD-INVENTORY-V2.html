@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.27</title>
+<title>CCD Inventory System v2.9.29</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.27 · Shippo auto-sync polish — silent mode + 10-min throttle (H-S1)</div>
+    <div class="login-version">v2.9.29 · Legacy parsePBK mirror — UPC+Page# column-overflow tolerance (B-S38-11)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.27</div>
+      <div class="topbar-version">v2.9.29</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1700,7 +1700,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.27';
+const TOOL_VERSION = '2.9.29';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -8200,14 +8200,31 @@ function parsePBK(text) {
   // Old regex `^\s*([A-Z0-9]{4,}-?\d*)\s+...` expected SKU-first and never
   // matched a real PBK invoice — silently failed on every import since at
   // least v2.9.14. Surfaced via Test All harness in v2.9.18 (S35).
+  //
+  // v2.9.29 (B-S38-11): widened to handle UPC+Page# column overflow.
+  // When an item has multiple Page# cross-references (e.g. "277, 67H, 89H,
+  // 125H"), the Page# column expands and the UPC↔Page# gap drops to ≤1px,
+  // which pdf.js extractPDFText() emits as zero-width (no separator). The
+  // prior `\s+\d{8,}\s+\S+\s+` anchor required a whitespace boundary after
+  // the UPC and another after Page# — both fail on the concatenated case.
+  // Two changes:
+  //   1. `\d{8,}` → `\d{8,}\S*`   : UPC trailer eats concatenated Page#
+  //   2. `\s+\S+\s+` (Page# slot) → `(?:(?!\$)\S+\s+)?` : Page# optional,
+  //      negative-lookahead on '$' so the optional group does NOT swallow
+  //      the price column when Page# was absorbed into the UPC trailer.
+  // MIRRORS the data-driven parser config in invoice_parsers row
+  // (vendor_key=primitives_by_kathy) for legacy↔DD parity. Keep in lockstep.
+  //
   // Real PBK line format:
   //   <qty> <item#> <description> <UPC 12 digits> <page#> $<reg> $<sale> EACH $<ext>
-  // Example:
+  // Example (clean):
   //   "4 102398 Spiral Notebook - Best Life 190134023980 294 $6.00 $3.60 EACH $14.40"
+  // Example (column-overflow case, post-v2.9.29):
+  //   "12 102342 Jar - Purple Lilac 190134023422277,67H,89H,125H $8.00 $6.40 EACH $76.80"
   // Use sale price (group 5) as unit_price since that's the actually-charged
   // price (qty × salePrice = ext, NOT qty × regPrice = ext).
   const items = [], lines = text.split('\n');
-  const lineP = /^\s*(\d+)\s+([A-Z0-9]{4,}-?\d*)\s+(.+?)\s+\d{8,}\s+\S+\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})\s+EACH\s+\$?([\d,]+\.[\d]{2})/i;
+  const lineP = /^\s*(\d+)\s+([A-Z0-9]{4,}-?\d*)\s+(.+?)\s+\d{8,}\S*\s+(?:(?!\$)\S+\s+)?\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})\s+EACH\s+\$?([\d,]+\.[\d]{2})/i;
   for (const line of lines) {
     const m = line.match(lineP);
     if (!m) continue;
@@ -8946,13 +8963,39 @@ function renderShippingTab() {
   const delivered = rows.filter(r => (r.tracking_status || '') === 'DELIVERED').length;
   const inTransit = rows.filter(r => ['TRANSIT','IN_TRANSIT'].includes(r.tracking_status || '')).length;
 
+  // v2.9.28 B-S38-10: Overdue = in-transit longer than carrier-typical SLA buffer.
+  // USPS / DHL / unknown → 14 days. UPS / FedEx → 10 days. PRE_TRANSIT also flags
+  // since "label printed but never moved" past the threshold is operationally
+  // identical to "stuck in transit" — Mary needs to investigate either way.
+  // Stale-data rows (NULL tracking_status with old shippo_created_at) are NOT
+  // flagged because Bucket A in FH-4 showed those are mostly already-delivered.
+  const _nowMs = Date.now();
+  function _overdueThresholdDays(carrier) {
+    const c = (carrier || '').toUpperCase();
+    if (c === 'UPS' || c === 'FEDEX') return 10;
+    return 14; // USPS, DHL, blank, anything else
+  }
+  function _isRowOverdue(r) {
+    const ts = r.tracking_status || '';
+    if (!['TRANSIT', 'IN_TRANSIT', 'PRE_TRANSIT'].includes(ts)) return false;
+    if (!r.shippo_created_at) return false;
+    const days = Math.floor((_nowMs - new Date(r.shippo_created_at).getTime()) / 86400000);
+    return days > _overdueThresholdDays(r.carrier);
+  }
+  function _daysInTransit(r) {
+    if (!r.shippo_created_at) return 0;
+    return Math.floor((_nowMs - new Date(r.shippo_created_at).getTime()) / 86400000);
+  }
+  const overdueCount = rows.filter(_isRowOverdue).length;
+
   const sortIcon = (col) => shipSortCol === col ? (shipSortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
-  let html = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px;">
+  let html = `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:16px;">
     <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Total Shipments</div><div style="font-size:22px;font-weight:700;color:var(--text);">${rows.length}</div></div>
     <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Total Cost</div><div style="font-size:22px;font-weight:700;color:var(--gold);">$${totalCost.toFixed(2)}</div></div>
     <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--muted);text-transform:uppercase;">Avg Cost</div><div style="font-size:22px;font-weight:700;color:var(--text);">$${avgCost.toFixed(2)}</div></div>
     <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:var(--green);text-transform:uppercase;">Delivered</div><div style="font-size:22px;font-weight:700;color:var(--green);">${delivered}</div><div style="font-size:11px;color:var(--yellow);">${inTransit} in transit</div></div>
+    <div class="section" style="text-align:center;padding:12px;"><div style="font-size:11px;color:${overdueCount > 0 ? 'var(--red)' : 'var(--muted)'};text-transform:uppercase;">⚠️ Overdue</div><div style="font-size:22px;font-weight:700;color:${overdueCount > 0 ? 'var(--red)' : 'var(--muted)'};">${overdueCount}</div><div style="font-size:11px;color:var(--muted2);">USPS &gt;14d · UPS/FedEx &gt;10d</div></div>
   </div>`;
 
   html += `<div class="table-wrapper"><table style="table-layout:fixed;width:100%;">
@@ -8972,7 +9015,19 @@ function renderShippingTab() {
       const date = (r.shippo_created_at || '').substring(0,10);
       const cost = pf(r.label_cost);
       const ts = r.tracking_status || r.label_status || r.status || '—';
-      const tsColor = ts === 'DELIVERED' ? 'var(--green)' : ts === 'TRANSIT' || ts === 'IN_TRANSIT' ? 'var(--yellow)' : ts === 'PRE_TRANSIT' ? 'var(--muted)' : ts === 'SUCCESS' ? 'var(--blue)' : 'var(--muted)';
+      // v2.9.28 B-S38-10: aging-aware status. Overdue rows (in-transit past
+      // carrier-typical SLA buffer) render red with "⚠️ Nd" suffix and a
+      // tooltip Mary can hover for the threshold context.
+      const overdue = _isRowOverdue(r);
+      const tsColor = overdue ? 'var(--red)' :
+                      ts === 'DELIVERED' ? 'var(--green)' :
+                      ts === 'TRANSIT' || ts === 'IN_TRANSIT' ? 'var(--yellow)' :
+                      ts === 'PRE_TRANSIT' ? 'var(--muted)' :
+                      ts === 'SUCCESS' ? 'var(--blue)' : 'var(--muted)';
+      const tsDisplay = overdue ? `${ts} ⚠️ ${_daysInTransit(r)}d` : ts;
+      const tsTooltip = overdue
+        ? `In transit ${_daysInTransit(r)} days — exceeds ${_overdueThresholdDays(r.carrier)}d threshold for ${r.carrier || 'this carrier'}. Investigate with carrier or contact customer.`
+        : '';
       const sku = escHtml(r.sku || '—');
       const skuLink = r.sku ? `<a href="#" onclick="openItemFromShipping('${escAttr(r.sku)}');return false;" style="color:var(--gold);">${sku}</a>` : `<span style="color:var(--muted2);">${sku}</span>`;
       const prodName = escHtml((r.sku && shipProductNames[r.sku]) ? shipProductNames[r.sku].substring(0,35) : '—');
@@ -8987,7 +9042,7 @@ function renderShippingTab() {
         <td style="font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(shipProductNames[r.sku] || '')}">${prodName}</td>
         <td style="font-size:12px;">${escHtml(r.carrier || '—')}</td>
         <td style="font-size:11px;">${escHtml(r.service_name || '—')}</td>
-        <td id="gShipStatus_${idx}" style="font-size:11px;font-weight:600;color:${tsColor};">${escHtml(ts)}</td>
+        <td id="gShipStatus_${idx}" style="font-size:11px;font-weight:600;color:${tsColor};"${tsTooltip ? ` title="${escAttr(tsTooltip)}"` : ''}>${escHtml(tsDisplay)}</td>
         <td style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escAttr(recipientName + ', ' + recipientLoc)}">${giftBadge}${recipientName}</td>
         <td style="overflow:hidden;text-overflow:ellipsis;font-size:11px;" onclick="event.stopPropagation();">${r.tracking_number ? `<a href="https://parcelsapp.com/en/tracking/${encodeURIComponent(r.tracking_number)}" target="_blank" style="color:var(--blue);">${trackNum}</a>` : '—'}</td>
         <td class="mono" style="font-weight:600;text-align:right;">${cost > 0 ? '$' + cost.toFixed(2) : '—'}</td>
