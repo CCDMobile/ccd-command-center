@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.21</title>
+    <title>CCD Sync Hub v4.4.22</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.21 — Clean Build Styles
+           CCD SYNC HUB v4.4.22 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.21 • Push Retry Backoff (fixed) • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.22 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -859,8 +859,89 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.21';
+    const SH_VERSION = 'v4.4.22';
     const SH_VERSION_KEY = 'synchub';
+
+    // ============================================================
+    // v4.4.22 KEEP-ALIVE — prevent Chrome/Edge background-tab throttling
+    // ============================================================
+    // PROBLEM: Modern browsers throttle setInterval/setTimeout in
+    // background tabs (timers slow to ~1/min after 5 min hidden).
+    // SH's shippoBackgroundSync, sync queue retries, and scheduled
+    // pushes all use setInterval — they stop firing reliably when
+    // SH isn't the focused tab.
+    //
+    // SOLUTION: Play a silent (gain=0) audio oscillator. Browsers
+    // do not throttle tabs producing audio. Classic technique used
+    // by Slack/Discord/etc.
+    //
+    // CONSTRAINT: Modern Chrome blocks AudioContext.start() until a
+    // user gesture has occurred. We attempt start immediately, and
+    // also wire a click listener as fallback (fires on the user's
+    // first SH interaction — typically within seconds of page load).
+    //
+    // VISIBLE STATUS: keepAliveDot in the header turns 🟢 once the
+    // oscillator is running. Hover for tooltip.
+    let _keepAliveCtx = null;
+    let _keepAliveOsc = null;
+    let _keepAliveStarted = false;
+    function _setKeepAliveDot(emoji, title) {
+        const el = document.getElementById('keepAliveDot');
+        if (el) { el.textContent = emoji; el.title = 'Keep-alive: ' + title; }
+    }
+    async function startKeepAlive() {
+        if (_keepAliveStarted) return true;
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!AudioCtx) {
+                console.warn('[KeepAlive] AudioContext unavailable — tab may throttle when hidden');
+                _setKeepAliveDot('🔴', 'unavailable (no AudioContext)');
+                return false;
+            }
+            if (!_keepAliveCtx) {
+                _keepAliveCtx = new AudioCtx();
+                _keepAliveOsc = _keepAliveCtx.createOscillator();
+                const gain = _keepAliveCtx.createGain();
+                gain.gain.value = 0;  // silent
+                _keepAliveOsc.connect(gain);
+                gain.connect(_keepAliveCtx.destination);
+                _keepAliveOsc.start();
+            }
+            if (_keepAliveCtx.state === 'suspended') {
+                await _keepAliveCtx.resume();
+            }
+            if (_keepAliveCtx.state === 'running') {
+                _keepAliveStarted = true;
+                _setKeepAliveDot('🟢', 'active — tab will not throttle when hidden');
+                console.log(`[KeepAlive ${SH_VERSION}] Active — background throttling disabled.`);
+                return true;
+            }
+            _setKeepAliveDot('🟡', 'pending user gesture — click anywhere');
+            return false;
+        } catch (e) {
+            console.warn('[KeepAlive] start failed:', e.message);
+            _setKeepAliveDot('🟡', 'pending user gesture — click anywhere');
+            return false;
+        }
+    }
+    function _wireKeepAliveOnFirstGesture() {
+        const handler = async () => {
+            const ok = await startKeepAlive();
+            if (ok) {
+                document.removeEventListener('click', handler, true);
+                document.removeEventListener('keydown', handler, true);
+            }
+        };
+        document.addEventListener('click', handler, true);
+        document.addEventListener('keydown', handler, true);
+        // Resume AudioContext if browser suspends it on tab visibility change
+        document.addEventListener('visibilitychange', () => {
+            if (_keepAliveCtx && _keepAliveCtx.state === 'suspended') {
+                _keepAliveCtx.resume().catch(() => {});
+            }
+        });
+    }
+    // ============================================================
 
     async function registerToolVersion(client, toolKey, toolVersion) {
         if (!client) return;
@@ -8754,6 +8835,13 @@
             console.log(`[Init] CCD Sync Hub ${SH_VERSION} — Supabase-Native Push Build`);
             
             ensureHostnameSet();
+            
+            // v4.4.22: Keep-alive — prevent background-tab throttling.
+            // Attempts immediate start; wires fallback to first user gesture
+            // if browser blocks AudioContext start without user interaction.
+            startKeepAlive().then(ok => {
+                if (!ok) _wireKeepAliveOnFirstGesture();
+            });
             
             // Load settings from localStorage first
             loadSettingsFromLocalStorage();
