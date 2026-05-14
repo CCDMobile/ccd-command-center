@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.34</title>
+<title>CCD Inventory System v2.9.35</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.34 · Find by SKU now resolves variant IDs (Etsy + Wix) — pairs with Wix Proxy v2.0.20</div>
+    <div class="login-version">v2.9.35 · B-S39-15 — Invoice import qty revert fix (state.items + form sync) + per-SKU activity log</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.34</div>
+      <div class="topbar-version">v2.9.35</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1701,7 +1701,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.34';
+const TOOL_VERSION = '2.9.35';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -8914,6 +8914,26 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
     }).eq('id', ex.id);
     if (error) throw error;
 
+    // v2.9.35 B-S39-15 FIX: refresh in-memory state + open form fields so a
+    // subsequent saveItem() (manual or auto) doesn't write back stale qty=oldQty
+    // and silently revert the import. Mirrors the pattern at line ~6418 in the
+    // writeoff-reversal path.
+    const _wsRounded = Math.round(avgWs * 100) / 100;
+    const _localItem = state.items.find(i => i.id === ex.id);
+    if (_localItem) {
+      _localItem.qty = totalQty;
+      _localItem.wholesale_price = _wsRounded;
+      _localItem.ib_shipping = ibPct;
+    }
+    if (state.currentItem && state.currentItem.id === ex.id) {
+      state.currentItem.qty = totalQty;
+      state.currentItem.wholesale_price = _wsRounded;
+      state.currentItem.ib_shipping = ibPct;
+      if (ge('f_qty'))         $('f_qty').value         = totalQty;
+      if (ge('f_wholesale'))   $('f_wholesale').value   = _wsRounded.toFixed(2);
+      if (ge('f_ib_shipping')) $('f_ib_shipping').value = ibPct;
+    }
+
     // Write invoice_item — schema columns are qty_ordered + unit_wholesale_price (B-S33-01)
     if (invoiceId) {
       const { error: liErr } = await sb.from('invoice_items').insert({
@@ -8925,6 +8945,14 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
       if (liErr) throw new Error('Invoice line insert failed: ' + liErr.message);
     }
     item._imported = true;
+    // v2.9.35 B-S39-15: per-SKU activity log so audits can trace per-item changes
+    // (the invoice-level log at importAllItems sets sku=null, which means
+    // sku-filtered queries miss this event).
+    logActivity('INVENTORY', 'INVOICE_ITEM_MERGED', null,
+      `${item.sku}: qty ${oldQty} → ${totalQty} (+${newQty}), ws $${oldWs.toFixed(2)} → $${_wsRounded.toFixed(2)}`,
+      { invoice_id: invoiceId, qty_old: oldQty, qty_added: newQty, qty_new: totalQty,
+        ws_old: oldWs, ws_new: _wsRounded, ib_shipping_pct: ibPct },
+      item.sku);
     console.log(`[Import] Merged ${item.sku}: +${newQty} → ${totalQty}, ws $${avgWs.toFixed(2)}`);
   } else {
     // Create new item
@@ -8947,6 +8975,11 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
       if (liErr) throw new Error('Invoice line insert failed: ' + liErr.message);
     }
     item._imported = true;
+    // v2.9.35 B-S39-15: per-SKU activity log for audit trail (new-item path)
+    logActivity('INVENTORY', 'INVOICE_ITEM_CREATED', null,
+      `${item.sku}: created with qty ${item.qty}, ws $${item.unitPrice.toFixed(2)}`,
+      { invoice_id: invoiceId, qty: item.qty, ws: item.unitPrice, ib_shipping_pct: ibPct },
+      item.sku);
     console.log(`[Import] Created ${item.sku}: qty=${item.qty}, ws $${item.unitPrice.toFixed(2)}`);
   }
 }
