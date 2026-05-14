@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.31</title>
+<title>CCD Inventory System v2.9.32</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.31 · B-S39-02 — Fee breakdown clarity (oh_fee/surcharge shown as built-in for non-TM channels)</div>
+    <div class="login-version">v2.9.32 · B-S39-01 — Restored oh_fee/surcharge as real deductions (absorption costing, all channels)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.31</div>
+      <div class="topbar-version">v2.9.32</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1701,7 +1701,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.31';
+const TOOL_VERSION = '2.9.32';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -3306,19 +3306,12 @@ function toggleFeeDetail(btn, idx) {
   const landedCost = ws * (1 + ib/100 + tar/100) + ob;
   const detailRow = document.createElement('tr');
   detailRow.className = 'fee-detail-row';
-  // v2.9.31 B-S39-02: oh_fee and surcharge are baked into Sale Price for non-TM channels
-  // (per calculate_sale_profit RPC: "Internal margin tracking — NOT deducted from profit").
-  // For TM, oh_fee IS a real deduction. Show channel-aware labels and styling.
-  const isTM = ch === 'treasuremarts';
-  const ohDisplay  = isTM
-    ? `<div class="fee-item"><div class="fee-label">Overhead</div><div class="fee-val">-$${pf(sale.oh_fee).toFixed(2)}</div></div>`
-    : `<div class="fee-item"><div class="fee-label" style="color:var(--muted2);">Overhead <span style="opacity:0.7;font-size:9px;">(in price)</span></div><div class="fee-val" style="color:var(--muted);">$${pf(sale.oh_fee).toFixed(2)}</div></div>`;
-  const surDisplay = isTM
-    ? `<div class="fee-item"><div class="fee-label">Surcharge</div><div class="fee-val">-$${pf(sale.surcharge).toFixed(2)}</div></div>`
-    : `<div class="fee-item"><div class="fee-label" style="color:var(--muted2);">Surcharge <span style="opacity:0.7;font-size:9px;">(in price)</span></div><div class="fee-val" style="color:var(--muted);">$${pf(sale.surcharge).toFixed(2)}</div></div>`;
-  const footnote = isTM
-    ? ''
-    : `<div style="margin-top:8px;font-size:10px;color:var(--muted2);font-style:italic;">* Overhead and Surcharge are CCD's internal margin tracking — already baked into the Sale Price, not deducted from Net Profit.</div>`;
+  // v2.9.32 B-S39-01: Reverted v2.9.31's channel-aware muting. Per ECOSYSTEM-018
+  // (locked S39), oh_fee and surcharge are REAL per-sale costs that cover
+  // CCD's allocated operating overhead (rent share, packaging, labor, admin).
+  // Absorption costing — these MUST be deducted from net_profit on every channel,
+  // not just TM. Display restored to original v2.9.30 form: all four (txn, cc,
+  // oh, surch) shown as deductions with minus signs.
   detailRow.innerHTML = `<td colspan="9" style="padding:0;">
     <div class="section" style="margin:4px 0;border-left:3px solid ${chColor};">
       <div class="section-title" style="color:${chColor};">Fee Breakdown — Order #${escHtml(sale.order_id || '—')}</div>
@@ -3327,12 +3320,11 @@ function toggleFeeDetail(btn, idx) {
         <div class="fee-item"><div class="fee-label">Landed Cost</div><div class="fee-val" style="color:var(--text);">$${landedCost.toFixed(2)}</div></div>
         <div class="fee-item"><div class="fee-label">Transaction Fee</div><div class="fee-val">-$${pf(sale.transaction_fee).toFixed(2)}</div></div>
         <div class="fee-item"><div class="fee-label">CC Processing</div><div class="fee-val">-$${pf(sale.cc_fee).toFixed(2)}</div></div>
-        ${ohDisplay}
-        ${surDisplay}
+        <div class="fee-item"><div class="fee-label">Overhead</div><div class="fee-val">-$${pf(sale.oh_fee).toFixed(2)}</div></div>
+        <div class="fee-item"><div class="fee-label">Surcharge</div><div class="fee-val">-$${pf(sale.surcharge).toFixed(2)}</div></div>
         <div class="fee-item"><div class="fee-label">OB Shipping</div><div class="fee-val">-$${ob.toFixed(2)}</div></div>
         <div class="fee-item"><div class="fee-label">Net Profit</div><div class="fee-val" style="color:${pf(sale.net_profit) >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700;">$${pf(sale.net_profit).toFixed(2)}</div></div>
       </div>
-      ${footnote}
     </div>
   </td>`;
   row.after(detailRow);
