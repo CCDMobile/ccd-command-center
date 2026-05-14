@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.33</title>
+<title>CCD Inventory System v2.9.34</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.33 · Find Channel IDs by SKU — Etsy + Wix proxy lookup on item card</div>
+    <div class="login-version">v2.9.34 · Find by SKU now resolves variant IDs (Etsy + Wix) — pairs with Wix Proxy v2.0.20</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.33</div>
+      <div class="topbar-version">v2.9.34</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1701,7 +1701,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.33';
+const TOOL_VERSION = '2.9.34';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -4851,22 +4851,55 @@ async function findChannelIdsBySku(sku) {
       return;
     }
     try {
-      const r = await jsonpRequest(etsyProxyUrl, {
-        action: 'listListings',
-        key: apiKey,
-        limit: 2000,
-        state: 'active'
-      });
-      if (!r.success) { results.etsyErr = r.error || 'unknown'; return; }
-      const listings = r.listings || [];
-      // Match against primary sku OR any value in skus[] array
-      const match = listings.find(l => {
-        if (l.sku && String(l.sku).toUpperCase() === skuUpper) return true;
-        if (Array.isArray(l.skus) && l.skus.some(s => String(s).toUpperCase() === skuUpper)) return true;
-        return false;
-      });
-      if (match) {
-        results.etsy = { listing_id: String(match.listing_id), title: match.title, url: match.url };
+      // Step 1: find the listing (use existing listing_id if already filled — saves the scan)
+      const existingListing = $('f_etsy_listing_id') ? ($('f_etsy_listing_id').value || '').trim() : '';
+      let listingId = existingListing;
+      let listingTitle = null, listingUrl = null;
+
+      if (!listingId) {
+        const r = await jsonpRequest(etsyProxyUrl, {
+          action: 'listListings',
+          key: apiKey,
+          limit: 2000,
+          state: 'active'
+        });
+        if (!r.success) { results.etsyErr = r.error || 'unknown'; return; }
+        const listings = r.listings || [];
+        const match = listings.find(l => {
+          if (l.sku && String(l.sku).toUpperCase() === skuUpper) return true;
+          if (Array.isArray(l.skus) && l.skus.some(s => String(s).toUpperCase() === skuUpper)) return true;
+          return false;
+        });
+        if (!match) return; // not found — results.etsy stays null
+        listingId = String(match.listing_id);
+        listingTitle = match.title;
+        listingUrl = match.url;
+      }
+
+      results.etsy = { listing_id: listingId, title: listingTitle, url: listingUrl, alreadyHad: !!existingListing };
+
+      // Step 2: resolve variant_id via getInventory on the listing
+      try {
+        const inv = await jsonpRequest(etsyProxyUrl, {
+          action: 'getInventory',
+          key: apiKey,
+          listing_id: listingId
+        });
+        if (inv.success && inv.inventory && inv.inventory.products) {
+          const products = inv.inventory.products;
+          // First try exact SKU match on a variant (product_id is the Etsy variant ID)
+          const variantMatch = products.find(p => p.sku && String(p.sku).toUpperCase() === skuUpper);
+          if (variantMatch && variantMatch.product_id) {
+            results.etsy.variant_id = String(variantMatch.product_id);
+          } else if (products.length === 1 && products[0].product_id) {
+            // Single-variant listing — only one variant exists, claim it
+            results.etsy.variant_id = String(products[0].product_id);
+            results.etsy.variantNote = '(single-variant listing)';
+          }
+        }
+      } catch (e) {
+        // Variant fetch failed — non-fatal, listing ID is still useful
+        results.etsy.variantErr = e.message;
       }
     } catch (e) {
       results.etsyErr = e.message;
@@ -4879,15 +4912,24 @@ async function findChannelIdsBySku(sku) {
       return;
     }
     try {
+      // v2.9.34: Wix Proxy v2.0.20+ also matches variant SKUs and returns variant info.
+      // Older proxies just return parent — gracefully degrade (no variant_id auto-fill).
       const r = await jsonpRequest(wixProxyUrl, {
         action: 'getProductBySku',
         key: apiKey,
         sku: sku
       });
       if (r.success && r.product) {
-        results.wix = { product_id: String(r.product.id), name: r.product.name };
+        results.wix = {
+          product_id: String(r.product.id),
+          name: r.product.name,
+          matched_via: r.matched_via || 'parent'  // 'parent' if proxy is pre-v2.0.20
+        };
+        if (r.variant && r.variant.id) {
+          results.wix.variant_id = String(r.variant.id);
+        }
       } else if (r.error && /not found/i.test(r.error)) {
-        results.wixErr = 'not found (may be a variant SKU — see B-S39-10)';
+        results.wixErr = 'not found (if SKU is a variant, ensure Wix Proxy is v2.0.20+)';
       } else {
         results.wixErr = r.error || 'unknown';
       }
@@ -4902,8 +4944,11 @@ async function findChannelIdsBySku(sku) {
   const parts = [];
   const etsyInput = $('f_etsy_listing_id');
   const wixInput = $('f_wix_product_id');
+  const etsyVarInput = $('f_etsy_variant_id');
+  const wixVarInput = $('f_wix_variant_id');
 
   if (results.etsy) {
+    // Etsy listing ID
     const current = etsyInput ? (etsyInput.value || '').trim() : '';
     if (!current) {
       if (etsyInput) {
@@ -4917,6 +4962,25 @@ async function findChannelIdsBySku(sku) {
     } else {
       parts.push(`<span style="color:var(--orange);">⚠ Etsy: found ${escHtml(results.etsy.listing_id)}, V2 has ${escHtml(current)} — not overwritten</span>`);
     }
+    // Etsy variant ID
+    if (results.etsy.variant_id) {
+      const curVar = etsyVarInput ? (etsyVarInput.value || '').trim() : '';
+      const note = results.etsy.variantNote ? ' ' + results.etsy.variantNote : '';
+      if (!curVar) {
+        if (etsyVarInput) {
+          etsyVarInput.value = results.etsy.variant_id;
+          etsyVarInput.style.boxShadow = '0 0 0 2px rgba(45,212,160,0.5)';
+          setTimeout(() => { etsyVarInput.style.boxShadow = ''; }, 2500);
+        }
+        parts.push(`<span style="color:var(--green);">✅ Etsy variant: ${escHtml(results.etsy.variant_id)} filled${escHtml(note)}</span>`);
+      } else if (curVar === results.etsy.variant_id) {
+        parts.push(`<span style="color:var(--muted);">✓ Etsy variant: already correct</span>`);
+      } else {
+        parts.push(`<span style="color:var(--orange);">⚠ Etsy variant: found ${escHtml(results.etsy.variant_id)}, V2 has ${escHtml(curVar)} — not overwritten</span>`);
+      }
+    } else if (results.etsy.variantErr) {
+      parts.push(`<span style="color:var(--orange);">⚠ Etsy variant lookup: ${escHtml(results.etsy.variantErr)}</span>`);
+    }
   } else if (results.etsyErr) {
     parts.push(`<span style="color:var(--red);">⚠ Etsy: ${escHtml(results.etsyErr)}</span>`);
   } else {
@@ -4924,6 +4988,7 @@ async function findChannelIdsBySku(sku) {
   }
 
   if (results.wix) {
+    // Wix product ID
     const current = wixInput ? (wixInput.value || '').trim() : '';
     if (!current) {
       if (wixInput) {
@@ -4936,6 +5001,25 @@ async function findChannelIdsBySku(sku) {
       parts.push(`<span style="color:var(--muted);">✓ Wix: ${escHtml(results.wix.product_id)} (already correct)</span>`);
     } else {
       parts.push(`<span style="color:var(--orange);">⚠ Wix: found ${escHtml(results.wix.product_id)}, V2 has ${escHtml(current)} — not overwritten</span>`);
+    }
+    // Wix variant ID (only present when matched_via='variant' via proxy v2.0.20+)
+    if (results.wix.variant_id) {
+      const curVar = wixVarInput ? (wixVarInput.value || '').trim() : '';
+      if (!curVar) {
+        if (wixVarInput) {
+          wixVarInput.value = results.wix.variant_id;
+          wixVarInput.style.boxShadow = '0 0 0 2px rgba(45,212,160,0.5)';
+          setTimeout(() => { wixVarInput.style.boxShadow = ''; }, 2500);
+        }
+        parts.push(`<span style="color:var(--green);">✅ Wix variant: ${escHtml(results.wix.variant_id)} filled</span>`);
+      } else if (curVar === results.wix.variant_id) {
+        parts.push(`<span style="color:var(--muted);">✓ Wix variant: already correct</span>`);
+      } else {
+        parts.push(`<span style="color:var(--orange);">⚠ Wix variant: found ${escHtml(results.wix.variant_id)}, V2 has ${escHtml(curVar)} — not overwritten</span>`);
+      }
+    } else if (results.wix.matched_via === 'parent') {
+      // matched via parent SKU — no variant info available
+      parts.push(`<span style="color:var(--muted2);">— Wix variant: parent-SKU match, no variant ID</span>`);
     }
   } else if (results.wixErr) {
     parts.push(`<span style="color:var(--red);">⚠ Wix: ${escHtml(results.wixErr)}</span>`);
