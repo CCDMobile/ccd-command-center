@@ -4837,16 +4837,23 @@ async function findChannelIdsBySku(sku) {
   const skuUpper = sku.toUpperCase();
   const results = { etsy: null, wix: null, etsyErr: null, wixErr: null };
 
+  // v2.9.33: proxy URLs + API key live in localStorage, NOT state.settings
+  // (which is never populated — see B-S39-11). Boot loader at ~line 1869
+  // hydrates ccdEtsyProxy/ccdWixProxy/ccdApiKey from settings table.
+  const etsyProxyUrl = localStorage.getItem('ccdEtsyProxy') || '';
+  const wixProxyUrl  = localStorage.getItem('ccdWixProxy')  || '';
+  const apiKey       = localStorage.getItem('ccdApiKey')    || '';
+
   // Run both lookups in parallel
   const etsyPromise = (async () => {
-    if (!state.settings.etsyProxyUrl) {
+    if (!etsyProxyUrl) {
       results.etsyErr = 'Etsy proxy not configured';
       return;
     }
     try {
-      const r = await jsonpRequest(state.settings.etsyProxyUrl, {
+      const r = await jsonpRequest(etsyProxyUrl, {
         action: 'listListings',
-        key: state.settings.etsyApiKey || state.settings.ccdApiKey,
+        key: apiKey,
         limit: 2000,
         state: 'active'
       });
@@ -4867,14 +4874,14 @@ async function findChannelIdsBySku(sku) {
   })();
 
   const wixPromise = (async () => {
-    if (!state.settings.wixProxyUrl) {
+    if (!wixProxyUrl) {
       results.wixErr = 'Wix proxy not configured';
       return;
     }
     try {
-      const r = await jsonpRequest(state.settings.wixProxyUrl, {
+      const r = await jsonpRequest(wixProxyUrl, {
         action: 'getProductBySku',
-        key: state.settings.wixApiKey || state.settings.ccdApiKey,
+        key: apiKey,
         sku: sku
       });
       if (r.success && r.product) {
@@ -4979,12 +4986,15 @@ async function fetchVariantIds(parentSku) {
       }
     }
 
-    if (etsyListings.size > 0 && state.settings.etsyProxyUrl) {
+    // v2.9.33 B-S39-11: proxy URL + key live in localStorage, not state.settings
+    const etsyProxyUrl_BS3911 = localStorage.getItem('ccdEtsyProxy') || '';
+    const apiKey_BS3911 = localStorage.getItem('ccdApiKey') || '';
+    if (etsyListings.size > 0 && etsyProxyUrl_BS3911) {
       for (const [listingId, items] of etsyListings) {
         try {
-          const result = await jsonpRequest(state.settings.etsyProxyUrl, {
+          const result = await jsonpRequest(etsyProxyUrl_BS3911, {
             action: 'getInventory',
-            key: state.settings.etsyApiKey || state.settings.ccdApiKey,
+            key: apiKey_BS3911,
             listing_id: listingId
           });
           if (result.success && result.inventory && result.inventory.products) {
@@ -5015,12 +5025,14 @@ async function fetchVariantIds(parentSku) {
       }
     }
 
-    if (wixProducts.size > 0 && state.settings.wixProxyUrl) {
+    // v2.9.33 B-S39-11: same localStorage source for Wix branch
+    const wixProxyUrl_BS3911 = localStorage.getItem('ccdWixProxy') || '';
+    if (wixProducts.size > 0 && wixProxyUrl_BS3911) {
       for (const [productId, items] of wixProducts) {
         try {
-          const result = await jsonpRequest(state.settings.wixProxyUrl, {
+          const result = await jsonpRequest(wixProxyUrl_BS3911, {
             action: 'getProduct',
-            key: state.settings.wixApiKey || state.settings.ccdApiKey,
+            key: apiKey_BS3911,
             productId: productId
           });
           if (result.success && result.product) {
