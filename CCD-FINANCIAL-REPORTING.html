@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.4</title>
+<title>CCD Financial Intelligence v1.8.5</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -533,7 +533,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.4</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.5</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1372,12 +1372,17 @@ body {
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
 // v1.8.4 — May 2026 — S40 Trust foundation: add OB Surcharge to Fee Breakdown (S40-FINDING-06 narrow)
+// v1.8.5 — May 2026 — S43 Phase 3a FR display: Offsite Ads (Fee Breakdown card + P&L + drill +
+//   export), Marketing Expense P&L section (Etsy Plus + PPC) + Net Profit after Marketing,
+//   B-S43-04 (Listing total / Discounts section), B-S43-05 (P&L itemization foots to Total Fees),
+//   B-S43-06 (suppress $0.00 fee rows), B-S43-02/03 (export channel scope + truncation warn).
+//   Net Profit byte-unchanged — REGRESSION-S42-NETINVARIANCE upheld.
 // v1.8.3 — April 2026
 // ALL financial values read from sales_history columns — zero recalculation.
 // Channel fees loaded from settings table (shared source with V2).
 // ============================================================================
 
-const FR_VERSION = 'v1.8.4';
+const FR_VERSION = 'v1.8.5';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -1672,7 +1677,7 @@ function buildQuery(table, cols) {
 
 async function fetchAgg(from, to, ch) {
   let q = sbClient.from('sales_history')
-    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,total_fees,actual_shipping_cost,ob_shipping,profit_margin,discount_amount')
+    .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,total_fees,etsy_offsite_ads_fee,actual_shipping_cost,ob_shipping,profit_margin,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
   if (ch) q = q.eq('sale_channel', ch);
   const { data } = await q;
@@ -2090,6 +2095,7 @@ function openDrill(r) {
       ${feeItem('Transaction', r.transaction_fee)}
       ${feeItem('CC Fee', r.cc_fee)}
       ${feeItem('Listing Fee', r.listing_fee)}
+      ${feeItem('Offsite Ads', r.etsy_offsite_ads_fee)}
       ${feeItem('Wayfair Fee', r.wayfair_fee)}
       ${feeItem('Recovery Fee', r.recovery_fee)}
       ${feeItem('Commission', r.commission)}
@@ -2354,6 +2360,7 @@ function buildChannelFeeBreakdown(channels, byCh, allRows) {
     { key:'transaction_fee', label:'Transaction' },
     { key:'cc_fee', label:'CC Fee' },
     { key:'listing_fee', label:'Listing Fee' },
+    { key:'etsy_offsite_ads_fee', label:'Offsite Ads' },
     { key:'wayfair_fee', label:'Wayfair Fee' },
     { key:'recovery_fee', label:'Recovery' },
     { key:'commission', label:'Commission' },
@@ -3592,7 +3599,7 @@ async function loadPnlReport() {
   document.getElementById('pnl-period-label').textContent = `Income statement — ${periodLabel()} — ${chLabel}`;
 
   let q = sbClient.from('sales_history')
-    .select('sale_date,sale_channel,total_revenue,wholesale_price,ib_shipping,tariff,ob_shipping,qty_sold,total_cost,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,gross_revenue,discount_amount')
+    .select('sale_date,sale_channel,total_revenue,wholesale_price,ib_shipping,tariff,ob_shipping,qty_sold,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,gross_revenue,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
   if (chDb) q = q.eq('sale_channel', chDb);
   const { data } = await q;
@@ -3601,7 +3608,7 @@ async function loadPnlReport() {
   let priorData = [];
   if (compareMode && priorFrom) {
     let pq = sbClient.from('sales_history')
-      .select('sale_date,total_revenue,total_cost,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount')
+      .select('sale_date,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount')
       .gte('sale_date', priorFrom).lte('sale_date', priorTo).limit(5000);
     if (chDb) pq = pq.eq('sale_channel', chDb);
     const { data: pd } = await pq;
@@ -3614,7 +3621,7 @@ async function loadPnlReport() {
     const mo = r.sale_date.substring(0,7);
     if (!byMonth[mo]) byMonth[mo] = {
       month:mo, revenue:0, grossRevenue:0, cogs:0, units:0, orders:0,
-      ohFee:0, txnFee:0, ccFee:0, listingFee:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0,
+      ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0,
       totalFees:0, netProfit:0, discounts:0
     };
     const m = byMonth[mo];
@@ -3627,6 +3634,8 @@ async function loadPnlReport() {
     m.txnFee       += parseFloat(r.transaction_fee)||0;
     m.ccFee        += parseFloat(r.cc_fee)||0;
     m.listingFee   += parseFloat(r.listing_fee)||0;
+    m.surcharge    += parseFloat(r.surcharge)||0;
+    m.offsiteAds   += parseFloat(r.etsy_offsite_ads_fee)||0;
     m.wfFee        += parseFloat(r.wayfair_fee)||0;
     m.recoveryFee  += parseFloat(r.recovery_fee)||0;
     m.commission   += parseFloat(r.commission)||0;
@@ -3645,7 +3654,7 @@ async function loadPnlReport() {
     const mo = r.sale_date.substring(0,7);
     const alignedMo = (parseInt(mo.substring(0,4))+1) + mo.substring(4);
     if (!priorByMonth[alignedMo]) priorByMonth[alignedMo] = {
-      revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, wfFee:0, recoveryFee:0,
+      revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0,
       rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0
     };
     const m = priorByMonth[alignedMo];
@@ -3654,6 +3663,10 @@ async function loadPnlReport() {
     m.ohFee      += parseFloat(r.oh_fee)||0;
     m.txnFee     += parseFloat(r.transaction_fee)||0;
     m.ccFee      += parseFloat(r.cc_fee)||0;
+    m.listingFee += parseFloat(r.listing_fee)||0;
+    m.surcharge  += parseFloat(r.surcharge)||0;
+    m.offsiteAds += parseFloat(r.etsy_offsite_ads_fee)||0;
+    m.commission += parseFloat(r.commission)||0;
     m.wfFee      += parseFloat(r.wayfair_fee)||0;
     m.recoveryFee += parseFloat(r.recovery_fee)||0;
     m.rent       += parseFloat(r.rent)||0;
@@ -3667,8 +3680,42 @@ async function loadPnlReport() {
   // Chart
   buildPnlChart(months);
 
+  // ── MARKETING EXPENSE (Build 2 / sub-step 2) ───────────────────────────
+  // Source: monthly_expenses (separate table, NOT sales_history). Etsy-scoped
+  // per S42. Does NOT enter net_profit (Q2=No) — V2<->FR<->§3.1 net parity
+  // preserved. Visibility (all/etsy only) is enforced in renderPnlTable.
+  const mktByMonth = {};
+  const priorMktByMonth = {};
+  if (channelFilter === 'all' || channelFilter === 'etsy') {
+    const mFrom = from.substring(0,7) + '-01';
+    const { data: mkt } = await sbClient.from('monthly_expenses')
+      .select('expense_month,expense_type,amount_usd')
+      .eq('channel','etsy')
+      .gte('expense_month', mFrom).lte('expense_month', to).limit(5000);
+    (mkt||[]).forEach(r => {
+      const mo = r.expense_month.substring(0,7);
+      if (!mktByMonth[mo]) mktByMonth[mo] = { etsy_plus:0, etsy_ppc:0 };
+      const t = r.expense_type;
+      if (mktByMonth[mo][t] != null) mktByMonth[mo][t] += parseFloat(r.amount_usd)||0;
+    });
+    if (compareMode && priorFrom) {
+      const pmFrom = priorFrom.substring(0,7) + '-01';
+      const { data: pmkt } = await sbClient.from('monthly_expenses')
+        .select('expense_month,expense_type,amount_usd')
+        .eq('channel','etsy')
+        .gte('expense_month', pmFrom).lte('expense_month', priorTo).limit(5000);
+      (pmkt||[]).forEach(r => {
+        const mo = r.expense_month.substring(0,7);
+        const alignedMo = (parseInt(mo.substring(0,4))+1) + mo.substring(4);
+        if (!priorMktByMonth[alignedMo]) priorMktByMonth[alignedMo] = { etsy_plus:0, etsy_ppc:0 };
+        const t = r.expense_type;
+        if (priorMktByMonth[alignedMo][t] != null) priorMktByMonth[alignedMo][t] += parseFloat(r.amount_usd)||0;
+      });
+    }
+  }
+
   // P&L table — traditional income statement format
-  renderPnlTable(months, priorByMonth);
+  renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth);
 }
 
 function buildPnlChart(months) {
@@ -3697,18 +3744,20 @@ function buildPnlChart(months) {
   });
 }
 
-function renderPnlTable(months, priorByMonth) {
+function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth) {
+  mktByMonth = mktByMonth || {};
+  priorMktByMonth = priorMktByMonth || {};
   const wrap = document.getElementById('pnlTableWrap');
   if (!months.length) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◪</div><div class="empty-msg">No data for this period</div></div>';
     return;
   }
 
-  const total = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0 };
+  const total = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
   months.forEach(m => { for (const k in total) total[k] += m[k]||0; });
 
   const hasPrior = compareMode && Object.keys(priorByMonth||{}).length > 0;
-  const priorTotal = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, wfFee:0, recoveryFee:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0 };
+  const priorTotal = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
   if (hasPrior) Object.values(priorByMonth).forEach(p => { for (const k in priorTotal) priorTotal[k] += p[k]||0; });
 
   const fmtMo = mo => { const [y,m] = mo.split('-'); return new Date(+y,+m-1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}); };
@@ -3724,9 +3773,14 @@ function renderPnlTable(months, priorByMonth) {
   }
 
   function pnlRow(label, key, cls, indent, fmtFn) {
-    const style = indent ? 'padding-left:24px;color:var(--dim);font-size:11px;' : 'font-weight:500;';
     const currTotal = total[key]||0;
     const priorVal = priorTotal[key]||0;
+    // B-S43-06: hide indented fee rows that are zero for the whole period
+    // (e.g. Wayfair/Recovery/Commission/Rent on an Etsy P&L). Non-indented
+    // structural rows always render; a row with prior-year activity is kept
+    // so compare-mode variance is never silently dropped.
+    if (indent && currTotal === 0 && priorVal === 0) return '';
+    const style = indent ? 'padding-left:24px;color:var(--dim);font-size:11px;' : 'font-weight:500;';
     const fmt = fmtFn || $$;
     return `<tr>
       <td style="${style}">${label}</td>
@@ -3763,6 +3817,8 @@ function renderPnlTable(months, priorByMonth) {
       ${pnlRow('Transaction Fee', 'txnFee', 'val-dim', true)}
       ${pnlRow('Credit Card Fee', 'ccFee', 'val-dim', true)}
       ${pnlRow('Listing Fee', 'listingFee', 'val-dim', true)}
+      ${pnlRow('Offsite Ads', 'offsiteAds', 'val-dim', true)}
+      ${pnlRow('OB Surcharge', 'surcharge', 'val-dim', true)}
       ${pnlRow('Wayfair Fee', 'wfFee', 'val-dim', true)}
       ${pnlRow('Recovery Fee', 'recoveryFee', 'val-dim', true)}
       ${pnlRow('Commission', 'commission', 'val-dim', true)}
@@ -3788,6 +3844,48 @@ function renderPnlTable(months, priorByMonth) {
         <td class="text-right" style="font-size:11px;border-left:2px solid var(--border2);">${total.revenue>0?pct((total.netProfit/total.revenue)*100):'—'}</td>
         ${hasPrior ? `<td class="text-right val-dim" style="font-size:11px;border-left:1px solid var(--border);">${priorTotal.revenue>0?pct((priorTotal.netProfit/priorTotal.revenue)*100):'—'}</td><td></td>` : ''}
       </tr>
+      ${(() => {
+        // ── MARKETING EXPENSE (Build 2) ──────────────────────────────────
+        // Etsy-scoped; shown only when the P&L scope includes Etsy. Sourced
+        // from monthly_expenses, NOT net_profit. "Net Profit after Marketing"
+        // = stored net − marketing; the Net Profit row above is unchanged.
+        if (channelFilter !== 'all' && channelFilter !== 'etsy') return '';
+        const mTot = { etsy_plus:0, etsy_ppc:0 };
+        months.forEach(m => { const x = mktByMonth[m.month]; if (x) { mTot.etsy_plus += x.etsy_plus||0; mTot.etsy_ppc += x.etsy_ppc||0; } });
+        const mktTotal = mTot.etsy_plus + mTot.etsy_ppc;
+        if (mktTotal === 0) return '';
+        const pTot = { etsy_plus:0, etsy_ppc:0 };
+        if (hasPrior) Object.values(priorMktByMonth).forEach(x => { pTot.etsy_plus += x.etsy_plus||0; pTot.etsy_ppc += x.etsy_ppc||0; });
+        const pMktTotal = pTot.etsy_plus + pTot.etsy_ppc;
+        const mRow = (label, key) => {
+          const ct = mTot[key], pv = pTot[key];
+          return `<tr>
+            <td style="padding-left:24px;color:var(--dim);font-size:11px;">${label}</td>
+            ${months.map(m => `<td class="text-right val-dim">${$$((mktByMonth[m.month]&&mktByMonth[m.month][key])||0)}</td>`).join('')}
+            <td class="text-right val-dim" style="font-weight:600;border-left:2px solid var(--border2);">${$$(ct)}</td>
+            ${varCell(ct, pv, 'val-dim')}
+          </tr>`;
+        };
+        // Per-month "Net Profit after Marketing": stored monthly net − that month's marketing
+        const napm = m => m.netProfit - (((mktByMonth[m.month]||{}).etsy_plus||0) + ((mktByMonth[m.month]||{}).etsy_ppc||0));
+        const napmTotal = total.netProfit - mktTotal;
+        const napmPriorTotal = priorTotal.netProfit - pMktTotal;
+        return `
+      <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Marketing Expense (Etsy)</td></tr>
+      ${mRow('Etsy Plus', 'etsy_plus')}
+      ${mRow('Promoted Listings (PPC)', 'etsy_ppc')}
+      <tr>
+        <td style="font-weight:500;">Total Marketing Expense</td>
+        ${months.map(m => { const v = ((mktByMonth[m.month]||{}).etsy_plus||0)+((mktByMonth[m.month]||{}).etsy_ppc||0); return `<td class="text-right val-neg">${$$(v)}</td>`; }).join('')}
+        <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(mktTotal)}</td>
+        ${varCell(mktTotal, pMktTotal, 'val-neg')}
+      </tr>
+      <tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">Net Profit after Marketing</td>
+        ${months.map(m => { const v = napm(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
+        <td class="text-right ${napmTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(napmTotal)}</td>
+        ${varCell(napmTotal, napmPriorTotal, napmTotal>=0?'val-pos':'val-neg')}
+      </tr>`;
+      })()}
     </tbody>
   </table></div>
   ${hasPrior ? '' : '<div style="font-size:10px;color:var(--muted);margin-top:6px;">Toggle "vs Prior Year" in top bar to see year-over-year comparison</div>'}`;
@@ -5621,21 +5719,45 @@ function exportWayfairReconExcel() {
   XLSX.writeFile(wb, `CCD_Wayfair_Reconciliation.xlsx`);
 }
 
-function exportPnlExcel() {
+async function exportPnlExcel() {
   // Re-trigger the P&L load to get data, then export
   const { from, to } = getRange();
-  sbClient.from('sales_history')
-    .select('sale_date,total_revenue,total_cost,oh_fee,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount')
-    .gte('sale_date', from).lte('sale_date', to).limit(5000)
+  // B-S43-02: export MUST honor the on-screen channel filter (previously all-channel always)
+  const chDb = CH_DB[channelFilter] || null;
+  const chLabel = channelFilter === 'all' ? 'All' : (CH_LABEL[chDb] || channelFilter);
+  // Build 3 (A): Marketing Expense (Etsy-scoped) for export parity with on-screen P&L
+  const exMkt = {};
+  if (channelFilter === 'all' || channelFilter === 'etsy') {
+    const mFrom = from.substring(0,7) + '-01';
+    const { data: mk } = await sbClient.from('monthly_expenses')
+      .select('expense_month,expense_type,amount_usd')
+      .eq('channel','etsy')
+      .gte('expense_month', mFrom).lte('expense_month', to).limit(5000);
+    (mk||[]).forEach(r => {
+      const mo = r.expense_month.substring(0,7);
+      if (!exMkt[mo]) exMkt[mo] = { etsy_plus:0, etsy_ppc:0 };
+      if (exMkt[mo][r.expense_type] != null) exMkt[mo][r.expense_type] += parseFloat(r.amount_usd)||0;
+    });
+  }
+  let exq = sbClient.from('sales_history')
+    .select('sale_date,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount')
+    .gte('sale_date', from).lte('sale_date', to).limit(5000);
+  if (chDb) exq = exq.eq('sale_channel', chDb);
+  exq
     .then(({ data }) => {
+      // B-S43-03: warn if the 5000-row cap was hit (silent multi-year truncation risk)
+      if ((data||[]).length === 5000) {
+        alert('Export note: result hit the 5000-row cap and may be truncated. Narrow the date range or channel for a complete export.');
+      }
       const byMonth = {};
       (data||[]).forEach(r => {
         const mo = r.sale_date.substring(0,7);
-        if (!byMonth[mo]) byMonth[mo] = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
+        if (!byMonth[mo]) byMonth[mo] = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
         const m = byMonth[mo];
         m.revenue += parseFloat(r.total_revenue)||0; m.cogs += parseFloat(r.total_cost)||0;
         m.ohFee += parseFloat(r.oh_fee)||0; m.txnFee += parseFloat(r.transaction_fee)||0;
         m.ccFee += parseFloat(r.cc_fee)||0; m.listingFee += parseFloat(r.listing_fee)||0;
+        m.surcharge += parseFloat(r.surcharge)||0; m.offsiteAds += parseFloat(r.etsy_offsite_ads_fee)||0;
         m.wfFee += parseFloat(r.wayfair_fee)||0;
         m.recoveryFee += parseFloat(r.recovery_fee)||0; m.commission += parseFloat(r.commission)||0;
         m.rent += parseFloat(r.rent)||0;
@@ -5655,6 +5777,7 @@ function exportPnlExcel() {
         ['Gross Profit', ...months.map(([,m])=>parseFloat((m.revenue-m.cogs).toFixed(2))), parseFloat(months.reduce((s,[,m])=>s+(m.revenue-m.cogs),0).toFixed(2))],
         row('OH Fee','ohFee'), row('Transaction Fee','txnFee'), row('CC Fee','ccFee'),
         row('Listing Fee','listingFee'),
+        row('Offsite Ads','offsiteAds'), row('OB Surcharge','surcharge'),
         row('Wayfair Fee','wfFee'), row('Recovery Fee','recoveryFee'), row('Commission','commission'), row('Rent','rent'),
         row('Mkt Deduction','mktDeduct'), row('Total Fees','totalFees'),
         row('Discounts/Promos','discounts'),
@@ -5662,11 +5785,26 @@ function exportPnlExcel() {
         ['Net Margin %', ...months.map(([,m])=>m.revenue>0?((m.netProfit/m.revenue)*100).toFixed(1)+'%':'0%'),
          months.reduce((s,[,m])=>s+m.revenue,0)>0?((months.reduce((s,[,m])=>s+m.netProfit,0)/months.reduce((s,[,m])=>s+m.revenue,0))*100).toFixed(1)+'%':'0%']
       ];
+      // Build 3 (A): Marketing Expense + Net Profit after Marketing — export parity with on-screen
+      const exMktTotal = labels.reduce((s,mo)=>s+(((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)),0);
+      if (exMktTotal > 0) {
+        const mRow = (label, key) => {
+          const vals = labels.map(mo => parseFloat((((exMkt[mo]||{})[key])||0).toFixed(2)));
+          return [label, ...vals, parseFloat(vals.reduce((s,v)=>s+v,0).toFixed(2))];
+        };
+        const napmVals = months.map(([mo,m]) => parseFloat((m.netProfit - (((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0))).toFixed(2)));
+        rows.push(
+          mRow('Etsy Plus','etsy_plus'),
+          mRow('Promoted Listings (PPC)','etsy_ppc'),
+          ['Total Marketing Expense', ...labels.map(mo => parseFloat((((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)).toFixed(2))), parseFloat(exMktTotal.toFixed(2))],
+          ['Net Profit after Marketing', ...napmVals, parseFloat(napmVals.reduce((s,v)=>s+v,0).toFixed(2))]
+        );
+      }
       const ws = XLSX.utils.aoa_to_sheet([headers,...rows]);
       ws['!cols'] = [20,...labels.map(()=>14),14].map(w=>({wch:w}));
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'P&L');
-      XLSX.writeFile(wb, `CCD_PnL_${from}_${to}.xlsx`);
+      XLSX.writeFile(wb, `CCD_PnL_${chLabel}_${from}_${to}.xlsx`);
     });
 }
 
