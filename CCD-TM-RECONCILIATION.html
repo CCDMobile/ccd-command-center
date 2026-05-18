@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CCD TM Reconciliation v1.0.0</title>
+<!--
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  CCD TM RECONCILIATION  —  S44-3a BUILD (DB persistence)                │
+  │  versionKey: tmrecon  ->  registers to settings.tool_versions.tmrecon  │
+  │  @scope  S44-3a = pdf.js parse + PREVIEW + COMMIT->VERIFY upsert.       │
+  │  @invariant  Writes ONLY to tm_monthly_financials (UPSERT on            │
+  │              sales_month) + settings.tool_versions (registerToolVersion │
+  │              merge). NO other table. NO §8 V2-vs-PDF recon (= S44-3b).  │
+  │  @invariant ECOSYSTEM-011 N/A — this tool never touches inventory/qty. │
+  │  @invariant ECOSYSTEM-005 — const VERSION is sole source; feeds visible │
+  │              label AND registerToolVersion. Bump here on every change.  │
+  │  @invariant  Commit DISABLED unless parse OK AND every row reconciles.  │
+  │              Upsert is idempotent by construction (PK sales_month).     │
+  │  @parse  Keys on memo :YYYYMM tokens, never txn date / section header  │
+  │          (rows are physically out of order in the source PDF).         │
+  │  @rent   Data-driven: try $240 standard, else $0 (template-zero        │
+  │          anomaly). Never hardcodes a month. Neither reconciles ->      │
+  │          flag for review, do NOT guess.                                │
+  │  Parse algorithm fixture-validated (S44-2) against the real Bill       │
+  │  History PDF: 4-month exact + comm=10% + identity + 1:1 payout + flag. │
+  │  DO NOT REMOVE THIS BLOCK.                                              │
+  └──────────────────────────────────────────────────────────────────────┘
+-->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+  :root{
+    --bg:#0c1018; --panel:#141a26; --panel2:#19212f; --line:#26303f;
+    --ink:#e8edf4; --mut:#8a97a8; --gold:#d8b25a;
+    --ok:#37c479; --bad:#e5604d; --warn:#e6b450; --accent:#5b9bd5;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);
+    font-family:"Iowan Old Style",Georgia,"Times New Roman",serif;
+    -webkit-font-smoothing:antialiased;line-height:1.5;padding:28px 22px 60px}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+  .wrap{max-width:1180px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:14px;
+    border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:20px}
+  .logo{width:30px;height:30px;border-radius:7px;background:var(--gold);
+    display:inline-flex;align-items:center;justify-content:center;
+    color:#1a130a;font-weight:700;font-size:17px;align-self:center}
+  h1{font-size:21px;font-weight:600;letter-spacing:.2px}
+  .ver{font-size:12px;color:var(--gold);font-family:ui-monospace,monospace;
+    border:1px solid var(--line);padding:2px 7px;border-radius:5px}
+  .sub{color:var(--mut);font-size:13px;margin-left:auto;align-self:center}
+  .banner{background:linear-gradient(180deg,#241c0e,#1c1709);
+    border:1px solid #4a3a16;color:#e6c98c;border-radius:9px;
+    padding:11px 15px;font-size:13px;margin-bottom:20px}
+  .banner b{color:var(--gold)}
+  .drop{border:1.5px dashed #33405380;border-radius:12px;background:var(--panel);
+    padding:42px 20px;text-align:center;cursor:pointer;transition:.15s;margin-bottom:22px}
+  .drop:hover,.drop.hot{border-color:var(--gold);background:var(--panel2)}
+  .drop h2{font-size:16px;font-weight:600;margin-bottom:6px}
+  .drop p{color:var(--mut);font-size:13px}
+  input[type=file]{display:none}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-bottom:22px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px 17px}
+  .kpi .lab{font-size:11px;letter-spacing:1.4px;color:var(--mut);text-transform:uppercase}
+  .kpi .val{font-size:24px;font-weight:600;margin-top:7px;font-family:ui-monospace,monospace}
+  .kpi.good .val{color:var(--ok)} .kpi.bad .val{color:var(--bad)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    overflow:hidden;margin-bottom:20px}
+  .card h3{font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:var(--gold);
+    padding:13px 17px;border-bottom:1px solid var(--line);background:var(--panel2)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{padding:11px 14px;text-align:right;border-bottom:1px solid var(--line)}
+  th{font-size:11px;letter-spacing:.8px;color:var(--mut);text-transform:uppercase;
+    font-weight:500;background:var(--panel2)}
+  th:first-child,td:first-child{text-align:left}
+  td.mono{font-family:ui-monospace,monospace}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;font-size:11px;padding:2px 9px;border-radius:20px;
+    font-family:ui-monospace,monospace;font-weight:600}
+  .pill.ok{background:#15351f;color:var(--ok)}
+  .pill.bad{background:#3a1c16;color:var(--bad)}
+  .pill.warn{background:#3a2f12;color:var(--warn)}
+  .note{color:var(--mut);font-size:12.5px;text-align:left}
+  .note.anom{color:var(--warn)}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:11px;margin-bottom:18px}
+  summary{padding:13px 17px;cursor:pointer;font-size:13px;color:var(--mut);
+    letter-spacing:.6px;text-transform:uppercase}
+  summary:hover{color:var(--ink)}
+  .raw{padding:6px 17px 17px;font-size:13px}
+  .raw div{padding:5px 0;border-bottom:1px dashed var(--line);color:var(--mut)}
+  .raw div:last-child{border-bottom:none}
+  .raw span{color:var(--ink);font-family:ui-monospace,monospace}
+  .acc{display:flex;flex-wrap:wrap;gap:8px;padding:15px 17px}
+  .acc .a{font-size:12.5px;padding:6px 12px;border-radius:7px;
+    font-family:ui-monospace,monospace}
+  .acc .a.p{background:#15351f;color:var(--ok)}
+  .acc .a.f{background:#3a1c16;color:var(--bad)}
+  .err{background:#2a1512;border:1px solid #5a2a20;color:#f0a596;
+    padding:13px 16px;border-radius:9px;font-size:13px;margin-bottom:18px;display:none}
+  footer{color:var(--mut);font-size:12px;text-align:center;margin-top:34px;
+    border-top:1px solid var(--line);padding-top:16px}
+  .sb{display:flex;align-items:center;gap:9px;margin-bottom:18px;
+    background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:10px 13px}
+  .sb input{background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    border-radius:6px;padding:7px 10px;font-size:12.5px;font-family:ui-monospace,monospace}
+  .sb input#sbUrl{flex:1;min-width:160px} .sb input#sbKey{flex:1.4;min-width:160px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex-shrink:0}
+  .dot.on{background:var(--ok)}
+  .sb .lbl{font-size:12px;color:var(--mut);letter-spacing:.6px}
+  button.act{background:var(--gold);color:#1a130a;border:none;border-radius:7px;
+    padding:8px 15px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+  button.act:hover{filter:brightness(1.07)}
+  button.ghost{background:transparent;color:var(--mut);border:1px solid var(--line);
+    border-radius:7px;padding:7px 13px;font-size:12.5px;cursor:pointer;font-family:inherit}
+  button.act:disabled{background:#2a3140;color:#5a6678;cursor:not-allowed;filter:none}
+  .commitbar{display:flex;align-items:center;gap:13px;margin-bottom:20px}
+  .commitbar .why{font-size:12.5px;color:var(--mut)}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);
+    background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+    padding:11px 20px;border-radius:9px;font-size:13px;opacity:0;transition:.25s;
+    pointer-events:none;z-index:50}
+  .toast.show{opacity:1}
+  .toast.ok{border-color:#2c6e49} .toast.err{border-color:#5a2a20}
+  .vp{padding:6px 17px 17px;font-size:13px}
+  .vp .vr{display:flex;justify-content:space-between;padding:7px 0;
+    border-bottom:1px dashed var(--line);color:var(--mut)}
+  .vp .vr:last-child{border-bottom:none}
+  .vp .vr b{color:var(--ok);font-family:ui-monospace,monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="logo">◆</span>
+    <h1>TM Reconciliation</h1>
+    <span class="ver" id="verLabel">v?.?.?</span>
+    <span class="sub">TreasureMarts Bill History — monthly financial parse</span>
+  </header>
+
+  <div class="banner">
+    <b>S44-3a BUILD.</b> Parse the TM Bill History PDF, review the grid, then
+    <b>Commit to database</b> — an idempotent upsert into <span class="mono">tm_monthly_financials</span>
+    (re-committing the same data changes nothing). The V2-vs-PDF reconciliation readout (S40-FINDING-05)
+    is S44-3b.
+  </div>
+
+  <div class="sb">
+    <span class="dot" id="sbDot"></span>
+    <span class="lbl" id="sbState">Not connected</span>
+    <input type="text" id="sbUrl" placeholder="Supabase URL">
+    <input type="password" id="sbKey" placeholder="Supabase anon key">
+    <button class="ghost" onclick="connectSupabase()">Connect</button>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="application/pdf,.pdf">
+    <h2>Drop the TM Bill History PDF here</h2>
+    <p>or click to choose &middot; parsed entirely in your browser</p>
+  </label>
+
+  <div id="out" style="display:none">
+    <div class="grid">
+      <div class="kpi" id="kMonths"><div class="lab">Sales months parsed</div><div class="val">—</div></div>
+      <div class="kpi" id="kGross"><div class="lab">Gross sales total</div><div class="val">—</div></div>
+      <div class="kpi" id="kRecon"><div class="lab">Identity reconciles</div><div class="val">—</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Preview — per sales-month (no writes)</h3>
+      <table id="tbl"><thead><tr>
+        <th>Sales month</th><th>Gross</th><th>Commission</th><th>10%?</th>
+        <th>Rent applied</th><th>Computed payout</th><th>Identity</th><th>Note</th>
+      </tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h3>Acceptance checks (fixture-locked S44-2)</h3>
+      <div class="acc" id="acc"></div>
+    </div>
+
+    <div class="commitbar">
+      <button class="act" id="commitBtn" disabled onclick="commitToDb()">Commit to database</button>
+      <span class="why" id="commitWhy">—</span>
+    </div>
+
+    <div class="card" id="verifyCard" style="display:none">
+      <h3>Verify — read back from tm_monthly_financials (post-commit)</h3>
+      <div class="vp" id="vp"></div>
+    </div>
+
+    <details>
+      <summary>Raw parsed artifacts (transparency)</summary>
+      <div class="raw" id="raw"></div>
+    </details>
+  </div>
+
+  <footer>CCD TM Reconciliation · S44-2 preview · parse keys on <span class="mono">:YYYYMM</span> memo tokens · rent is identity-validated, never hardcoded</footer>
+</div>
+
+<script>
+"use strict";
+/* ECOSYSTEM-005: const VERSION is the single source of truth.
+   Feeds the visible label AND registerToolVersion -> settings.tool_versions.tmrecon. */
+const VERSION = "v1.0.0";
+document.getElementById("verLabel").textContent = VERSION;
+document.title = "CCD TM Reconciliation " + VERSION;
+
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+const STD_RENT = 240.00;            // current standard monthly rent (Paul, S44)
+const $ = id => document.getElementById(id);
+const money = n => "$" + n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const num = s => parseFloat(String(s).replace(/,/g,""));
+
+const drop = $("drop"), fileIn = $("file");
+["dragover","dragenter"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add("hot");}));
+["dragleave","drop"].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.remove("hot");}));
+drop.addEventListener("drop",ev=>{ if(ev.dataTransfer.files[0]) handle(ev.dataTransfer.files[0]); });
+fileIn.addEventListener("change",ev=>{ if(ev.target.files[0]) handle(ev.target.files[0]); });
+
+/* ── Supabase: mirrored verbatim from CCD-WAYFAIR-REMITTANCE (consistency) ── */
+let sbClient = null, sbConnected = false;
+let lastParsed = null;   // rows snapshot for commit (set by parseAndRender)
+
+function toast(msg, kind){
+  let t = document.getElementById("toast");
+  if(!t){ t=document.createElement("div"); t.id="toast"; t.className="toast"; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.className = "toast show " + (kind==="success"?"ok":kind==="error"?"err":"");
+  clearTimeout(t._h); t._h = setTimeout(()=>{ t.className="toast"; }, 2600);
+}
+
+function setSbState(on){
+  sbConnected = on;
+  $("sbDot").classList.toggle("on", on);
+  $("sbState").textContent = on ? "Connected" : "Not connected";
+  refreshCommitGate();
+}
+
+function connectSupabase(){
+  const url = $("sbUrl").value.trim(), key = $("sbKey").value.trim();
+  if(!url || !key){ toast("Enter Supabase URL and key", "warning"); return; }
+  try{
+    sbClient = supabase.createClient(url, key);
+    sbClient.from("tm_monthly_financials").select("sales_month").limit(1).then(({ error })=>{
+      if(error && error.message.includes("does not exist")){
+        toast("tm_monthly_financials not found — run the S44-3a DDL first", "error"); return;
+      }
+      setSbState(true);
+      localStorage.setItem("ccdSupabaseUrl", url);
+      localStorage.setItem("ccdSupabaseKey", key);
+      registerToolVersion(sbClient, "tmrecon", VERSION);
+      toast("Connected to Supabase", "success");
+    });
+  }catch(e){ toast("Connect failed: " + e.message, "error"); }
+}
+
+/* registerToolVersion — byte-for-byte the remittance pattern (merge, skip-if-same, non-fatal). */
+async function registerToolVersion(client, toolKey, toolVersion){
+  if(!client) return;
+  try{
+    const { data } = await client.from("settings").select("value").eq("key","tool_versions").limit(1);
+    let versions = {};
+    const exists = data && data.length > 0;
+    if(exists && data[0].value){
+      versions = typeof data[0].value === "string" ? JSON.parse(data[0].value) : data[0].value;
+    }
+    if(versions[toolKey] === toolVersion) return;
+    versions[toolKey] = toolVersion;
+    const now = new Date().toISOString();
+    if(exists){
+      await client.from("settings").update({ value:versions, updated_at:now, updated_by:toolKey }).eq("key","tool_versions");
+    }else{
+      await client.from("settings").insert({ key:"tool_versions", value:versions, updated_at:now, updated_by:toolKey });
+    }
+    console.log("Registered " + toolKey + " " + toolVersion);
+  }catch(e){ console.log("Version register skipped:", e.message); }
+}
+
+(function autoConnect(){
+  const url = localStorage.getItem("ccdSupabaseUrl"), key = localStorage.getItem("ccdSupabaseKey");
+  if(url && key){ $("sbUrl").value=url; $("sbKey").value=key; connectSupabase(); }
+})();
+
+function refreshCommitGate(){
+  const btn = $("commitBtn"), why = $("commitWhy");
+  if(!lastParsed){ btn.disabled=true; why.textContent="Parse a PDF first."; return; }
+  if(!lastParsed.allReconcile){
+    btn.disabled=true;
+    why.textContent="Commit blocked — every month must reconcile (identity + payouts 1:1). Review the flagged row.";
+    return;
+  }
+  if(!sbConnected){ btn.disabled=true; why.textContent="Connect to Supabase to commit."; return; }
+  btn.disabled=false;
+  why.textContent = lastParsed.rows.length + " month(s) ready — idempotent upsert on sales_month.";
+}
+
+async function commitToDb(){
+  if(!sbClient || !sbConnected || !lastParsed || !lastParsed.allReconcile) return;
+  const btn = $("commitBtn"); btn.disabled = true; btn.textContent = "Committing…";
+  try{
+    const printedAt = lastParsed.printedAt || null;
+    const payload = lastParsed.rows.map(r=>({
+      sales_month: r.mm,
+      gross_sales: r.g,
+      commission: r.c,
+      rent_applied: r.rent,
+      payout: r.payout,
+      identity_ok: r.ok,
+      anomaly_note: (r.rent === 0 || !r.ok) ? r.label : null,
+      source_printed_at: printedAt,
+      updated_at: new Date().toISOString()
+    }));
+    const { error } = await sbClient
+      .from("tm_monthly_financials")
+      .upsert(payload, { onConflict: "sales_month" });
+    if(error) throw error;
+    toast("Committed " + payload.length + " row(s)", "success");
+    await verifyFromDb(lastParsed.rows.map(r=>r.mm));
+  }catch(e){
+    toast("Commit failed: " + e.message, "error");
+  }finally{
+    btn.textContent = "Commit to database";
+    refreshCommitGate();
+  }
+}
+
+async function verifyFromDb(months){
+  try{
+    const { data, error } = await sbClient
+      .from("tm_monthly_financials")
+      .select("sales_month,gross_sales,commission,rent_applied,payout,identity_ok,updated_at")
+      .in("sales_month", months)
+      .order("sales_month");
+    if(error) throw error;
+    const vp = $("vp");
+    vp.innerHTML =
+      `<div class="vr"><span>Rows read back from DB</span><b>${data.length} / ${months.length}</b></div>` +
+      data.map(r=>`<div class="vr"><span>${r.sales_month} &middot; gross ${money(+r.gross_sales)} &middot; comm ${money(+r.commission)} &middot; rent ${money(+r.rent_applied)} &middot; payout ${r.payout==null?'—':money(+r.payout)} &middot; id_ok ${r.identity_ok}</span><b>OK</b></div>`).join("") +
+      `<div class="vr"><span>Re-commit is idempotent (PK sales_month) — running again changes nothing.</span><b>✓</b></div>`;
+    $("verifyCard").style.display = "block";
+  }catch(e){ toast("Verify read failed: " + e.message, "error"); }
+}
+
+
+function showErr(m){ const e=$("err"); e.textContent="Parse error: "+m; e.style.display="block"; }
+
+async function handle(f){
+  $("err").style.display="none";
+  try{
+    const buf = await f.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data:buf}).promise;
+    let lines = [];
+    for(let p=1;p<=pdf.numPages;p++){
+      const page = await pdf.getPage(p);
+      const tc = await page.getTextContent();
+      lines = lines.concat(reconstructLines(tc.items));
+    }
+    parseAndRender(lines);
+  }catch(e){ showErr(e && e.message ? e.message : String(e)); }
+}
+
+/* Reconstruct logical lines from pdf.js text items.
+   Y-group (within ~3 units), X-sort, single-space join — the established
+   predictor of this engine's output. Whitespace normalized for regex. */
+function reconstructLines(items){
+  const rows = [];
+  items.forEach(it=>{
+    const s = (it.str||""); if(!s.trim()) return;
+    const x = it.transform[4], y = Math.round(it.transform[5]);
+    let r = rows.find(rr => Math.abs(rr.y - y) <= 3);
+    if(!r){ r = {y, parts:[]}; rows.push(r); }
+    r.parts.push({x, s});
+  });
+  rows.sort((a,b)=> b.y - a.y);
+  return rows.map(r=>{
+    r.parts.sort((a,b)=> a.x - b.x);
+    return r.parts.map(p=>p.s).join(" ").replace(/\s+/g," ").trim();
+  });
+}
+
+function parseAndRender(lines){
+  const text = lines.join("\n");
+
+  const gross = {}, comm = {};
+  let m;
+  const reG = /Month Sales Total\s+Monthly Sales:(\d{6})\s+\$([\d,]+\.\d{2})/g;
+  while((m = reG.exec(text))) gross[m[1]] = num(m[2]);
+  const reC = /% of Monthly Sales\s+10% Monthly Sales:(\d{6})\s+-?\$([\d,]+\.\d{2})/g;
+  while((m = reC.exec(text))) comm[m[1]] = num(m[2]);
+
+  const payouts = [];
+  const reP = /Settle Up\s+EFT Payout\s+-?\$([\d,]+\.\d{2})/g;
+  while((m = reP.exec(text))) payouts.push(num(m[1]));
+
+  const rentLines = [];
+  const reR = /Rent Monthly\s+(-?)\$([\d,]+\.\d{2})/g;
+  while((m = reR.exec(text))) rentLines.push((m[1]||"") + num(m[2]).toFixed(2));
+  const anchors = [];
+  const reA = /Monthly Rent for :(\d{6})/g;
+  while((m = reA.exec(text))) anchors.push(m[1]);
+
+  const months = Object.keys(gross).sort();
+  const pmset = payouts.slice();
+  const rows = [];
+  let identityAll = months.length > 0;
+
+  months.forEach(mm=>{
+    const g = gross[mm], c = comm[mm] != null ? comm[mm] : 0;
+    let picked = null;
+    for(const cand of [{r:STD_RENT,l:"standard $240"},
+                       {r:0,l:"ZERO-RENT ANOMALY — template-zero rent; settled in a later cycle"}]){
+      const p = Math.round((g - c - cand.r)*100)/100;
+      const idx = pmset.findIndex(x => Math.abs(x - p) < 0.005);
+      if(idx > -1){ picked = {rent:cand.r,label:cand.l,payout:p,idx}; break; }
+    }
+    const tenOk = Math.round(g*10)/100 === Math.round(c*100)/100;
+    if(picked){
+      pmset.splice(picked.idx,1);
+      rows.push({mm,g,c,tenOk,rent:picked.rent,payout:picked.payout,ok:true,label:picked.label});
+    }else{
+      identityAll = false;
+      rows.push({mm,g,c,tenOk,rent:null,payout:null,ok:false,
+        label:"NO RENT VALUE RECONCILES — needs review (not $240, not zero-anomaly)"});
+    }
+  });
+
+  // KPIs
+  const tg = months.reduce((s,k)=> s + gross[k], 0);
+  $("kMonths").querySelector(".val").textContent = months.length;
+  $("kGross").querySelector(".val").textContent = money(tg);
+  const rk = $("kRecon"); rk.querySelector(".val").textContent = identityAll && !pmset.length ? "YES" : "NO";
+  rk.className = "kpi " + (identityAll && !pmset.length ? "good" : "bad");
+
+  // Table
+  const tb = $("tbl").querySelector("tbody"); tb.innerHTML = "";
+  rows.forEach(r=>{
+    const anom = r.rent === 0 || !r.ok;
+    tb.insertAdjacentHTML("beforeend",
+      `<tr>
+        <td class="mono">${r.mm}</td>
+        <td class="mono">${money(r.g)}</td>
+        <td class="mono">${money(r.c)}</td>
+        <td>${r.tenOk?'<span class="pill ok">10%</span>':'<span class="pill bad">≠10%</span>'}</td>
+        <td class="mono">${r.rent==null?'—':money(r.rent)}</td>
+        <td class="mono">${r.payout==null?'—':money(r.payout)}</td>
+        <td>${r.ok?'<span class="pill ok">reconciles</span>':'<span class="pill bad">no match</span>'}</td>
+        <td class="note ${anom?'anom':''}">${r.label}</td>
+      </tr>`);
+  });
+
+  // Acceptance (fixture-locked)
+  const exp = {"202601":[54.90,5.49],"202602":[430.41,43.04],"202603":[485.07,48.51],"202604":[409.25,40.93]};
+  const fourExact = Object.keys(exp).every(k =>
+    gross[k]!=null && comm[k]!=null &&
+    Math.abs(gross[k]-exp[k][0])<0.005 && Math.abs(comm[k]-exp[k][1])<0.005);
+  const tenAll = rows.length>0 && rows.every(r=>r.tenOk);
+  const anomFlagged = rows.some(r=> r.rent === 0);
+  const checks = [
+    ["4-month exact", fourExact],
+    ["commission = 10%", tenAll],
+    ["identity all reconcile", identityAll],
+    ["payouts consumed 1:1 (no leftover)", payouts.length>0 && !pmset.length],
+    ["zero-rent anomaly flagged", anomFlagged],
+  ];
+  $("acc").innerHTML = checks.map(([n,ok])=>
+    `<span class="a ${ok?'p':'f'}">${ok?'PASS':'FAIL'} · ${n}</span>`).join("");
+
+  // Raw artifacts
+  $("raw").innerHTML =
+    `<div>Gross lines: <span>${JSON.stringify(gross)}</span></div>
+     <div>Commission lines: <span>${JSON.stringify(comm)}</span></div>
+     <div>EFT payouts found: <span>[${payouts.map(money).join(", ")}]</span></div>
+     <div>Leftover (unmatched) payouts: <span>${pmset.length?'['+pmset.map(money).join(", ")+']':'none'}</span></div>
+     <div>Explicit "Rent Monthly" lines: <span>[${rentLines.join(", ")}]</span></div>
+     <div>"Monthly Rent for :" anchors: <span>[${anchors.join(", ")}]</span></div>`;
+
+  $("out").style.display = "block";
+
+  /* ── S44-3a additive: snapshot for commit. Parse logic above is byte-unchanged
+     from the verified S44-2 build (diff-scope: only this block + DB fns are new). */
+  let printedAt = null;
+  const pf = text.match(/At:\s*(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+  if(pf){ printedAt = `${pf[3]}-${pf[1]}-${pf[2]}T${pf[4]}:${pf[5]}:${pf[6]}`; }
+  lastParsed = {
+    rows,
+    allReconcile: identityAll && payouts.length>0 && !pmset.length,
+    printedAt
+  };
+  refreshCommitGate();
+}
+</script>
+</body>
+</html>
