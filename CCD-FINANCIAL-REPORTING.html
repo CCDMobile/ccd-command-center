@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.5</title>
+<title>CCD Financial Intelligence v1.8.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -533,7 +533,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.5</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.6</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1371,6 +1371,12 @@ body {
 <script>
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
+// v1.8.6 — May 2026 — S46 Item J: Wayfair Vendor Charges overlay in P&L (reads
+//   wayfair_vendor_charges; channel-scoped to all/wayfair; generic across
+//   program_type so legacy "Merchandising" + current "Partner Home Access Fee"
+//   both surface). Combined "Net Profit after All Overhead" row when Marketing
+//   (Etsy) and Wayfair Charges both visible. Per-row net_profit untouched —
+//   REGRESSION-S42-NETINVARIANCE upheld.
 // v1.8.4 — May 2026 — S40 Trust foundation: add OB Surcharge to Fee Breakdown (S40-FINDING-06 narrow)
 // v1.8.5 — May 2026 — S43 Phase 3a FR display: Offsite Ads (Fee Breakdown card + P&L + drill +
 //   export), Marketing Expense P&L section (Etsy Plus + PPC) + Net Profit after Marketing,
@@ -1382,7 +1388,7 @@ body {
 // Channel fees loaded from settings table (shared source with V2).
 // ============================================================================
 
-const FR_VERSION = 'v1.8.5';
+const FR_VERSION = 'v1.8.6';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -3714,8 +3720,46 @@ async function loadPnlReport() {
     }
   }
 
+  // ── WAYFAIR VENDOR CHARGES (S46 / Item J) ──────────────────────────────
+  // Source: wayfair_vendor_charges (separate table, NOT sales_history).
+  // Wayfair-scoped. Does NOT enter net_profit (parity invariant preserved);
+  // rendered as a P&L overlay similar to Marketing Expense above. Generic
+  // read — accepts ANY program_type so legacy "Merchandising" (Jul-Dec 2025)
+  // and current "Partner Home Access Fee" (Jan 2026+) both surface; do NOT
+  // filter by program_type string or historical months silently drop.
+  // @invariant ECOSYSTEM-019 (overlay; per-row net_profit unchanged)
+  const wfChargesByMonth = {};
+  const priorWfChargesByMonth = {};
+  if (channelFilter === 'all' || channelFilter === 'wayfair') {
+    const vFrom = from.substring(0,7) + '-01';
+    const { data: vc } = await sbClient.from('wayfair_vendor_charges')
+      .select('invoice_date,program_type,amount')
+      .gte('invoice_date', vFrom).lte('invoice_date', to).limit(5000);
+    (vc||[]).forEach(r => {
+      if (!r.invoice_date) return;
+      const mo = r.invoice_date.substring(0,7);
+      const pt = (r.program_type||'(unknown)').trim();
+      if (!wfChargesByMonth[mo]) wfChargesByMonth[mo] = {};
+      wfChargesByMonth[mo][pt] = (wfChargesByMonth[mo][pt]||0) + Math.abs(parseFloat(r.amount)||0);
+    });
+    if (compareMode && priorFrom) {
+      const pvFrom = priorFrom.substring(0,7) + '-01';
+      const { data: pvc } = await sbClient.from('wayfair_vendor_charges')
+        .select('invoice_date,program_type,amount')
+        .gte('invoice_date', pvFrom).lte('invoice_date', priorTo).limit(5000);
+      (pvc||[]).forEach(r => {
+        if (!r.invoice_date) return;
+        const mo = r.invoice_date.substring(0,7);
+        const alignedMo = (parseInt(mo.substring(0,4))+1) + mo.substring(4);
+        const pt = (r.program_type||'(unknown)').trim();
+        if (!priorWfChargesByMonth[alignedMo]) priorWfChargesByMonth[alignedMo] = {};
+        priorWfChargesByMonth[alignedMo][pt] = (priorWfChargesByMonth[alignedMo][pt]||0) + Math.abs(parseFloat(r.amount)||0);
+      });
+    }
+  }
+
   // P&L table — traditional income statement format
-  renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth);
+  renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfChargesByMonth, priorWfChargesByMonth);
 }
 
 function buildPnlChart(months) {
@@ -3744,8 +3788,10 @@ function buildPnlChart(months) {
   });
 }
 
-function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth) {
+function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfChargesByMonth, priorWfChargesByMonth) {
   mktByMonth = mktByMonth || {};
+  wfChargesByMonth = wfChargesByMonth || {};
+  priorWfChargesByMonth = priorWfChargesByMonth || {};
   priorMktByMonth = priorMktByMonth || {};
   const wrap = document.getElementById('pnlTableWrap');
   if (!months.length) {
@@ -3857,6 +3903,13 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth) {
         const pTot = { etsy_plus:0, etsy_ppc:0 };
         if (hasPrior) Object.values(priorMktByMonth).forEach(x => { pTot.etsy_plus += x.etsy_plus||0; pTot.etsy_ppc += x.etsy_ppc||0; });
         const pMktTotal = pTot.etsy_plus + pTot.etsy_ppc;
+        // S46/J: when WF Charges section also renders (channelFilter='all'
+        // AND wayfair_vendor_charges has data in scope), suppress our own
+        // "Net Profit after Marketing" row — the WF IIFE below emits a
+        // single combined "Net Profit after All Overhead" subtracting both.
+        const wfWillRender = (channelFilter === 'all') &&
+          Object.values(wfChargesByMonth).some(md =>
+            Object.values(md).reduce((s,v) => s+v, 0) > 0);
         const mRow = (label, key) => {
           const ct = mTot[key], pv = pTot[key];
           return `<tr>
@@ -3880,10 +3933,101 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth) {
         <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(mktTotal)}</td>
         ${varCell(mktTotal, pMktTotal, 'val-neg')}
       </tr>
-      <tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">Net Profit after Marketing</td>
+      ${wfWillRender ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">Net Profit after Marketing</td>
         ${months.map(m => { const v = napm(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
         <td class="text-right ${napmTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(napmTotal)}</td>
         ${varCell(napmTotal, napmPriorTotal, napmTotal>=0?'val-pos':'val-neg')}
+      </tr>`}`;
+      })()}
+      ${(() => {
+        // ── WAYFAIR VENDOR CHARGES (S46 / Item J) ────────────────────────
+        // Wayfair-scoped; shown only when the P&L scope includes Wayfair.
+        // Sourced from wayfair_vendor_charges, NOT net_profit. Per-row
+        // net_profit unchanged — REGRESSION-S42-NETINVARIANCE upheld.
+        // Generic across program_type so both "Merchandising" (legacy) and
+        // "Partner Home Access Fee" (current) surface without code change.
+        // When Marketing section ALSO rendered above (channel='all' + both
+        // have data), this section emits a single combined "Net Profit
+        // after All Overhead" row instead of a parallel "after Wayfair
+        // Charges" — design choice S46.
+        if (channelFilter !== 'all' && channelFilter !== 'wayfair') return '';
+        // Discover program_types present and per-program totals
+        const programTotals = {};
+        let wfTotal = 0;
+        months.forEach(m => {
+          const md = wfChargesByMonth[m.month];
+          if (!md) return;
+          Object.entries(md).forEach(([prog, amt]) => {
+            programTotals[prog] = (programTotals[prog]||0) + amt;
+            wfTotal += amt;
+          });
+        });
+        if (wfTotal === 0) return '';
+        // Prior-period per-program totals (aligned to current months)
+        const priorProgramTotals = {};
+        let pWfTotal = 0;
+        if (hasPrior) {
+          Object.values(priorWfChargesByMonth).forEach(md => {
+            Object.entries(md).forEach(([prog, amt]) => {
+              priorProgramTotals[prog] = (priorProgramTotals[prog]||0) + amt;
+              pWfTotal += amt;
+            });
+          });
+        }
+        const programList = [...new Set([...Object.keys(programTotals), ...Object.keys(priorProgramTotals)])].sort();
+        // Per-program sub-row (mirrors Marketing's mRow)
+        const wfRow = (prog) => {
+          const ct = programTotals[prog]||0;
+          const pv = priorProgramTotals[prog]||0;
+          return `<tr>
+            <td style="padding-left:24px;color:var(--dim);font-size:11px;">${prog}</td>
+            ${months.map(m => {
+              const v = (wfChargesByMonth[m.month]||{})[prog] || 0;
+              return `<td class="text-right val-dim">${v > 0 ? $$(v) : '—'}</td>`;
+            }).join('')}
+            <td class="text-right val-dim" style="font-weight:600;border-left:2px solid var(--border2);">${$$(ct)}</td>
+            ${varCell(ct, pv, 'val-dim')}
+          </tr>`;
+        };
+        // Combined-overhead detection — Marketing IIFE used the symmetric
+        // wfWillRender flag to suppress its "after" row when we're going
+        // to emit a combined one here.
+        const mktVisible = (channelFilter === 'all' || channelFilter === 'etsy');
+        let mktTotalCombined = 0;
+        if (mktVisible) {
+          months.forEach(m => {
+            const x = mktByMonth[m.month];
+            if (x) mktTotalCombined += (x.etsy_plus||0) + (x.etsy_ppc||0);
+          });
+        }
+        const showCombined = mktTotalCombined > 0;  // both sections visible w/ data
+        let pMktTotalCombined = 0;
+        if (hasPrior && showCombined) {
+          Object.values(priorMktByMonth).forEach(x => {
+            pMktTotalCombined += (x.etsy_plus||0) + (x.etsy_ppc||0);
+          });
+        }
+        const afterLabel = showCombined ? 'Net Profit after All Overhead' : 'Net Profit after Wayfair Charges';
+        const afterPerMonth = m => {
+          const mMkt = showCombined ? (((mktByMonth[m.month]||{}).etsy_plus||0) + ((mktByMonth[m.month]||{}).etsy_ppc||0)) : 0;
+          const mWf  = Object.values(wfChargesByMonth[m.month]||{}).reduce((s,v)=>s+v, 0);
+          return m.netProfit - mMkt - mWf;
+        };
+        const afterTotal = total.netProfit - (showCombined ? mktTotalCombined : 0) - wfTotal;
+        const afterPriorTotal = priorTotal.netProfit - (showCombined ? pMktTotalCombined : 0) - pWfTotal;
+        return `
+      <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Wayfair Vendor Charges</td></tr>
+      ${programList.map(wfRow).join('')}
+      <tr>
+        <td style="font-weight:500;">Total Wayfair Charges</td>
+        ${months.map(m => { const v = Object.values(wfChargesByMonth[m.month]||{}).reduce((s,x)=>s+x, 0); return `<td class="text-right val-neg">${v > 0 ? $$(v) : '—'}</td>`; }).join('')}
+        <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(wfTotal)}</td>
+        ${varCell(wfTotal, pWfTotal, 'val-neg')}
+      </tr>
+      <tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
+        ${months.map(m => { const v = afterPerMonth(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
+        <td class="text-right ${afterTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(afterTotal)}</td>
+        ${varCell(afterTotal, afterPriorTotal, afterTotal>=0?'val-pos':'val-neg')}
       </tr>`;
       })()}
     </tbody>
