@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Remittance Import v1.3.2</title>
+<title>CCD Wayfair Remittance Import v1.3.3</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
@@ -141,7 +141,13 @@
     .upload-zone h3 { margin-bottom: 8px; font-size: 18px; }
     .upload-zone p { color: var(--text-dim); font-size: 14px; }
     .upload-zone input[type="file"] { display: none; }
-    
+
+    /* ── Select dropdowns (v1.3.3 — fix native option rendering on dark theme) ── */
+    select option {
+        background: var(--bg-card);
+        color: var(--text);
+    }
+
     /* ── Buttons ── */
     .btn {
         padding: 8px 16px;
@@ -403,7 +409,7 @@
         <span class="logo">W</span>
         Wayfair Remittance Import
     </h1>
-    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.2</span>
+    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.3</span>
 </div>
 
 <!-- Supabase Connection Bar -->
@@ -421,6 +427,7 @@
     <div class="tab" onclick="switchTab('browse')">📋 Browse Data</div>
     <div class="tab" onclick="switchTab('reconcile')">🔗 Reconciliation</div>
     <div class="tab" onclick="switchTab('reports')">📊 Reports</div>
+    <div class="tab" onclick="switchTab('monthly')">🗓️ Monthly Statement</div>
     <div class="tab" onclick="switchTab('returns')">↩️ Returns &amp; Cancellations</div>
 </div>
 
@@ -496,6 +503,29 @@
                 <div class="icon">📊</div>
                 <h3>Financial Reports</h3>
                 <p>Import remittance data to generate reports on fees, trends, and profitability.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════ MONTHLY STATEMENT TAB (v1.3.3 / S46) ════════ -->
+    <div class="view" id="view-monthly">
+        <div class="section-header">
+            <h2>Monthly Statement</h2>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <select id="monthlyPicker" onchange="renderMonthlyPreview(this.value)" style="padding:6px 10px;font-size:13px;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:6px;">
+                    <option value="">Select month…</option>
+                </select>
+                <button class="btn btn-accent btn-sm" onclick="downloadMonthlyXLSX()" id="monthlyDlBtn" disabled>📥 Download XLSX</button>
+            </div>
+        </div>
+        <div style="background:var(--bg-card);padding:12px 14px;border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--text-muted);line-height:1.5;">
+            <strong>For accountants.</strong> Report shows Wayfair sale activity for the selected month (organized by <em>invoice_date</em> — the month the sale happened), with cross-reference to the remittance that paid each line. Includes monthly vendor charges (Partner Home Access Fee / Merchandising) and a formula-driven summary so totals self-verify.
+        </div>
+        <div id="monthlyPreview">
+            <div class="empty-state">
+                <div class="icon">🗓️</div>
+                <h3>Pick a month to preview</h3>
+                <p>Pick a month from the dropdown above. The on-screen preview matches the downloadable Excel report.</p>
             </div>
         </div>
     </div>
@@ -585,12 +615,14 @@
 
 <!-- Supabase JS Client -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- SheetJS (xlsx) for in-browser Excel generation — v1.3.3 Monthly Statement -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script>
 // ═══════════════════════════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════════════════════════
-const REM_VERSION = 'v1.3.2';
+const REM_VERSION = 'v1.3.3';
 const REM_VERSION_KEY = 'remittance';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1678,7 +1710,382 @@ function switchTab(name) {
     // Auto-load data when switching to tabs
     if (name === 'browse' && sbConnected) loadBrowseData();
     if (name === 'reports' && sbConnected) loadReports();
+    if (name === 'monthly' && sbConnected) loadMonthlyStatementPicker();
     if (name === 'returns' && sbConnected) loadReturnsHistory();
+}
+
+// ═══════════════════════════════════════════════════════════
+// MONTHLY STATEMENT (v1.3.3 / S46 — accountant export)
+// ═══════════════════════════════════════════════════════════
+// Generates a self-contained XLSX statement for any month with
+// Wayfair activity. Period basis: invoice_date (sale activity).
+// Cross-references each remittance line to its remittance number
+// + date and (when reconciled) the matching sales_history SKU/
+// product name. Vendor charges (Partner Home Access Fee /
+// Merchandising) are included as a separate section. Read-only —
+// no DB mutation. SheetJS loaded from CDN.
+
+let _monthlyCache = null;  // { lines, charges, salesMap, month, monthLabel }
+
+async function loadMonthlyStatementPicker() {
+    if (!sbConnected) return;
+    const picker = document.getElementById('monthlyPicker');
+    if (!picker) return;
+
+    // Collect all distinct invoice months across both remittance lines and vendor charges
+    const [linesRes, chargesRes] = await Promise.all([
+        sbClient.from('wayfair_remittance_lines').select('invoice_date').not('invoice_date','is',null).limit(20000),
+        sbClient.from('wayfair_vendor_charges').select('invoice_date').not('invoice_date','is',null).limit(5000)
+    ]);
+    const months = new Set();
+    (linesRes.data || []).forEach(r => { if (r.invoice_date) months.add(r.invoice_date.substring(0,7)); });
+    (chargesRes.data || []).forEach(r => { if (r.invoice_date) months.add(r.invoice_date.substring(0,7)); });
+
+    const sorted = [...months].sort().reverse();  // most recent first
+    const current = picker.value;
+    picker.innerHTML = '<option value="">Select month…</option>' +
+        sorted.map(m => {
+            const d = new Date(m + '-01T00:00:00');
+            const label = d.toLocaleString('default', { month: 'long', year: 'numeric' });
+            return `<option value="${m}"${m === current ? ' selected' : ''}>${label}</option>`;
+        }).join('');
+}
+
+async function loadMonthlyData(month) {
+    const monthStart = month + '-01';
+    const [y, m] = month.split('-').map(Number);
+    const nextMonth = m === 12
+        ? `${y+1}-01-01`
+        : `${y}-${String(m+1).padStart(2,'0')}-01`;
+
+    // Remittance lines — joined to remittance header for traceability
+    const { data: lines } = await sbClient
+        .from('wayfair_remittance_lines')
+        .select('*, wayfair_remittances(remittance_number, remittance_date)')
+        .gte('invoice_date', monthStart).lt('invoice_date', nextMonth)
+        .order('invoice_date');
+
+    // Vendor charges (Partner Home Access Fee, Merchandising, etc.) for same period
+    const { data: charges } = await sbClient
+        .from('wayfair_vendor_charges')
+        .select('*, wayfair_remittances(remittance_number, remittance_date)')
+        .gte('invoice_date', monthStart).lt('invoice_date', nextMonth)
+        .order('invoice_date');
+
+    // Cross-reference to sales_history for SKU + product name
+    const saleIds = (lines || []).filter(l => l.sale_id).map(l => l.sale_id);
+    const salesMap = {};
+    if (saleIds.length) {
+        const { data: sales } = await sbClient
+            .from('sales_history')
+            .select('id,sku,product_name,sale_date')
+            .in('id', saleIds);
+        (sales || []).forEach(s => { salesMap[s.id] = s; });
+    }
+
+    const d = new Date(monthStart + 'T00:00:00');
+    return {
+        lines: lines || [],
+        charges: charges || [],
+        salesMap,
+        month,
+        monthLabel: d.toLocaleString('default', { month: 'long', year: 'numeric' })
+    };
+}
+
+function computeMonthlyTotals(data) {
+    let grossProduct = 0, damages = 0, earlyPay = 0, other = 0, salesNet = 0;
+    data.lines.forEach(l => {
+        grossProduct += parseFloat(l.product_amount) || 0;
+        damages      += Math.abs(parseFloat(l.damages_defects_amt) || 0);
+        earlyPay     += Math.abs(parseFloat(l.early_pay_discount) || 0);
+        other        += (parseFloat(l.shipping)||0) + (parseFloat(l.other)||0) + (parseFloat(l.tax_vat)||0);
+        salesNet     += parseFloat(l.payment_amount) || 0;
+    });
+    let vendorChargesTotal = 0;
+    data.charges.forEach(c => { vendorChargesTotal += Math.abs(parseFloat(c.amount) || 0); });
+    return {
+        grossProduct, damages, earlyPay, other, salesNet,
+        vendorChargesTotal,
+        netToCcd: salesNet - vendorChargesTotal,
+        lineCount: data.lines.length,
+        chargeCount: data.charges.length
+    };
+}
+
+async function renderMonthlyPreview(month) {
+    const preview = document.getElementById('monthlyPreview');
+    const btn = document.getElementById('monthlyDlBtn');
+    if (!month) {
+        preview.innerHTML = '<div class="empty-state"><div class="icon">🗓️</div><h3>Pick a month to preview</h3><p>Pick a month from the dropdown above. The on-screen preview matches the downloadable Excel report.</p></div>';
+        btn.disabled = true;
+        _monthlyCache = null;
+        return;
+    }
+    preview.innerHTML = '<div style="text-align:center;padding:40px;"><span class="spinner"></span> Loading…</div>';
+
+    const data = await loadMonthlyData(month);
+    _monthlyCache = data;
+    const t = computeMonthlyTotals(data);
+    const $$ = n => '$' + (Math.abs(parseFloat(n)||0)).toFixed(2);
+    const $$s = n => { const v = parseFloat(n)||0; return (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2); };
+
+    if (t.lineCount === 0 && t.chargeCount === 0) {
+        preview.innerHTML = `<div class="empty-state"><div class="icon">🗓️</div><h3>${data.monthLabel} — no activity</h3><p>No Wayfair sales or vendor charges found for this month. Confirm the remittance covering this period has been imported.</p></div>`;
+        btn.disabled = true;
+        return;
+    }
+
+    btn.disabled = false;
+
+    const linesRows = data.lines.map(l => {
+        const sale = l.sale_id ? data.salesMap[l.sale_id] : null;
+        return `<tr>
+            <td>${l.invoice_date || ''}</td>
+            <td>${esc(l.po_number || '')}</td>
+            <td>${sale ? esc(sale.sku || '') : '<span style="color:var(--text-muted)">—</span>'}</td>
+            <td>${sale ? esc(sale.product_name || '') : '<span style="color:var(--text-muted)">(unmatched)</span>'}</td>
+            <td class="text-right">${$$(l.product_amount)}</td>
+            <td class="text-right val-neg">${$$(l.damages_defects_amt)}</td>
+            <td class="text-right val-dim">${$$(l.early_pay_discount)}</td>
+            <td class="text-right">${$$(l.payment_amount)}</td>
+            <td>${esc(l.wayfair_remittances?.remittance_number || '')}</td>
+            <td>${l.wayfair_remittances?.remittance_date || ''}</td>
+        </tr>`;
+    }).join('');
+
+    const chargeRows = data.charges.map(c => `<tr>
+        <td>${c.invoice_date || ''}</td>
+        <td>${esc(c.program_type || '')}</td>
+        <td>${esc(c.description || '')}</td>
+        <td class="text-right val-neg">${$$(c.amount)}</td>
+        <td>${esc(c.wayfair_remittances?.remittance_number || '')}</td>
+        <td>${c.wayfair_remittances?.remittance_date || ''}</td>
+    </tr>`).join('');
+
+    preview.innerHTML = `
+        <h3 style="margin-top:0;">${data.monthLabel} — Wayfair Statement Preview</h3>
+
+        <div class="table-wrap" style="margin-bottom:16px;">
+            <div class="table-title"><span>Summary</span></div>
+            <div class="table-scroll">
+                <table>
+                    <tbody>
+                        <tr><td>Gross Product Sales (${t.lineCount} line${t.lineCount===1?'':'s'})</td><td class="text-right">${$$(t.grossProduct)}</td></tr>
+                        <tr><td>  Less: Damages Allowance (4%)</td><td class="text-right val-neg">${$$s(-t.damages)}</td></tr>
+                        <tr><td>  Less: Early Pay Discount (2%)</td><td class="text-right val-dim">${$$s(-t.earlyPay)}</td></tr>
+                        ${t.other !== 0 ? `<tr><td>  Less: Other (shipping/tax)</td><td class="text-right val-dim">${$$s(-t.other)}</td></tr>` : ''}
+                        <tr style="border-top:1px solid var(--border);"><td style="font-weight:600;">Net Sales (per remittances)</td><td class="text-right" style="font-weight:600;">${$$(t.salesNet)}</td></tr>
+                        ${t.vendorChargesTotal > 0 ? `<tr><td>Vendor Charges (${t.chargeCount})</td><td class="text-right val-neg">${$$s(-t.vendorChargesTotal)}</td></tr>` : ''}
+                        <tr style="border-top:2px solid var(--border);background:rgba(45,212,160,.08);"><td style="font-weight:700;">Net to CCD</td><td class="text-right" style="font-weight:700;">${$$(t.netToCcd)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="table-wrap" style="margin-bottom:16px;">
+            <div class="table-title"><span>Sales Detail (${t.lineCount})</span></div>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr>
+                        <th>Invoice Date</th><th>PO #</th><th>SKU</th><th>Product</th>
+                        <th class="text-right">Product Amt</th><th class="text-right">Damages</th>
+                        <th class="text-right">Early Pay</th><th class="text-right">Net Payment</th>
+                        <th>Remittance #</th><th>Remittance Date</th>
+                    </tr></thead>
+                    <tbody>${linesRows || '<tr><td colspan="10" style="text-align:center;color:var(--text-muted);">No sale lines this month</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>
+
+        ${t.chargeCount > 0 ? `<div class="table-wrap">
+            <div class="table-title"><span>Vendor Charges (${t.chargeCount})</span></div>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Invoice Date</th><th>Program Type</th><th>Description</th><th class="text-right">Amount</th><th>Remittance #</th><th>Remittance Date</th></tr></thead>
+                    <tbody>${chargeRows}</tbody>
+                </table>
+            </div>
+        </div>` : ''}
+    `;
+}
+
+function downloadMonthlyXLSX() {
+    if (!_monthlyCache) { toast('Pick a month first', 'warning'); return; }
+    if (typeof XLSX === 'undefined') { toast('XLSX library not loaded — check internet connection', 'error'); return; }
+
+    const data = _monthlyCache;
+    const t = computeMonthlyTotals(data);
+    const today = new Date().toISOString().substring(0,10);
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: Summary ──────────────────────────────────────────────
+    // Formula-driven so the accountant can verify totals tie out.
+    // Pre-compute formula values so cells render reliably (SheetJS needs
+    // {t,f,v} not just {f}); Excel still recalculates if inputs change.
+    const vNetSales = t.salesNet;                              // sum of payment_amount per line
+    const vNetToCcd = t.salesNet - t.vendorChargesTotal;       // bottom line
+    const sum = [];
+    sum.push(['Country Charm Decor, LLC']);
+    sum.push(['Wayfair Monthly Statement']);
+    sum.push([data.monthLabel]);
+    sum.push([`Generated ${today}`]);
+    sum.push([]);
+    sum.push(['Period basis', 'Invoice date (sale activity)']);
+    sum.push(['Currency',     'USD']);
+    sum.push(['Sale lines',   t.lineCount]);
+    sum.push(['Vendor charges', t.chargeCount]);
+    sum.push([]);
+    sum.push(['Summary',                          'Amount',                'Notes']);
+    sum.push(['Gross Product Sales',              t.grossProduct,          'sum of Product Amount per line']);
+    sum.push(['Less: Damages Allowance (4%)',     -t.damages,              'per-sale fee']);
+    sum.push(['Less: Early Pay Discount (2%)',    -t.earlyPay,             'per-sale fee']);
+    sum.push(['Less: Other (shipping/tax)',       -t.other,                'usually 0 for Wayfair dropship']);
+    sum.push(['Net Sales (per remittances)',      { t: 'n', f: 'B12+B13+B14+B15', v: vNetSales }, 'sum of Payment Amount per line']);
+    sum.push([]);
+    sum.push(['Vendor Charges (monthly)',         -t.vendorChargesTotal,   'Partner Home Access Fee / etc.']);
+    sum.push([]);
+    sum.push(['Net to CCD',                       { t: 'n', f: 'B16+B18', v: vNetToCcd },        'Bottom line']);
+
+    const ws1 = XLSX.utils.aoa_to_sheet(sum);
+    // Number formatting for the Amount column
+    const fmt = '"$"#,##0.00;[Red]("$"#,##0.00);"-"';
+    ['B12','B13','B14','B15','B16','B18','B20'].forEach(addr => {
+        if (ws1[addr]) ws1[addr].z = fmt;
+    });
+    ws1['!cols'] = [{ wch: 38 }, { wch: 14 }, { wch: 42 }];
+    // Title styling via merged cells for readability
+    ws1['!merges'] = (ws1['!merges'] || []).concat([
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 2 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 2 } },
+        { s: { r: 2, c: 0 }, e: { r: 2, c: 2 } },
+        { s: { r: 3, c: 0 }, e: { r: 3, c: 2 } }
+    ]);
+    XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
+
+    // ── Sheet 2: Sales Detail ────────────────────────────────────────
+    const detail = [
+        ['Invoice Date', 'PO #', 'SKU', 'Product Name',
+         'Product Amount', 'Damages (4%)', 'Early Pay (2%)', 'Shipping', 'Other', 'Tax/VAT',
+         'Net Payment', 'Business', 'Order Type', 'Remittance #', 'Remittance Date', 'Reconciled']
+    ];
+    data.lines.forEach(l => {
+        const sale = l.sale_id ? data.salesMap[l.sale_id] : null;
+        detail.push([
+            l.invoice_date || '',
+            l.po_number || '',
+            sale ? (sale.sku || '') : '',
+            sale ? (sale.product_name || '') : '(unmatched)',
+            parseFloat(l.product_amount) || 0,
+            parseFloat(l.damages_defects_amt) || 0,
+            parseFloat(l.early_pay_discount) || 0,
+            parseFloat(l.shipping) || 0,
+            parseFloat(l.other) || 0,
+            parseFloat(l.tax_vat) || 0,
+            parseFloat(l.payment_amount) || 0,
+            l.business || '',
+            l.order_type || '',
+            l.wayfair_remittances?.remittance_number || '',
+            l.wayfair_remittances?.remittance_date || '',
+            l.reconciled ? 'Yes' : 'No'
+        ]);
+    });
+    // Totals row with formulas + pre-computed cached values (SheetJS needs
+    // {t,f,v} for reliable rendering; Excel still recalculates on input edit)
+    if (data.lines.length > 0) {
+        const lastDataRow = data.lines.length + 1;  // 1-indexed; header is row 1
+        // Pre-compute column sums for cached cell values
+        const colSum = (key) => data.lines.reduce((s, l) => s + (parseFloat(l[key]) || 0), 0);
+        const sProduct = colSum('product_amount');
+        const sDamages = colSum('damages_defects_amt');
+        const sEarly   = colSum('early_pay_discount');
+        const sShip    = colSum('shipping');
+        const sOther   = colSum('other');
+        const sTax     = colSum('tax_vat');
+        const sPay     = colSum('payment_amount');
+        detail.push([
+            'TOTALS', '', '', '',
+            { t: 'n', f: `SUM(E2:E${lastDataRow})`, v: sProduct },
+            { t: 'n', f: `SUM(F2:F${lastDataRow})`, v: sDamages },
+            { t: 'n', f: `SUM(G2:G${lastDataRow})`, v: sEarly },
+            { t: 'n', f: `SUM(H2:H${lastDataRow})`, v: sShip },
+            { t: 'n', f: `SUM(I2:I${lastDataRow})`, v: sOther },
+            { t: 'n', f: `SUM(J2:J${lastDataRow})`, v: sTax },
+            { t: 'n', f: `SUM(K2:K${lastDataRow})`, v: sPay },
+            '', '', '', '', ''
+        ]);
+    }
+    const ws2 = XLSX.utils.aoa_to_sheet(detail);
+    // Format all currency columns
+    const currencyCols = ['E','F','G','H','I','J','K'];
+    for (let r = 2; r <= data.lines.length + 2; r++) {
+        currencyCols.forEach(col => {
+            const addr = col + r;
+            if (ws2[addr]) ws2[addr].z = fmt;
+        });
+    }
+    ws2['!cols'] = [
+        { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 38 },
+        { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+        { wch: 13 }, { wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 12 }
+    ];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Sales Detail');
+
+    // ── Sheet 3: Vendor Charges ──────────────────────────────────────
+    const vc = [
+        ['Invoice Date', 'Program Type', 'Description', 'Amount', 'Remittance #', 'Remittance Date']
+    ];
+    data.charges.forEach(c => {
+        vc.push([
+            c.invoice_date || '',
+            c.program_type || '',
+            c.description || '',
+            -Math.abs(parseFloat(c.amount) || 0),  // always shown as negative deduction
+            c.wayfair_remittances?.remittance_number || '',
+            c.wayfair_remittances?.remittance_date || ''
+        ]);
+    });
+    if (data.charges.length > 0) {
+        const lastCRow = data.charges.length + 1;
+        const sCharges = -data.charges.reduce((s, c) => s + Math.abs(parseFloat(c.amount) || 0), 0);
+        vc.push(['TOTAL', '', '', { t: 'n', f: `SUM(D2:D${lastCRow})`, v: sCharges }, '', '']);
+    }
+    const ws3 = XLSX.utils.aoa_to_sheet(vc);
+    for (let r = 2; r <= data.charges.length + 2; r++) {
+        if (ws3['D' + r]) ws3['D' + r].z = fmt;
+    }
+    ws3['!cols'] = [{ wch: 12 }, { wch: 24 }, { wch: 30 }, { wch: 13 }, { wch: 16 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws3, 'Vendor Charges');
+
+    // ── Sheet 4: Notes / Methodology ─────────────────────────────────
+    const notes = [
+        ['Notes — Wayfair Monthly Statement'],
+        [],
+        ['Period basis',          'Invoice date (sale activity month).'],
+        ['',                      'Each remittance line is included if its invoice_date falls in the selected month,'],
+        ['',                      'regardless of which remittance paid it (the remittance # and date are shown for traceability).'],
+        [],
+        ['Wayfair fee structure', '4% Damages Allowance + 2% Early Pay Discount, both per product amount.'],
+        ['',                      'Partner Home Access Fee: $49.99/mo flat (was branded "Merchandising" through Dec 2025).'],
+        ['',                      'Outbound shipping: $0 — Wayfair supplies the label, CCD never pays shipping on a Wayfair drop-ship.'],
+        [],
+        ['Excluded',              'Reversed and cancelled rows (status=reversed/cancelled in sales_history).'],
+        ['',                      'Recent sales whose remittance has not yet arrived (Wayfair pays after a 30-day return window).'],
+        [],
+        ['Reconciled column',     'Yes = remittance line matched to a sales_history row via order_id="WF-"+po_number.'],
+        ['',                      'No = remittance line received but the matching sales_history row was not found.'],
+        [],
+        ['Generated by',          'CCD-WAYFAIR-REMITTANCE tool, version ' + REM_VERSION + '.'],
+        ['Reproducible',          'Open the tool, go to Monthly Statement tab, pick the same month, click Download XLSX.']
+    ];
+    const ws4 = XLSX.utils.aoa_to_sheet(notes);
+    ws4['!cols'] = [{ wch: 24 }, { wch: 88 }];
+    ws4['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 1 } }];
+    XLSX.utils.book_append_sheet(wb, ws4, 'Notes');
+
+    const filename = `Wayfair_Statement_${data.month}.xlsx`;
+    XLSX.writeFile(wb, filename);
+    toast(`Downloaded ${filename}`, 'success');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2210,7 +2617,7 @@ async function processReturn(parsed, today) {
             qty_restocked: im ? item.qty : 0,
             reason:        item.reason || null,
             notes:         item.raNumber ? `RA# ${item.raNumber}` : null,
-            created_by:    'WayfairRemittance-v1.3.2'
+            created_by:    `WayfairRemittance-${REM_VERSION}`
         };
 
         const { data: returnData, error: rErr } = await sbClient
