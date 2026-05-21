@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.22</title>
+    <title>CCD Sync Hub v4.4.23</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.22 — Clean Build Styles
+           CCD SYNC HUB v4.4.23 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.22 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.23 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -572,6 +572,15 @@
         <!-- ║                  "Push Selected DIFFERENTIAL" sends SKU list → DIFFERENTIAL.║ -->
         <!-- ║                  NEVER modify runTrueUpNow call paths to send TRUE_UP with ║ -->
         <!-- ║                  a SKU list — Wayfair would zero every unincluded item.    ║ -->
+        <!-- ║                                                                           ║ -->
+        <!-- ║ @superseded-part v4.4.23 (S45, B-S44-01): Wayfair now platform-auto-     ║ -->
+        <!-- ║                  decrements on a sale (server-side change). The SALE-      ║ -->
+        <!-- ║                  DRIVEN quantity-push to Wayfair is removed from the       ║ -->
+        <!-- ║                  cascade writer (sourceChannel guard, ~line 4924/4984),    ║ -->
+        <!-- ║                  making Wayfair behave like Etsy/Wix. THIS HEARTBEAT       ║ -->
+        <!-- ║                  CONTRACT IS UNCHANGED: the 24h TRUE_UP and the never-     ║ -->
+        <!-- ║                  TRUE_UP-with-SKUs rule still stand. Cross-channel         ║ -->
+        <!-- ║                  (Etsy/Wix-origin) propagation to Wayfair still occurs.    ║ -->
         <!-- ║                                                                           ║ -->
         <!-- ║ @urls            wayfairProxyUrl comes from state.settings (loaded from   ║ -->
         <!-- ║                  settings.proxy_urls.wayfair in Supabase). NEVER hardcode. ║ -->
@@ -859,7 +868,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.22';
+    const SH_VERSION = 'v4.4.23';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4920,8 +4929,17 @@
                     }
                 }
                 
-                // Wayfair cascade (always — Wayfair doesn't auto-reduce)
-                if (product.wayfairSku || product.supplierPartNumber) {
+                // Wayfair cascade — v4.4.23 (B-S44-01): Wayfair now platform-
+                // auto-decrements its own on-site inventory on a sale (server-
+                // side change, Paul-confirmed S44). Guard against self-push on a
+                // Wayfair-origin sale, exactly like the Etsy/Wix guards above —
+                // otherwise Wayfair decrements itself AND this cascade pushes the
+                // SH-decremented qty back = 2x per unit. Cross-channel (Etsy/Wix
+                // origin) sales STILL push here: sourceChannel != 'wayfair' →
+                // ECOSYSTEM-011 peer-decrement propagation is preserved.
+                // Supersedes the sale-driven-quantity-push half of ECOSYSTEM-010;
+                // the TRUE_UP heartbeat (separate path) is unchanged.
+                if ((product.wayfairSku || product.supplierPartNumber) && sourceChannel !== 'wayfair') {
                     const wayfairQty = parseInt(channels.wayfair) || 0;
                     try {
                         await sbClient.from('sync_queue').insert({
@@ -4981,7 +4999,13 @@
                         } catch (e) { console.error(`[Bundle Cascade] Wix failed for ${comp.sku}:`, e.message); }
                     }
                 }
-                if (comp.wayfairSku || comp.supplierPartNumber) {
+                // v4.4.23 (B-S44-01): same Wayfair self-push guard as the
+                // top-level cascade. NOTE: uses order.channel, NOT sourceChannel
+                // — sourceChannel is const-scoped to the per-item loop above and
+                // is OUT of scope in this bundle loop; order.channel is in scope
+                // (used at the cascade-summary logActivity below). Copying
+                // sourceChannel here would throw a ReferenceError.
+                if ((comp.wayfairSku || comp.supplierPartNumber) && order.channel !== 'wayfair') {
                     const wayfairQty = parseInt(compChannels.wayfair) || 0;
                     try {
                         await sbClient.from('sync_queue').insert({
