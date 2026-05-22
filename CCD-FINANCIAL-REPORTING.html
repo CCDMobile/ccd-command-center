@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.7</title>
+<title>CCD Financial Intelligence v1.8.8</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -533,7 +533,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.7</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.8</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1371,6 +1371,32 @@ body {
 <script>
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
+// v1.8.8 — May 2026 — S48 FR Deep Dive (build session). Two fixes shipped in
+//   one artifact:
+//   F-S47-10 (ECOSYSTEM-023): "Gross Revenue" P&L row + Gross Profit + Net
+//     Margin % now read from `gross_revenue` column (with `total_revenue`
+//     fallback for older rows where gross_revenue is NULL), not from
+//     `total_revenue`. Fixes the historical Etsy display understatement
+//     (442 of 798 Etsy 2025 rows had total_revenue corrupted with an
+//     unknown pre-fees-pre-cost formula; gross_revenue is RPC-truth =
+//     sale_price × qty). Etsy 2025 visible Gross Revenue moves
+//     26,930.44 → 27,982.28; Net Profit UNCHANGED at 6,075.84 (stored
+//     independently from total_revenue). Underlying data corruption NOT
+//     mutated — root cause is heterogeneous (no single formula fits the
+//     1616 affected rows); see F-S48-F10 finding doc for full audit.
+//     Per-row REGRESSION-S42-NETINVARIANCE upheld.
+//   F-S47-11 (ECOSYSTEM-022): Shipping Variance overlay added to P&L —
+//     quad-overlay coordinator extension. Channel-guarded to etsy + wix
+//     (wayfair drop-ships; TM is in-person). Three-row section: Forecast
+//     Shipping (OB), Actual Shipping Cost, Net Shipping Variance. The
+//     variance is a credit/debit to net_profit at the bottom-line row.
+//     Existing Marketing / Wayfair Charges / Wix Subscription overlays now
+//     yield to SV via xxWillRender flags; SV owns the final "Net Profit
+//     after All Adjustments" row when 2+ overlays active or "Net Profit
+//     including Shipping Variance" when SV is alone. exportPnlExcel parity
+//     extended with new Shipping Variance section. Per-row net_profit
+//     untouched — REGRESSION-S42-NETINVARIANCE upheld.
+//   Also: topbar version label readability bump (10px → 14px, --gold2).
 // v1.8.7 — May 2026 — S47: Wix Subscription overlay in P&L (reads
 //   monthly_expenses where channel='wix'; channel-scoped to all/wix; generic
 //   across expense_type so wix_subscription / wix_app_litcommerce /
@@ -1399,7 +1425,7 @@ body {
 // Channel fees loaded from settings table (shared source with V2).
 // ============================================================================
 
-const FR_VERSION = 'v1.8.7';
+const FR_VERSION = 'v1.8.8';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -3625,7 +3651,7 @@ async function loadPnlReport() {
   let priorData = [];
   if (compareMode && priorFrom) {
     let pq = sbClient.from('sales_history')
-      .select('sale_date,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount')
+      .select('sale_date,sale_channel,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount,ob_shipping,actual_shipping_cost')
       .gte('sale_date', priorFrom).lte('sale_date', priorTo).limit(5000);
     if (chDb) pq = pq.eq('sale_channel', chDb);
     const { data: pd } = await pq;
@@ -3639,7 +3665,8 @@ async function loadPnlReport() {
     if (!byMonth[mo]) byMonth[mo] = {
       month:mo, revenue:0, grossRevenue:0, cogs:0, units:0, orders:0,
       ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0,
-      totalFees:0, netProfit:0, discounts:0
+      totalFees:0, netProfit:0, discounts:0,
+      obShipping:0, actualShipping:0   /* @invariant ECOSYSTEM-022 (F-11 Shipping Variance overlay; populated from etsy+wix only via channel guard) */
     };
     const m = byMonth[mo];
     m.revenue      += parseFloat(r.total_revenue)||0;
@@ -3661,6 +3688,14 @@ async function loadPnlReport() {
     m.totalFees    += parseFloat(r.total_fees)||0;
     m.netProfit    += parseFloat(r.net_profit)||0;
     m.discounts    += parseFloat(r.discount_amount)||0;
+    // ─── F-11 Shipping Variance accumulators (ECOSYSTEM-022) ─────────────
+    // Channel-guard: only etsy + wix populate ob_shipping AND actual_shipping_cost.
+    // Wayfair drop-ships (ob_shipping = 0 by business model); TM in-person (no actual).
+    // Mixing them in would dilute the variance signal; guard keeps the scope clean.
+    if (r.sale_channel === 'etsy' || r.sale_channel === 'wix') {
+      m.obShipping     += parseFloat(r.ob_shipping)||0;
+      m.actualShipping += parseFloat(r.actual_shipping_cost)||0;
+    }
   });
 
   const months = Object.values(byMonth).sort((a,b) => a.month.localeCompare(b.month));
@@ -3671,11 +3706,13 @@ async function loadPnlReport() {
     const mo = r.sale_date.substring(0,7);
     const alignedMo = (parseInt(mo.substring(0,4))+1) + mo.substring(4);
     if (!priorByMonth[alignedMo]) priorByMonth[alignedMo] = {
-      revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0,
-      rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0
+      revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0,
+      rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0,
+      obShipping:0, actualShipping:0
     };
     const m = priorByMonth[alignedMo];
-    m.revenue    += parseFloat(r.total_revenue)||0;
+    m.revenue      += parseFloat(r.total_revenue)||0;
+    m.grossRevenue += parseFloat(r.gross_revenue || r.total_revenue)||0;
     m.cogs       += parseFloat(r.total_cost)||0;
     m.ohFee      += parseFloat(r.oh_fee)||0;
     m.txnFee     += parseFloat(r.transaction_fee)||0;
@@ -3692,6 +3729,11 @@ async function loadPnlReport() {
     m.netProfit  += parseFloat(r.net_profit)||0;
     m.orders     += 1;
     m.units      += parseInt(r.qty_sold)||0;
+    // F-11 prior-year shipping accumulators (ECOSYSTEM-022 channel-guard parity)
+    if (r.sale_channel === 'etsy' || r.sale_channel === 'wix') {
+      m.obShipping     += parseFloat(r.ob_shipping)||0;
+      m.actualShipping += parseFloat(r.actual_shipping_cost)||0;
+    }
   });
 
   // Chart
@@ -3854,11 +3896,11 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
     return;
   }
 
-  const total = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
+  const total = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
   months.forEach(m => { for (const k in total) total[k] += m[k]||0; });
 
   const hasPrior = compareMode && Object.keys(priorByMonth||{}).length > 0;
-  const priorTotal = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
+  const priorTotal = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
   if (hasPrior) Object.values(priorByMonth).forEach(p => { for (const k in priorTotal) priorTotal[k] += p[k]||0; });
 
   const fmtMo = mo => { const [y,m] = mo.split('-'); return new Date(+y,+m-1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}); };
@@ -3900,7 +3942,7 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
     </tr></thead>
     <tbody>
       <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--gold);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Revenue</td></tr>
-      ${pnlRow('Gross Revenue', 'revenue', 'val-gold')}
+      ${pnlRow('Gross Revenue', 'grossRevenue', 'val-gold')}
       ${pnlRow('Orders', 'orders', '', false, num)}
       ${pnlRow('Units Sold', 'units', '', false, num)}
 
@@ -3908,9 +3950,9 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
       ${pnlRow('Total COGS', 'cogs', 'val-neg')}
 
       <tr style="background:rgba(45,212,160,.05);"><td style="font-weight:700;color:var(--green);">Gross Profit</td>
-        ${months.map(m => `<td class="text-right val-pos" style="font-weight:600;">${$$(m.revenue - m.cogs)}</td>`).join('')}
-        <td class="text-right val-pos" style="font-weight:700;border-left:2px solid var(--border2);">${$$(total.revenue - total.cogs)}</td>
-        ${varCell(total.revenue-total.cogs, priorTotal.revenue-priorTotal.cogs, 'val-pos')}
+        ${months.map(m => `<td class="text-right val-pos" style="font-weight:600;">${$$(m.grossRevenue - m.cogs)}</td>`).join('')}
+        <td class="text-right val-pos" style="font-weight:700;border-left:2px solid var(--border2);">${$$(total.grossRevenue - total.cogs)}</td>
+        ${varCell(total.grossRevenue-total.cogs, priorTotal.grossRevenue-priorTotal.cogs, 'val-pos')}
       </tr>
 
       <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Channel Fees &amp; Expenses</td></tr>
@@ -3941,9 +3983,9 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         ${varCell(total.netProfit, priorTotal.netProfit, total.netProfit>=0?'val-pos':'val-neg')}
       </tr>
       <tr><td style="color:var(--muted);font-size:11px;">Net Margin %</td>
-        ${months.map(m => `<td class="text-right" style="font-size:11px;">${m.revenue>0?pct((m.netProfit/m.revenue)*100):'—'}</td>`).join('')}
-        <td class="text-right" style="font-size:11px;border-left:2px solid var(--border2);">${total.revenue>0?pct((total.netProfit/total.revenue)*100):'—'}</td>
-        ${hasPrior ? `<td class="text-right val-dim" style="font-size:11px;border-left:1px solid var(--border);">${priorTotal.revenue>0?pct((priorTotal.netProfit/priorTotal.revenue)*100):'—'}</td><td></td>` : ''}
+        ${months.map(m => `<td class="text-right" style="font-size:11px;">${m.grossRevenue>0?pct((m.netProfit/m.grossRevenue)*100):'—'}</td>`).join('')}
+        <td class="text-right" style="font-size:11px;border-left:2px solid var(--border2);">${total.grossRevenue>0?pct((total.netProfit/total.grossRevenue)*100):'—'}</td>
+        ${hasPrior ? `<td class="text-right val-dim" style="font-size:11px;border-left:1px solid var(--border);">${priorTotal.grossRevenue>0?pct((priorTotal.netProfit/priorTotal.grossRevenue)*100):'—'}</td><td></td>` : ''}
       </tr>
       ${(() => {
         // ── MARKETING EXPENSE (Build 2) ──────────────────────────────────
@@ -3958,19 +4000,20 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         const pTot = { etsy_plus:0, etsy_ppc:0 };
         if (hasPrior) Object.values(priorMktByMonth).forEach(x => { pTot.etsy_plus += x.etsy_plus||0; pTot.etsy_ppc += x.etsy_ppc||0; });
         const pMktTotal = pTot.etsy_plus + pTot.etsy_ppc;
-        // S46/J + S47/Wix: tri-overlay coordination. When EITHER the Wayfair
-        // Charges section OR the Wix Subscription section will render below
-        // (channelFilter='all' + that section has data in scope), suppress
-        // our own "Net Profit after Marketing" row — a lower IIFE will emit
-        // a single combined "Net Profit after All Overhead" subtracting all
-        // active overlays.
+        // S46/J + S47/Wix + S48/F-11: quad-overlay coordination. When the
+        // Wayfair Charges, Wix Subscription, OR Shipping Variance section
+        // will render below (channelFilter='all'+ that section has data in
+        // scope), suppress our own "Net Profit after Marketing" row — a
+        // lower IIFE will emit a single combined "after" row.
         const wfWillRender = (channelFilter === 'all') &&
           Object.values(wfChargesByMonth).some(md =>
             Object.values(md).reduce((s,v) => s+v, 0) > 0);
         const wxWillRender = (channelFilter === 'all') &&
           Object.values(wixSubByMonth).some(md =>
             Object.values(md).reduce((s,v) => s+v, 0) > 0);
-        const suppressOurAfter = wfWillRender || wxWillRender;
+        const svWillRender = (channelFilter === 'all' || channelFilter === 'etsy' || channelFilter === 'wix') &&
+          (Math.abs(total.obShipping) > 0.005 || Math.abs(total.actualShipping) > 0.005);
+        const suppressOurAfter = wfWillRender || wxWillRender || svWillRender;
         const mRow = (label, key) => {
           const ct = mTot[key], pv = pTot[key];
           return `<tr>
@@ -4068,12 +4111,14 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
             pMktTotalCombined += (x.etsy_plus||0) + (x.etsy_ppc||0);
           });
         }
-        // S47/Wix: tri-overlay — if Wix Subscription will render below
-        // (channelFilter='all' + wix data in scope), suppress our own
-        // "after" row; the Wix IIFE will emit the combined row.
+        // S47/Wix + S48/F-11: quad-overlay — if Wix Subscription OR
+        // Shipping Variance will render below, suppress our own "after"
+        // row; a lower IIFE will emit the combined row.
         const wxWillRenderFromWf = (channelFilter === 'all') &&
           Object.values(wixSubByMonth).some(md =>
             Object.values(md).reduce((s,v) => s+v, 0) > 0);
+        const svWillRenderFromWf = (channelFilter === 'all' || channelFilter === 'etsy' || channelFilter === 'wix') &&
+          (Math.abs(total.obShipping) > 0.005 || Math.abs(total.actualShipping) > 0.005);
         const afterLabel = showCombined ? 'Net Profit after All Overhead' : 'Net Profit after Wayfair Charges';
         const afterPerMonth = m => {
           const mMkt = showCombined ? (((mktByMonth[m.month]||{}).etsy_plus||0) + ((mktByMonth[m.month]||{}).etsy_ppc||0)) : 0;
@@ -4091,7 +4136,7 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(wfTotal)}</td>
         ${varCell(wfTotal, pWfTotal, 'val-neg')}
       </tr>
-      ${wxWillRenderFromWf ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
+      ${(wxWillRenderFromWf || svWillRenderFromWf) ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
         ${months.map(m => { const v = afterPerMonth(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
         <td class="text-right ${afterTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(afterTotal)}</td>
         ${varCell(afterTotal, afterPriorTotal, afterTotal>=0?'val-pos':'val-neg')}
@@ -4178,6 +4223,11 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
           });
         }
         const otherActive = (mktTotalCombined > 0) || (wfTotalCombined > 0);
+        // S48/F-11: quad-overlay — if Shipping Variance will render below,
+        // suppress our own "after" row; the SV IIFE owns the combined
+        // bottom-line "Net Profit after All Adjustments" when SV is in mix.
+        const svWillRenderFromWx = (channelFilter === 'all' || channelFilter === 'etsy' || channelFilter === 'wix') &&
+          (Math.abs(total.obShipping) > 0.005 || Math.abs(total.actualShipping) > 0.005);
         // Prior totals for the combined "after" line
         let pMktTotalCombined = 0;
         if (hasPrior && mktVisible) {
@@ -4214,6 +4264,123 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         ${months.map(m => { const v = Object.values(wixSubByMonth[m.month]||{}).reduce((s,x)=>s+x, 0); return `<td class="text-right val-neg">${v > 0 ? $$(v) : '—'}</td>`; }).join('')}
         <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(wxTotal)}</td>
         ${varCell(wxTotal, pWxTotal, 'val-neg')}
+      </tr>
+      ${svWillRenderFromWx ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
+        ${months.map(m => { const v = afterPerMonth(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
+        <td class="text-right ${afterTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(afterTotal)}</td>
+        ${varCell(afterTotal, afterPriorTotal, afterTotal>=0?'val-pos':'val-neg')}
+      </tr>`}`;
+      })()}
+      ${(() => {
+        // ── SHIPPING VARIANCE (S48 / F-S47-11) ───────────────────────────
+        // Etsy+Wix-scoped (data populated only on these channels via the
+        // accumulator channel-guard above). Sourced from ob_shipping (forecast
+        // at sale time) and actual_shipping_cost (post-shipment Shippo
+        // receipt). Per-row net_profit UNCHANGED — overlay only.
+        // REGRESSION-S42-NETINVARIANCE preserved.
+        //
+        // Variance semantics: positive = forecast > actual = unearned credit
+        // to profit. Negative = forecast < actual = real loss. Most periods
+        // show positive variance under CCD's conservative-forecast model.
+        //
+        // Quad-overlay coordinator (extends ECOSYSTEM-019 / ECOSYSTEM-021):
+        // this IIFE is LAST in the chain and owns the final combined "after"
+        // row. When any of Marketing / Wayfair Charges / Wix Subscription
+        // also rendered, the label becomes "Net Profit after All Adjustments"
+        // and the math is: netProfit − marketing − wfCharges − wixSub +
+        // shippingVariance. When only Shipping Variance renders, the label
+        // is "Net Profit including Shipping Variance".
+        // @invariant ECOSYSTEM-022
+        if (channelFilter !== 'all' && channelFilter !== 'etsy' && channelFilter !== 'wix') return '';
+        const obTotal     = total.obShipping;
+        const actualTotal = total.actualShipping;
+        const svTotal     = obTotal - actualTotal;
+        // Render guard: if both legs are zero, no shipping data in scope → skip
+        if (Math.abs(obTotal) < 0.005 && Math.abs(actualTotal) < 0.005) return '';
+        const obPriorTotal     = priorTotal.obShipping;
+        const actualPriorTotal = priorTotal.actualShipping;
+        const svPriorTotal     = obPriorTotal - actualPriorTotal;
+        // Detect other active overlays for combined-bottom-line math/label
+        const mktVisibleSV = (channelFilter === 'all' || channelFilter === 'etsy');
+        let mktTotalSV = 0;
+        if (mktVisibleSV) {
+          months.forEach(m => {
+            const x = mktByMonth[m.month];
+            if (x) mktTotalSV += (x.etsy_plus||0) + (x.etsy_ppc||0);
+          });
+        }
+        const wfVisibleSV = (channelFilter === 'all' || channelFilter === 'wayfair');
+        let wfTotalSV = 0;
+        if (wfVisibleSV) {
+          months.forEach(m => {
+            const md = wfChargesByMonth[m.month];
+            if (md) wfTotalSV += Object.values(md).reduce((s,v) => s+v, 0);
+          });
+        }
+        const wxVisibleSV = (channelFilter === 'all' || channelFilter === 'wix');
+        let wxTotalSV = 0;
+        if (wxVisibleSV) {
+          months.forEach(m => {
+            const md = wixSubByMonth[m.month];
+            if (md) wxTotalSV += Object.values(md).reduce((s,v) => s+v, 0);
+          });
+        }
+        const otherActiveSV = (mktTotalSV > 0) || (wfTotalSV > 0) || (wxTotalSV > 0);
+        // Prior totals for the combined "after" line
+        let pMktTotalSV = 0, pWfTotalSV = 0, pWxTotalSV = 0;
+        if (hasPrior && mktVisibleSV) {
+          Object.values(priorMktByMonth).forEach(x => {
+            pMktTotalSV += (x.etsy_plus||0) + (x.etsy_ppc||0);
+          });
+        }
+        if (hasPrior && wfVisibleSV) {
+          Object.values(priorWfChargesByMonth).forEach(md => {
+            pWfTotalSV += Object.values(md).reduce((s,v) => s+v, 0);
+          });
+        }
+        if (hasPrior && wxVisibleSV) {
+          Object.values(priorWixSubByMonth).forEach(md => {
+            pWxTotalSV += Object.values(md).reduce((s,v) => s+v, 0);
+          });
+        }
+        const afterLabel = otherActiveSV ? 'Net Profit after All Adjustments' : 'Net Profit including Shipping Variance';
+        const afterPerMonth = m => {
+          const mMkt = mktVisibleSV ? (((mktByMonth[m.month]||{}).etsy_plus||0) + ((mktByMonth[m.month]||{}).etsy_ppc||0)) : 0;
+          const mWf  = wfVisibleSV  ? Object.values(wfChargesByMonth[m.month]||{}).reduce((s,v)=>s+v, 0) : 0;
+          const mWx  = wxVisibleSV  ? Object.values(wixSubByMonth[m.month]||{}).reduce((s,v)=>s+v, 0) : 0;
+          const mSv  = (m.obShipping||0) - (m.actualShipping||0);
+          return m.netProfit - mMkt - mWf - mWx + mSv;
+        };
+        const afterTotal = total.netProfit
+          - (mktVisibleSV ? mktTotalSV : 0)
+          - (wfVisibleSV  ? wfTotalSV  : 0)
+          - (wxVisibleSV  ? wxTotalSV  : 0)
+          + svTotal;
+        const afterPriorTotal = priorTotal.netProfit
+          - (mktVisibleSV ? pMktTotalSV : 0)
+          - (wfVisibleSV  ? pWfTotalSV  : 0)
+          - (wxVisibleSV  ? pWxTotalSV  : 0)
+          + svPriorTotal;
+        const svCls = svTotal >= 0 ? 'val-pos' : 'val-neg';
+        return `
+      <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Shipping Variance (Etsy + Wix)</td></tr>
+      <tr>
+        <td style="padding-left:24px;color:var(--dim);font-size:11px;">Forecast Shipping (OB)</td>
+        ${months.map(m => `<td class="text-right val-dim">${(m.obShipping||0) > 0.005 ? $$(m.obShipping) : '—'}</td>`).join('')}
+        <td class="text-right val-dim" style="font-weight:600;border-left:2px solid var(--border2);">${$$(obTotal)}</td>
+        ${varCell(obTotal, obPriorTotal, 'val-dim')}
+      </tr>
+      <tr>
+        <td style="padding-left:24px;color:var(--dim);font-size:11px;">Actual Shipping Cost</td>
+        ${months.map(m => `<td class="text-right val-dim">${(m.actualShipping||0) > 0.005 ? $$(m.actualShipping) : '—'}</td>`).join('')}
+        <td class="text-right val-dim" style="font-weight:600;border-left:2px solid var(--border2);">${$$(actualTotal)}</td>
+        ${varCell(actualTotal, actualPriorTotal, 'val-dim')}
+      </tr>
+      <tr>
+        <td style="font-weight:500;">Net Shipping Variance</td>
+        ${months.map(m => { const v = (m.obShipping||0) - (m.actualShipping||0); const c = v >= 0 ? 'val-pos' : 'val-neg'; return `<td class="text-right ${c}">${Math.abs(v) > 0.005 ? $$(v) : '—'}</td>`; }).join('')}
+        <td class="text-right ${svCls}" style="font-weight:600;border-left:2px solid var(--border2);">${$$(svTotal)}</td>
+        ${varCell(svTotal, svPriorTotal, svCls)}
       </tr>
       <tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
         ${months.map(m => { const v = afterPerMonth(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
@@ -6107,7 +6274,7 @@ async function exportPnlExcel() {
     });
   }
   let exq = sbClient.from('sales_history')
-    .select('sale_date,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount')
+    .select('sale_date,sale_channel,total_revenue,gross_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount,ob_shipping,actual_shipping_cost')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
   if (chDb) exq = exq.eq('sale_channel', chDb);
   exq
@@ -6119,9 +6286,11 @@ async function exportPnlExcel() {
       const byMonth = {};
       (data||[]).forEach(r => {
         const mo = r.sale_date.substring(0,7);
-        if (!byMonth[mo]) byMonth[mo] = { revenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0 };
+        if (!byMonth[mo]) byMonth[mo] = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
         const m = byMonth[mo];
-        m.revenue += parseFloat(r.total_revenue)||0; m.cogs += parseFloat(r.total_cost)||0;
+        m.revenue += parseFloat(r.total_revenue)||0;
+        m.grossRevenue += parseFloat(r.gross_revenue || r.total_revenue)||0;   /* F-10 ECOSYSTEM-023 export parity */
+        m.cogs += parseFloat(r.total_cost)||0;
         m.ohFee += parseFloat(r.oh_fee)||0; m.txnFee += parseFloat(r.transaction_fee)||0;
         m.ccFee += parseFloat(r.cc_fee)||0; m.listingFee += parseFloat(r.listing_fee)||0;
         m.surcharge += parseFloat(r.surcharge)||0; m.offsiteAds += parseFloat(r.etsy_offsite_ads_fee)||0;
@@ -6131,6 +6300,11 @@ async function exportPnlExcel() {
         m.mktDeduct += parseFloat(r.marketplace_deduction)||0; m.totalFees += parseFloat(r.total_fees)||0;
         m.netProfit += parseFloat(r.net_profit)||0; m.discounts += parseFloat(r.discount_amount)||0;
         m.orders++; m.units += parseInt(r.qty_sold)||0;
+        // F-11 ECOSYSTEM-022 export parity — channel-guard to etsy + wix
+        if (r.sale_channel === 'etsy' || r.sale_channel === 'wix') {
+          m.obShipping     += parseFloat(r.ob_shipping)||0;
+          m.actualShipping += parseFloat(r.actual_shipping_cost)||0;
+        }
       });
       const months = Object.entries(byMonth).sort((a,b)=>a[0].localeCompare(b[0]));
       const labels = months.map(([mo])=>mo);
@@ -6140,8 +6314,8 @@ async function exportPnlExcel() {
         return [label, ...vals, parseFloat(vals.reduce((s,v)=>s+v,0).toFixed(2))];
       };
       const rows = [
-        row('Gross Revenue','revenue'), row('COGS','cogs'),
-        ['Gross Profit', ...months.map(([,m])=>parseFloat((m.revenue-m.cogs).toFixed(2))), parseFloat(months.reduce((s,[,m])=>s+(m.revenue-m.cogs),0).toFixed(2))],
+        row('Gross Revenue','grossRevenue'), row('COGS','cogs'),
+        ['Gross Profit', ...months.map(([,m])=>parseFloat((m.grossRevenue-m.cogs).toFixed(2))), parseFloat(months.reduce((s,[,m])=>s+(m.grossRevenue-m.cogs),0).toFixed(2))],
         row('OH Fee','ohFee'), row('Transaction Fee','txnFee'), row('CC Fee','ccFee'),
         row('Listing Fee','listingFee'),
         row('Offsite Ads','offsiteAds'), row('OB Surcharge','surcharge'),
@@ -6149,8 +6323,8 @@ async function exportPnlExcel() {
         row('Mkt Deduction','mktDeduct'), row('Total Fees','totalFees'),
         row('Discounts/Promos','discounts'),
         row('Net Profit','netProfit'),
-        ['Net Margin %', ...months.map(([,m])=>m.revenue>0?((m.netProfit/m.revenue)*100).toFixed(1)+'%':'0%'),
-         months.reduce((s,[,m])=>s+m.revenue,0)>0?((months.reduce((s,[,m])=>s+m.netProfit,0)/months.reduce((s,[,m])=>s+m.revenue,0))*100).toFixed(1)+'%':'0%']
+        ['Net Margin %', ...months.map(([,m])=>m.grossRevenue>0?((m.netProfit/m.grossRevenue)*100).toFixed(1)+'%':'0%'),
+         months.reduce((s,[,m])=>s+m.grossRevenue,0)>0?((months.reduce((s,[,m])=>s+m.netProfit,0)/months.reduce((s,[,m])=>s+m.grossRevenue,0))*100).toFixed(1)+'%':'0%']
       ];
       // Build 3 (A) + S47: tri-overlay coordination (mirrors on-screen
       // renderPnlTable). Compute totals + activity flags up front, then emit
@@ -6160,14 +6334,21 @@ async function exportPnlExcel() {
       const exMktTotal = labels.reduce((s,mo)=>s+(((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)),0);
       const exWfTotal  = labels.reduce((s,mo)=>s+Object.values(exWf[mo]||{}).reduce((a,b)=>a+b,0),0);
       const exWxTotal  = labels.reduce((s,mo)=>s+Object.values(exWx[mo]||{}).reduce((a,b)=>a+b,0),0);
+      // F-11 ECOSYSTEM-022 export parity: SV totals + activity flag
+      const exObTotal     = months.reduce((s,[,m])=>s+(m.obShipping||0),0);
+      const exActualTotal = months.reduce((s,[,m])=>s+(m.actualShipping||0),0);
+      const exSvTotal     = exObTotal - exActualTotal;
       const mktActive = exMktTotal > 0;
       const wfActive  = exWfTotal  > 0;
       const wxActive  = exWxTotal  > 0;
-      const multipleActive = (mktActive ? 1 : 0) + (wfActive ? 1 : 0) + (wxActive ? 1 : 0) > 1;
+      const svActive  = (Math.abs(exObTotal) > 0.005 || Math.abs(exActualTotal) > 0.005) &&
+                        (channelFilter === 'all' || channelFilter === 'etsy' || channelFilter === 'wix');
+      const multipleActive = (mktActive ? 1 : 0) + (wfActive ? 1 : 0) + (wxActive ? 1 : 0) + (svActive ? 1 : 0) > 1;
       // Per-month subtraction helpers (only active sections contribute)
       const moMkt = mo => mktActive ? (((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)) : 0;
       const moWf  = mo => wfActive  ? Object.values(exWf[mo]||{}).reduce((a,b)=>a+b,0) : 0;
       const moWx  = mo => wxActive  ? Object.values(exWx[mo]||{}).reduce((a,b)=>a+b,0) : 0;
+      const moSv  = mo => { const m = (byMonth[mo]||{}); return svActive ? ((m.obShipping||0)-(m.actualShipping||0)) : 0; };
       // ── Marketing section ───────────────────────────────────────────
       if (mktActive) {
         const mRow = (label, key) => {
@@ -6180,7 +6361,7 @@ async function exportPnlExcel() {
           ['Total Marketing Expense', ...labels.map(mo => parseFloat(moMkt(mo).toFixed(2))), parseFloat(exMktTotal.toFixed(2))]
         );
         // Emit "Net Profit after Marketing" only if Marketing is the LAST active section
-        if (!wfActive && !wxActive) {
+        if (!wfActive && !wxActive && !svActive) {
           const napmVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo)).toFixed(2)));
           rows.push(['Net Profit after Marketing', ...napmVals, parseFloat(napmVals.reduce((s,v)=>s+v,0).toFixed(2))]);
         }
@@ -6195,7 +6376,7 @@ async function exportPnlExcel() {
         wfProgList.forEach(p => rows.push(wfRow(p)));
         rows.push(['Total Wayfair Charges', ...labels.map(mo => parseFloat(moWf(mo).toFixed(2))), parseFloat(exWfTotal.toFixed(2))]);
         // Emit "Net Profit after X" only if Wayfair is the LAST active section
-        if (!wxActive) {
+        if (!wxActive && !svActive) {
           const wfLabel = mktActive ? 'Net Profit after All Overhead' : 'Net Profit after Wayfair Charges';
           const napVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo) - moWf(mo)).toFixed(2)));
           rows.push([wfLabel, ...napVals, parseFloat(napVals.reduce((s,v)=>s+v,0).toFixed(2))]);
@@ -6212,10 +6393,29 @@ async function exportPnlExcel() {
         };
         wxTypeList.forEach(t => rows.push(wxRowFn(t)));
         rows.push(['Total Wix Subscription', ...labels.map(mo => parseFloat(moWx(mo).toFixed(2))), parseFloat(exWxTotal.toFixed(2))]);
-        // Wix is the LAST in the chain — always emits the final "after" row when active
-        const wxLabel = multipleActive ? 'Net Profit after All Overhead' : 'Net Profit after Wix Subscription';
-        const napVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo) - moWf(mo) - moWx(mo)).toFixed(2)));
-        rows.push([wxLabel, ...napVals, parseFloat(napVals.reduce((s,v)=>s+v,0).toFixed(2))]);
+        // S48/F-11: Wix yields to Shipping Variance when SV is active. If SV
+        // is NOT active, Wix is still last in chain and emits the final row.
+        if (!svActive) {
+          const wxLabel = multipleActive ? 'Net Profit after All Overhead' : 'Net Profit after Wix Subscription';
+          const napVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo) - moWf(mo) - moWx(mo)).toFixed(2)));
+          rows.push([wxLabel, ...napVals, parseFloat(napVals.reduce((s,v)=>s+v,0).toFixed(2))]);
+        }
+      }
+      // ── Shipping Variance section (S48 / F-S47-11 / ECOSYSTEM-022) ──
+      // Quad-overlay LAST link. Etsy + Wix scope. Variance is a credit
+      // (positive) or debit (negative) to net_profit; per-row net_profit
+      // unchanged in DB (REGRESSION-S42-NETINVARIANCE preserved).
+      if (svActive) {
+        const obVals     = months.map(([,m]) => parseFloat((m.obShipping||0).toFixed(2)));
+        const actualVals = months.map(([,m]) => parseFloat((m.actualShipping||0).toFixed(2)));
+        const svVals     = months.map(([,m]) => parseFloat(((m.obShipping||0) - (m.actualShipping||0)).toFixed(2)));
+        rows.push(['Forecast Shipping (OB)', ...obVals,     parseFloat(exObTotal.toFixed(2))]);
+        rows.push(['Actual Shipping Cost',   ...actualVals, parseFloat(exActualTotal.toFixed(2))]);
+        rows.push(['Net Shipping Variance',  ...svVals,     parseFloat(exSvTotal.toFixed(2))]);
+        // SV is LAST in chain — always emits the final "after" row when active
+        const svLabel = multipleActive ? 'Net Profit after All Adjustments' : 'Net Profit including Shipping Variance';
+        const napVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo) - moWf(mo) - moWx(mo) + moSv(mo)).toFixed(2)));
+        rows.push([svLabel, ...napVals, parseFloat(napVals.reduce((s,v)=>s+v,0).toFixed(2))]);
       }
       const ws = XLSX.utils.aoa_to_sheet([headers,...rows]);
       ws['!cols'] = [20,...labels.map(()=>14),14].map(w=>({wch:w}));
