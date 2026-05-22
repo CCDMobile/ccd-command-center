@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.6</title>
+<title>CCD Financial Intelligence v1.8.7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -533,7 +533,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.6</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:10px;font-weight:400;color:var(--muted);margin-left:4px;" id="frVersionLabel">v1.8.7</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1371,6 +1371,17 @@ body {
 <script>
 // ============================================================================
 // CCD FINANCIAL REPORTING PLATFORM — Complete
+// v1.8.7 — May 2026 — S47: Wix Subscription overlay in P&L (reads
+//   monthly_expenses where channel='wix'; channel-scoped to all/wix; generic
+//   across expense_type so wix_subscription / wix_app_litcommerce /
+//   wix_app_pinterest / wix_app_ascend / wix_app_rabbit_seo all surface and
+//   future Wix-channel expense_types auto-appear). Tri-overlay coordination:
+//   Marketing (Etsy) + Wayfair Charges + Wix Subscription all on 'all' view
+//   collapse to a single "Net Profit after All Overhead" row at the bottom.
+//   exportPnlExcel parity extended — now includes both Wayfair Vendor Charges
+//   (S46 Item J gap-fix, REGRESSION-S47-EXPORTPARITY) AND Wix Subscription
+//   sections matching on-screen. Per-row net_profit untouched —
+//   REGRESSION-S42-NETINVARIANCE upheld. @invariant ECOSYSTEM-021.
 // v1.8.6 — May 2026 — S46 Item J: Wayfair Vendor Charges overlay in P&L (reads
 //   wayfair_vendor_charges; channel-scoped to all/wayfair; generic across
 //   program_type so legacy "Merchandising" + current "Partner Home Access Fee"
@@ -1388,7 +1399,7 @@ body {
 // Channel fees loaded from settings table (shared source with V2).
 // ============================================================================
 
-const FR_VERSION = 'v1.8.6';
+const FR_VERSION = 'v1.8.7';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -3758,8 +3769,50 @@ async function loadPnlReport() {
     }
   }
 
+  // ── WIX SUBSCRIPTION (S47) ─────────────────────────────────────────────
+  // Source: monthly_expenses where channel='wix' (separate table, NOT
+  // sales_history). Wix-scoped. Does NOT enter net_profit (parity invariant
+  // preserved); rendered as a P&L overlay mirroring Wayfair Vendor Charges.
+  // GENERIC across expense_type — wix_subscription / wix_app_litcommerce /
+  // wix_app_pinterest / wix_app_ascend / wix_app_rabbit_seo all surface
+  // without code changes, and any future Wix-channel expense_type added to
+  // monthly_expenses auto-appears here. Friendly labels are mapped in
+  // renderPnlTable (Wix IIFE); unknown types fall through to their raw name.
+  // @invariant ECOSYSTEM-021 (overlay; per-row net_profit unchanged)
+  const wixSubByMonth = {};
+  const priorWixSubByMonth = {};
+  if (channelFilter === 'all' || channelFilter === 'wix') {
+    const wxFrom = from.substring(0,7) + '-01';
+    const { data: ws } = await sbClient.from('monthly_expenses')
+      .select('expense_month,expense_type,amount_usd')
+      .eq('channel','wix')
+      .gte('expense_month', wxFrom).lte('expense_month', to).limit(5000);
+    (ws||[]).forEach(r => {
+      if (!r.expense_month) return;
+      const mo = r.expense_month.substring(0,7);
+      const et = (r.expense_type||'(unknown)').trim();
+      if (!wixSubByMonth[mo]) wixSubByMonth[mo] = {};
+      wixSubByMonth[mo][et] = (wixSubByMonth[mo][et]||0) + Math.abs(parseFloat(r.amount_usd)||0);
+    });
+    if (compareMode && priorFrom) {
+      const pwFrom = priorFrom.substring(0,7) + '-01';
+      const { data: pws } = await sbClient.from('monthly_expenses')
+        .select('expense_month,expense_type,amount_usd')
+        .eq('channel','wix')
+        .gte('expense_month', pwFrom).lte('expense_month', priorTo).limit(5000);
+      (pws||[]).forEach(r => {
+        if (!r.expense_month) return;
+        const mo = r.expense_month.substring(0,7);
+        const alignedMo = (parseInt(mo.substring(0,4))+1) + mo.substring(4);
+        const et = (r.expense_type||'(unknown)').trim();
+        if (!priorWixSubByMonth[alignedMo]) priorWixSubByMonth[alignedMo] = {};
+        priorWixSubByMonth[alignedMo][et] = (priorWixSubByMonth[alignedMo][et]||0) + Math.abs(parseFloat(r.amount_usd)||0);
+      });
+    }
+  }
+
   // P&L table — traditional income statement format
-  renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfChargesByMonth, priorWfChargesByMonth);
+  renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfChargesByMonth, priorWfChargesByMonth, wixSubByMonth, priorWixSubByMonth);
 }
 
 function buildPnlChart(months) {
@@ -3788,11 +3841,13 @@ function buildPnlChart(months) {
   });
 }
 
-function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfChargesByMonth, priorWfChargesByMonth) {
+function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfChargesByMonth, priorWfChargesByMonth, wixSubByMonth, priorWixSubByMonth) {
   mktByMonth = mktByMonth || {};
   wfChargesByMonth = wfChargesByMonth || {};
   priorWfChargesByMonth = priorWfChargesByMonth || {};
   priorMktByMonth = priorMktByMonth || {};
+  wixSubByMonth = wixSubByMonth || {};
+  priorWixSubByMonth = priorWixSubByMonth || {};
   const wrap = document.getElementById('pnlTableWrap');
   if (!months.length) {
     wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◪</div><div class="empty-msg">No data for this period</div></div>';
@@ -3903,13 +3958,19 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         const pTot = { etsy_plus:0, etsy_ppc:0 };
         if (hasPrior) Object.values(priorMktByMonth).forEach(x => { pTot.etsy_plus += x.etsy_plus||0; pTot.etsy_ppc += x.etsy_ppc||0; });
         const pMktTotal = pTot.etsy_plus + pTot.etsy_ppc;
-        // S46/J: when WF Charges section also renders (channelFilter='all'
-        // AND wayfair_vendor_charges has data in scope), suppress our own
-        // "Net Profit after Marketing" row — the WF IIFE below emits a
-        // single combined "Net Profit after All Overhead" subtracting both.
+        // S46/J + S47/Wix: tri-overlay coordination. When EITHER the Wayfair
+        // Charges section OR the Wix Subscription section will render below
+        // (channelFilter='all' + that section has data in scope), suppress
+        // our own "Net Profit after Marketing" row — a lower IIFE will emit
+        // a single combined "Net Profit after All Overhead" subtracting all
+        // active overlays.
         const wfWillRender = (channelFilter === 'all') &&
           Object.values(wfChargesByMonth).some(md =>
             Object.values(md).reduce((s,v) => s+v, 0) > 0);
+        const wxWillRender = (channelFilter === 'all') &&
+          Object.values(wixSubByMonth).some(md =>
+            Object.values(md).reduce((s,v) => s+v, 0) > 0);
+        const suppressOurAfter = wfWillRender || wxWillRender;
         const mRow = (label, key) => {
           const ct = mTot[key], pv = pTot[key];
           return `<tr>
@@ -3933,7 +3994,7 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(mktTotal)}</td>
         ${varCell(mktTotal, pMktTotal, 'val-neg')}
       </tr>
-      ${wfWillRender ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">Net Profit after Marketing</td>
+      ${suppressOurAfter ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">Net Profit after Marketing</td>
         ${months.map(m => { const v = napm(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
         <td class="text-right ${napmTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(napmTotal)}</td>
         ${varCell(napmTotal, napmPriorTotal, napmTotal>=0?'val-pos':'val-neg')}
@@ -4007,6 +4068,12 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
             pMktTotalCombined += (x.etsy_plus||0) + (x.etsy_ppc||0);
           });
         }
+        // S47/Wix: tri-overlay — if Wix Subscription will render below
+        // (channelFilter='all' + wix data in scope), suppress our own
+        // "after" row; the Wix IIFE will emit the combined row.
+        const wxWillRenderFromWf = (channelFilter === 'all') &&
+          Object.values(wixSubByMonth).some(md =>
+            Object.values(md).reduce((s,v) => s+v, 0) > 0);
         const afterLabel = showCombined ? 'Net Profit after All Overhead' : 'Net Profit after Wayfair Charges';
         const afterPerMonth = m => {
           const mMkt = showCombined ? (((mktByMonth[m.month]||{}).etsy_plus||0) + ((mktByMonth[m.month]||{}).etsy_ppc||0)) : 0;
@@ -4023,6 +4090,130 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         ${months.map(m => { const v = Object.values(wfChargesByMonth[m.month]||{}).reduce((s,x)=>s+x, 0); return `<td class="text-right val-neg">${v > 0 ? $$(v) : '—'}</td>`; }).join('')}
         <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(wfTotal)}</td>
         ${varCell(wfTotal, pWfTotal, 'val-neg')}
+      </tr>
+      ${wxWillRenderFromWf ? '' : `<tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
+        ${months.map(m => { const v = afterPerMonth(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
+        <td class="text-right ${afterTotal>=0?'val-pos':'val-neg'}" style="font-weight:700;font-size:13px;border-left:2px solid var(--border2);">${$$(afterTotal)}</td>
+        ${varCell(afterTotal, afterPriorTotal, afterTotal>=0?'val-pos':'val-neg')}
+      </tr>`}`;
+      })()}
+      ${(() => {
+        // ── WIX SUBSCRIPTION (S47) ───────────────────────────────────────
+        // Wix-scoped; shown only when the P&L scope includes Wix. Sourced
+        // from monthly_expenses where channel='wix', NOT net_profit. Per-row
+        // net_profit unchanged — REGRESSION-S42-NETINVARIANCE upheld.
+        // GENERIC across expense_type so wix_subscription / wix_app_*
+        // (litcommerce / pinterest / ascend / rabbit_seo / anything future)
+        // all surface without code change. Friendly labels mapped below;
+        // unknown types fall through to raw expense_type string.
+        //
+        // Tri-overlay coordinator: this IIFE is LAST in the chain, so it
+        // owns the final "after" row. When ANY other overlay is also active
+        // (Marketing and/or Wayfair Charges), the label becomes "Net Profit
+        // after All Overhead" and the subtraction includes all three.
+        // When only Wix renders, the label is "Net Profit after Wix
+        // Subscription". @invariant ECOSYSTEM-021.
+        if (channelFilter !== 'all' && channelFilter !== 'wix') return '';
+        // Discover expense_types present and per-type totals
+        const typeTotals = {};
+        let wxTotal = 0;
+        months.forEach(m => {
+          const md = wixSubByMonth[m.month];
+          if (!md) return;
+          Object.entries(md).forEach(([typ, amt]) => {
+            typeTotals[typ] = (typeTotals[typ]||0) + amt;
+            wxTotal += amt;
+          });
+        });
+        if (wxTotal === 0) return '';
+        // Prior-period per-type totals
+        const priorTypeTotals = {};
+        let pWxTotal = 0;
+        if (hasPrior) {
+          Object.values(priorWixSubByMonth).forEach(md => {
+            Object.entries(md).forEach(([typ, amt]) => {
+              priorTypeTotals[typ] = (priorTypeTotals[typ]||0) + amt;
+              pWxTotal += amt;
+            });
+          });
+        }
+        // Friendly type labels (unknown types fall through to raw name)
+        const WX_TYPE_LABELS = {
+          wix_subscription:    'Wix Business Plan',
+          wix_app_litcommerce: 'LitCommerce',
+          wix_app_pinterest:   'Pinterest Feed Sync',
+          wix_app_ascend:      'Ascend',
+          wix_app_rabbit_seo:  'Rabbit SEO',
+        };
+        const typeList = [...new Set([...Object.keys(typeTotals), ...Object.keys(priorTypeTotals)])].sort();
+        const wxRow = (typ) => {
+          const label = WX_TYPE_LABELS[typ] || typ;
+          const ct = typeTotals[typ]||0;
+          const pv = priorTypeTotals[typ]||0;
+          return `<tr>
+            <td style="padding-left:24px;color:var(--dim);font-size:11px;">${label}</td>
+            ${months.map(m => {
+              const v = (wixSubByMonth[m.month]||{})[typ] || 0;
+              return `<td class="text-right val-dim">${v > 0 ? $$(v) : '—'}</td>`;
+            }).join('')}
+            <td class="text-right val-dim" style="font-weight:600;border-left:2px solid var(--border2);">${$$(ct)}</td>
+            ${varCell(ct, pv, 'val-dim')}
+          </tr>`;
+        };
+        // Tri-overlay combined-overhead detection
+        const mktVisible = (channelFilter === 'all' || channelFilter === 'etsy');
+        let mktTotalCombined = 0;
+        if (mktVisible) {
+          months.forEach(m => {
+            const x = mktByMonth[m.month];
+            if (x) mktTotalCombined += (x.etsy_plus||0) + (x.etsy_ppc||0);
+          });
+        }
+        const wfVisible = (channelFilter === 'all' || channelFilter === 'wayfair');
+        let wfTotalCombined = 0;
+        if (wfVisible) {
+          months.forEach(m => {
+            const md = wfChargesByMonth[m.month];
+            if (md) wfTotalCombined += Object.values(md).reduce((s,v) => s+v, 0);
+          });
+        }
+        const otherActive = (mktTotalCombined > 0) || (wfTotalCombined > 0);
+        // Prior totals for the combined "after" line
+        let pMktTotalCombined = 0;
+        if (hasPrior && mktVisible) {
+          Object.values(priorMktByMonth).forEach(x => {
+            pMktTotalCombined += (x.etsy_plus||0) + (x.etsy_ppc||0);
+          });
+        }
+        let pWfTotalCombined = 0;
+        if (hasPrior && wfVisible) {
+          Object.values(priorWfChargesByMonth).forEach(md => {
+            pWfTotalCombined += Object.values(md).reduce((s,v) => s+v, 0);
+          });
+        }
+        const afterLabel = otherActive ? 'Net Profit after All Overhead' : 'Net Profit after Wix Subscription';
+        const afterPerMonth = m => {
+          const mMkt = mktVisible ? (((mktByMonth[m.month]||{}).etsy_plus||0) + ((mktByMonth[m.month]||{}).etsy_ppc||0)) : 0;
+          const mWf  = wfVisible  ? Object.values(wfChargesByMonth[m.month]||{}).reduce((s,v)=>s+v, 0) : 0;
+          const mWx  = Object.values(wixSubByMonth[m.month]||{}).reduce((s,v)=>s+v, 0);
+          return m.netProfit - mMkt - mWf - mWx;
+        };
+        const afterTotal = total.netProfit
+          - (mktVisible ? mktTotalCombined : 0)
+          - (wfVisible  ? wfTotalCombined  : 0)
+          - wxTotal;
+        const afterPriorTotal = priorTotal.netProfit
+          - (mktVisible ? pMktTotalCombined : 0)
+          - (wfVisible  ? pWfTotalCombined  : 0)
+          - pWxTotal;
+        return `
+      <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Wix Subscription</td></tr>
+      ${typeList.map(wxRow).join('')}
+      <tr>
+        <td style="font-weight:500;">Total Wix Subscription</td>
+        ${months.map(m => { const v = Object.values(wixSubByMonth[m.month]||{}).reduce((s,x)=>s+x, 0); return `<td class="text-right val-neg">${v > 0 ? $$(v) : '—'}</td>`; }).join('')}
+        <td class="text-right val-neg" style="font-weight:600;border-left:2px solid var(--border2);">${$$(wxTotal)}</td>
+        ${varCell(wxTotal, pWxTotal, 'val-neg')}
       </tr>
       <tr style="background:rgba(45,212,160,.06);border-top:1px solid var(--border2);"><td style="font-weight:700;font-size:13px;color:var(--green);">${afterLabel}</td>
         ${months.map(m => { const v = afterPerMonth(m); return `<td class="text-right ${v>=0?'val-pos':'val-neg'}" style="font-weight:600;font-size:12px;">${$$(v)}</td>`; }).join('')}
@@ -5883,6 +6074,38 @@ async function exportPnlExcel() {
       if (exMkt[mo][r.expense_type] != null) exMkt[mo][r.expense_type] += parseFloat(r.amount_usd)||0;
     });
   }
+  // S47/REGRESSION-S47-EXPORTPARITY: Wayfair Vendor Charges (Wayfair-scoped)
+  // for export parity with on-screen — was missing in v1.8.6, present here.
+  const exWf = {};
+  if (channelFilter === 'all' || channelFilter === 'wayfair') {
+    const vFrom = from.substring(0,7) + '-01';
+    const { data: vc } = await sbClient.from('wayfair_vendor_charges')
+      .select('invoice_date,program_type,amount')
+      .gte('invoice_date', vFrom).lte('invoice_date', to).limit(5000);
+    (vc||[]).forEach(r => {
+      if (!r.invoice_date) return;
+      const mo = r.invoice_date.substring(0,7);
+      const pt = (r.program_type||'(unknown)').trim();
+      if (!exWf[mo]) exWf[mo] = {};
+      exWf[mo][pt] = (exWf[mo][pt]||0) + Math.abs(parseFloat(r.amount)||0);
+    });
+  }
+  // S47: Wix Subscription (Wix-scoped) — export parity with on-screen overlay.
+  const exWx = {};
+  if (channelFilter === 'all' || channelFilter === 'wix') {
+    const wxFrom = from.substring(0,7) + '-01';
+    const { data: ws } = await sbClient.from('monthly_expenses')
+      .select('expense_month,expense_type,amount_usd')
+      .eq('channel','wix')
+      .gte('expense_month', wxFrom).lte('expense_month', to).limit(5000);
+    (ws||[]).forEach(r => {
+      if (!r.expense_month) return;
+      const mo = r.expense_month.substring(0,7);
+      const et = (r.expense_type||'(unknown)').trim();
+      if (!exWx[mo]) exWx[mo] = {};
+      exWx[mo][et] = (exWx[mo][et]||0) + Math.abs(parseFloat(r.amount_usd)||0);
+    });
+  }
   let exq = sbClient.from('sales_history')
     .select('sale_date,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount')
     .gte('sale_date', from).lte('sale_date', to).limit(5000);
@@ -5929,20 +6152,70 @@ async function exportPnlExcel() {
         ['Net Margin %', ...months.map(([,m])=>m.revenue>0?((m.netProfit/m.revenue)*100).toFixed(1)+'%':'0%'),
          months.reduce((s,[,m])=>s+m.revenue,0)>0?((months.reduce((s,[,m])=>s+m.netProfit,0)/months.reduce((s,[,m])=>s+m.revenue,0))*100).toFixed(1)+'%':'0%']
       ];
-      // Build 3 (A): Marketing Expense + Net Profit after Marketing — export parity with on-screen
+      // Build 3 (A) + S47: tri-overlay coordination (mirrors on-screen
+      // renderPnlTable). Compute totals + activity flags up front, then emit
+      // each section's rows. Only the LAST active overlay emits the final
+      // "Net Profit after X" row; when 2+ are active the label collapses to
+      // "Net Profit after All Overhead" subtracting all active overlays.
       const exMktTotal = labels.reduce((s,mo)=>s+(((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)),0);
-      if (exMktTotal > 0) {
+      const exWfTotal  = labels.reduce((s,mo)=>s+Object.values(exWf[mo]||{}).reduce((a,b)=>a+b,0),0);
+      const exWxTotal  = labels.reduce((s,mo)=>s+Object.values(exWx[mo]||{}).reduce((a,b)=>a+b,0),0);
+      const mktActive = exMktTotal > 0;
+      const wfActive  = exWfTotal  > 0;
+      const wxActive  = exWxTotal  > 0;
+      const multipleActive = (mktActive ? 1 : 0) + (wfActive ? 1 : 0) + (wxActive ? 1 : 0) > 1;
+      // Per-month subtraction helpers (only active sections contribute)
+      const moMkt = mo => mktActive ? (((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)) : 0;
+      const moWf  = mo => wfActive  ? Object.values(exWf[mo]||{}).reduce((a,b)=>a+b,0) : 0;
+      const moWx  = mo => wxActive  ? Object.values(exWx[mo]||{}).reduce((a,b)=>a+b,0) : 0;
+      // ── Marketing section ───────────────────────────────────────────
+      if (mktActive) {
         const mRow = (label, key) => {
           const vals = labels.map(mo => parseFloat((((exMkt[mo]||{})[key])||0).toFixed(2)));
           return [label, ...vals, parseFloat(vals.reduce((s,v)=>s+v,0).toFixed(2))];
         };
-        const napmVals = months.map(([mo,m]) => parseFloat((m.netProfit - (((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0))).toFixed(2)));
         rows.push(
           mRow('Etsy Plus','etsy_plus'),
           mRow('Promoted Listings (PPC)','etsy_ppc'),
-          ['Total Marketing Expense', ...labels.map(mo => parseFloat((((exMkt[mo]||{}).etsy_plus||0)+((exMkt[mo]||{}).etsy_ppc||0)).toFixed(2))), parseFloat(exMktTotal.toFixed(2))],
-          ['Net Profit after Marketing', ...napmVals, parseFloat(napmVals.reduce((s,v)=>s+v,0).toFixed(2))]
+          ['Total Marketing Expense', ...labels.map(mo => parseFloat(moMkt(mo).toFixed(2))), parseFloat(exMktTotal.toFixed(2))]
         );
+        // Emit "Net Profit after Marketing" only if Marketing is the LAST active section
+        if (!wfActive && !wxActive) {
+          const napmVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo)).toFixed(2)));
+          rows.push(['Net Profit after Marketing', ...napmVals, parseFloat(napmVals.reduce((s,v)=>s+v,0).toFixed(2))]);
+        }
+      }
+      // ── Wayfair Vendor Charges section (S47 / REGRESSION-S47-EXPORTPARITY) ─
+      if (wfActive) {
+        const wfProgList = [...new Set(labels.flatMap(mo => Object.keys(exWf[mo]||{})))].sort();
+        const wfRow = (prog) => {
+          const vals = labels.map(mo => parseFloat(((exWf[mo]||{})[prog]||0).toFixed(2)));
+          return [prog, ...vals, parseFloat(vals.reduce((s,v)=>s+v,0).toFixed(2))];
+        };
+        wfProgList.forEach(p => rows.push(wfRow(p)));
+        rows.push(['Total Wayfair Charges', ...labels.map(mo => parseFloat(moWf(mo).toFixed(2))), parseFloat(exWfTotal.toFixed(2))]);
+        // Emit "Net Profit after X" only if Wayfair is the LAST active section
+        if (!wxActive) {
+          const wfLabel = mktActive ? 'Net Profit after All Overhead' : 'Net Profit after Wayfair Charges';
+          const napVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo) - moWf(mo)).toFixed(2)));
+          rows.push([wfLabel, ...napVals, parseFloat(napVals.reduce((s,v)=>s+v,0).toFixed(2))]);
+        }
+      }
+      // ── Wix Subscription section (S47) ──────────────────────────────
+      if (wxActive) {
+        const WX_TYPE_LABELS = { wix_subscription:'Wix Business Plan', wix_app_litcommerce:'LitCommerce', wix_app_pinterest:'Pinterest Feed Sync', wix_app_ascend:'Ascend', wix_app_rabbit_seo:'Rabbit SEO' };
+        const wxTypeList = [...new Set(labels.flatMap(mo => Object.keys(exWx[mo]||{})))].sort();
+        const wxRowFn = (typ) => {
+          const lab = WX_TYPE_LABELS[typ] || typ;
+          const vals = labels.map(mo => parseFloat(((exWx[mo]||{})[typ]||0).toFixed(2)));
+          return [lab, ...vals, parseFloat(vals.reduce((s,v)=>s+v,0).toFixed(2))];
+        };
+        wxTypeList.forEach(t => rows.push(wxRowFn(t)));
+        rows.push(['Total Wix Subscription', ...labels.map(mo => parseFloat(moWx(mo).toFixed(2))), parseFloat(exWxTotal.toFixed(2))]);
+        // Wix is the LAST in the chain — always emits the final "after" row when active
+        const wxLabel = multipleActive ? 'Net Profit after All Overhead' : 'Net Profit after Wix Subscription';
+        const napVals = months.map(([mo,m]) => parseFloat((m.netProfit - moMkt(mo) - moWf(mo) - moWx(mo)).toFixed(2)));
+        rows.push([wxLabel, ...napVals, parseFloat(napVals.reduce((s,v)=>s+v,0).toFixed(2))]);
       }
       const ws = XLSX.utils.aoa_to_sheet([headers,...rows]);
       ws['!cols'] = [20,...labels.map(()=>14),14].map(w=>({wch:w}));
