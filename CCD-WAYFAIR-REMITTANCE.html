@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Remittance Import v1.3.3</title>
+<title>CCD Wayfair Remittance Import v1.3.4</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
@@ -409,7 +409,7 @@
         <span class="logo">W</span>
         Wayfair Remittance Import
     </h1>
-    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.3</span>
+    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.4</span>
 </div>
 
 <!-- Supabase Connection Bar -->
@@ -622,7 +622,7 @@
 // ═══════════════════════════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════════════════════════
-const REM_VERSION = 'v1.3.3';
+const REM_VERSION = 'v1.3.4';
 const REM_VERSION_KEY = 'remittance';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -1366,11 +1366,20 @@ async function runReconciliation() {
     // Load vendor charges for fee summary
     const { data: charges } = await sbClient.from('wayfair_vendor_charges').select('*');
     
-    // Build sales lookup: order_id → sale record
-    const salesMap = {};
-    (sales || []).forEach(s => { salesMap[s.order_id] = s; });
+    // ── v1.3.4: Group sales by order_id to handle multi-SKU Wayfair POs ─
+    // (Wayfair sends ONE remittance line per PO even when the order has
+    // multiple SKUs; sales_history records one row per SKU. Pre-v1.3.4 the
+    // matcher used salesMap[order_id]=sale which overwrote duplicates so
+    // only the last row per PO ever matched. Now N sales → 1 remittance
+    // line, with the primary sale_id stored on the line and ALL sale ids
+    // stored in linked_sale_ids jsonb for full traceability.)
+    const salesByOrder = {};
+    (sales || []).forEach(s => {
+        if (!salesByOrder[s.order_id]) salesByOrder[s.order_id] = [];
+        salesByOrder[s.order_id].push(s);
+    });
     
-    // Match lines to sales
+    // Match lines to sales — for grouped order_ids, link the whole group
     const matched = [];
     const unmatchedRemittance = [];
     
@@ -1381,23 +1390,44 @@ async function runReconciliation() {
         line._remDate = remDate;
         
         const saleKey = 'WF-' + line.po_number;
-        const sale = salesMap[saleKey];
+        const saleGroup = salesByOrder[saleKey];
         
-        if (sale) {
-            matched.push({ line, sale });
-            if (!line.reconciled) {
+        if (saleGroup && saleGroup.length > 0) {
+            // Primary = first row (stable order — sales loaded ascending by
+            // sales_history insertion order). Linked = all row ids.
+            const primary = saleGroup[0];
+            const allIds = saleGroup.map(s => s.id);
+            saleGroup.forEach(s => matched.push({ line, sale: s }));
+            
+            // Only write to DB if anything actually changed (idempotent
+            // across re-runs; avoids spamming updated_at on every recon).
+            const existingLinked = Array.isArray(line.linked_sale_ids)
+                ? line.linked_sale_ids
+                : [];
+            const sameSet = existingLinked.length === allIds.length
+                && existingLinked.every(id => allIds.includes(id));
+            const needsUpdate = !line.reconciled
+                || line.sale_id !== primary.id
+                || !sameSet;
+            
+            if (needsUpdate) {
                 sbClient.from('wayfair_remittance_lines')
-                    .update({ reconciled: true, reconciled_at: new Date().toISOString(), sale_id: sale.id })
+                    .update({
+                        reconciled: true,
+                        reconciled_at: new Date().toISOString(),
+                        sale_id: primary.id,
+                        linked_sale_ids: allIds
+                    })
                     .eq('id', line.id)
                     .then(() => {});
             }
-            delete salesMap[saleKey];
+            delete salesByOrder[saleKey];
         } else {
             unmatchedRemittance.push(line);
         }
     }
     
-    const unmatchedSales = Object.values(salesMap);
+    const unmatchedSales = Object.values(salesByOrder).flat();
     
     // Store globally for filter/sort/export
     window._reconData = { matched, unmatchedRemittance, unmatchedSales, charges: charges || [], allLines: lines || [] };
@@ -1773,13 +1803,24 @@ async function loadMonthlyData(month) {
         .order('invoice_date');
 
     // Cross-reference to sales_history for SKU + product name
-    const saleIds = (lines || []).filter(l => l.sale_id).map(l => l.sale_id);
+    // v1.3.4: read linked_sale_ids (jsonb array, set by Option-A matcher)
+    // when present; this surfaces ALL SKUs for multi-SKU POs, not just the
+    // primary sale_id. Falls back to sale_id alone for lines reconciled
+    // before the v1.3.4 matcher upgrade.
+    const allSaleIds = new Set();
+    (lines || []).forEach(l => {
+        if (Array.isArray(l.linked_sale_ids)) {
+            l.linked_sale_ids.forEach(id => allSaleIds.add(id));
+        } else if (l.sale_id) {
+            allSaleIds.add(l.sale_id);
+        }
+    });
     const salesMap = {};
-    if (saleIds.length) {
+    if (allSaleIds.size) {
         const { data: sales } = await sbClient
             .from('sales_history')
             .select('id,sku,product_name,sale_date')
-            .in('id', saleIds);
+            .in('id', [...allSaleIds]);
         (sales || []).forEach(s => { salesMap[s.id] = s; });
     }
 
@@ -1839,12 +1880,23 @@ async function renderMonthlyPreview(month) {
     btn.disabled = false;
 
     const linesRows = data.lines.map(l => {
-        const sale = l.sale_id ? data.salesMap[l.sale_id] : null;
+        // v1.3.4: collect all linked sales (multi-SKU POs surface every SKU);
+        // fall back to single sale_id for legacy lines.
+        const linkedIds = Array.isArray(l.linked_sale_ids) && l.linked_sale_ids.length
+            ? l.linked_sale_ids
+            : (l.sale_id ? [l.sale_id] : []);
+        const linkedSales = linkedIds.map(id => data.salesMap[id]).filter(Boolean);
+        const skuCell = linkedSales.length === 0
+            ? '<span style="color:var(--text-muted)">—</span>'
+            : esc(linkedSales.map(s => s.sku || '').filter(Boolean).join(', '));
+        const productCell = linkedSales.length === 0
+            ? '<span style="color:var(--text-muted)">(unmatched)</span>'
+            : esc(linkedSales.map(s => s.product_name || '').filter(Boolean).join(' | '));
         return `<tr>
             <td>${l.invoice_date || ''}</td>
-            <td>${esc(l.po_number || '')}</td>
-            <td>${sale ? esc(sale.sku || '') : '<span style="color:var(--text-muted)">—</span>'}</td>
-            <td>${sale ? esc(sale.product_name || '') : '<span style="color:var(--text-muted)">(unmatched)</span>'}</td>
+            <td>${esc(l.po_number || '')}${linkedSales.length > 1 ? ` <span style="color:var(--text-muted);font-size:10px;">(${linkedSales.length} SKUs)</span>` : ''}</td>
+            <td>${skuCell}</td>
+            <td>${productCell}</td>
             <td class="text-right">${$$(l.product_amount)}</td>
             <td class="text-right val-neg">${$$(l.damages_defects_amt)}</td>
             <td class="text-right val-dim">${$$(l.early_pay_discount)}</td>
@@ -1970,12 +2022,22 @@ function downloadMonthlyXLSX() {
          'Net Payment', 'Business', 'Order Type', 'Remittance #', 'Remittance Date', 'Reconciled']
     ];
     data.lines.forEach(l => {
-        const sale = l.sale_id ? data.salesMap[l.sale_id] : null;
+        // v1.3.4: collect ALL linked SKUs for multi-SKU POs via linked_sale_ids
+        const linkedIds = Array.isArray(l.linked_sale_ids) && l.linked_sale_ids.length
+            ? l.linked_sale_ids
+            : (l.sale_id ? [l.sale_id] : []);
+        const linkedSales = linkedIds.map(id => data.salesMap[id]).filter(Boolean);
+        const skuStr = linkedSales.length === 0
+            ? ''
+            : linkedSales.map(s => s.sku || '').filter(Boolean).join(', ');
+        const productStr = linkedSales.length === 0
+            ? '(unmatched)'
+            : linkedSales.map(s => s.product_name || '').filter(Boolean).join(' | ');
         detail.push([
             l.invoice_date || '',
             l.po_number || '',
-            sale ? (sale.sku || '') : '',
-            sale ? (sale.product_name || '') : '(unmatched)',
+            skuStr,
+            productStr,
             parseFloat(l.product_amount) || 0,
             parseFloat(l.damages_defects_amt) || 0,
             parseFloat(l.early_pay_discount) || 0,
