@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.35</title>
+<title>CCD Inventory System v2.9.36</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.35 · B-S39-15 — Invoice import qty revert fix (state.items + form sync) + per-SKU activity log</div>
+    <div class="login-version">v2.9.36 · B-S50-01 diag — Wayfair cascade forensic logging (no behavior change)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.35</div>
+      <div class="topbar-version">v2.9.36</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1701,7 +1701,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.35';
+const TOOL_VERSION = '2.9.36';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -6366,10 +6366,19 @@ async function confirmSell() {
       }});
     }
     if (item.wayfair_sku && qtyUpdates.wayfair_qty !== undefined) {
+      // v2.9.36 (B-S50-01 diag): log Wayfair sync row decision for the
+      // "Wayfair not updating on cross-channel sales" forensic chain (G13).
+      // Pairs with SH v4.4.24 cascade-eval + pushToWayfair entry logs. No behavior change.
+      console.log(`[B-S50-01 diag v2.9.36] V2 confirmSell wayfair-eval: sku=${item.sku} channel=${channel} item.wayfair_sku=${item.wayfair_sku || 'none'} qtyUpdates.wayfair_qty=${qtyUpdates.wayfair_qty} item.wayfair_qty-preSale=${item.wayfair_qty} guard-pass=YES`);
       syncRows.push({ item_id: item.id, channel:'wayfair', operation:'update', fields: {
         sku: item.sku, quantity: qtyUpdates.wayfair_qty, wayfairSku: item.wayfair_sku,
         fieldTypes:['quantity'], trigger:'sale'
       }});
+    } else if (item.wayfair_sku) {
+      // v2.9.36 (B-S50-01 diag): wayfair_sku present but qtyUpdates.wayfair_qty undefined
+      // — explains absence of a wayfair sync row (peer-decrement silent-no-op when
+      // pre-sale wayfair_qty was 0, per ECOSYSTEM-011).
+      console.log(`[B-S50-01 diag v2.9.36] V2 confirmSell wayfair-eval: sku=${item.sku} channel=${channel} item.wayfair_sku=${item.wayfair_sku} qtyUpdates.wayfair_qty=undefined item.wayfair_qty-preSale=${item.wayfair_qty} guard-pass=NO (no sync row written)`);
     }
     // Add cascade sync rows (bundle component deductions + bundle recalcs)
     syncRows.push(...cascadeSyncRows);

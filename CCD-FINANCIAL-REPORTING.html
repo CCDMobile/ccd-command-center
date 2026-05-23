@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.8</title>
+<title>CCD Financial Intelligence v1.8.9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -533,7 +533,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.8</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.9</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1291,11 +1291,41 @@ body {
         <div class="page-header">
           <div>
             <div class="page-title">TM Statement Reconciliation</div>
-            <div class="page-subtitle">Cross-reference POSKis statement against CCD sales data</div>
+            <div class="page-subtitle">Authoritative TM P&amp;L · cross-reference statements against CCD sales</div>
           </div>
         </div>
+
+        <!-- v1.8.9 TM-3b: KPI strip — at-a-glance Truth / V2 / Residual -->
+        <div class="kpi-grid" id="tmTruthKpis" style="margin-bottom:14px;">
+          <div class="kpi-card"><div class="kpi-label">Truth Gross</div><div class="kpi-value" id="tmKpiTruthGross">—</div><div class="kpi-delta neutral" id="tmKpiTruthGrossSub">tm_monthly_financials</div></div>
+          <div class="kpi-card"><div class="kpi-label">V2 Gross (direct)</div><div class="kpi-value" id="tmKpiV2Gross">—</div><div class="kpi-delta neutral" id="tmKpiV2GrossSub">sales_history TM rows</div></div>
+          <div class="kpi-card"><div class="kpi-label">Residual</div><div class="kpi-value" id="tmKpiResidual">—</div><div class="kpi-delta neutral" id="tmKpiResidualSub">S40-FINDING-05 offset</div></div>
+        </div>
+
+        <!-- v1.8.9 TM-3b: Truth panel — pulls authoritatively from tm_monthly_financials -->
+        <div class="card" style="margin-bottom:14px;">
+          <div class="card-header">
+            <div class="card-title">TM Monthly Financials <span style="color:#10b981;font-size:10px;font-weight:400;margin-left:8px;letter-spacing:.4px;">SOURCE OF TRUTH</span></div>
+            <div class="card-action" id="tmTruthMeta" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);">—</div>
+          </div>
+          <div class="card-body" id="tmTruthWrap">
+            <div class="loading"><div class="spinner"></div> Loading tm_monthly_financials…</div>
+          </div>
+        </div>
+
+        <!-- v1.8.9 TM-3b: §8 readout — surface-only Truth vs V2-entered with ±1-month shift detector -->
+        <div class="card" style="margin-bottom:14px;">
+          <div class="card-header">
+            <div class="card-title">§8 Readout — Truth vs V2-entered <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:8px;">surface-only, no auto-align</span></div>
+            <div class="card-action" style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);">PDF gross vs SUM(total_revenue) WHERE sale_channel='treasuremarts'</div>
+          </div>
+          <div class="card-body" id="tmReadoutWrap">
+            <div class="loading"><div class="spinner"></div> Computing §8 comparison…</div>
+          </div>
+        </div>
+
         <div class="card">
-          <div class="card-header"><div class="card-title">Enter POSKis Statement Values</div></div>
+          <div class="card-header"><div class="card-title">Enter POSKis Statement Values <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:8px;">ad-hoc reconciliation for a single month</span></div></div>
           <div class="card-body" id="tmReconInputWrap">
             <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:end;">
               <div style="flex:1;min-width:140px;">
@@ -1425,7 +1455,7 @@ body {
 // Channel fees loaded from settings table (shared source with V2).
 // ============================================================================
 
-const FR_VERSION = 'v1.8.8';
+const FR_VERSION = 'v1.8.9';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -7045,6 +7075,239 @@ function loadTmRecon() {
   if (monthInput && !monthInput.value) {
     monthInput.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
   }
+  // v1.8.9 TM-3b: load Truth panel + §8 readout authoritatively from tm_monthly_financials
+  loadTmTruthAndReadout();
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v1.8.9 TM-3b — Truth panel + §8 Readout (surface-only, no auto-align).
+// Reads tm_monthly_financials authoritatively for TM P&L, then computes the
+// §8 comparison against sales_history TM rows with a ±1-month shift detector
+// (S40-FINDING-05). Closes the fifth-carry TM-3b track. Spec: CCD-S44-1.
+// ─────────────────────────────────────────────────────────────────────────
+async function loadTmTruthAndReadout() {
+  const truthWrap   = document.getElementById('tmTruthWrap');
+  const readoutWrap = document.getElementById('tmReadoutWrap');
+  const truthMeta   = document.getElementById('tmTruthMeta');
+  if (!truthWrap || !readoutWrap) return;
+
+  // ── 1. Fetch truth (tm_monthly_financials, full table — small, 4-12 rows expected) ──
+  let truth = [];
+  try {
+    const { data, error } = await sbClient.from('tm_monthly_financials')
+      .select('sales_month,gross_sales,commission,rent_applied,payout,identity_ok,anomaly_note,source_printed_at,imported_at,updated_at')
+      .order('sales_month', { ascending: true })
+      .limit(120);
+    if (error) throw error;
+    truth = data || [];
+  } catch (e) {
+    truthWrap.innerHTML = `<div style="color:var(--red);font-size:12px;">Failed to load tm_monthly_financials: ${e.message}</div>`;
+    readoutWrap.innerHTML = `<div style="color:var(--muted);font-size:12px;">§8 readout unavailable (truth fetch failed)</div>`;
+    return;
+  }
+
+  // ── 2. Fetch V2 TM sales (sales_history, group by sale_date month client-side) ──
+  let v2ByMonth = {};
+  let v2Total = 0;
+  try {
+    const { data, error } = await sbClient.from('sales_history')
+      .select('sale_date,total_revenue,qty_sold,status')
+      .eq('sale_channel', 'treasuremarts')
+      .order('sale_date', { ascending: true })
+      .limit(5000);
+    if (error) throw error;
+    (data || []).forEach(r => {
+      const status = (r.status || '').toLowerCase();
+      if (status === 'reversed' || status === 'cancelled') return;
+      if (!r.sale_date) return;
+      // Extract YYYYMM from sale_date (ISO date or 'YYYY-MM-DD…')
+      const m = String(r.sale_date).slice(0,7).replace('-','');
+      if (!/^\d{6}$/.test(m)) return;
+      const rev = parseFloat(r.total_revenue) || 0;
+      if (!v2ByMonth[m]) v2ByMonth[m] = { rev: 0, units: 0 };
+      v2ByMonth[m].rev += rev;
+      v2ByMonth[m].units += parseInt(r.qty_sold) || 0;
+      v2Total += rev;
+    });
+  } catch (e) {
+    readoutWrap.innerHTML = `<div style="color:var(--red);font-size:12px;">Failed to load V2 TM sales: ${e.message}</div>`;
+    // continue — Truth panel can still render
+  }
+
+  // ── 3. Render Truth panel ──
+  if (truth.length === 0) {
+    truthWrap.innerHTML = `<div style="color:var(--muted);font-size:12px;padding:8px;">No rows in tm_monthly_financials yet. Import a TM Bill History PDF via the standalone CCD-TM-RECONCILIATION tool.</div>`;
+  } else {
+    const totGross = truth.reduce((s,r) => s + (parseFloat(r.gross_sales)||0), 0);
+    const totComm  = truth.reduce((s,r) => s + (parseFloat(r.commission)||0), 0);
+    const totRent  = truth.reduce((s,r) => s + (parseFloat(r.rent_applied)||0), 0);
+    const totPayout= truth.reduce((s,r) => s + (parseFloat(r.payout)||0), 0);
+    const idOkCount= truth.filter(r => r.identity_ok).length;
+    const flagged  = truth.filter(r => r.anomaly_note && r.anomaly_note.trim()).length;
+
+    truthMeta.textContent = `${truth.length} row${truth.length===1?'':'s'} · ${idOkCount}/${truth.length} identity_ok · imported by tmrecon`;
+
+    const rowsHtml = truth.map(r => {
+      const gross   = parseFloat(r.gross_sales)||0;
+      const comm    = parseFloat(r.commission)||0;
+      const rent    = parseFloat(r.rent_applied)||0;
+      const payout  = r.payout == null ? null : (parseFloat(r.payout)||0);
+      const idOk    = r.identity_ok;
+      const note    = r.anomaly_note || '';
+      const rentCol = rent === 0 ? 'color:#f59e0b;' : '';
+      const idIcon  = idOk ? '<span style="color:var(--green);">✓</span>' : '<span style="color:var(--red);">✗</span>';
+      return `<tr style="border-top:1px solid var(--border2);">
+        <td style="padding:9px 14px;font-family:'DM Mono',monospace;font-size:11px;">${escapeHtml(r.sales_month||'')}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;">${gross.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;">${comm.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;${rentCol}">${rent.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;">${payout==null?'—':payout.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:center;font-size:12px;">${idIcon}</td>
+        <td style="padding:9px 14px;font-size:10px;color:${note?'#f59e0b':'var(--muted)'};">${escapeHtml(note) || '—'}</td>
+      </tr>`;
+    }).join('');
+
+    truthWrap.innerHTML = `
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;">
+              <th style="text-align:left;padding:7px 14px;font-weight:500;">Month</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">Gross</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">Commission</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">Rent</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">Payout</th>
+              <th style="text-align:center;padding:7px 14px;font-weight:500;">ID OK</th>
+              <th style="text-align:left;padding:7px 14px;font-weight:500;">Anomaly</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+            <tr style="border-top:2px solid rgba(212,168,83,0.3);background:rgba(212,168,83,0.04);">
+              <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">TOTAL</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">${totGross.toFixed(2)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">${totComm.toFixed(2)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">${totRent.toFixed(2)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">${totPayout.toFixed(2)}</td>
+              <td style="padding:10px 14px;text-align:center;font-size:11px;color:var(--green);">${idOkCount}/${truth.length}</td>
+              <td style="padding:10px 14px;font-size:10px;color:var(--muted);">${flagged} flagged</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`;
+
+    // ── 4. Render KPI strip ──
+    const kpiTruthGross  = document.getElementById('tmKpiTruthGross');
+    const kpiV2Gross     = document.getElementById('tmKpiV2Gross');
+    const kpiResidual    = document.getElementById('tmKpiResidual');
+    const kpiResidualSub = document.getElementById('tmKpiResidualSub');
+    if (kpiTruthGross) kpiTruthGross.textContent = '$' + totGross.toFixed(2);
+    if (kpiV2Gross)    kpiV2Gross.textContent    = '$' + v2Total.toFixed(2);
+    const residual = v2Total - totGross;
+    if (kpiResidual) {
+      kpiResidual.textContent = (residual >= 0 ? '+$' : '−$') + Math.abs(residual).toFixed(2);
+      kpiResidual.className = 'kpi-value ' + (Math.abs(residual) < 0.01 ? 'positive' : (Math.abs(residual) < totGross * 0.10 ? '' : 'negative'));
+    }
+    if (kpiResidualSub) kpiResidualSub.textContent = 'V2 − Truth · period-basis offset';
+
+    // ── 5. Render §8 readout ──
+    // Build merged month set (truth months ∪ v2 months), iterate in order, compute
+    // direct delta and shifted delta (PDF(M) vs V2(M+1)) per S40-FINDING-05 rule.
+    const monthsSet = new Set();
+    truth.forEach(r => { if (r.sales_month) monthsSet.add(r.sales_month); });
+    Object.keys(v2ByMonth).forEach(m => monthsSet.add(m));
+    const months = Array.from(monthsSet).sort();
+
+    const truthMap = {};
+    truth.forEach(r => { truthMap[r.sales_month] = r; });
+
+    const nextMonth = (yyyymm) => {
+      const yr = parseInt(yyyymm.slice(0,4));
+      const mo = parseInt(yyyymm.slice(4,6));
+      const d2 = new Date(yr, mo, 1); // mo is 1-12, JS Date month is 0-11 → +1 here equals "next month"
+      return d2.getFullYear() + String(d2.getMonth()+1).padStart(2,'0');
+    };
+
+    const readoutRows = months.map(m => {
+      const t = truthMap[m];
+      const pdfGross = t ? (parseFloat(t.gross_sales)||0) : null;
+      const v2Direct = v2ByMonth[m] ? v2ByMonth[m].rev : null;
+      const mPlus1   = nextMonth(m);
+      const v2Shift  = v2ByMonth[mPlus1] ? v2ByMonth[mPlus1].rev : null;
+
+      let deltaDirect = (pdfGross != null && v2Direct != null) ? (v2Direct - pdfGross) : null;
+      let deltaShift  = (pdfGross != null && v2Shift != null)  ? (v2Shift  - pdfGross) : null;
+
+      let bestFit, fitColor;
+      if (pdfGross == null) {
+        bestFit = 'V2-ONLY'; fitColor = 'var(--muted)';
+      } else if (deltaDirect == null && deltaShift == null) {
+        bestFit = 'NO V2 DATA'; fitColor = 'var(--muted)';
+      } else if (deltaShift != null && deltaDirect != null && Math.abs(deltaShift) + 0.50 < Math.abs(deltaDirect)) {
+        bestFit = 'SHIFT'; fitColor = '#f59e0b';
+      } else {
+        bestFit = 'DIRECT'; fitColor = 'var(--green)';
+      }
+
+      const fmtDelta = (v) => v == null ? '—' : (v >= 0 ? '+' : '−') + '$' + Math.abs(v).toFixed(2);
+      const deltaColor = (v) => {
+        if (v == null) return 'var(--muted)';
+        const abs = Math.abs(v);
+        if (abs < 0.50) return 'var(--green)';
+        if (abs < 50)   return '#f59e0b';
+        return 'var(--red)';
+      };
+
+      return `<tr style="border-top:1px solid var(--border2);">
+        <td style="padding:9px 14px;font-family:'DM Mono',monospace;font-size:11px;">${escapeHtml(m)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;">${pdfGross==null?'—':pdfGross.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;">${v2Direct==null?'—':v2Direct.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:${deltaColor(deltaDirect)};">${fmtDelta(deltaDirect)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);">${v2Shift==null?'— no data':v2Shift.toFixed(2)}</td>
+        <td style="padding:9px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:${deltaColor(deltaShift)};">${fmtDelta(deltaShift)}</td>
+        <td style="padding:9px 14px;text-align:center;font-size:10px;color:${fitColor};font-weight:500;">${bestFit}</td>
+      </tr>`;
+    }).join('');
+
+    const totPdf  = truth.reduce((s,r) => s + (parseFloat(r.gross_sales)||0), 0);
+    const residualTot = v2Total - totPdf;
+
+    readoutWrap.innerHTML = `
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.5px;">
+              <th style="text-align:left;padding:7px 14px;font-weight:500;">Month</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">PDF Gross</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">V2 Direct</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">Δ Direct</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">V2 M+1</th>
+              <th style="text-align:right;padding:7px 14px;font-weight:500;">Δ Shifted</th>
+              <th style="text-align:center;padding:7px 14px;font-weight:500;">Best Fit</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${readoutRows}
+            <tr style="border-top:2px solid rgba(212,168,83,0.3);background:rgba(212,168,83,0.04);">
+              <td style="padding:10px 14px;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">TOTAL</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">${totPdf.toFixed(2)}</td>
+              <td style="padding:10px 14px;text-align:right;font-family:'DM Mono',monospace;font-size:11px;color:var(--gold);font-weight:600;">${v2Total.toFixed(2)}</td>
+              <td colspan="4" style="padding:10px 14px;text-align:left;font-family:'DM Mono',monospace;font-size:11px;color:${Math.abs(residualTot) < totPdf * 0.10 ? '#f59e0b' : 'var(--red)'};font-weight:600;">${residualTot >= 0 ? '+' : '−'}$${Math.abs(residualTot).toFixed(2)} <span style="color:var(--muted);font-weight:400;margin-left:8px;">→ TM-3b residual (period-basis offset)</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:10px 14px 4px;font-size:10px;color:var(--muted);line-height:1.6;">
+        <span style="color:var(--green);">●</span> DIRECT = PDF month aligns with V2 same-month &nbsp;·&nbsp;
+        <span style="color:#f59e0b;">●</span> SHIFT = PDF(M) aligns better with V2(M+1) by ≥ $0.50 &nbsp;·&nbsp;
+        spec: CCD-S44-1 §8 · S40-FINDING-05
+      </div>`;
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 async function runTmReconciliation() {

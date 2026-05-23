@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.23</title>
+    <title>CCD Sync Hub v4.4.24</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
-           CCD SYNC HUB v4.4.23 — Clean Build Styles
+           CCD SYNC HUB v4.4.24 — Clean Build Styles
            ============================================================ */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
         
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.23 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.4.24 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -868,7 +868,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.23';
+    const SH_VERSION = 'v4.4.24';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4939,6 +4939,9 @@
                 // ECOSYSTEM-011 peer-decrement propagation is preserved.
                 // Supersedes the sale-driven-quantity-push half of ECOSYSTEM-010;
                 // the TRUE_UP heartbeat (separate path) is unchanged.
+                // v4.4.24 (B-S50-01 diag): forensic logging for "Wayfair not
+                // updating on cross-channel sales" (G13). No behavior change.
+                console.log(`[B-S50-01 diag ${SH_VERSION}] cascade-eval(top): sku=${lookupSku} sourceChannel=${sourceChannel} wayfairSku=${product.wayfairSku || 'none'} supplierPartNumber=${product.supplierPartNumber || 'none'} channels.wayfair=${channels.wayfair} parsed=${parseInt(channels.wayfair) || 0} guard-pass=${((product.wayfairSku || product.supplierPartNumber) && sourceChannel !== 'wayfair') ? 'YES' : 'NO'}`);
                 if ((product.wayfairSku || product.supplierPartNumber) && sourceChannel !== 'wayfair') {
                     const wayfairQty = parseInt(channels.wayfair) || 0;
                     try {
@@ -5005,6 +5008,9 @@
                 // is OUT of scope in this bundle loop; order.channel is in scope
                 // (used at the cascade-summary logActivity below). Copying
                 // sourceChannel here would throw a ReferenceError.
+                // v4.4.24 (B-S50-01 diag): forensic logging — same purpose as the
+                // top-level diag above.
+                console.log(`[B-S50-01 diag ${SH_VERSION}] cascade-eval(bundle): sku=${comp.sku} order.channel=${order.channel} wayfairSku=${comp.wayfairSku || 'none'} supplierPartNumber=${comp.supplierPartNumber || 'none'} compChannels.wayfair=${compChannels.wayfair} parsed=${parseInt(compChannels.wayfair) || 0} guard-pass=${((comp.wayfairSku || comp.supplierPartNumber) && order.channel !== 'wayfair') ? 'YES' : 'NO'}`);
                 if ((comp.wayfairSku || comp.supplierPartNumber) && order.channel !== 'wayfair') {
                     const wayfairQty = parseInt(compChannels.wayfair) || 0;
                     try {
@@ -5651,6 +5657,12 @@
         const key = state.settings.ccdApiKey;
         
         if (!url) return { success: false, error: 'Wayfair proxy not configured' };
+
+        // v4.4.24 (B-S50-01 diag): log every pushToWayfair entry with full context
+        // including the originating sync_queue row's _source and trigger fields.
+        // Pairs with cascade-eval logs above and the existing 📤/📥 logs below to
+        // give a full forensic chain for "Wayfair not updating on cross-channel sales".
+        console.log(`[B-S50-01 diag ${SH_VERSION}] pushToWayfair entry: sku=${product?.sku || 'unknown'} action=${action} fields._source=${fields?._source || 'none'} fields.trigger=${fields?.trigger || 'none'} fields.quantity=${fields?.quantity} fields.wayfairSku=${fields?.wayfairSku || 'none'} product.channels.wayfair=${product?.channels?.wayfair} product.wayfairQty=${product?.wayfairQty}`);
 
         try {
             // ============ CREATE - NOT SUPPORTED VIA API ============
