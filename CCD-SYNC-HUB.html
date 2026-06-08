@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.4.24</title>
+    <title>CCD Sync Hub v4.5.3</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.4.24 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.5.3 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -702,7 +702,7 @@
                     <div class="setting-row">
                         <label class="checkbox-label">
                             <input type="checkbox" id="autoProcessEnabled" />
-                            Enable order auto-pull (every 5 minutes)
+                            Enable automatic order pull (processing stays manual)
                         </label>
                     </div>
                     <div class="setting-row">
@@ -868,8 +868,72 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.4.24';
+    const SH_VERSION = 'v4.5.3';
     const SH_VERSION_KEY = 'synchub';
+
+    // ============================================================
+    // PHASE 3 (S58) — service_flags reader (inline port of ccd-service-flags.js)
+    // ------------------------------------------------------------
+    // Inline faithful port of ccd-service-flags.js (ADR-006 / ADR-007).
+    // Keeps SH single-file; ccd-service-flags.js stays the canonical
+    // standalone source the Edge function imports in Phase 4.
+    // Governing invariant: every default = today's behavior, so reading
+    // flags at defaults is behavior-neutral. Deep-merge live row over the
+    // frozen defaults; 30s cache (R-012); fail-safe to defaults.
+    // ============================================================
+    const SERVICE_FLAGS_DEFAULTS = Object.freeze({
+        service_enabled: false,
+        poll_interval_minutes: 2,
+        order_pull: { etsy: true, wix: true, wayfair: true },
+        order_auto_apply: false,
+        product_push: { etsy: true, wix: true, wayfair: true },
+        cascade_peer_decrement: true,
+        true_up_heartbeat: { enabled: true, interval_minutes: 60 },
+        sync_queue_processor: true,
+    });
+    let _serviceFlags = null;      // last merged flags
+    let _serviceFlagsLoadedAt = 0; // epoch ms of last successful load
+    const _SERVICE_FLAGS_TTL = 30000;
+
+    function _isPlainObject(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+    function _deepMerge(base, override) {
+        const out = Array.isArray(base) ? base.slice() : { ...base };
+        if (!_isPlainObject(override)) return out;
+        for (const key of Object.keys(override)) {
+            const b = out[key], o = override[key];
+            out[key] = _isPlainObject(b) && _isPlainObject(o) ? _deepMerge(b, o) : o;
+        }
+        return out;
+    }
+    function _readPath(obj, path) {
+        return path.split('.').reduce((acc, k) => (_isPlainObject(acc) || Array.isArray(acc) ? acc[k] : undefined), obj);
+    }
+    // Loads + merges service_flags via the existing sbClient. Fail-safe: on any
+    // error, degrades to defaults (= today's behavior), never throws into a hot path.
+    async function loadServiceFlags(force = false) {
+        const fresh = _serviceFlags && (Date.now() - _serviceFlagsLoadedAt) < _SERVICE_FLAGS_TTL;
+        if (fresh && !force) return _serviceFlags;
+        try {
+            if (!sbClient) throw new Error('no client');
+            const { data, error } = await sbClient.from('settings').select('value').eq('key', 'service_flags').maybeSingle();
+            if (error) throw error;
+            const live = (data && _isPlainObject(data.value)) ? data.value : {};
+            _serviceFlags = _deepMerge(SERVICE_FLAGS_DEFAULTS, live);
+            _serviceFlagsLoadedAt = Date.now();
+            return _serviceFlags;
+        } catch (err) {
+            console.warn('[service_flags] load failed, using defaults:', err && err.message);
+            if (!_serviceFlags) _serviceFlags = _deepMerge(SERVICE_FLAGS_DEFAULTS, {});
+            return _serviceFlags;
+        }
+    }
+    // Synchronous accessor against the last load; returns the ADR-006 default if absent.
+    function getFlag(path) {
+        const src = _serviceFlags || SERVICE_FLAGS_DEFAULTS;
+        const v = _readPath(src, path);
+        return v === undefined ? _readPath(SERVICE_FLAGS_DEFAULTS, path) : v;
+    }
+
 
     // ============================================================
     // v4.4.22 KEEP-ALIVE — prevent Chrome/Edge background-tab throttling
@@ -1016,6 +1080,7 @@
         inventorySnapshot: {},
         _batchProcessing: false,
         autoProcessInterval: null,
+        autoPullNextRun: null,
     };
     
     // Legacy compatibility
@@ -1094,6 +1159,9 @@
             
             // Load settings
             await loadSettingsFromSupabase();
+
+            // Phase 3 (S58): load service_flags (deep-merged over ADR-006 defaults)
+            await loadServiceFlags(true);
             
             // Load processed orders
             await loadProcessedOrdersFromDb();
@@ -1141,7 +1209,15 @@
                 logActivityToSupabase(...args);
             }
             _activityBuffer.length = 0;
-            
+
+            // Phase 3 (S58): if auto-pull is enabled, fire one pull immediately so
+            // new orders are present right after opening SH (the interval poller,
+            // started at init/saveSettings, handles subsequent ticks). Pull-only —
+            // processing stays manual unless order_auto_apply=true.
+            if (state.settings.autoProcessEnabled) {
+                setTimeout(() => { pullOrdersFromChannels(true); }, 300);
+            }
+
             return true;
             
         } catch (error) {
@@ -2542,7 +2618,7 @@
         
         // Pull from each channel with a configured proxy URL
         // v4.4.4: Pull is NOT gated by enableSync toggles (those control pushing only)
-        if (state.settings.etsyProxyUrl) {
+        if (state.settings.etsyProxyUrl && getFlag('order_pull.etsy') !== false) {
             try {
                 const r = await pullEtsyOrders(startDate, endDate);
                 results.etsy = r;
@@ -2555,7 +2631,7 @@
             addLog('Etsy: skipped (no proxy URL)', 'info');
         }
         
-        if (state.settings.wixProxyUrl) {
+        if (state.settings.wixProxyUrl && getFlag('order_pull.wix') !== false) {
             try {
                 const r = await pullWixOrders(startDate, endDate);
                 results.wix = r;
@@ -2568,7 +2644,7 @@
             addLog('Wix: skipped (no proxy URL)', 'info');
         }
         
-        if (state.settings.wayfairProxyUrl) {
+        if (state.settings.wayfairProxyUrl && getFlag('order_pull.wayfair') !== false) {
             try {
                 const r = await pullWayfairOrders(startDate, endDate);
                 results.wayfair = r;
@@ -2619,8 +2695,9 @@
             { etsy: results.etsy, wix: results.wix, wayfair: results.wayfair, totalOrders, totalItems, totalAdded }
         );
         
-        // Auto-process if enabled AND this was a manual pull with new orders
-        if (state.settings.autoProcessEnabled && totalAdded > 0 && !isAuto) {
+        // Auto-APPLY only if order_auto_apply=true (decoupled from auto-pull, S58).
+        // Default false → manual pull adds to the orders queue; Mary applies manually.
+        if (getFlag('order_auto_apply') === true && totalAdded > 0 && !isAuto) {
             addLog(`🔄 Auto-processing ${totalAdded} new orders...`, 'info');
             setTimeout(async () => { await processAllOrders(true); }, 500);
         }
@@ -7292,51 +7369,46 @@
     
     function startAutoProcess() {
         stopAutoProcess();
+        // Phase 3 (S58): cadence from service_flags.poll_interval_minutes (default 2).
+        const _pollMin = parseInt(getFlag('poll_interval_minutes')) || 2;
+        const _pollMs = _pollMin * 60 * 1000;
+        state.autoPullNextRun = Date.now() + _pollMs;
         state.autoProcessInterval = setInterval(async () => {
-            console.log('[Auto-Process] Running...');
-            addLog('Auto-process triggered', 'info');
+            state.autoPullNextRun = Date.now() + _pollMs;
+            console.log('[Auto-Pull] Running...');
+            addLog('Auto-pull triggered', 'info');
+            // Refresh flags within TTL so a flip (e.g. order_auto_apply) is picked up.
+            await loadServiceFlags();
             await pullOrdersFromChannels(true);
-            await processAllOrders(true);
-            
-            // v4.2.0: No need to call processQueue — cascade rows are written
-            // directly to Supabase sync_queue by processOrder. The 15-second
-            // poller (pollSyncQueue) picks them up and pushes to channels.
-            // This ensures one push path for everything.
-            console.log('[Auto-Process] Complete. Cascade rows in sync_queue for poller.');
-            
-            // v4.4.17 (B-S30-01): Cancellation reconciliation. Runs AFTER
-            // processAllOrders so any sale just inserted gets a fresh status
-            // from the same poll cycle if Etsy already cancelled it. Gated
-            // internally on state.settings.cancelReconEnabled — silent no-op
-            // if disabled. Errors are caught by the function; never block
-            // the auto-process loop.
-            //
-            // DUAL-TRIGGER NOTE: This is the AUTO path. There is also a
-            // call in pullOrdersFromChannels gated on !isAuto for manual
-            // Pull All Orders. The !isAuto gate prevents double-firing:
-            //   - Auto tick: pull(isAuto=true, no recon) → process → recon HERE
-            //   - Manual:    pull(isAuto=false, recon there) → no process → no recon here
-            // Do NOT remove the !isAuto gate without removing this hook,
-            // or the reconciler will run twice per auto tick.
-            //
-            // v4.4.18 (B-S30-02): Wix reconciler runs after Etsy. Each call
-            // is independently try/caught — a failure in one channel does
-            // not block the other. Both share the cancelReconEnabled flag
-            // and the auto-process timer.
-            try {
-                await reconcileEtsyCancellations({ manual: false });
-            } catch (e) {
-                console.warn(`[Auto-Process ${SH_VERSION}] Etsy cancel recon threw:`, e.message);
+
+            // Phase 3 (S58): DECOUPLED. Apply + reconcile run ONLY when
+            // order_auto_apply=true. At the default (false) the tick is pull-only —
+            // orders land in the orders queue and are applied manually,
+            // with no automatic inventory mutation (process or reconcile).
+            if (getFlag('order_auto_apply') === true) {
+                await processAllOrders(true);
+                // v4.2.0: cascade rows go to sync_queue; the 15s poller pushes them.
+                console.log('[Auto-Apply] Complete. Cascade rows in sync_queue for poller.');
+                // v4.4.17/18 (B-S30-01/02): cancellation reconciliation AFTER apply.
+                // Gated internally on cancelReconEnabled; each channel try/caught.
+                try {
+                    await reconcileEtsyCancellations({ manual: false });
+                } catch (e) {
+                    console.warn(`[Auto-Apply ${SH_VERSION}] Etsy cancel recon threw:`, e.message);
+                }
+                try {
+                    await reconcileWixCancellations({ manual: false });
+                } catch (e) {
+                    console.warn(`[Auto-Apply ${SH_VERSION}] Wix cancel recon threw:`, e.message);
+                }
+            } else {
+                console.log('[Auto-Pull] order_auto_apply=false → pull-only (manual processing/reconcile).');
             }
-            try {
-                await reconcileWixCancellations({ manual: false });
-            } catch (e) {
-                console.warn(`[Auto-Process ${SH_VERSION}] Wix cancel recon threw:`, e.message);
-            }
-        }, 5 * 60 * 1000); // Every 5 minutes
-        addLog('Auto-process started (every 5 minutes)', 'success');
-        toast('⚡ Auto-process ON — pulling & processing every 5 minutes', 'success');
+        }, _pollMs);
+        addLog(`Auto-pull started (every ${_pollMin} min, processing manual)`, 'success');
+        toast(`⚡ Auto-pull ON — pulling every ${_pollMin} min (processing manual)`, 'success');
         updateAutoProcessIndicator(true);
+        startAutoPullCountdown();
     }
     
     function stopAutoProcess() {
@@ -7345,6 +7417,8 @@
             state.autoProcessInterval = null;
         }
         updateAutoProcessIndicator(false);
+        stopAutoPullCountdown();
+        state.autoPullNextRun = null;
     }
     
     // v4.2.4: Header indicator for auto-process state
@@ -7358,6 +7432,26 @@
         } else {
             el.style.display = 'none';
         }
+    }
+
+    // S58: live "time to next pull" countdown shown in the AUTO badge.
+    let _autoPullCountdownInterval = null;
+    function startAutoPullCountdown() {
+        stopAutoPullCountdown();
+        updateAutoPullCountdown();
+        _autoPullCountdownInterval = setInterval(updateAutoPullCountdown, 1000);
+    }
+    function stopAutoPullCountdown() {
+        if (_autoPullCountdownInterval) { clearInterval(_autoPullCountdownInterval); _autoPullCountdownInterval = null; }
+    }
+    function updateAutoPullCountdown() {
+        const el = document.getElementById('autoProcessIndicator');
+        if (!el) return;
+        if (!state.autoProcessInterval || !state.autoPullNextRun) { el.textContent = '⚡ AUTO'; return; }
+        const remaining = Math.max(0, state.autoPullNextRun - Date.now());
+        const m = Math.floor(remaining / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        el.textContent = `⚡ AUTO · next pull ${m}:${String(s).padStart(2, '0')}`;
     }
     
     // ============================================================
