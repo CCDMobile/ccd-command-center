@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.6.1</title>
+<title>CCD Wayfair Order Manager v1.6.2</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -94,6 +94,13 @@
   .field label { display: block; font-size: 11px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; }
   .field select, .field input { padding: 7px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-size: 12px; outline: none; font-family: 'DM Sans', sans-serif; }
   .field select { min-width: 160px; }
+
+  /* v1.6.2: Native <input type="date"> rendered in dark mode. color-scheme:dark makes the
+     browser draw the calendar-picker indicator as a light glyph and themes the popup calendar
+     dark, so the picker is legible against the dark field background (was near-invisible). */
+  input[type="date"] { color-scheme: dark; }
+  input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.85; }
+  input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
 
   /* Documents */
   .doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 12px 0; }
@@ -193,7 +200,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.1</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.2</span></h1>
     <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
   </header>
 
@@ -220,7 +227,6 @@
     <div class="tab" onclick="switchTab('detail',this)">Order Detail</div>
     <div class="tab" onclick="switchTab('ship',this)">Ship &amp; Labels</div>
     <div class="tab" onclick="switchTab('asns',this)">Pending ASNs <span id="asnTabBadge" style="display:none;margin-left:4px;padding:1px 6px;background:var(--warn);color:#000;border-radius:8px;font-size:10px;font-weight:700;">0</span></div>
-    <div class="tab" onclick="switchTab('manifest',this)">Manifest</div>
     <div class="tab" onclick="switchTab('history',this)">History &amp; Log</div>
   </div>
 
@@ -253,6 +259,8 @@
     <div id="shipContent">
       <div class="orders-empty">Accept an order first, then use this tab to register for pickup and download labels</div>
     </div>
+    <!-- v1.6.2: Daily Manifest now renders as the 4th card in the Documents grid inside
+         #shipContent (see renderShipTab). No separate section here. -->
   </div>
 
   <!-- TAB 4: Pending ASNs (v1.6) — registered-but-not-yet-ASN'd orders for one-click close-out -->
@@ -274,26 +282,7 @@
     </div>
   </div>
 
-  <!-- TAB 5: Manifest (v1.5) — CCD-native daily shipment manifest, not tied to any selected PO -->
-  <div class="tab-panel" id="tab-manifest">
-    <div style="margin-bottom:14px;">
-      <h3 style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px;">Daily Shipment Manifest</h3>
-      <div style="font-size:11px;color:var(--text-muted);">
-        CCD's own shipment records, generated from <code style="font-family:'JetBrains Mono',monospace;color:var(--text-dim);">activity_log.order_registered</code> rows. One page per carrier. Print one for the driver, keep one for the files.
-      </div>
-    </div>
-
-    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;">
-      <div class="field" style="margin-bottom:0;">
-        <label>Ship Date</label>
-        <input type="date" id="manifestDate" style="font-family:'JetBrains Mono',monospace;">
-      </div>
-      <button class="btn btn-primary btn-sm" onclick="generateCCDManifest()" id="btnGenManifest">Load Shipments</button>
-      <button class="btn btn-success btn-sm" onclick="downloadCCDManifestPDF()" id="btnDlManifest" disabled>Download PDF</button>
-    </div>
-
-    <div id="manifestResult"></div>
-  </div>
+  <!-- TAB 5 (Manifest) retired in v1.6.2 — manifest now lives on the Ship & Labels tab -->
 
   <!-- TAB 5: History & Log -->
   <div class="tab-panel" id="tab-history">
@@ -360,6 +349,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <script>
 // =========================================================================
 // STATE
@@ -438,7 +428,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.1',
+      device: 'WF-OrderMgr-v1.6.2',
       user_name: localStorage.getItem('ccdUsername') || 'Paul',
       sku: sku || details?.sku || null
     });
@@ -1074,9 +1064,22 @@ function renderShipTab() {
   }
   const o = currentOrder;
 
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const defaultPickup = tomorrow.toISOString().substring(0, 10);
+  // v1.6.2: Seed the Daily Manifest date to today on first render; preserve any prior
+  // selection across re-renders (stored in manifestDateValue via the input's onchange).
+  if (!manifestDateValue) {
+    const t = new Date();
+    manifestDateValue = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
+  }
+
+  // v1.6.2: Default the pickup date to the order's Ship By date (estimatedShipDate).
+  // Slicing the ISO string avoids any timezone drift. Falls back to tomorrow only if
+  // the order has no ship-by date. Field stays editable.
+  let defaultPickup = (o.estimatedShipDate || '').substring(0, 10);
+  if (!defaultPickup) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    defaultPickup = tomorrow.toISOString().substring(0, 10);
+  }
 
   // v1.3: determine button set based on unit count
   const units = totalUnits(o);
@@ -1116,11 +1119,34 @@ function renderShipTab() {
     </div>
 
     <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:16px 0 8px;">Documents</h4>
-    <div class="doc-grid" id="docGrid">
-      <div class="doc-card unavailable"><div class="doc-icon">📄</div><div class="doc-name">Shipping Label</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
-      <div class="doc-card unavailable"><div class="doc-icon">📋</div><div class="doc-name">Packing Slip</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
-      <div class="doc-card unavailable"><div class="doc-icon">📦</div><div class="doc-name">Bill of Lading</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+    <div class="doc-grid">
+      <!-- v1.6.2: #docGrid uses display:contents so its 3 children (label/slip/BOL, rebuilt
+           by renderDocuments) remain direct grid items of .doc-grid, sitting in a row with
+           the Daily Manifest card below. The manifest card lives OUTSIDE #docGrid so it is
+           NOT wiped when renderDocuments rewrites #docGrid.innerHTML. -->
+      <div id="docGrid" style="display:contents;">
+        <div class="doc-card unavailable"><div class="doc-icon">📄</div><div class="doc-name">Shipping Label</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+        <div class="doc-card unavailable"><div class="doc-icon">📋</div><div class="doc-name">Packing Slip</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+        <div class="doc-card unavailable"><div class="doc-icon">📦</div><div class="doc-name">Bill of Lading</div><div style="font-size:11px;color:var(--text-muted)">Register to generate</div></div>
+      </div>
+      <!-- Daily Manifest: date-driven, independent of the selected PO. Loaded preview
+           renders full-width in #manifestResult below the grid. -->
+      <div class="doc-card">
+        <div class="doc-icon">📑</div>
+        <div class="doc-name">Daily Manifest</div>
+        <div class="field" style="margin:0 0 8px;">
+          <label>Ship Date</label>
+          <input type="date" id="manifestDate" value="${manifestDateValue}" onchange="setManifestDate(this.value)" style="font-family:'JetBrains Mono',monospace;width:100%;">
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="generateCCDManifest()" id="btnGenManifest" style="margin-bottom:6px;">Load Shipments</button>
+        <button class="btn btn-primary btn-sm" onclick="downloadCCDManifestPDF()" id="btnDlManifest" style="margin-bottom:6px;" disabled>Download PDF</button>
+        <button class="btn btn-primary btn-sm" onclick="printCCDManifestPDF()" id="btnPrintManifest" disabled>🖨️ Print</button>
+      </div>
     </div>
+    <div style="font-size:11px;color:var(--text-muted);margin:6px 0 0;">
+      Daily Manifest reads <code style="font-family:'JetBrains Mono',monospace;color:var(--text-dim);">activity_log.order_registered</code> rows — one page per carrier, every PO shipped on the chosen date (not just this order).
+    </div>
+    <div id="manifestResult" style="margin-top:10px;"></div>
 
     <h4 style="font-size:13px;font-weight:600;color:var(--text-dim);margin:12px 0 6px;">Tracking</h4>
     <div id="trackingInfo" style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-dim);">No tracking info yet</div>
@@ -1155,6 +1181,17 @@ function renderShipTab() {
   // immediately for reprint. If not registered yet, the call returns empty
   // events and the placeholder cards stay (no error state).
   fetchShippingInfo();
+
+  // v1.6.2: If a manifest was already loaded this session, re-render its preview into the
+  // freshly-rebuilt #manifestResult and re-enable Download PDF (state survives in
+  // currentManifestData across renderShipTab rebuilds).
+  if (currentManifestData) {
+    renderCCDManifestPreview();
+    const dl = document.getElementById('btnDlManifest');
+    if (dl) dl.disabled = false;
+    const pr = document.getElementById('btnPrintManifest');
+    if (pr) pr.disabled = false;
+  }
 }
 
 function updateRegisterButton() {
@@ -1888,6 +1925,8 @@ function markRegisteredInUI() {
 // + generate PDF via jsPDF (loaded from CDN in <head>).
 
 let currentManifestData = null; // { date, carriers: { CARRIER_CODE: [row, ...] } }
+let manifestDateValue = '';     // v1.6.2: persists the chosen manifest date across renderShipTab() rebuilds
+function setManifestDate(v) { manifestDateValue = v; }  // setter so the inline onchange reliably reaches the global
 
 // Carrier code → display name mapping for manifest header.
 // Wayfair's codes are Wayfair-specific; unknown codes render verbatim.
@@ -1909,6 +1948,7 @@ async function generateCCDManifest() {
 
   document.getElementById('btnGenManifest').disabled = true;
   document.getElementById('btnDlManifest').disabled = true;
+  document.getElementById('btnPrintManifest').disabled = true;
   log(`Loading shipments for ${date}…`, 'info');
 
   const el = document.getElementById('manifestResult');
@@ -1978,6 +2018,7 @@ async function generateCCDManifest() {
     currentManifestData = { date, carriers: byCarrier };
     renderCCDManifestPreview();
     document.getElementById('btnDlManifest').disabled = false;
+    document.getElementById('btnPrintManifest').disabled = false;
   } catch (e) {
     log('Manifest load failed: ' + e.message, 'err');
     el.innerHTML = `<div style="padding:10px;background:var(--fail-bg);border:1px solid rgba(244,112,104,0.2);border-radius:7px;font-size:12px;color:var(--fail);">Load failed: ${e.message}</div>`;
@@ -2137,19 +2178,20 @@ function renderCCDManifestPreview() {
   document.getElementById('manifestResult').innerHTML = html;
 }
 
-function downloadCCDManifestPDF() {
-  if (!currentManifestData) { toast('Load shipments first', 'err'); return; }
+// v1.6.2: shared builder so Download and Print both produce the same manifest PDF.
+// Returns { doc, date, carrierCodes, carriers } or null (with a toast) on any precondition fail.
+function buildManifestDoc() {
+  if (!currentManifestData) { toast('Load shipments first', 'err'); return null; }
   const { date, carriers } = currentManifestData;
   const carrierCodes = Object.keys(carriers).sort();
-  if (carrierCodes.length === 0) { toast('Nothing to generate', 'err'); return; }
+  if (carrierCodes.length === 0) { toast('Nothing to generate', 'err'); return null; }
 
   if (!window.jspdf || !window.jspdf.jsPDF) {
     toast('jsPDF not loaded — check internet connection', 'err');
     log('jsPDF library missing — PDF generation unavailable', 'err');
-    return;
+    return null;
   }
 
-  log(`Generating PDF for ${date}…`, 'info');
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -2164,11 +2206,35 @@ function downloadCCDManifestPDF() {
     });
   });
 
+  return { doc, date, carrierCodes, carriers };
+}
+
+function downloadCCDManifestPDF() {
+  const built = buildManifestDoc();
+  if (!built) return;
+  const { doc, date, carrierCodes, carriers } = built;
+
+  log(`Generating PDF for ${date}…`, 'info');
   const fname = `CCD-Manifest-${date}.pdf`;
   doc.save(fname);
   log(`PDF saved: ${fname}`, 'ok');
   toast('Manifest PDF downloaded', 'ok');
   auditLog('manifest_generated', `Daily manifest generated for ${date} — ${carrierCodes.length} carrier(s)`, {
+    date, carrierCount: carrierCodes.length,
+    shipmentCount: carrierCodes.reduce((s, c) => s + carriers[c].length, 0),
+    carriers: carrierCodes
+  });
+}
+
+// v1.6.2: print the manifest straight to one print dialog (pick the main printer).
+function printCCDManifestPDF() {
+  const built = buildManifestDoc();
+  if (!built) return;
+  const { doc, date, carrierCodes, carriers } = built;
+
+  log(`Printing manifest for ${date}…`, 'info');
+  printPdfBytes(doc.output('arraybuffer'), `manifest ${date}`);
+  auditLog('manifest_printed', `Daily manifest printed for ${date} — ${carrierCodes.length} carrier(s)`, {
     date, carrierCount: carrierCodes.length,
     shipmentCount: carrierCodes.reduce((s, c) => s + carriers[c].length, 0),
     carriers: carrierCodes
@@ -2293,7 +2359,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.1 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.2 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -2333,11 +2399,17 @@ function renderDocuments(docs, tracking) {
 
 function docCard(icon, name, key, url) {
   if (url) {
+    // v1.6.2: the Packing Slip card gets an extra "Print ×2" action (one print dialog,
+    // two copies). Only renders when the slip URL is present, so no separate enable/disable.
+    const printBtn = key === 'slip'
+      ? `<button class="btn btn-primary btn-sm" id="btnPrintSlips" onclick="printPackingSlips()" style="margin-top:6px;" title="Print 2 copies in one job — pick your main printer in the dialog">🖨️ Print ×2</button>`
+      : '';
     return `<div class="doc-card available">
       <div class="doc-icon">${icon}</div>
       <div class="doc-name">${name}</div>
       <div style="font-size:10px;color:var(--text-muted);margin-bottom:6px;word-break:break-all;">${url.substring(0, 60)}…</div>
       <button class="btn btn-primary btn-sm" onclick="downloadDoc('${key}', '${name}')">Download</button>
+      ${printBtn}
     </div>`;
   }
   return `<div class="doc-card unavailable">
@@ -2345,6 +2417,93 @@ function docCard(icon, name, key, url) {
     <div class="doc-name">${name}</div>
     <div style="font-size:11px;color:var(--text-muted)">Not available</div>
   </div>`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// v1.6.2 — Tier 1 batch printing
+// Browsers can't silently route to a specific printer, so the approach is: build
+// one combined PDF and open ONE print dialog (operator picks the main printer).
+// Shipping label stays a separate action (label printer). pdf-lib merges/duplicates
+// PDF pages; the job is printed via a hidden iframe so it's a single dialog.
+// ─────────────────────────────────────────────────────────────────────────
+function b64ToBytes(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+function printPdfBytes(bytes, jobLabel) {
+  try {
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
+    iframe.src = url;
+    let cleaned = false;
+    const cleanup = () => { if (cleaned) return; cleaned = true; try { URL.revokeObjectURL(url); iframe.remove(); } catch (e) {} };
+    iframe.onload = () => {
+      // Small delay lets the embedded PDF viewer finish laying out before print()
+      setTimeout(() => {
+        try {
+          const w = iframe.contentWindow;
+          w.focus();
+          if (w.addEventListener) w.addEventListener('afterprint', cleanup);
+          w.print();
+          log(`Print dialog opened — ${jobLabel}`, 'ok');
+        } catch (e) {
+          log('Print failed: ' + e.message, 'err');
+          toast('Print failed — ' + e.message, 'err');
+          cleanup();
+        }
+      }, 350);
+    };
+    document.body.appendChild(iframe);
+    setTimeout(cleanup, 120000); // safety net if afterprint never fires
+  } catch (e) {
+    log('Print failed: ' + e.message, 'err');
+    toast('Print failed — ' + e.message, 'err');
+  }
+}
+
+// Single-button batch: 2 copies of the current PO's packing slip → one print dialog.
+async function printPackingSlips() {
+  const slipUrl = currentDocUrls.slip;
+  if (!slipUrl) { toast('No packing slip yet — register the order first', 'err'); return; }
+  const btn = document.getElementById('btnPrintSlips');
+  if (btn) btn.disabled = true;
+  log('Fetching packing slip for 2-copy print…', 'info');
+  try {
+    const r = await proxyPost('downloadDocument', { url: slipUrl });
+    if (!r.success) throw new Error(r.error || 'download failed');
+    const slipBytes = b64ToBytes(r.base64);
+
+    let outBytes;
+    try {
+      if (typeof PDFLib === 'undefined') throw new Error('pdf-lib not loaded');
+      const { PDFDocument } = PDFLib;
+      const src = await PDFDocument.load(slipBytes, { ignoreEncryption: true });
+      const out = await PDFDocument.create();
+      for (let copy = 0; copy < 2; copy++) {
+        const pages = await out.copyPages(src, src.getPageIndices());
+        pages.forEach(p => out.addPage(p));
+      }
+      outBytes = await out.save();
+      log('Built 2-copy packing slip PDF', 'ok');
+    } catch (mergeErr) {
+      // Graceful fallback: print a single copy rather than nothing
+      log(`2-copy merge unavailable (${mergeErr.message}) — printing a single copy`, 'warn');
+      toast('Printing single copy (merge unavailable)', 'warn');
+      outBytes = slipBytes;
+    }
+
+    printPdfBytes(outBytes, currentOrder ? `${currentOrder.poNumber} packing slip ×2` : 'packing slip ×2');
+  } catch (e) {
+    log('Print packing slip failed: ' + e.message, 'err');
+    toast('Failed: ' + e.message, 'err');
+  } finally {
+    if (btn) btn.disabled = !currentDocUrls.slip;
+  }
 }
 
 async function downloadDoc(key, name) {
@@ -2496,14 +2655,8 @@ function switchTab(name, el) {
     renderShipTab();
   }
   if (name === 'detail') updateAcceptButton();
-  // v1.5: Initialize Manifest tab date to today on first open (idempotent)
-  if (name === 'manifest') {
-    const dateInput = document.getElementById('manifestDate');
-    if (dateInput && !dateInput.value) {
-      const t = new Date();
-      dateInput.value = `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`;
-    }
-  }
+  // v1.6.2: Manifest date is seeded/persisted in renderShipTab (manifestDateValue), so no
+  // separate init is needed on tab switch.
   // v1.6: Auto-load Pending ASNs on tab switch if not yet loaded this session
   if (name === 'asns' && sb && pendingASNs.length === 0) {
     const content = document.getElementById('pendingASNContent');
