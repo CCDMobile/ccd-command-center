@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.36</title>
+<title>CCD Inventory System v2.9.37</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.36 · B-S50-01 diag — Wayfair cascade forensic logging (no behavior change)</div>
+    <div class="login-version">v2.9.37 · Add Product + Duplicate Product (new-item insert path)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.36</div>
+      <div class="topbar-version">v2.9.37</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -711,6 +711,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <option value="all">All Brands</option>
       </select>
       <div class="filter-count" id="filterCount"></div>
+      <button class="btn-card btn-save" onclick="addNewProduct()" style="padding:7px 14px;font-size:12px;background:var(--green);color:#fff;">➕ Add Product</button>
       <button class="btn-card btn-save" onclick="openInvoiceImport()" style="padding:7px 14px;font-size:12px;">📄 Import Invoice</button>
     </div>
 
@@ -779,6 +780,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
           <button class="btn-card btn-push" onclick="pushToChannels(true)" title="Push this item + all siblings, bundle components, and parent bundles" style="font-size:11px;">↻ Push Family</button>
           <button class="btn-card btn-save" onclick="saveItem()">💾 Save</button>
           <button class="btn-card" onclick="cancelCard()" style="background:transparent;border:1px solid var(--border);color:var(--muted);">✕ Cancel</button>
+          <button class="btn-card" onclick="duplicateItem()" style="background:transparent;border:1px solid var(--blue);color:var(--blue);font-size:11px;" title="Create a new product pre-filled from this one — blank SKU, qty 0 in warehouse and all channels, listing IDs cleared">📑 Duplicate</button>
           <button class="btn-card" onclick="deleteItem()" style="background:transparent;border:1px solid var(--red);color:var(--red);font-size:11px;" title="Permanently remove this item from inventory (sales history preserved)">🗑 Delete</button>
           <label class="active-toggle">
             Active <input type="checkbox" id="cardActive" checked>
@@ -1701,7 +1703,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.36';
+const TOOL_VERSION = '2.9.37';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2432,6 +2434,171 @@ async function populateKpiRow(item) {
   } catch(e) {
     console.log('KPI load skipped:', e.message);
   }
+}
+
+// ═══════════════════════════════════════════════════════════
+// NEW PRODUCT / DUPLICATE  (v2.9.37, S53)
+// Both share a new-item card mode: state.currentItem._isNew = true.
+// saveItem() INSERTs when _isNew is set, otherwise UPDATEs as before.
+// ═══════════════════════════════════════════════════════════
+
+// Blank seed for "+ Add Product" — empty form, all qty 0, active.
+function _blankItemSeed() {
+  return {
+    sku: '', product_name: '', brand_name: '', category: '', shelf_number: '',
+    comments: '', vendor: '',
+    wholesale_price: 0, ib_shipping: 0, tariff: 0, ob_shipping: 0,
+    qty: 0, etsy_qty: 0, wix_qty: 0, wayfair_qty: 0, treasuremarts_qty: 0,
+    etsy_price: 0, wix_price: 0, wayfair_price: 0, treasuremarts_price: 0,
+    shipping_weight: null, box_length: null, box_width: null, box_height: null,
+    etsy_listing_id: null, wix_product_id: null, wix_variant_id: null,
+    etsy_variant_id: null, wayfair_sku: null,
+    wayfair_dimensions: '', wayfair_weight: '', wayfair_materials: '',
+    wayfair_color: '', wayfair_props: '', wayfair_country: '',
+    etsy_pricing_notes: '', wix_pricing_notes: '', wayfair_pricing_notes: '', tm_pricing_notes: '',
+    is_active: true, photographed: false, description_last_updated: null,
+    par_reorder_point: null, par_reorder_qty: null, par_max_stock: null,
+    par_etsy_min: null, par_etsy_target: null, par_wix_min: null, par_wix_target: null,
+    par_wayfair_min: null, par_wayfair_target: null, par_tm_min: null, par_tm_target: null
+  };
+}
+
+// Duplicate seed — copy product info from src, blank SKU + listing IDs, zero all qty.
+// Decisions (S53): qty 0 in warehouse AND all channels; do NOT copy
+// parent_sku / variant_label / is_bundle (a duplicate is a standalone item).
+function _dupItemSeed(src) {
+  return {
+    sku: '', // user enters a new one
+    // Product info — copied
+    product_name: src.product_name || '',
+    brand_name: src.brand_name || '',
+    category: src.category || '',
+    shelf_number: src.shelf_number || '',
+    comments: src.comments || '',
+    vendor: src.vendor || '',
+    wholesale_price: pf(src.wholesale_price),
+    ib_shipping: pf(src.ib_shipping),
+    tariff: pf(src.tariff),
+    ob_shipping: pf(src.ob_shipping),
+    // Channel prices — copied
+    etsy_price: pf(src.etsy_price),
+    wix_price: pf(src.wix_price),
+    wayfair_price: pf(src.wayfair_price),
+    treasuremarts_price: pf(src.treasuremarts_price),
+    // Shipping dims — copied
+    shipping_weight: src.shipping_weight ?? null,
+    box_length: src.box_length ?? null,
+    box_width: src.box_width ?? null,
+    box_height: src.box_height ?? null,
+    // Wayfair descriptive fields — copied (wayfair_sku is a listing id → blanked below)
+    wayfair_dimensions: src.wayfair_dimensions || '',
+    wayfair_weight: src.wayfair_weight || '',
+    wayfair_materials: src.wayfair_materials || '',
+    wayfair_color: src.wayfair_color || '',
+    wayfair_props: src.wayfair_props || '',
+    wayfair_country: src.wayfair_country || '',
+    // Pricing notes — copied
+    etsy_pricing_notes: src.etsy_pricing_notes || '',
+    wix_pricing_notes: src.wix_pricing_notes || '',
+    wayfair_pricing_notes: src.wayfair_pricing_notes || '',
+    tm_pricing_notes: src.tm_pricing_notes || '',
+    // PAR levels — copied (product policy, not channel-linked)
+    par_reorder_point: src.par_reorder_point ?? null,
+    par_reorder_qty: src.par_reorder_qty ?? null,
+    par_max_stock: src.par_max_stock ?? null,
+    par_etsy_min: src.par_etsy_min ?? null, par_etsy_target: src.par_etsy_target ?? null,
+    par_wix_min: src.par_wix_min ?? null, par_wix_target: src.par_wix_target ?? null,
+    par_wayfair_min: src.par_wayfair_min ?? null, par_wayfair_target: src.par_wayfair_target ?? null,
+    par_tm_min: src.par_tm_min ?? null, par_tm_target: src.par_tm_target ?? null,
+    // Quantities — ZEROED (decision #2). Physical stock is not duplicated.
+    qty: 0, etsy_qty: 0, wix_qty: 0, wayfair_qty: 0, treasuremarts_qty: 0,
+    // Channel LISTING IDs — BLANKED (non-negotiable: two rows must never point
+    // at the same live listing, or the sale cascade / ECOSYSTEM-011 peer-decrement
+    // corrupts qty across channels).
+    etsy_listing_id: null, wix_product_id: null, wix_variant_id: null,
+    etsy_variant_id: null, wayfair_sku: null,
+    // Reset state
+    is_active: true, photographed: false, description_last_updated: null
+    // Intentionally NOT copied: id, parent_sku, variant_label, is_bundle,
+    // bundle component links, created_at, updated_at, date_added,
+    // last_sold_date, last_sold_channel, etsy_offsite_ads.
+  };
+}
+
+function addNewProduct() {
+  openNewItemCard(_blankItemSeed(), null);
+}
+
+function duplicateItem() {
+  const src = state.currentItem;
+  if (!src) return;
+  captureEdits(); // reflect any on-screen edits into the copy
+  const seed = _dupItemSeed(state.currentItem);
+  openNewItemCard(seed, src.sku || src.product_name || 'item');
+}
+
+// Open the edit card in NEW-ITEM mode (no DB id; saveItem will INSERT).
+// Mirrors onRowClick's render path but skips the DB fetch, KPI load, and
+// realtime subscription — none of those exist until the row is saved.
+function openNewItemCard(seed, dupFromLabel) {
+  state.currentItem = seed;
+  state.currentItem._isNew = true;
+  state.currentItem._originalSku = '';
+  state.cardDirty = false;
+  state.hasUnsavedEdits = false;
+  state.cardRendered = false;
+  clearUnsavedMark();
+  state.priorScrollY = window.scrollY;
+
+  unsubscribeFromItem(); // drop any prior item's realtime channel
+
+  $qa('.top-view').forEach(v => v.classList.remove('active'));
+  $('cardView').classList.add('visible');
+  window.scrollTo(0,0);
+
+  // Header
+  $('cardSku').textContent = '✦ NEW';
+  $('cardName').textContent = seed.product_name || 'New Product';
+  if ($('cardActive')) $('cardActive').checked = true;
+
+  // Meta — minimal for a new standalone item
+  let metaHtml = '';
+  if (seed.brand_name) metaHtml += `<span class="brand-label">${escHtml(seed.brand_name)}</span>`;
+  metaHtml += `<span class="badge badge-active">New — unsaved</span>`;
+  $('cardMeta').innerHTML = metaHtml;
+
+  $('variantBanner').style.display = 'none';
+  $('vbSiblings').innerHTML = '';
+
+  // KPI row — no sales history yet
+  ['kpiSold','kpiRevenue','kpiProfit','kpiMargin','kpiDays','kpiVelocity'].forEach(id => { if ($(id)) $(id).textContent = '—'; });
+
+  // Clear stale DOM, render Overview from the seed
+  $qa('.sub-content').forEach(c => { c.innerHTML = ''; });
+  switchSub('overview');
+
+  // Unlock the SKU field — a new product needs one before it can be saved
+  const skuInp = $('f_sku');
+  if (skuInp) {
+    skuInp.readOnly = false;
+    skuInp.style.border = '1px solid var(--gold)';
+    skuInp.style.background = 'var(--bg1)';
+  }
+  if ($('skuEditBtn')) $('skuEditBtn').textContent = '🔓';
+
+  // Mark unsaved so the close-guard protects the entry
+  state.hasUnsavedEdits = true;
+  markUnsaved();
+
+  if (dupFromLabel) {
+    showCardStatus(`Duplicated from ${dupFromLabel} — enter a new SKU, then Save. Quantities and listing IDs were cleared.`, 'ok');
+  } else {
+    showCardStatus('New product — enter a SKU (required) plus details, then Save.', 'ok');
+    if (skuInp) skuInp.focus();
+  }
+
+  logActivity('INVENTORY', dupFromLabel ? 'PRODUCT_DUPLICATE_START' : 'PRODUCT_ADD_START', null,
+    dupFromLabel ? `Duplicate started from ${dupFromLabel}` : 'New product form opened', {}, null);
 }
 
 async function closeCard() {
@@ -5617,6 +5784,65 @@ async function saveItem() {
       }
     }
 
+    // ── NEW ITEM INSERT (v2.9.37, S53) ──
+    // _isNew cards carry no DB id; INSERT instead of UPDATE, then flip to edit
+    // mode. Placed BEFORE the SKU-change/cascade block so a new item never
+    // triggers a cross-table SKU cascade (it has no prior SKU to cascade from).
+    if (item._isNew) {
+      const newItemSku = ge('f_sku') ? ($('f_sku').value || '').trim() : '';
+      if (!newItemSku) {
+        state.saving = false;
+        statusEl.className = 'inline-status show error';
+        statusEl.textContent = 'SKU is required to create a new product.';
+        statusEl.style.display = 'block';
+        const si = $('f_sku'); if (si) { si.readOnly = false; si.focus(); }
+        return;
+      }
+      const { data: dupeNew } = await sb.from('items').select('id').eq('sku', newItemSku).limit(1);
+      if (dupeNew && dupeNew.length > 0) {
+        state.saving = false;
+        statusEl.className = 'inline-status show error';
+        statusEl.textContent = `SKU "${newItemSku}" already exists. Choose a different SKU.`;
+        statusEl.style.display = 'block';
+        return;
+      }
+      updates.sku = newItemSku;
+      updates.created_at = new Date().toISOString();
+      // Safety: a brand-new row must never inherit a live listing identifier.
+      updates.etsy_listing_id = updates.etsy_listing_id || null;
+      updates.wix_product_id = updates.wix_product_id || null;
+      updates.wix_variant_id = updates.wix_variant_id || null;
+      updates.etsy_variant_id = updates.etsy_variant_id || null;
+
+      const { data: newRow, error: insErr } = await sb.from('items').insert(updates).select().single();
+      if (insErr) throw insErr;
+
+      // Flip card into normal edit mode for the freshly-created row
+      item._isNew = false;
+      item._originalSku = newItemSku;
+      Object.assign(state.currentItem, updates, { id: newRow.id });
+      state.cardDirty = true;
+
+      $('cardSku').textContent = newItemSku;
+      $('cardName').textContent = updates.product_name || 'Untitled';
+      // Re-lock SKU field (now an existing item; use the ✏️ toggle to change it)
+      const si = $('f_sku'); if (si) { si.readOnly = true; si.style.border = ''; si.style.background = ''; }
+      if ($('skuEditBtn')) $('skuEditBtn').textContent = '✏️';
+
+      subscribeToItem(newRow.id);
+      logActivity('INVENTORY','ITEM_CREATED',null,`Created ${newItemSku}`,{},newItemSku);
+
+      statusEl.className = 'inline-status show ok';
+      statusEl.textContent = `✅ Created ${newItemSku} successfully — now editing.`;
+      statusEl.style.display = 'block';
+      clearUnsavedMark();
+      state.hasUnsavedEdits = false;
+      state.saving = false;
+      statusEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
+      return;
+    }
+
     // ── SKU CHANGE: Detect, validate, confirm, cascade ──
     const newSku = ge('f_sku') ? ($('f_sku').value || '').trim() : '';
     const oldSku = item._originalSku || item.sku || '';
@@ -5772,6 +5998,8 @@ async function saveItem() {
 async function deleteItem() {
   const item = state.currentItem;
   if (!item) return;
+  // New (unsaved) items have no DB row — just discard and close.
+  if (item._isNew) { state.hasUnsavedEdits = false; clearUnsavedMark(); cancelCard(); return; }
   const statusEl = $('cardStatus');
 
   try {
@@ -6369,7 +6597,7 @@ async function confirmSell() {
       // v2.9.36 (B-S50-01 diag): log Wayfair sync row decision for the
       // "Wayfair not updating on cross-channel sales" forensic chain (G13).
       // Pairs with SH v4.4.24 cascade-eval + pushToWayfair entry logs. No behavior change.
-      console.log(`[B-S50-01 diag v2.9.36] V2 confirmSell wayfair-eval: sku=${item.sku} channel=${channel} item.wayfair_sku=${item.wayfair_sku || 'none'} qtyUpdates.wayfair_qty=${qtyUpdates.wayfair_qty} item.wayfair_qty-preSale=${item.wayfair_qty} guard-pass=YES`);
+      console.log(`[B-S50-01 diag v${TOOL_VERSION}] V2 confirmSell wayfair-eval: sku=${item.sku} channel=${channel} item.wayfair_sku=${item.wayfair_sku || 'none'} qtyUpdates.wayfair_qty=${qtyUpdates.wayfair_qty} item.wayfair_qty-preSale=${item.wayfair_qty} guard-pass=YES`);
       syncRows.push({ item_id: item.id, channel:'wayfair', operation:'update', fields: {
         sku: item.sku, quantity: qtyUpdates.wayfair_qty, wayfairSku: item.wayfair_sku,
         fieldTypes:['quantity'], trigger:'sale'
@@ -6378,7 +6606,7 @@ async function confirmSell() {
       // v2.9.36 (B-S50-01 diag): wayfair_sku present but qtyUpdates.wayfair_qty undefined
       // — explains absence of a wayfair sync row (peer-decrement silent-no-op when
       // pre-sale wayfair_qty was 0, per ECOSYSTEM-011).
-      console.log(`[B-S50-01 diag v2.9.36] V2 confirmSell wayfair-eval: sku=${item.sku} channel=${channel} item.wayfair_sku=${item.wayfair_sku} qtyUpdates.wayfair_qty=undefined item.wayfair_qty-preSale=${item.wayfair_qty} guard-pass=NO (no sync row written)`);
+      console.log(`[B-S50-01 diag v${TOOL_VERSION}] V2 confirmSell wayfair-eval: sku=${item.sku} channel=${channel} item.wayfair_sku=${item.wayfair_sku} qtyUpdates.wayfair_qty=undefined item.wayfair_qty-preSale=${item.wayfair_qty} guard-pass=NO (no sync row written)`);
     }
     // Add cascade sync rows (bundle component deductions + bundle recalcs)
     syncRows.push(...cascadeSyncRows);
