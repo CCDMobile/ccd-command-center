@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.37</title>
+<title>CCD Inventory System v2.9.38</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.37 · Add Product + Duplicate Product (new-item insert path)</div>
+    <div class="login-version">v2.9.38 · Bare "Shipping $X" parse pattern + editable IB$/Tariff$ fields</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.37</div>
+      <div class="topbar-version">v2.9.38</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1703,7 +1703,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.37';
+const TOOL_VERSION = '2.9.38';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2998,7 +2998,7 @@ function renderOverview(item) {
       </div>
       <div class="form-row">
         <div class="form-label">IB Shipping ($)</div>
-        <div class="form-value"><span class="cost-computed">$${ibDollar.toFixed(2)}</span></div>
+        <div class="form-value"><input class="form-input" id="f_ib_dollar" value="${ibDollar.toFixed(2)}" onchange="onCostDollarChange('ib')" title="Per-unit dollar amount. The % is derived from Wholesale."></div>
       </div>
       <div class="form-row">
         <div class="form-label">Tariff (%)</div>
@@ -3006,7 +3006,7 @@ function renderOverview(item) {
       </div>
       <div class="form-row">
         <div class="form-label">Tariff ($)</div>
-        <div class="form-value"><span class="cost-computed">$${tariffDollar.toFixed(2)}</span></div>
+        <div class="form-value"><input class="form-input" id="f_tariff_dollar" value="${tariffDollar.toFixed(2)}" onchange="onCostDollarChange('tariff')" title="Per-unit dollar amount. The % is derived from Wholesale."></div>
       </div>
       <div class="form-row">
         <div class="form-label">OB Shipping</div>
@@ -4220,6 +4220,35 @@ function onCostBasisChange() {
   if ($('f_ib')) item.ib_shipping = parseFloat($('f_ib').value) || 0;
   if ($('f_tariff')) item.tariff = parseFloat($('f_tariff').value) || 0;
   if ($('f_ob')) item.ob_shipping = parseFloat($('f_ob').value) || 0;
+  renderOverview(item);
+}
+
+// v2.9.38 (S53): manual $ entry for IB Shipping ($) and Tariff ($).
+// These are stored as PERCENTAGES of wholesale (ib_shipping / tariff columns) —
+// there are no dollar columns. Entering a dollar amount back-computes the
+// % = $ / wholesale * 100, so the stored model and all downstream profit /
+// landed-cost math (RPC, FR, ECOSYSTEM-018) are unchanged. A non-zero wholesale
+// is required to derive the %. Note: because the model is %-of-wholesale, a
+// later change to Wholesale will re-scale this dollar amount proportionally.
+function onCostDollarChange(kind) {
+  const item = state.currentItem;
+  if (!item) return;
+  captureEdits();
+  const wholesale = parseFloat($('f_wholesale') ? $('f_wholesale').value : item.wholesale_price) || 0;
+  const fieldId = kind === 'tariff' ? 'f_tariff_dollar' : 'f_ib_dollar';
+  const pctCol  = kind === 'tariff' ? 'tariff' : 'ib_shipping';
+  const label   = kind === 'tariff' ? 'Tariff' : 'IB Shipping';
+  const dollarVal = parseFloat($(fieldId) ? $(fieldId).value : 0) || 0;
+  if (wholesale <= 0) {
+    showCardStatus(`Enter a Wholesale cost before setting ${label} ($) — the % is derived from it.`, 'error');
+    renderOverview(item); // revert the $ field to its computed value
+    return;
+  }
+  // Round % to 2dp: keeps the % field tidy while preserving cent-accuracy on the $.
+  const pct = Math.round((dollarVal / wholesale) * 100 * 100) / 100;
+  item[pctCol] = pct;
+  if (pctCol === 'ib_shipping' && $('f_ib')) $('f_ib').value = pct;
+  if (pctCol === 'tariff' && $('f_tariff')) $('f_tariff').value = pct;
   renderOverview(item);
 }
 
@@ -8386,7 +8415,8 @@ function parseInvoiceTextDataDriven(text) {
   // parens. Once shippingCost is non-zero, IB% auto-computes downstream.
   const shipPatterns = [/FRT\d+\s+([\d,]+\.[\d]{2})/i, /Freight[:\s]+\$?([\d,]+\.?\d*)/i, /Shipping[:\s&]+[Hh]andling[:\s]+\$?([\d,]+\.?\d*)/i,
     /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i,
-    /Shipping Cost\s*(?:\([^)]+\))?\s*[:\s]*\$?([\d,]+\.[\d]{2})/i];
+    /Shipping Cost\s*(?:\([^)]+\))?\s*[:\s]*\$?([\d,]+\.[\d]{2})/i,
+    /Shipping[:\s]+\$?([\d,]+\.\d{2})/i];  // v2.9.38 (S53): bare "Shipping $X.XX" fallback (Happy Cow). After "Shipping Cost" so the specific label still wins; "Shipping" (not "Shipped") avoids the "Shipped date" line.
   for (const p of shipPatterns) {
     const m = text.match(p);
     if (m) { inv.shippingCost = parseFloat(m[1].replace(/,/g,'')); break; }
@@ -8619,7 +8649,8 @@ function parseInvoiceText(text) {
   // carrier-name parens.
   const shipPatterns = [/FRT\d+\s+([\d,]+\.[\d]{2})/i, /Freight[:\s]+\$?([\d,]+\.?\d*)/i, /Shipping[:\s&]+[Hh]andling[:\s]+\$?([\d,]+\.?\d*)/i,
     /Total\s*Charged\s*to\s*CC\s+[\d,]+\.[\d]{2}\s+([\d,]+\.[\d]{2})/i, /FREIGHT[:\s]+\$?([\d,]+\.?\d*)/i,
-    /Shipping Cost\s*(?:\([^)]+\))?\s*[:\s]*\$?([\d,]+\.[\d]{2})/i];
+    /Shipping Cost\s*(?:\([^)]+\))?\s*[:\s]*\$?([\d,]+\.[\d]{2})/i,
+    /Shipping[:\s]+\$?([\d,]+\.\d{2})/i];  // v2.9.38 (S53): bare "Shipping $X.XX" fallback (Happy Cow), legacy parity with data-driven engine.
   for (const p of shipPatterns) { const m = text.match(p); if (m) { inv.shippingCost = parseFloat(m[1].replace(/,/g,'')); break; } }
 
   // Parse items by vendor
