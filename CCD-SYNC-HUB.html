@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.5.3</title>
+    <title>CCD Sync Hub v4.6.0</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.5.3 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.0 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -454,6 +454,7 @@
     <!-- TAB BAR -->
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('orders')" id="tabOrders">📦 Orders <span class="badge" id="ordersBadge" style="display:none">0</span></button>
+        <button class="tab-btn" onclick="switchTab('review')" id="tabReview" title="Durable pending-order intake awaiting approval (v4.6.0 / ADR-013)">📥 Review <span class="badge" id="reviewBadge" style="display:none">0</span></button>
         <button class="tab-btn" onclick="switchTab('queue')" id="tabQueue">📤 Push Queue <span class="badge" id="queueBadge" style="display:none">0</span><span class="badge" id="failedBadge" style="display:none;background:var(--error);color:#fff;margin-left:4px;" title="Pushes that permanently failed in the last 24h — click Push Queue tab to review">0</span></button>
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
         <button class="tab-btn" onclick="switchTab('wayfair')" id="tabWayfair">🏠 Wayfair</button>
@@ -499,6 +500,22 @@
             </div>
         </div>
         
+        <!-- ==================== REVIEW TAB (v4.6.0 / ADR-013 — durable pending_orders intake) ==================== -->
+        <div class="tab-content" id="tab-review">
+            <div style="display:flex; gap:10px; margin-bottom:14px; flex-wrap:wrap; align-items:center;">
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text); border: 1px solid var(--border);" onclick="loadPendingReview()">🔄 Refresh</button>
+                <button class="btn btn-success btn-sm" onclick="approveAllPending()" title="Approve every pending order — each runs the normal apply (inventory deduction + cascade)">✅ Approve All</button>
+                <span style="color: var(--text-dim); font-size: 0.8rem;">Durable intake awaiting approval. Approve runs the normal apply path; reject has no inventory effect.</span>
+            </div>
+            <div id="reviewContainer">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📥</div>
+                    <div class="empty-state-title">No pending orders</div>
+                    <div style="color: var(--text-dim);">Pulled orders awaiting approval will appear here.</div>
+                </div>
+            </div>
+        </div>
+
         <!-- ==================== QUEUE TAB ==================== -->
         <div class="tab-content" id="tab-queue">
             <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
@@ -868,7 +885,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.5.3';
+    const SH_VERSION = 'v4.6.0';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1182,6 +1199,12 @@
                     saveOrdersToStorage();
                 }
             }
+
+            // v4.6.0 (ADR-013 §5.4) — heal any pending_orders row already in the
+            // processed ledger (legacy-path / cross-session applies), then populate
+            // the Review tab + badge.
+            await healPendingFromProcessed();
+            await loadPendingReview();
             
             // Load SKU mappings from Supabase
             await loadSkuMappingsFromDb();
@@ -2665,6 +2688,7 @@
         // Add orders to state (always enabled in clean build)
         let totalAdded = 0;
         let totalDuplicates = 0;
+        const newlyPulled = []; // v4.6.0 (ADR-013): collect new orders for durable pending_orders intake
         
         for (const channel of ['etsy', 'wix', 'wayfair']) {
             const r = results[channel];
@@ -2672,6 +2696,23 @@
                 const result = addOrdersToState(r.orders, channel);
                 totalAdded += result.added;
                 totalDuplicates += result.duplicates;
+                if (result.formatted && result.formatted.length) newlyPulled.push(...result.formatted);
+            }
+        }
+
+        // v4.6.0 (ADR-013 / Option C) — durable intake PRODUCER. At order_auto_apply=false,
+        // each newly-pulled order also writes a durable pending_orders row (idempotent via
+        // ON CONFLICT (channel, external_order_id)). Mary's local Orders tab is unchanged —
+        // addOrdersToState already populated it above. At order_auto_apply=true the order
+        // applies immediately via the gate below, so no pending row is written (review queue
+        // is the manual-path concept only). Wrapped so an intake-write failure can never
+        // block the pull's display/finally.
+        if (getFlag('order_auto_apply') !== true && newlyPulled.length) {
+            try {
+                await producePendingOrders(newlyPulled);
+                await loadPendingReview();
+            } catch (e) {
+                console.warn(`[PendingIntake ${SH_VERSION}] producer threw:`, e.message);
             }
         }
         
@@ -2741,6 +2782,257 @@
                 pullBtn.textContent = pullBtn._originalText || '🔄 Pull All Orders';
             }
         }
+    }
+
+    // ============================================================
+    // v4.6.0 (ADR-013 / Option C) — DURABLE PENDING-ORDER INTAKE
+    // ------------------------------------------------------------
+    // Producer + browser review/approve surface over public.pending_orders.
+    // Closes the Phase 3 gap browser-first (no edge runtime). The APPROVAL
+    // PATH IS NOT REIMPLEMENTED — approve routes the order through the
+    // existing processOrder() unchanged (ECOSYSTEM-011 peer-decrement,
+    // bundle cascade, sync_queue writes, reconcilers all reused as-is).
+    //
+    // ID mapping (locked S60 §0.14): pending_orders stores (channel, BARE
+    // external_order_id); the durable processed ledger is
+    // processed_orders.order_id, PREFIXED per channel. Convergence/skip
+    // checks map between them via PENDING_PREFIX — never compare a bare id
+    // against the prefixed ledger.
+    // ============================================================
+    const PENDING_PREFIX = { etsy: 'ETSY-', wix: 'WIX-', wayfair: 'WF-' };
+    function stripPrefix(id) { return String(id == null ? '' : id).replace(/^(ETSY-|WIX-|WF-)/, ''); }
+    function _channelFromPrefixedId(prefixedId) {
+        if (prefixedId.startsWith('ETSY-')) return 'etsy';
+        if (prefixedId.startsWith('WIX-'))  return 'wix';
+        if (prefixedId.startsWith('WF-'))   return 'wayfair';
+        return null;
+    }
+
+    // PRODUCER — write a durable pending_orders row per newly-pulled order.
+    // Idempotent: ON CONFLICT (channel, external_order_id) DO NOTHING — a
+    // re-pull never creates a 2nd row and never resurrects an approved/
+    // rejected row. Orders already applied historically (prefixed id in
+    // processedIds) are skipped so they don't reappear as pending.
+    async function producePendingOrders(orders) {
+        if (!sbClient || !orders || !orders.length) return { written: 0, skipped: 0 };
+        const rows = [];
+        let skipped = 0;
+        for (const o of orders) {
+            if (!o || !o.id || !o.channel) continue;
+            if (state.orders.processedIds.has(o.id)) { skipped++; continue; }
+            rows.push({
+                channel: o.channel,
+                external_order_id: stripPrefix(o.id),
+                payload: o,
+                pulled_at: new Date().toISOString(),
+                status: 'pending'
+            });
+        }
+        if (!rows.length) {
+            if (skipped) console.log(`[PendingIntake ${SH_VERSION}] 0 written, ${skipped} already-applied skipped`);
+            return { written: 0, skipped };
+        }
+        const { error } = await sbClient
+            .from('pending_orders')
+            .upsert(rows, { onConflict: 'channel,external_order_id', ignoreDuplicates: true });
+        if (error) {
+            console.warn(`[PendingIntake ${SH_VERSION}] upsert failed:`, error.message);
+            addLog(`Pending intake write failed: ${error.message}`, 'error');
+            return { written: 0, skipped, error };
+        }
+        addLog(`📥 ${rows.length} order(s) recorded to pending review (${skipped} already applied)`, 'info');
+        console.log(`[PendingIntake ${SH_VERSION}] wrote ${rows.length} pending row(s), skipped ${skipped}`);
+        return { written: rows.length, skipped };
+    }
+
+    // §5.4 CONVERGENCE — flip the matching pending row to approved. Called
+    // fire-and-forget from markOrderProcessed so EVERY apply surface (Review
+    // approve, "Process All Pending", auto-apply) converges the durable row.
+    // The status='pending' guard makes it idempotent and won't clobber a reject.
+    async function flipPendingApproved(prefixedId) {
+        if (!sbClient || !sbConnected) return;
+        const channel = _channelFromPrefixedId(String(prefixedId));
+        if (!channel) return;
+        const extId = stripPrefix(prefixedId);
+        try {
+            const { error } = await sbClient.from('pending_orders')
+                .update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: 'sync_hub' })
+                .eq('channel', channel).eq('external_order_id', extId).eq('status', 'pending');
+            if (error) console.warn(`[PendingReview ${SH_VERSION}] flip failed:`, error.message);
+        } catch (e) {
+            console.warn(`[PendingReview ${SH_VERSION}] flip threw:`, e.message);
+        }
+    }
+
+    // §5.4 LOAD-TIME HEAL — mark any pending row whose prefixed id is already
+    // in the processed ledger as approved (heals orders applied via the legacy
+    // path before this build, and across devices/sessions). Connect-time only.
+    async function healPendingFromProcessed() {
+        if (!sbClient || !sbConnected) return;
+        if (!state.orders.processedIds || state.orders.processedIds.size === 0) return;
+        try {
+            const { data, error } = await sbClient.from('pending_orders')
+                .select('id, channel, external_order_id').eq('status', 'pending').limit(2000);
+            if (error) throw error;
+            const healed = [];
+            for (const r of (data || [])) {
+                const prefixedId = (PENDING_PREFIX[r.channel] || '') + r.external_order_id;
+                if (state.orders.processedIds.has(prefixedId)) healed.push(r.id);
+            }
+            if (!healed.length) return;
+            const { error: upErr } = await sbClient.from('pending_orders')
+                .update({ status: 'approved', reviewed_at: new Date().toISOString(), reviewed_by: 'sync_hub' })
+                .in('id', healed).eq('status', 'pending');
+            if (upErr) { console.warn(`[PendingReview ${SH_VERSION}] heal update failed:`, upErr.message); return; }
+            console.log(`[PendingReview ${SH_VERSION}] healed ${healed.length} already-applied pending row(s)`);
+        } catch (e) {
+            console.warn(`[PendingReview ${SH_VERSION}] heal threw:`, e.message);
+        }
+    }
+
+    // CONSUMER — load + render status='pending' rows (uses idx_pending_orders_pending).
+    async function loadPendingReview() {
+        const container = document.getElementById('reviewContainer');
+        if (!sbClient || !sbConnected) {
+            state.pendingReview = [];
+            if (container) container.innerHTML = _reviewEmpty('Connect to Supabase to load pending orders');
+            _updateReviewBadge(0);
+            return;
+        }
+        try {
+            const { data, error } = await sbClient.from('pending_orders')
+                .select('id, channel, external_order_id, payload, pulled_at, status')
+                .eq('status', 'pending')
+                .order('pulled_at', { ascending: false })
+                .limit(500);
+            if (error) throw error;
+            state.pendingReview = data || [];
+            _renderReview(state.pendingReview);
+            _updateReviewBadge(state.pendingReview.length);
+        } catch (e) {
+            console.warn(`[PendingReview ${SH_VERSION}] load failed:`, e.message);
+            if (container) container.innerHTML = _reviewEmpty('Failed to load pending orders: ' + _escHtml(e.message));
+            _updateReviewBadge(0);
+        }
+    }
+
+    function _reviewEmpty(msg) {
+        return `<div class="empty-state"><div class="empty-state-icon">📥</div>`
+             + `<div class="empty-state-title">No pending orders</div>`
+             + `<div style="color: var(--text-dim);">${_escHtml(msg)}</div></div>`;
+    }
+
+    function _updateReviewBadge(n) {
+        const b = document.getElementById('reviewBadge');
+        if (!b) return;
+        if (n > 0) { b.textContent = n; b.style.display = 'inline'; }
+        else { b.style.display = 'none'; }
+    }
+
+    function _renderReview(rows) {
+        const container = document.getElementById('reviewContainer');
+        if (!container) return;
+        if (!rows || !rows.length) { container.innerHTML = _reviewEmpty('Pulled orders awaiting approval will appear here.'); return; }
+        const _badge = { etsy: '🟠 Etsy', wix: '🔵 Wix', wayfair: '🏠 Wayfair' };
+        let html = `<table style="width:100%; border-collapse:collapse; font-size:0.82rem;">`
+            + `<thead style="position:sticky; top:0; background: var(--bg-input); z-index:1;"><tr>`
+            + `<th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Channel</th>`
+            + `<th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Order</th>`
+            + `<th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Pulled</th>`
+            + `<th style="text-align:left; padding:8px; border-bottom:1px solid var(--border);">Summary</th>`
+            + `<th style="text-align:right; padding:8px; border-bottom:1px solid var(--border);">Action</th>`
+            + `</tr></thead><tbody>`;
+        for (const r of rows) {
+            const p = r.payload || {};
+            const items = Array.isArray(p.items) ? p.items : [];
+            const itemCount = items.length;
+            const total = (Number(p.total) || 0).toFixed(2);
+            const buyer = p.buyer || 'Unknown';
+            const skuList = items.slice(0, 3).map(i => i.sku).filter(Boolean).join(', ') + (itemCount > 3 ? ` +${itemCount - 3}` : '');
+            const pulled = r.pulled_at ? new Date(r.pulled_at).toLocaleString() : '';
+            html += `<tr style="border-bottom:1px solid var(--border);">`
+                + `<td style="padding:8px;">${_escHtml(_badge[r.channel] || r.channel)}</td>`
+                + `<td style="padding:8px; font-family:monospace;">${_escHtml(r.external_order_id)}</td>`
+                + `<td style="padding:8px; color:var(--text-dim);">${_escHtml(pulled)}</td>`
+                + `<td style="padding:8px;">${itemCount} item${itemCount !== 1 ? 's' : ''} · $${_escHtml(total)} · ${_escHtml(buyer)}`
+                + (skuList ? `<div style="color:var(--text-dim); font-size:0.75rem;">${_escHtml(skuList)}</div>` : '')
+                + `</td>`
+                + `<td style="padding:8px; text-align:right; white-space:nowrap;">`
+                + `<button class="btn btn-success btn-sm" onclick="approvePendingOrder('${_escHtml(r.id)}')">Approve</button> `
+                + `<button class="btn btn-sm" style="background:var(--error); color:#fff;" onclick="rejectPendingOrder('${_escHtml(r.id)}')">Reject</button>`
+                + `</td></tr>`;
+        }
+        html += `</tbody></table>`;
+        container.innerHTML = html;
+    }
+
+    // APPROVE — reuse the EXISTING apply path unchanged. markOrderProcessed
+    // (called inside processOrder) flips this pending row to approved via the
+    // §5.4 hook. Idempotent against the duplicate guard: if already applied,
+    // converge the row without re-applying.
+    async function approvePendingOrder(rowId) {
+        const row = (state.pendingReview || []).find(r => r.id === rowId);
+        if (!row) { toast('Pending order not found — refresh review', 'warning'); return; }
+        const prefixedId = (PENDING_PREFIX[row.channel] || '') + row.external_order_id;
+
+        if (state.orders.processedIds.has(prefixedId)) {
+            await flipPendingApproved(prefixedId);
+            addLog(`✅ ${prefixedId} already applied — pending row marked approved`, 'info');
+            await loadPendingReview();
+            return;
+        }
+        if (!window.masterJsonData) { toast('Connect Master JSON file first', 'error'); return; }
+
+        // Option I additive mirror: the order is normally already in state.orders.all
+        // (addOrdersToState populated it at pull). If absent (cleared / other session),
+        // inject the durable payload so the existing apply path can find it.
+        if (!state.orders.all.find(o => o.id === prefixedId)) {
+            const payload = row.payload || {};
+            if (!payload.id) { toast('Pending row has no usable payload', 'error'); return; }
+            state.orders.all = [payload, ...state.orders.all];
+        }
+
+        await processOrder(prefixedId);
+
+        // Only converge the row if the apply actually completed (SKU-validation
+        // failure leaves it pending so Mary can fix + retry).
+        if (state.orders.processedIds.has(prefixedId)) {
+            await flipPendingApproved(prefixedId);
+        }
+        await loadPendingReview();
+    }
+
+    // REJECT — flips the row to rejected with an optional reason. NO inventory effect.
+    async function rejectPendingOrder(rowId) {
+        const row = (state.pendingReview || []).find(r => r.id === rowId);
+        if (!row) { toast('Pending order not found — refresh review', 'warning'); return; }
+        if (!sbClient || !sbConnected) { toast('Connect to Supabase first', 'warning'); return; }
+        const reason = (prompt('Reject reason (optional):', '') || '').trim();
+        try {
+            const { error } = await sbClient.from('pending_orders')
+                .update({ status: 'rejected', reviewed_at: new Date().toISOString(), reviewed_by: 'sync_hub', reject_reason: reason || null })
+                .eq('id', row.id).eq('status', 'pending');
+            if (error) { toast('Reject failed: ' + error.message, 'error'); return; }
+            addLog(`🚫 Pending order ${row.channel}/${row.external_order_id} rejected${reason ? ' — ' + reason : ''} (no inventory effect)`, 'info');
+            await loadPendingReview();
+        } catch (e) {
+            toast('Reject failed: ' + e.message, 'error');
+        }
+    }
+
+    // APPROVE ALL — guarded bulk approve. Snapshots the list so per-row reloads
+    // don't mutate the loop. Each row runs the full apply path.
+    async function approveAllPending() {
+        const rows = (state.pendingReview || []).slice();
+        if (!rows.length) { toast('No pending orders to approve', 'info'); return; }
+        if (!confirm(`Approve all ${rows.length} pending order(s)?\n\nEach runs the normal apply (inventory deduction + ECOSYSTEM-011 cascade).`)) return;
+        let ok = 0, fail = 0;
+        for (const r of rows) {
+            try { await approvePendingOrder(r.id); ok++; }
+            catch (e) { fail++; console.warn(`[PendingReview ${SH_VERSION}] approve-all error on ${r.id}:`, e.message); }
+        }
+        toast(`Approve All: ${ok} processed, ${fail} errored`, fail ? 'warning' : 'success');
+        await loadPendingReview();
     }
 
     // === pullEtsyOrders ===
@@ -7048,6 +7340,11 @@
         if (tabName === 'wayfair' && typeof _maybeInitWayfairTab === 'function') {
             _maybeInitWayfairTab();
         }
+
+        // v4.6.0 (ADR-013): refresh durable pending-order list on Review tab open
+        if (tabName === 'review' && typeof loadPendingReview === 'function') {
+            loadPendingReview();
+        }
     }
     
     // ============================================================
@@ -8367,6 +8664,14 @@
 
     function markOrderProcessed(orderId) {
         state.orders.processedIds.add(orderId);
+
+        // v4.6.0 (ADR-013 §5.4) — converge the durable pending_orders row.
+        // Fire-and-forget: never block the (sync) apply chokepoint, and the
+        // load-time heal covers any miss. Guarded by status='pending' inside.
+        if (typeof flipPendingApproved === 'function') {
+            flipPendingApproved(orderId).then(() => { try { loadPendingReview(); } catch (e) {} })
+                .catch(e => console.warn(`[PendingReview ${SH_VERSION}] converge threw:`, e && e.message));
+        }
         
         // Update in all arrays
         const updateOrder = (arr) => {
