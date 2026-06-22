@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.0</title>
+    <title>CCD Sync Hub v4.6.1</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.0 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.1 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -885,7 +885,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.0';
+    const SH_VERSION = 'v4.6.1';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4986,7 +4986,21 @@
                     
                     // v2.1.0: Auto-adjust channel allocations after order
                     // v4.4.4: Pass deductedQty so all online channels reduce together
-                    adjustResult = autoAdjustChannelAllocations(product, order.channel, item.qty);
+                    // v4.6.1 (S67): cascade_peer_decrement service flag (ADR-006). When
+                    // false, ECOSYSTEM-011 peer-decrement is SUPPRESSED by passing
+                    // deductedQty=0 — the protected peer-decrement block (line ~4335) is
+                    // skipped at its `deductedQty > 0` guard, so the protected function is
+                    // NOT modified. Rule-2 warehouse capping (independent of deductedQty)
+                    // still runs. Default true = today's behavior (peer-decrement on every
+                    // sale). DANGER: flipping false intentionally lets peers drift above
+                    // warehouse reality (oversell risk) — operator's explicit choice when
+                    // disabling cross-channel sync. See ECOSYSTEM-011 banner above.
+                    const _peerSyncOn = getFlag('cascade_peer_decrement') !== false;
+                    if (!_peerSyncOn) {
+                        console.log(`[ECOSYSTEM-011 ${SH_VERSION}] cascade_peer_decrement=false (service_flags) — peer-decrement suppressed for ${sku} (source-only sale)`);
+                        addLog(`⏭️ Peer-decrement suppressed for ${sku} (cascade_peer_decrement=false)`, 'info');
+                    }
+                    adjustResult = autoAdjustChannelAllocations(product, order.channel, _peerSyncOn ? item.qty : 0);
                     
                     // v4.3.4 FIX: Sync flat qty properties with channels object.
                     // itemToSbRow falls back to these if channels.* is undefined.
@@ -5225,7 +5239,12 @@
         // processSyncQueueRow() — the same proven path Desktop uses — handles the push.
         let cascadeCount = 0;
         
-        if (enableDeduction && sbConnected) {
+        // v4.6.1 (S67): cascade_peer_decrement=false suppresses ALL peer cascade
+        // writes (every row below is peer-only — each is guarded sourceChannel!==channel).
+        // With peer-decrement suppressed (above), these would otherwise push unchanged
+        // peer quantities; skip them so a source-only sale generates no peer sync_queue
+        // rows. Default true = today's behavior.
+        if (enableDeduction && sbConnected && getFlag('cascade_peer_decrement') !== false) {
             for (const item of order.items) {
                 const sku = item.sku;
                 if (sku === 'UNKNOWN') continue;
@@ -5336,7 +5355,9 @@
         
         // ===== v4.3.7: BUNDLE COMPONENT CASCADE ROWS =====
         // Write cascade rows for each component product affected by bundle sales.
-        if (bundleComponentProducts.length > 0 && sbConnected) {
+        // v4.6.1 (S67): also gated by cascade_peer_decrement (component cascades are
+        // peer pushes — suppressed when cross-channel sync is off).
+        if (bundleComponentProducts.length > 0 && sbConnected && getFlag('cascade_peer_decrement') !== false) {
             for (const comp of bundleComponentProducts) {
                 const compSbId = comp._sbId || comp.id;
                 const compChannels = comp.channels || {};
@@ -8114,7 +8135,25 @@
         }
         
         console.log(`[Sync Queue] Processing: ${channel} ${row.operation} for ${fields.sku || 'unknown'} (id=${row.id})`);
-        
+
+        // v4.6.1 (S67): service_flags product_push.{channel} — ABSOLUTE kill switch.
+        // Mirrors the edge writer's gate (index.ts: `product_push?.[channel] === false`
+        // => markSkipped). Placed BEFORE the forceProcess block on purpose: this is a
+        // service-level gate, not the legacy UI auto-push toggle, so even a manual
+        // "Process & Push" must respect it (the edge has no "force" concept). Strict
+        // `=== false` + getFlag's ADR-006 default of true = behavior-neutral until a
+        // channel is deliberately disabled. Closes the browser↔edge asymmetry during
+        // the Step 6 parallel run (one flip now silences both producers for a channel).
+        if (getFlag('product_push.' + channel) === false) {
+            console.log(`[Sync Queue] ⏭️ ${channel} product_push disabled (service_flags) — skipping (id=${row.id})`);
+            await sbClient.from('sync_queue').update({
+                status: 'skipped',
+                error_message: `${channel} product_push disabled (service_flags)`,
+                processed_at: new Date().toISOString()
+            }).eq('id', row.id);
+            return;
+        }
+
         // Check per-channel push toggle — respect Sync Hub's settings
         // v4.2.0: forceProcess=true bypasses this check (used by "Process & Push" button)
         if (!forceProcess) {
@@ -8995,6 +9034,19 @@
     async function runFullTrueUpNow() {
         if (!_trueUpIsConfigured()) {
             alert('Wayfair proxy URL or CCD API key is not configured. Set them under Settings first.');
+            return;
+        }
+
+        // v4.6.1 (S67): true_up_heartbeat.enabled service flag (ADR-006), Option B —
+        // gates the BROWSER-INITIATED manual TRUE_UP only. The server-side scheduled
+        // GAS heartbeat remains the source of truth and is NOT touched by this flag
+        // (so ECOSYSTEM-010's 24h compliance feed is never disabled from here).
+        // interval_minutes is informational under Option B (server owns cadence).
+        // Refresh within TTL so a recent flip is seen; default true = behavior-neutral.
+        await loadServiceFlags();
+        if (getFlag('true_up_heartbeat.enabled') === false) {
+            addLog('⏭️ Manual TRUE_UP blocked — true_up_heartbeat.enabled=false (service_flags)', 'warning');
+            alert('Manual TRUE_UP is disabled by service_flags (true_up_heartbeat.enabled = false).\n\nThe server-side scheduled heartbeat is unaffected. Re-enable the flag to run a manual TRUE_UP.');
             return;
         }
 
