@@ -1253,10 +1253,29 @@
     }
     
     async function loadFromSupabase() {
-        const { data, error } = await sbClient.from('items').select('*').order('sku').limit(5000);
-        if (error) throw error;
-        
-        const items = (data || []).map(sbRowToItem);
+        // v4.6.1 hotfix (B-S76-01): page through the ENTIRE items table.
+        // A single .select().limit(5000) is silently capped at 1000 rows by
+        // PostgREST (db.max-rows), truncating the SKU-sorted tail. That dropped
+        // item 809 / RP92375 (sorts at rank ~1008 of 1018) out of
+        // masterJsonData.inventory, so Etsy tube sales missed Stage 0 and
+        // mis-resolved to inactive item 8815 via the Stage 4 endsWith fallback.
+        // Fetch in pages, advancing by rows ACTUALLY received and stopping on the
+        // first empty page, so the whole table loads regardless of the server cap.
+        const PAGE = 1000;
+        const items = [];
+        let from = 0;
+        while (true) {
+            const { data, error } = await sbClient
+                .from('items')
+                .select('*')
+                .order('sku')
+                .range(from, from + PAGE - 1);
+            if (error) throw error;
+            const batch = data || [];
+            for (const row of batch) items.push(sbRowToItem(row));
+            if (batch.length === 0) break;      // no more rows — done
+            from += batch.length;               // advance by what we got (cap-agnostic)
+        }
         
         window.masterJsonData = window.masterJsonData || {};
         window.masterJsonData.inventory = items;
