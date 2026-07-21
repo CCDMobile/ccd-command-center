@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.1</title>
+    <title>CCD Sync Hub v4.6.2</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.1 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.2 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -885,7 +885,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.1';
+    const SH_VERSION = 'v4.6.2';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4142,21 +4142,33 @@
             }
         }
         
-        // Stage 4: EndsWith — extract numeric core and find items ending with it
-        // "103763 PBK" → already handled by Stage 3, but this catches other patterns
-        // Also handles prefix variations like "G60352" matching "60352" or vice versa
+        // Stage 4: EndsWith — numeric core; ACTIVE + UNIQUE only, else HOLD (S78 v4.6.2).
+        // Prior bug: .find() returned the FIRST match with no active guard, so RP92375
+        // (order sku) routed to INACTIVE 90969/RP92375 (item 8815) when 809 was truncated
+        // out of the loaded set. Fix: only consider ACTIVE items, and refuse to guess when
+        // 0 or >1 candidates remain — fall through to null so the caller HOLDs the order
+        // for manual SKU entry (no silent deduction to a dead/ambiguous item).
+        // "103763 PBK" → already handled by Stage 3; also catches prefix variations
+        // like "G60352" matching "60352".
         const numericMatch = etsySku.match(/(\d{4,})/);
         if (numericMatch) {
             const numCore = numericMatch[1];
-            product = products.find(p => {
+            const candidates = products.filter(p => {
                 const s = getSku(p);
-                return s && s !== etsySku && (s.endsWith(numCore) || numCore.endsWith(s.replace(/^[A-Za-z]+/, '')));
+                return s && s !== etsySku
+                    && p.isActive !== false && p.is_active !== false   // ACTIVE only
+                    && (s.endsWith(numCore) || numCore.endsWith(s.replace(/^[A-Za-z]+/, '')));
             });
-            if (product) {
-                const matchedSku = getSku(product);
-                console.log(`[Etsy SKU] Stage 4 - Numeric core: ${etsySku} → ${matchedSku} (80%)`);
-                return { product, confidence: 80, method: 'numeric_core', matchedSku };
+            if (candidates.length === 1) {
+                const matchedSku = getSku(candidates[0]);
+                console.log(`[Etsy SKU] Stage 4 - Numeric core (unique active): ${etsySku} → ${matchedSku} (80%)`);
+                return { product: candidates[0], confidence: 80, method: 'numeric_core', matchedSku };
             }
+            if (candidates.length > 1) {
+                console.warn(`[Etsy SKU] Stage 4 HOLD - ${candidates.length} active items end with ${numCore}; refusing to guess for ${etsySku}`);
+            }
+            // 0 or >1 → fall through to null (caller: "SKU not found" warning + continue,
+            // no deduction — Sync Hub line ~4930).
         }
         
         console.log(`[Etsy SKU] No match for: ${etsySku}`);
