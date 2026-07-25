@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.38</title>
+<title>CCD Inventory System v2.9.39</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.38 · Bare "Shipping $X" parse pattern + editable IB$/Tariff$ fields</div>
+    <div class="login-version">v2.9.39 · Category dropdown live-refresh after save</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.38</div>
+      <div class="topbar-version">v2.9.39</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1703,7 +1703,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.38';
+const TOOL_VERSION = '2.9.39';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1994,9 +1994,23 @@ async function logActivity(category, action, channel, summary, details = {}, sku
 // ═══════════════════════════════════════════════════════════
 // LOAD BRANDS (for filter dropdown)
 // ═══════════════════════════════════════════════════════════
+/* S77 REG S76-01: paginate full-table loads — PostgREST silently caps single-page .limit() at db.max-rows(1000). Advance-by-received, stop-on-short/empty. */
+async function sbFetchAll(makeQuery, pageSize = 1000) {
+  let all = [], offset = 0;
+  for (;;) {
+    const { data, error } = await makeQuery().range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
+}
+
 async function loadBrands() {
   try {
-    const { data } = await sb.from('items').select('brand_name').not('brand_name', 'is', null).limit(5000);
+    const data = await sbFetchAll(() => sb.from('items').select('brand_name').not('brand_name', 'is', null));
     const set = new Set();
     (data || []).forEach(r => { if (r.brand_name && r.brand_name.trim()) set.add(r.brand_name.trim()); });
     state.brands = [...set].sort((a,b) => a.localeCompare(b));
@@ -2011,7 +2025,7 @@ async function loadBrands() {
 
 async function loadCategories() {
   try {
-    const { data } = await sb.from('items').select('category').not('category', 'is', null).limit(5000);
+    const data = await sbFetchAll(() => sb.from('items').select('category').not('category', 'is', null));
     const set = new Set();
     (data || []).forEach(r => { if (r.category && r.category.trim()) set.add(r.category.trim()); });
     state.categories = [...set].sort((a,b) => a.localeCompare(b));
@@ -2020,7 +2034,7 @@ async function loadCategories() {
 
 async function loadVendors() {
   try {
-    const { data } = await sb.from('items').select('vendor').not('vendor', 'is', null).limit(5000);
+    const data = await sbFetchAll(() => sb.from('items').select('vendor').not('vendor', 'is', null));
     const set = new Set();
     (data || []).forEach(r => { if (r.vendor && r.vendor.trim()) set.add(r.vendor.trim()); });
     state.vendors = [...set].sort((a,b) => a.localeCompare(b));
@@ -2033,10 +2047,9 @@ async function loadVendors() {
 async function loadSaleCounts() {
   try {
     const cutoff = new Date(Date.now() - 90*24*60*60*1000).toISOString().split('T')[0];
-    const { data } = await sb.from('sales_history')
+    const data = await sbFetchAll(() => sb.from('sales_history')
       .select('sku, qty_sold')
-      .gte('sale_date', cutoff)
-      .limit(5000);
+      .gte('sale_date', cutoff));
     state.saleCounts = {};
     (data || []).forEach(r => {
       if (r.sku) state.saleCounts[r.sku] = (state.saleCounts[r.sku] || 0) + (parseInt(r.qty_sold) || 1);
@@ -2058,7 +2071,7 @@ async function loadStats() {
     // Out of stock
     const { count: outCount } = await sb.from('items').select('*', { count: 'exact', head: true }).eq('is_active', true).lte('qty', 0);
     // Inventory value (load qty + wholesale for active items)
-    const { data: valData } = await sb.from('items').select('qty, wholesale_price').eq('is_active', true).limit(5000);
+    const valData = await sbFetchAll(() => sb.from('items').select('qty, wholesale_price').eq('is_active', true));
     let totalValue = 0;
     (valData || []).forEach(r => {
       totalValue += (parseFloat(r.qty) || 0) * (parseFloat(r.wholesale_price) || 0);
@@ -5990,6 +6003,19 @@ async function saveItem() {
 
     // Merge updates back into state
     Object.assign(state.currentItem, updates);
+    // v2.9.39: keep the list cache + category dropdown in sync after save so a
+    // newly-typed category is immediately usable on OTHER items (previously the
+    // dropdown only rebuilt at page load), and a reopen shows fresh values
+    // (previously the stale state.items row was read back, looking like a lost save).
+    const _savedCat = (updates.category || '').trim();
+    if (_savedCat && !state.categories.includes(_savedCat)) {
+      state.categories.push(_savedCat);
+      state.categories.sort((a, b) => a.localeCompare(b));
+      const _dl = document.getElementById('categoryList');
+      if (_dl) _dl.innerHTML = state.categories.map(c => `<option value="${escAttr(c)}">`).join('');
+    }
+    const _cacheIx = state.items.findIndex(i => i.id === item.id);
+    if (_cacheIx >= 0) Object.assign(state.items[_cacheIx], updates);
     state.cardDirty = true;
 
     // Update card header DOM so name/SKU reflect immediately (no refresh needed)
@@ -6823,8 +6849,7 @@ async function loadWriteoffLog() {
   if (!el) return;
   el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">Loading write-offs...</div>';
   try {
-    const { data, error } = await sb.from('write_offs').select('*').order('created_at', { ascending: false }).limit(5000);
-    if (error) throw error;
+    const data = await sbFetchAll(() => sb.from('write_offs').select('*').order('created_at', { ascending: false }));
     woLogData = data || [];
     renderWriteoffLog();
   } catch(e) {
@@ -9348,9 +9373,9 @@ async function loadShippingTab() {
   const container = $('shippingTabContent');
   container.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">Loading shipping data...</div>';
   try {
-    const [{ data, error }, { data: itemRows }] = await Promise.all([
+    const [{ data, error }, itemRows] = await Promise.all([
       sb.from('shippo_transactions').select('*').order('shippo_created_at', { ascending: false }).limit(500),
-      sb.from('items').select('sku,product_name').limit(5000)
+      sbFetchAll(() => sb.from('items').select('sku,product_name'))
     ]);
     if (error) throw error;
     shipTabData = data || [];
@@ -10338,7 +10363,7 @@ async function syncShippoGlobal(silent = false) {
     const transactions = result.transactions || result.data || [];
 
     // Build SKU lookup from items for metadata matching
-    const { data: itemRows } = await sb.from('items').select('sku').limit(5000);
+    const itemRows = await sbFetchAll(() => sb.from('items').select('sku'));
     const knownSkus = new Set((itemRows || []).map(r => (r.sku || '').toUpperCase()).filter(Boolean));
 
     function extractSkuFromMetadata(meta) {
@@ -10697,10 +10722,7 @@ async function pushAllChannel() {
 
   try {
     // Fetch all items for this channel (not just current page)
-    let query = sb.from('items').select('id,sku,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_price,wix_price,wayfair_price,treasuremarts_price').eq('is_active', true);
-    query = cfg.filter(query);
-    const { data, error } = await query.limit(5000);
-    if (error) throw error;
+    const data = await sbFetchAll(() => cfg.filter(sb.from('items').select('id,sku,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_price,wix_price,wayfair_price,treasuremarts_price').eq('is_active', true)));
 
     const items = data || [];
     let queued = 0;
@@ -11106,13 +11128,11 @@ function getAnalyticsDateRange() {
 async function loadAnalytics() {
   const range = getAnalyticsDateRange();
   try {
-    const { data, error } = await sb.from('sales_history')
+    const data = await sbFetchAll(() => sb.from('sales_history')
       .select('sku,product_name,brand_name,sale_channel,qty_sold,sale_price,total_revenue,net_profit,profit_margin,sale_date,order_id,ship_to_name,ship_to_address')
       .eq('status', 'active')
       .gte('sale_date', range.from)
-      .lte('sale_date', range.to)
-      .limit(5000);
-    if (error) throw error;
+      .lte('sale_date', range.to));
     const rows = data || [];
 
     // KPIs
@@ -12252,10 +12272,9 @@ async function fixAllocations() {
 
   try {
     // Load all active items
-    const { data: items, error } = await sb.from('items')
+    const items = await sbFetchAll(() => sb.from('items')
       .select('id,sku,qty,treasuremarts_qty,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,is_active')
-      .order('sku').limit(5000);
-    if (error) throw error;
+      .order('sku'));
 
     const active = (items || []).filter(i => i.is_active !== false);
     statusEl.textContent = `Scanning ${active.length} active items...`;
