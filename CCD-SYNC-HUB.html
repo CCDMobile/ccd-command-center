@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.3</title>
+    <title>CCD Sync Hub v4.6.4</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.3 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.4 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -885,7 +885,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.3';
+    const SH_VERSION = 'v4.6.4';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4014,6 +4014,25 @@
                 incrementMappingUsage(wayfairSku);
                 console.log(`[SKU Match] Stage 0 - Saved mapping: ${wayfairSku} → ${mappedSku} (100%)`);
                 return { product, confidence: 100, method: 'saved_mapping', matchedSku: mappedSku };
+            }
+        }
+        
+        // Stage 0.5: wayfair_sku field match — ACTIVE + UNIQUE (S78 v4.6.4).
+        // Authoritative: each item's Wayfair partNumber is stored in wayfair_sku. Prefer it
+        // over fuzzy master-sku matching so items sharing a numeric core (e.g. RP92374 vs
+        // 93112/RP92374, both end 92374) can't collide via Stage 5. Requires exactly one
+        // ACTIVE owner; otherwise fall through to the legacy stages (no new mismatch risk).
+        {
+            const wfOwners = products.filter(p =>
+                (p.wayfairSku || p.wayfair_sku) === wayfairSku
+                && p.isActive !== false && p.is_active !== false);
+            if (wfOwners.length === 1) {
+                const matchedSku = wfOwners[0].sku || wfOwners[0].SKU;
+                console.log(`[SKU Match] Stage 0.5 - wayfair_sku (unique active): ${wayfairSku} → ${matchedSku} (100%)`);
+                return { product: wfOwners[0], confidence: 100, method: 'wayfair_sku', matchedSku };
+            }
+            if (wfOwners.length > 1) {
+                console.warn(`[SKU Match] Stage 0.5 - ${wfOwners.length} active items share wayfair_sku ${wayfairSku}; falling through to legacy stages`);
             }
         }
         
