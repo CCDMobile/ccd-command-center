@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.39</title>
+<title>CCD Inventory System v2.9.40</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.39 · Category dropdown live-refresh after save</div>
+    <div class="login-version">v2.9.40 · Write-off manual cost override</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.39</div>
+      <div class="topbar-version">v2.9.40</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1703,7 +1703,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.39';
+const TOOL_VERSION = '2.9.40';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -5534,7 +5534,7 @@ async function renderWriteoff(item) {
       <div>
         <div class="form-row">
           <div class="form-label">Quantity</div>
-          <div class="form-value"><input class="form-input" id="wo_qty" value="1" style="width:70px;" oninput="updateWoTotalLoss(${landed})"></div>
+          <div class="form-value"><input class="form-input" id="wo_qty" value="1" style="width:70px;" oninput="updateWoTotalLoss()"></div>
         </div>
         <div class="form-row">
           <div class="form-label">Reason</div>
@@ -5557,7 +5557,7 @@ async function renderWriteoff(item) {
         </div>
         <div class="form-row">
           <div class="form-label">Cost Per Unit</div>
-          <div class="form-value"><span class="mono" style="font-size:14px;font-weight:600;" id="wo_unit_cost">$${landed.toFixed(2)}</span> <span class="cost-computed">(auto)</span></div>
+          <div class="form-value">$<input class="form-input mono" id="wo_unit_cost" data-auto="${landed.toFixed(2)}" value="${landed.toFixed(2)}" style="width:90px;font-weight:600;text-align:right;" oninput="updateWoTotalLoss()"> <span class="cost-computed" id="wo_cost_flag">(auto)</span></div>
         </div>
         <div class="form-row">
           <div class="form-label">Total Loss</div>
@@ -6706,11 +6706,19 @@ async function confirmSell() {
 // ═══════════════════════════════════════════════════════════
 // WRITE-OFF RECORDING
 // ═══════════════════════════════════════════════════════════
-function updateWoTotalLoss(landedPerUnit) {
-  const qty = pi($('wo_qty') ? $('wo_qty').value : 1);
-  const total = landedPerUnit * Math.max(qty, 0);
+function updateWoTotalLoss() {
+  // v2.9.40: cost-per-unit is now editable; read it (and qty) from the DOM so a
+  // manual override (e.g. Sample/Giveaway = product + IB only) flows to Total Loss.
+  const qty = Math.max(pi($('wo_qty') ? $('wo_qty').value : 1), 0);
+  const cpuEl = $('wo_unit_cost');
+  const cpu = cpuEl ? pf(cpuEl.value) : 0;
+  const total = cpu * qty;
   if ($('wo_total_loss')) $('wo_total_loss').textContent = '$' + total.toFixed(2);
   if ($('wo_claim_amount')) $('wo_claim_amount').value = '$' + total.toFixed(2);
+  if (cpuEl && $('wo_cost_flag')) {
+    const auto = pf(cpuEl.getAttribute('data-auto'));
+    $('wo_cost_flag').textContent = (Math.abs(cpu - auto) > 0.005) ? '(manual)' : '(auto)';
+  }
 }
 
 async function recordWriteoff() {
@@ -6721,9 +6729,17 @@ async function recordWriteoff() {
   const location = gv('wo_location') || 'Warehouse';
   const notes = gv('wo_notes') || '';
   const reporter = gv('wo_reporter') || 'Paul';
-  const landed = pf(item.wholesale_price) * (1 + pf(item.ib_shipping)/100 + pf(item.tariff)/100) + pf(item.ob_shipping);
+  const autoLanded = pf(item.wholesale_price) * (1 + pf(item.ib_shipping)/100 + pf(item.tariff)/100) + pf(item.ob_shipping);
+  // v2.9.40: honor a manual Cost Per Unit override (blank/invalid → fall back to auto).
+  const cpuRaw = gv('wo_unit_cost');
+  const cpuNum = parseFloat(cpuRaw);
+  const costPerUnit = (cpuRaw !== null && String(cpuRaw).trim() !== '' && isFinite(cpuNum) && cpuNum >= 0) ? cpuNum : autoLanded;
+  const manualCost = Math.abs(costPerUnit - autoLanded) > 0.005;
+  const woNotes = manualCost
+    ? (notes ? notes + ' ' : '') + `[manual cost override: $${costPerUnit.toFixed(2)}/unit vs auto $${autoLanded.toFixed(2)}]`
+    : notes;
 
-  if (!confirm(`Record write-off?\n\n${item.sku} x ${qty}\nReason: ${reason}\nTotal Loss: $${(landed * qty).toFixed(2)}`)) return;
+  if (!confirm(`Record write-off?\n\n${item.sku} x ${qty}\nReason: ${reason}\nCost/Unit: $${costPerUnit.toFixed(2)}${manualCost ? ' (manual)' : ''}\nTotal Loss: $${(costPerUnit * qty).toFixed(2)}`)) return;
   state.saving = true;
 
   try {
@@ -6735,10 +6751,10 @@ async function recordWriteoff() {
       quantity: qty,
       reason: reason,
       location: location,
-      cost_per_unit: landed,
-      total_loss: landed * qty,
+      cost_per_unit: costPerUnit,
+      total_loss: costPerUnit * qty,
       reported_by: reporter,
-      notes: notes,
+      notes: woNotes,
       claim_filed: gv('wo_insurance_status') || 'No',
       claim_number: gv('wo_claim_number') || null,
       carrier: gv('wo_carrier') || null,
