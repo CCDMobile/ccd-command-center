@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.2</title>
+    <title>CCD Sync Hub v4.6.3</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.2 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.3 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -885,7 +885,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.2';
+    const SH_VERSION = 'v4.6.3';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4063,19 +4063,29 @@
             }
         }
         
-        // Stage 5: Numeric-only partial match (70% confidence)
-        // CCDCWIG60492 → Find SKUs ending with "60492" like "G60492"
+        // Stage 5: Numeric-only partial match — ACTIVE + UNIQUE only, else HOLD (S78 v4.6.3).
+        // Prior bug: first-match .find() with no active guard → Wayfair CCDSVRP92374 (numeric
+        // core 92374) matched INACTIVE bundle 93112/RP92374 (item 8819) instead of active
+        // RP92374 (item 703), because both end with 92374 and 8819 came first. Same class as
+        // the Etsy Stage-4 fix. Now: only ACTIVE items, and refuse to guess when 0 or >1 remain
+        // (→ null → caller flags the order UNMATCHED for manual review; no deduction, no push).
+        // CCDCWIG60492 → find SKUs ending with "60492" like "G60492".
         if (numericMatch) {
             const numericPart = numericMatch[0];
-            product = products.find(p => {
+            const candidates = products.filter(p => {
                 const sku = p.sku || p.SKU;
-                return sku && sku.endsWith(numericPart) && sku !== numericPart;
+                return sku && sku.endsWith(numericPart) && sku !== numericPart
+                    && p.isActive !== false && p.is_active !== false;   // ACTIVE only
             });
-            if (product) {
-                const matchedSku = product.sku || product.SKU;
-                console.log(`[SKU Match] Stage 5 - Partial numeric: ${wayfairSku} → ${matchedSku} (70%)`);
-                return { product, confidence: 70, method: 'partial_numeric', matchedSku };
+            if (candidates.length === 1) {
+                const matchedSku = candidates[0].sku || candidates[0].SKU;
+                console.log(`[SKU Match] Stage 5 - Partial numeric (unique active): ${wayfairSku} → ${matchedSku} (70%)`);
+                return { product: candidates[0], confidence: 70, method: 'partial_numeric', matchedSku };
             }
+            if (candidates.length > 1) {
+                console.warn(`[SKU Match] Stage 5 HOLD - ${candidates.length} active items end with ${numericPart}; refusing to guess for ${wayfairSku}`);
+            }
+            // 0 or >1 active → fall through to null (caller marks order unmatched).
         }
         
         // No match found
