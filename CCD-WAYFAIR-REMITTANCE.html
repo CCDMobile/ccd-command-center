@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Remittance Import v1.3.4</title>
+<title>CCD Wayfair Remittance Import v1.3.5</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
@@ -409,7 +409,7 @@
         <span class="logo">W</span>
         Wayfair Remittance Import
     </h1>
-    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.4</span>
+    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.5</span>
 </div>
 
 <!-- Supabase Connection Bar -->
@@ -622,7 +622,7 @@
 // ═══════════════════════════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════════════════════════
-const REM_VERSION = 'v1.3.4';
+const REM_VERSION = 'v1.3.5';
 const REM_VERSION_KEY = 'remittance';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -748,6 +748,7 @@ function parseRemittanceCSV(text, fileName) {
             supplierName: '',
             remittanceDate: '',
             totalUSD: 0,
+            epdAmount: 0,
             paymentMethod: ''
         },
         lines: [],
@@ -759,6 +760,16 @@ function parseRemittanceCSV(text, fileName) {
     let section = 'header';  // header | orders | vendor_services | footer
     let orderHeaderFound = false;
     let vendorHeaderFound = false;
+    let orderCols = null;    // v1.3.5: header-name → index map for order lines
+
+    // Read a cell by logical key. Once the order header row is parsed we TRUST the name
+    // map (absent key → undefined → 0); only fall back to legacy fixed indices if no
+    // header was seen. This survives Wayfair adding/removing/reordering columns
+    // (2026-07 they dropped the per-line Early Pay column, shifting Payment Amount 9→8).
+    const cAt = (cells, key, fallbackIdx) => {
+        const idx = orderCols ? orderCols[key] : fallbackIdx;
+        return (idx != null && idx < cells.length) ? cells[idx] : undefined;
+    };
     
     for (let i = 0; i < lines.length; i++) {
         const raw = lines[i];
@@ -790,6 +801,11 @@ function parseRemittanceCSV(text, fileName) {
             result.header.totalUSD = parseFloat((cells[1] || first.replace('Total (USD):', '')).trim()) || 0;
             continue;
         }
+        if (first.startsWith('EPD Amount (USD):') && section === 'header') {
+            // v1.3.5: EPD is now a header-level figure (per-line column removed).
+            result.header.epdAmount = parseFloat(cells[1]) || 0;
+            continue;
+        }
         if (first.startsWith('To be sent via')) {
             result.header.paymentMethod = first.replace('To be sent via', '').trim();
             continue;
@@ -799,6 +815,27 @@ function parseRemittanceCSV(text, fileName) {
         if (first === 'Invoice #' && (cells[1] || '').trim() === 'PO #') {
             section = 'orders';
             orderHeaderFound = true;
+            // v1.3.5: map columns by header NAME so index shifts don't zero the import.
+            orderCols = {};
+            cells.forEach((h, idx) => {
+                const n = (h || '').trim().toLowerCase();
+                if (n === 'invoice #') orderCols.invoiceNumber = idx;
+                else if (n === 'po #') orderCols.poNumber = idx;
+                else if (n === 'invoice date') orderCols.invoiceDate = idx;
+                else if (n === 'product amount') orderCols.productAmount = idx;
+                else if (n.includes('damages') || n.includes('defects')) {
+                    orderCols.damagesDefectsAmt = idx;
+                    const m = n.match(/([\d.]+)\s*%/);
+                    if (m) result.damagesDefectsPct = parseFloat(m[1]);
+                }
+                else if (n.includes('early pay') || n.includes('epd')) orderCols.earlyPayDiscount = idx;
+                else if (n === 'shipping') orderCols.shipping = idx;
+                else if (n === 'other') orderCols.other = idx;
+                else if (n.includes('tax')) orderCols.taxVat = idx;
+                else if (n === 'payment amount') orderCols.paymentAmount = idx;
+                else if (n === 'business') orderCols.business = idx;
+                else if (n === 'order type') orderCols.orderType = idx;
+            });
             continue;
         }
         
@@ -815,13 +852,13 @@ function parseRemittanceCSV(text, fileName) {
         // ── Sub-total row ──
         if ((cells[2] || '').trim() === 'Sub-total:') {
             result.subtotals = {
-                productAmount: parseFloat(cells[3]) || 0,
-                damagesDefects: parseFloat(cells[4]) || 0,
-                earlyPay: parseFloat(cells[5]) || 0,
-                shipping: parseFloat(cells[6]) || 0,
-                other: parseFloat(cells[7]) || 0,
-                taxVat: parseFloat(cells[8]) || 0,
-                paymentAmount: parseFloat(cells[9]) || 0
+                productAmount: parseFloat(cAt(cells,'productAmount',3)) || 0,
+                damagesDefects: parseFloat(cAt(cells,'damagesDefectsAmt',4)) || 0,
+                earlyPay: parseFloat(cAt(cells,'earlyPayDiscount',5)) || 0,
+                shipping: parseFloat(cAt(cells,'shipping',6)) || 0,
+                other: parseFloat(cAt(cells,'other',7)) || 0,
+                taxVat: parseFloat(cAt(cells,'taxVat',8)) || 0,
+                paymentAmount: parseFloat(cAt(cells,'paymentAmount',9)) || 0
             };
             section = 'footer';
             continue;
@@ -836,23 +873,23 @@ function parseRemittanceCSV(text, fileName) {
         // ── Parse Order Lines ──
         if (section === 'orders' && orderHeaderFound && first && first !== '') {
             // Skip blank rows
-            const invoiceNum = first;
-            const poNum = (cells[1] || '').trim();
+            const invoiceNum = (cAt(cells, 'invoiceNumber', 0) || '').trim();
+            const poNum = (cAt(cells, 'poNumber', 1) || '').trim();
             if (!poNum) continue;
             
             result.lines.push({
                 invoiceNumber: invoiceNum,
                 poNumber: poNum,
-                invoiceDate: (cells[2] || '').trim(),
-                productAmount: parseFloat(cells[3]) || 0,
-                damagesDefectsAmt: parseFloat(cells[4]) || 0,
-                earlyPayDiscount: parseFloat(cells[5]) || 0,
-                shipping: parseFloat(cells[6]) || 0,
-                other: parseFloat(cells[7]) || 0,
-                taxVat: parseFloat(cells[8]) || 0,
-                paymentAmount: parseFloat(cells[9]) || 0,
-                business: (cells[10] || 'Wayfair').trim(),
-                orderType: (cells[11] || 'Dropship').trim()
+                invoiceDate: (cAt(cells, 'invoiceDate', 2) || '').trim(),
+                productAmount: parseFloat(cAt(cells, 'productAmount', 3)) || 0,
+                damagesDefectsAmt: parseFloat(cAt(cells, 'damagesDefectsAmt', 4)) || 0,
+                earlyPayDiscount: parseFloat(cAt(cells, 'earlyPayDiscount', 5)) || 0,
+                shipping: parseFloat(cAt(cells, 'shipping', 6)) || 0,
+                other: parseFloat(cAt(cells, 'other', 7)) || 0,
+                taxVat: parseFloat(cAt(cells, 'taxVat', 8)) || 0,
+                paymentAmount: parseFloat(cAt(cells, 'paymentAmount', 9)) || 0,
+                business: (cAt(cells, 'business', 10) || 'Wayfair').trim(),
+                orderType: (cAt(cells, 'orderType', 11) || 'Dropship').trim()
             });
             continue;
         }
