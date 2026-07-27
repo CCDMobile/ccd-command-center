@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Channel Manager v2.5.0</title>
+<title>CCD Channel Manager v2.5.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
@@ -36,9 +36,9 @@
 </style>
 </head>
 <body>
-<div class="login-screen" id="loginScreen"><div class="login-card"><div class="login-logo">Country Charm Decor</div><div class="login-sub">Channel Manager v2.5</div><div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://your-project.supabase.co" autocomplete="off"></div><div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off"></div><button class="login-btn" onclick="doConnect()">Connect</button><div class="login-status" id="loginStatus"></div><div class="login-version">v2.5.0 · LC Blockers Phase 3 (Bulk)</div></div></div>
+<div class="login-screen" id="loginScreen"><div class="login-card"><div class="login-logo">Country Charm Decor</div><div class="login-sub">Channel Manager v2.5.1</div><div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://your-project.supabase.co" autocomplete="off"></div><div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off"></div><button class="login-btn" onclick="doConnect()">Connect</button><div class="login-status" id="loginStatus"></div><div class="login-version">v2.5.1 · LC Blockers Phase 3 (Bulk)</div></div></div>
 <div class="app" id="appShell">
-  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.5.0</div></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
+  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.5.1</div></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
   <div class="tab-bar"><button class="tab-btn active" onclick="switchTab('products',this)">📦 Products</button><button class="tab-btn" onclick="switchTab('editor',this)">✏️ Content Editor</button><button class="tab-btn" onclick="switchTab('pricing',this)">💰 Pricing Advisor</button><button class="tab-btn" onclick="switchTab('bulk',this)">⚡ Bulk Ops</button></div>
   <div class="main">
     <div id="tabProducts" class="tab-content visible">
@@ -109,7 +109,7 @@
 </div>
 <div class="detail-overlay" id="detailOverlay" onclick="closeDetail(event)"><div class="detail-panel" onclick="event.stopPropagation()"><div class="detail-header"><div class="detail-title"><span id="detailSku" class="sku-cell"></span><span id="detailName"></span></div><button class="detail-close" onclick="closeDetail()">✕</button></div><div class="detail-body" id="detailBody"></div></div></div>
 <script>
-const CM_VERSION='2.5.0',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
+const CM_VERSION='2.5.1',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
 const WORKER_URL='https://cold-field-4bb6.psmith-925.workers.dev/';
 const CHANNELS=['etsy','wix','wayfair','pinterest','instagram','facebook'];
 const CH_LABEL={etsy:'Etsy',wix:'Wix',wayfair:'Wayfair',pinterest:'Pinterest',instagram:'Instagram',facebook:'Facebook'};
@@ -154,11 +154,13 @@ function logActivity(c,a,ch,d){if(!sbClient)return;sbClient.from('activity_log')
 async function refreshData(){document.getElementById('sbLabel').textContent='Refreshing...';await loadAllData();document.getElementById('sbLabel').textContent='Connected';renderTable();}
 
 /* ── DATA ── */
+/* S77 REG S76-01: paginate full-table loads — PostgREST silently caps single-page .limit() at db.max-rows(1000). Advance-by-received, stop-on-short/empty. */
+async function sbFetchAll(makeQuery,pageSize=1000){let all=[],offset=0;for(;;){const{data,error}=await makeQuery().range(offset,offset+pageSize-1);if(error)throw error;if(!data||!data.length)break;all=all.concat(data);if(data.length<pageSize)break;offset+=pageSize;}return all;}
 async function loadAllData(){try{
-const{data:items,error:ie}=await sbClient.from('items').select('id,sku,product_name,brand_name,category,vendor,qty,is_active,wholesale_price,retail_price,ob_shipping,ib_shipping,tariff,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_price,wix_price,wayfair_price,treasuremarts_price,etsy_price_adj,wix_price_adj,wayfair_price_adj,treasuremarts_price_adj,etsy_listing_id,wix_product_id,wix_variant_id,wayfair_sku,parent_sku,variant_label,etsy_variant_id,coop_price').order('sku',{ascending:true}).limit(5000);
-if(ie)throw ie;allItems=items||[];
-const{data:content,error:ce2}=await sbClient.from('channel_content').select('id,item_id,sku,channel,title,description,tags,seo_slug,seo_title,seo_description,materials,taxonomy_id,extra_fields,generated_by,generated_at,last_pushed_at').limit(5000);
-if(ce2)throw ce2;contentMap={};(content||[]).forEach(c=>{if(!contentMap[c.sku])contentMap[c.sku]={};contentMap[c.sku][c.channel]=c;});
+const items=await sbFetchAll(()=>sbClient.from('items').select('id,sku,product_name,brand_name,category,vendor,qty,is_active,wholesale_price,retail_price,ob_shipping,ib_shipping,tariff,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_price,wix_price,wayfair_price,treasuremarts_price,etsy_price_adj,wix_price_adj,wayfair_price_adj,treasuremarts_price_adj,etsy_listing_id,wix_product_id,wix_variant_id,wayfair_sku,parent_sku,variant_label,etsy_variant_id,coop_price').order('sku',{ascending:true}));
+allItems=items;
+const content=await sbFetchAll(()=>sbClient.from('channel_content').select('id,item_id,sku,channel,title,description,tags,seo_slug,seo_title,seo_description,materials,taxonomy_id,extra_fields,generated_by,generated_at,last_pushed_at').order('id',{ascending:true}));
+contentMap={};(content||[]).forEach(c=>{if(!contentMap[c.sku])contentMap[c.sku]={};contentMap[c.sku][c.channel]=c;});
 const bs=new Set();allItems.forEach(i=>{if(i.brand_name)bs.add(i.brand_name);});brands=Array.from(bs).sort();populateBrandFilter();applyFilters();updateStats();renderEditorList();boApplyFilters();
 }catch(e){document.getElementById('productTable').innerHTML=`<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--red)">Error: ${esc(e.message)}</td></tr>`;}}
 function populateBrandFilter(){const s=document.getElementById('filterBrand');s.innerHTML='<option value="">All Brands</option>';brands.forEach(b=>{s.innerHTML+=`<option value="${esc(b)}">${esc(b)}</option>`;});}
