@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.40</title>
+<title>CCD Inventory System v2.9.41</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.40 · Write-off manual cost override</div>
+    <div class="login-version">v2.9.41 · Gerson parser + invoice guardrail</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.40</div>
+      <div class="topbar-version">v2.9.41</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1524,6 +1524,14 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:4px;">⚠️ Could not parse line items from this invoice.</div>
         <div style="font-size:12px;color:var(--text-dim);">The parser for <span id="impParseFailVendor" style="font-weight:600;">this vendor</span> may be out of date. Add line items manually below using <strong>+ Add Row</strong>, or upload a different PDF.</div>
       </div>
+      <!-- v2.9.41 (B-S79-02): guardrail banner. Fires when parsed rows fail the
+           qty x unitPrice = lineTotal check, carry an implausible qty, or don't
+           cross-foot to a printed subtotal. ADVISORY — does not block import. -->
+      <div id="importValidationWarning" style="display:none;margin-bottom:12px;padding:10px 14px;background:rgba(220,38,38,0.08);border:1px solid var(--red);border-radius:var(--radius);">
+        <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:4px;">⛔ Parsed figures don't add up — check before importing.</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px;">Importing a wrong quantity or price onto an existing SKU changes its on-hand count <strong>and</strong> its averaged wholesale cost. Correct the flagged rows below, or remove them.</div>
+        <ul id="impValidationList" style="margin:0;padding-left:18px;font-size:12px;color:var(--red);"></ul>
+      </div>
       <!-- Review table -->
       <div style="overflow-x:auto;max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);">
         <table class="card-table" style="font-size:11px;">
@@ -1703,7 +1711,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.40';
+const TOOL_VERSION = '2.9.41';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -8403,7 +8411,16 @@ async function loadInvoiceParsers() {
   }
 }
 
+// v2.9.41 (B-S79-02): guardrail runs on the DISPATCHER's output so it covers
+// the legacy engine and the data-driven engine identically, whichever is routed.
 function parseInvoiceTextDispatched(text) {
+  const parsed = _parseInvoiceTextDispatched(text);
+  try { validateParsedItems(parsed, text); }
+  catch (e) { console.warn('[Invoice] Validation skipped:', e.message); }
+  return parsed;
+}
+
+function _parseInvoiceTextDispatched(text) {
   if (state.useDataDrivenParsers && state.invoiceParsers && state.invoiceParsers.length > 0) {
     console.log(`[IP-S1] Routing through data-driven engine (${state.invoiceParsers.length} parsers loaded)`);
     return parseInvoiceTextDataDriven(text);
@@ -8433,19 +8450,17 @@ function parseInvoiceTextDataDriven(text) {
   // v2.9.23 (B-S36-01): added /Invoice No\.?:?\s+(...)/i (Sunset Vista
   // labeled form) and /\*(\d{5,})\*/ (barcode-bracket fallback for
   // vendors who print the invoice # bracketed by asterisks).
+  // v2.9.41 (B-S79-03): added /Invoice # XXX/ + occurrence-advance fix via
+  // pickInvoiceNumber(). Kept byte-identical to the legacy engine — these two
+  // pattern lists must not drift apart. @invariant
   const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
+    /Invoice\s*#\s+([A-Z]{0,4}\d[A-Z0-9.-]*)/i,
     /Invoice No\.?:?\s+([A-Z0-9-]+)/i,
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
     /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i,
     /\*(\d{5,})\*/];
   const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
-  for (const p of invPatterns) {
-    const m = text.match(p);
-    if (m && m[1].length > 3 && !falsePosSet.has(m[1].toLowerCase())) {
-      inv.invoiceNumber = m[1].trim();
-      break;
-    }
-  }
+  inv.invoiceNumber = pickInvoiceNumber(text, invPatterns, falsePosSet);
   const datePatterns = [/Invoice Date:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i, /Date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i, /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/];
   for (const p of datePatterns) {
     const m = text.match(p);
@@ -8655,6 +8670,73 @@ function extractItemFromMatch(match, lineOrFlat, pattern, parser, skipRe) {
 // verbatim. The dispatcher above routes to it whenever the feature flag is OFF.
 // ════════════════════════════════════════════════════════════════════════════
 
+// ── v2.9.41 (B-S79-03): invoice-number selection ────────────────────────────
+// PRIOR BUG: the old loop did `text.match(p)` (non-global → first match only).
+// When that first match was rejected by falsePosSet, the loop advanced to the
+// next PATTERN rather than the next OCCURRENCE of the same pattern. On any
+// invoice with a bare "Invoice" heading line, /Invoice[#:\s-]+(...)/ matched the
+// heading, captured the literal word "Invoice", got correctly rejected — and the
+// real "Invoice # INV322665" two characters later was never tried. The fallback
+// chain then reached /(SO\d{6,})/ and returned the Sales Order number instead.
+// Now: exhaust every occurrence of each pattern before moving to the next.
+// @invariant pattern ORDER is still authoritative — specific labels before
+// loose fallbacks. Do not reorder invPatterns without re-running the fixtures.
+function pickInvoiceNumber(text, invPatterns, falsePosSet) {
+  for (const p of invPatterns) {
+    const rx = new RegExp(p.source, p.flags.includes('g') ? p.flags : p.flags + 'g');
+    let m;
+    while ((m = rx.exec(text)) !== null) {
+      if (m.index === rx.lastIndex) rx.lastIndex++;   // zero-length guard
+      const cand = (m[1] || '').trim();
+      if (cand.length > 3 && !falsePosSet.has(cand.toLowerCase())) return cand;
+    }
+  }
+  return '';
+}
+
+// ── v2.9.41 (B-S79-02): parsed-row arithmetic guardrail ─────────────────────
+// WHY: parseGeneric can return a confidently-WRONG row rather than zero rows,
+// and the v2.9.14 warning banner only fires at items.length === 0 — so a
+// misparse reached the review screen looking normal. Real case (S79, Gerson
+// INV322665): one row, sku "Asst", qty 2,851,460. Because the duplicate-SKU
+// import path does `qty += newQty` AND a weighted-average wholesale_price, an
+// unnoticed misparse landing on a real SKU silently corrupts that item's cost
+// basis. This is ADVISORY ONLY — it flags rows and surfaces a banner; it never
+// blocks the Import All button. Never let it hard-fail an existing vendor.
+function validateParsedItems(inv, text) {
+  const problems = [];
+  (inv.items || []).forEach((it, n) => {
+    const q = Number(it.qty), u = Number(it.unitPrice), lt = Number(it.lineTotal);
+    if (!Number.isFinite(q) || q <= 0 || q > 10000) {
+      it.confidence = 'suspect'; problems.push(`Row ${n + 1}: implausible qty ${it.qty}`); return;
+    }
+    if (!Number.isFinite(u) || u < 0) {
+      it.confidence = 'suspect'; problems.push(`Row ${n + 1}: invalid unit price`); return;
+    }
+    // Tolerance: 2 cents OR 2% of the line, whichever is larger. The relative
+    // floor absorbs CTW's qty = round(amount/price) reconstruction drift and
+    // vendor discount rounding without masking a genuine misparse.
+    const expected = q * u;
+    if (Number.isFinite(lt) && Math.abs(expected - lt) > Math.max(0.02, Math.abs(lt) * 0.02)) {
+      it.confidence = 'suspect';
+      problems.push(`Row ${n + 1} (${it.sku || '?'}): ${q} x $${u.toFixed(2)} = $${expected.toFixed(2)}, invoice line reads $${lt.toFixed(2)}`);
+    }
+  });
+  // Cross-foot against a printed subtotal when one is present. Catches DROPPED
+  // rows, which no per-row check can see.
+  const sm = text && text.match(/Sub-?total:?\s*\$?([\d,]+\.\d{2})/i);
+  if (sm && (inv.items || []).length) {
+    const printed = parseFloat(sm[1].replace(/,/g, ''));
+    const summed = inv.items.reduce((s, i) => s + (Number(i.lineTotal) || 0), 0);
+    if (Math.abs(printed - summed) > 0.02) {
+      problems.push(`Subtotal cross-foot: rows sum to $${summed.toFixed(2)} but invoice prints $${printed.toFixed(2)} — line items may be missing.`);
+    }
+  }
+  inv._validation = problems;
+  if (problems.length) console.warn('[Invoice] Validation flags:', problems);
+  return problems;
+}
+
 function parseInvoiceText(text) {
   const inv = { supplierName:'', invoiceNumber:'', invoiceDate:'', shippingCost:0, items:[] };
 
@@ -8667,19 +8749,24 @@ function parseInvoiceText(text) {
     { name:'Adams & Co.', p:/Adams & Co/i },
     { name:'Park Designs', p:/Park\s*Designs|Split[\s-]*P|Goldsboro\s*NC\s*27532/i },
     { name:'K&K Interiors', p:/K\s*&\s*K\s*Interiors|Sandusky.*OH.*44870|kkinteriors\.com/i },
-    { name:'CTW Home Collection', p:/CTW\s*HOME|COLONIAL\s*TIN\s*WORKS|P\.?O\.?\s*BOX\s*49909/i }
+    { name:'CTW Home Collection', p:/CTW\s*HOME|COLONIAL\s*TIN\s*WORKS|P\.?O\.?\s*BOX\s*49909/i },
+    // v2.9.41 (B-S79-01): Gerson. Detect on company name / domain / Olathe KS
+    // origin. Placed last so it can never pre-empt an existing vendor match.
+    { name:'The Gerson Companies', p:/Gerson\s*Compan|gersoncompany\.com|1450\s*S\s*Lone\s*Elm/i }
   ];
   for (const v of vendors) { if (v.p.test(text)) { inv.supplierName = v.name; break; } }
 
   // Invoice number — v2.9.23 (B-S36-01): added "Invoice No." labeled form
   // (Sunset Vista) and \*(\d{5,})\* barcode-bracket fallback.
+  // v2.9.41 (B-S79-03): added /Invoice # XXX/ (space, no colon — Gerson).
   const invPatterns = [/Invoice-#:\s*([A-Z0-9-]+)/i, /Invoice #:\s*([A-Z0-9-]+)/i, /Invoice#\s+([A-Z0-9-]+)/i,
+    /Invoice\s*#\s+([A-Z]{0,4}\d[A-Z0-9.-]*)/i,
     /Invoice No\.?:?\s+([A-Z0-9-]+)/i,
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
     /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i,
     /\*(\d{5,})\*/];
   const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
-  for (const p of invPatterns) { const m = text.match(p); if (m && m[1].length > 3 && !falsePosSet.has(m[1].toLowerCase())) { inv.invoiceNumber = m[1].trim(); break; } }
+  inv.invoiceNumber = pickInvoiceNumber(text, invPatterns, falsePosSet);
 
   // Date
   const datePatterns = [/Invoice Date:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i, /Date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i, /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/];
@@ -8698,7 +8785,8 @@ function parseInvoiceText(text) {
   const parsers = {
     'CWI Gifts': parseCWI, 'Primitives by Kathy': parsePBK, 'Foreside': parseForeside,
     'Sunset Vista Designs': parseSunsetVista, 'Park Designs': parseParkDesigns,
-    'K&K Interiors': parseKK, 'CTW Home Collection': parseCTW
+    'K&K Interiors': parseKK, 'CTW Home Collection': parseCTW,
+    'The Gerson Companies': parseGerson
   };
   inv.items = (parsers[inv.supplierName] || parseGeneric)(text);
   console.log(`[Invoice] ${inv.supplierName || 'Unknown'} #${inv.invoiceNumber}: ${inv.items.length} items, shipping $${inv.shippingCost}`);
@@ -8959,6 +9047,50 @@ function parseParkDesigns(text) {
   return items;
 }
 
+// ── v2.9.41 (B-S79-01): The Gerson Companies ────────────────────────────────
+// Gerson's column order INVERTS the common layout — qty sits BETWEEN the unit
+// price and the extended price, and the description is on the FOLLOWING line:
+//
+//   2796900 687293894303 MP24 IP6 EA $5.45 6 $32.70
+//   5.12"H Resin Harvest Highland Cow on Football, 3 Asst
+//   \_item_/ \___UPC___/ \_MOQ__/ UOM \unit/ qty \_ext_/
+//
+// parseGeneric assumes SKU-qty-desc-price-price, so on Gerson it produced ONE
+// junk row (sku "Asst", qty 2,851,460) instead of zero rows — see B-S79-02.
+// MOQ is free-form ("MP24 IP6", "MP12") so it's matched lazily and discarded.
+// SKU = Gerson item number (matches the vendor-item-number convention already
+// used for K&K/Adams SKUs in items). UPC is carried through for later use.
+const GERSON_ROW = /^(\d{6,8})\s+(\d{11,14})\s+(.+?)\s+([A-Z]{2,4})\s+\$?([\d,]+\.\d{2})\s+(\d+)\s+\$?([\d,]+\.\d{2})\s*$/;
+const GERSON_STOP = /^(Freight|Total|Subtotal|Sub-total|Payment|Discounts|Tracking|Sales Order|Item\b|Qty\b|Minimum|Bill To|Ship To|Invoice|PO #|Account|Location|Terms|United States|Parent Account|\d+ of \d+)/i;
+
+function parseGerson(text) {
+  const items = [];
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(GERSON_ROW);
+    if (!m) continue;
+    // Description is the next line that is neither another item row nor a
+    // header/footer label. Bounded lookahead so a malformed block can't run on.
+    let desc = '';
+    for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+      const nxt = lines[j];
+      if (GERSON_ROW.test(nxt) || GERSON_STOP.test(nxt) || nxt.length < 3) continue;
+      desc = nxt;
+      break;
+    }
+    items.push({
+      sku: m[1],
+      description: desc || `Gerson item ${m[1]}`,
+      qty: parseInt(m[6], 10),
+      unitPrice: parseFloat(m[5].replace(/,/g, '')),
+      lineTotal: parseFloat(m[7].replace(/,/g, '')),
+      upc: m[2],
+      confidence: 'high'
+    });
+  }
+  return items;
+}
+
 function parseGeneric(text) {
   const items = [], flat = text.replace(/\n/g,' ').replace(/\s+/g,' ');
   const p = /\b([A-Z0-9]{3,}[-]?[A-Z0-9]*)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
@@ -9022,6 +9154,21 @@ function showImportReview() {
     }
   }
 
+  // v2.9.41 (B-S79-02): surface guardrail flags. Advisory only — Import All
+  // stays enabled; the operator decides. Silent when there are no flags.
+  const vWarn = $('importValidationWarning');
+  const vList = $('impValidationList');
+  const flags = (importData && importData._validation) || [];
+  if (vWarn && vList) {
+    if (flags.length) {
+      vList.innerHTML = flags.map(f => `<li>${escHtml(String(f))}</li>`).join('');
+      vWarn.style.display = '';
+    } else {
+      vList.innerHTML = '';
+      vWarn.style.display = 'none';
+    }
+  }
+
   // Auto-calculate IB %
   const subtotal = importData.items.reduce((s, i) => s + (i.unitPrice * i.qty), 0);
   const ibPct = (importData.shippingCost > 0 && subtotal > 0) ? Math.round((importData.shippingCost / subtotal) * 1000) / 10 : '';
@@ -9039,8 +9186,13 @@ function renderImportTable() {
   }
   tbody.innerHTML = importData.items.map((item, idx) => {
     const shipCost = (item.unitPrice * ibPct / 100 * item.qty).toFixed(2);
-    return `<tr style="${item.duplicate ? 'background:rgba(251,191,36,0.08);' : ''}${item._imported ? 'opacity:0.5;' : ''}">
-      <td style="text-align:center;">${item.confidence === 'high' ? '✓' : item.confidence === 'manual' ? '✎' : '⚠'}${item.duplicate ? '<br><span style="color:var(--yellow);font-size:10px;">Exists</span>' : ''}</td>
+    // v2.9.41 (B-S79-02): 'suspect' rows (failed the arithmetic guardrail) get a
+    // red ⛔ and a red row tint so a misparse can't read as a normal row.
+    const suspect = item.confidence === 'suspect';
+    const glyph = suspect ? '<span style="color:var(--red);font-weight:700;" title="Failed arithmetic check — verify before importing">⛔</span>'
+      : item.confidence === 'high' ? '✓' : item.confidence === 'manual' ? '✎' : '⚠';
+    return `<tr style="${suspect ? 'background:rgba(220,38,38,0.10);' : item.duplicate ? 'background:rgba(251,191,36,0.08);' : ''}${item._imported ? 'opacity:0.5;' : ''}">
+      <td style="text-align:center;">${glyph}${item.duplicate ? '<br><span style="color:var(--yellow);font-size:10px;">Exists</span>' : ''}</td>
       <td><input class="card-field-input mono" value="${escAttr(item.sku)}" style="width:100%;font-size:11px;padding:4px 6px;" onchange="importData.items[${idx}].sku=this.value"></td>
       <td><input class="card-field-input" value="${escAttr(item.description)}" style="width:100%;font-size:11px;padding:4px 6px;" onchange="importData.items[${idx}].description=this.value"></td>
       <td><input class="card-field-input mono" type="number" value="${item.qty}" style="width:50px;font-size:11px;padding:4px;text-align:center;" onchange="importData.items[${idx}].qty=parseInt(this.value)||0;importData.items[${idx}].lineTotal=importData.items[${idx}].qty*importData.items[${idx}].unitPrice;renderImportTable();"></td>
