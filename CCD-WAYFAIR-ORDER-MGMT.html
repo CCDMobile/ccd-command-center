@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.6.2</title>
+<title>CCD Wayfair Order Manager v1.6.3</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -208,7 +208,7 @@
     <div class="cfg-field"><label>Supabase URL</label><input type="text" id="sbUrl"></div>
     <div class="cfg-field"><label>Supabase Key</label><input type="password" id="sbKey"></div>
     <div class="cfg-field"><label>Order Proxy URL <span id="proxyUrlIndicator" style="font-size:9px;font-weight:500;color:var(--text-muted);margin-left:6px;"></span></label><input type="text" id="proxyUrl"><div id="proxyUrlReset" style="display:none;font-size:9px;margin-top:2px;"><a href="#" onclick="resetProxyUrl();return false;" style="color:var(--text-muted);text-decoration:underline;cursor:pointer;">Reset to default</a></div></div>
-    <div class="cfg-field" style="max-width:240px;"><label>CCD API Key</label><input type="password" id="apiKey" value="ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF"></div>
+    <div class="cfg-field" style="max-width:240px;"><label>CCD API Key</label><input type="password" id="apiKey" value="" placeholder="loads from Supabase"></div>
     <button class="btn btn-primary btn-sm" onclick="connectAll()">Connect</button>
   </div>
 
@@ -520,6 +520,41 @@ async function proxyPost(action, body = {}) {
   return r.json();
 }
 
+// =========================================================================
+// v1.6.3: CCD API key is loaded from Supabase, never hardcoded.
+//
+// PRIOR BUG: the key lived in the apiKey input's value attribute. It was
+// never saved, so every reload restored whatever was baked into the HTML —
+// after the S79 rotation that was the RETIRED key, forcing a manual repaste
+// on every open. This file is also served publicly from ccdmobile.github.io,
+// so the credential was readable by anyone.
+//
+// settings.api_keys.ccdApiKey is the same source SH / V2 / CM / FR read, so
+// this tool now inherits key rotations automatically and is no longer a
+// rotation surface.
+// =========================================================================
+async function loadApiKeyFromDb() {
+  if (!sb) return;
+  const el = document.getElementById('apiKey');
+  if (!el) return;
+  try {
+    const { data, error } = await sb.from('settings')
+      .select('value').eq('key', 'api_keys').single();
+    if (error) {
+      log('CCD API key: DB read failed (' + error.message + ') — paste manually', 'err');
+      return;
+    }
+    const k = data && data.value && data.value.ccdApiKey;
+    if (!k) {
+      log('CCD API key: settings.api_keys.ccdApiKey is empty — paste manually', 'err');
+      return;
+    }
+    el.value = k;
+    log('CCD API key loaded from Supabase (' + k.length + ' chars)', 'ok');
+  } catch (e) {
+    log('CCD API key load failed: ' + e.message, 'err');
+  }
+}
 function connectAll() {
   const sbUrl = document.getElementById('sbUrl').value.trim();
   const sbKey = document.getElementById('sbKey').value.trim();
@@ -529,6 +564,7 @@ function connectAll() {
     localStorage.setItem('ccdSupabaseKey', sbKey);
     log('Supabase connected', 'ok');
     loadDbItems();
+    loadApiKeyFromDb();   // v1.6.3
   }
   const px = proxyUrl();
   if (px) {
@@ -559,7 +595,7 @@ function autoConnect() {
   if (sbKey) document.getElementById('sbKey').value = sbKey;
   document.getElementById('proxyUrl').value = pxUrl;
   updateProxyUrlIndicator();
-  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); loadDbItems(); }
+  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); loadDbItems(); loadApiKeyFromDb(); }   // v1.6.3
 
   // Keep indicator in sync if the operator edits the URL field manually
   const pxEl = document.getElementById('proxyUrl');
