@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.41</title>
+<title>CCD Inventory System v2.9.44</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.41 · Gerson parser + invoice guardrail</div>
+    <div class="login-version">v2.9.44 · per-item list hide</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.41</div>
+      <div class="topbar-version">v2.9.44</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -695,6 +695,14 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <input type="text" id="searchInput" placeholder="Search SKU, product name, brand..." oninput="onSearchDebounced()">
         <button class="search-clear" id="searchClear" onclick="clearSearch()" title="Clear search">✕</button>
       </div>
+      <label class="filter-select" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:0 10px;" title="Hide rows with zero warehouse qty. Display only \u2014 does not change is_active or affect any channel feed.">
+        <input type="checkbox" id="filterHideZero" onchange="onFilterChange()" style="cursor:pointer;">
+        <span style="font-size:13px;">In stock only</span>
+      </label>
+      <label class="filter-select" style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;padding:0 10px;" title="Reveal rows you have hidden. Hidden rows show dimmed \u2014 click the eye to restore.">
+        <input type="checkbox" id="filterShowHidden" onchange="onFilterChange()" style="cursor:pointer;">
+        <span style="font-size:13px;">Show hidden</span>
+      </label>
       <select class="filter-select" id="filterStatus" onchange="onFilterChange()">
         <option value="all">All Status</option>
         <option value="active" selected>Active</option>
@@ -712,6 +720,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
       </select>
       <div class="filter-count" id="filterCount"></div>
       <button class="btn-card btn-save" onclick="addNewProduct()" style="padding:7px 14px;font-size:12px;background:var(--green);color:#fff;">➕ Add Product</button>
+      <button class="btn-card" onclick="hideAllZeroQty()" title="Hide every zero-qty row from the list. Display only, fully reversible." style="padding:7px 14px;font-size:12px;">🙈 Hide 0-qty</button>
       <button class="btn-card btn-save" onclick="openInvoiceImport()" style="padding:7px 14px;font-size:12px;">📄 Import Invoice</button>
     </div>
 
@@ -731,10 +740,11 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             <th>Sales</th>
             <th data-col="last_sold_date" onclick="onSort('last_sold_date')">Last Sale <span class="sort-arrow"></span></th>
             <th>Status</th>
+            <th style="width:44px;text-align:center;" title="Hide/show this row in the list">Hide</th>
           </tr>
         </thead>
         <tbody id="inventoryBody">
-          <tr class="loading-row"><td colspan="11">Loading inventory...</td></tr>
+          <tr class="loading-row"><td colspan="12">Loading inventory...</td></tr>
         </tbody>
       </table>
     </div>
@@ -1711,7 +1721,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.41';
+const TOOL_VERSION = '2.9.44';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1759,7 +1769,15 @@ let state = {
     search: '',
     status: 'active',
     channel: 'all',
-    brand: 'all'
+    brand: 'all',
+    // v2.9.43: DISPLAY-ONLY. Hides zero-qty rows from the list without touching
+    // is_active. Deliberately NOT auto-deactivation: is_active gates the Wayfair
+    // TRUE_UP feed (fetchActiveWayfairItems filters is_active=eq.true), so
+    // flipping ~193 out-of-stock items would shrink the feed enough to trip the
+    // v1.3.3 >20% shrink guard and abort the compliance heartbeat. Default off.
+    hideZero: false,
+    // v2.9.44: reveal rows flagged items.is_hidden (display-only flag)
+    showHidden: false
   },
   brands: [],             // Unique brand list for filter dropdown
   categories: [],         // Unique category list for dropdown
@@ -2101,7 +2119,7 @@ async function loadStats() {
 // ═══════════════════════════════════════════════════════════
 async function loadInventory() {
   const tbody = $('inventoryBody');
-  tbody.innerHTML = '<tr class="loading-row"><td colspan="11">Loading inventory...</td></tr>';
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="12">Loading inventory...</td></tr>';
 
   try {
     let query = sb.from('items').select('*', { count: 'exact' });
@@ -2110,6 +2128,10 @@ async function loadInventory() {
     const f = state.filters;
     if (f.status === 'active')   query = query.eq('is_active', true);
     if (f.status === 'inactive') query = query.eq('is_active', false);
+    // v2.9.43: display-only in-stock filter (see state.filters.hideZero)
+    if (f.hideZero)              query = query.gt('qty', 0);
+    // v2.9.44: hidden rows excluded unless explicitly revealed
+    if (!f.showHidden)           query = query.or('is_hidden.is.null,is_hidden.eq.false');
 
     if (f.channel === 'etsy')    query = query.not('etsy_listing_id', 'is', null);
     if (f.channel === 'wix')     query = query.not('wix_product_id', 'is', null);
@@ -2142,7 +2164,7 @@ async function loadInventory() {
     renderPagination();
     renderFilterCount();
   } catch(e) {
-    tbody.innerHTML = `<tr class="loading-row"><td colspan="11" style="color:var(--red);">Error: ${escHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr class="loading-row"><td colspan="12" style="color:var(--red);">Error: ${escHtml(e.message)}</td></tr>`;
     console.error('Load error:', e);
   }
 }
@@ -2150,12 +2172,92 @@ async function loadInventory() {
 // ═══════════════════════════════════════════════════════════
 // RENDER TABLE
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// v2.9.44: PER-ITEM LIST HIDE (items.is_hidden)
+// ───────────────────────────────────────────────────────────
+// Mary controls which rows are hidden, one at a time, rather than a blanket
+// zero-qty rule.
+//
+// WHY A DEDICATED COLUMN AND NOT is_active:
+//   is_active gates the Wayfair TRUE_UP feed — fetchActiveWayfairItems()
+//   filters is_active=eq.true. Deactivating the ~193 out-of-stock items would
+//   shrink the feed past the v1.3.3 >20% guard and ABORT the compliance
+//   heartbeat. It also drives channel pushes and reporting. is_hidden is
+//   display-only and read by nothing else.
+//
+// WHY A DB COLUMN AND NOT localStorage:
+//   localStorage is per-browser: Mary's choices would not reach Paul, and a
+//   cache clear would silently lose them. The stated requirement was
+//   "don't want to lose the information".
+//
+// Mirrors the existing shippo_transactions is_hidden pattern (toggle +
+// showHidden reveal + 0.4 opacity) so the interaction is already familiar.
+// ═══════════════════════════════════════════════════════════
+
+async function toggleItemHidden(id, ev) {
+  if (ev) ev.stopPropagation();          // never open the item card on a hide click
+  const item = state.items.find(i => i.id === id);
+  if (!item) return;
+
+  const next = !item.is_hidden;
+  try {
+    const { error } = await sb.from('items')
+      .update({ is_hidden: next, updated_at: new Date().toISOString() })
+      .eq('id', id);
+    if (error) throw error;
+
+    item.is_hidden = next;
+    logActivity('INVENTORY', next ? 'ITEM_HIDDEN' : 'ITEM_UNHIDDEN', null,
+      `${item.sku}: list ${next ? 'hidden' : 'unhidden'}`,
+      { sku: item.sku, is_hidden: next }, item.sku);
+
+    // When not showing hidden rows, drop it from view immediately rather than
+    // reloading — a full reload would lose scroll position mid-triage.
+    if (next && !state.filters.showHidden) {
+      const tr = $q(`#inventoryBody tr[data-id="${id}"]`);
+      if (tr) tr.remove();
+      state.items = state.items.filter(i => i.id !== id);
+      state.totalCount = Math.max(0, state.totalCount - 1);
+      renderFilterCount();
+      if (state.items.length === 0) loadInventory();
+      return;
+    }
+    renderTable();
+  } catch (e) {
+    alert('Could not update hidden state: ' + e.message);
+  }
+}
+
+// Bulk: hide every ACTIVE zero-qty item currently matching the filters.
+// Gives the "automatic at zero" outcome as a single deliberate action that is
+// fully reversible, instead of a background rule that surprises people.
+async function hideAllZeroQty() {
+  if (!confirm('Hide every zero-qty item from the list?\n\n' +
+               'This is display-only — it does NOT deactivate anything, does not ' +
+               'touch any channel, and does not affect the Wayfair feed.\n\n' +
+               'Reverse it any time with "Show hidden".')) return;
+  try {
+    const { data, error } = await sb.from('items')
+      .update({ is_hidden: true, updated_at: new Date().toISOString() })
+      .eq('is_active', true).lte('qty', 0).eq('is_hidden', false)
+      .select('id');
+    if (error) throw error;
+    const n = (data || []).length;
+    logActivity('INVENTORY', 'BULK_HIDE_ZERO_QTY', null,
+      `Hid ${n} zero-qty items from the list`, { count: n }, null);
+    alert(`Hid ${n} zero-qty item${n === 1 ? '' : 's'}.\n\nUse "Show hidden" to review or restore.`);
+    loadInventory();
+  } catch (e) {
+    alert('Bulk hide failed: ' + e.message);
+  }
+}
+
 function renderTable() {
   const tbody = $('inventoryBody');
 
   if (state.items.length === 0) {
     tbody.innerHTML = `
-      <tr><td colspan="11">
+      <tr><td colspan="12">
         <div class="empty-state">
           <div class="empty-state-icon">📦</div>
           <div class="empty-state-text">No items found</div>
@@ -2175,6 +2277,7 @@ function renderTable() {
     const isVariant = !!item.parent_sku;
     const isBundle = !!item.is_bundle;
     const isActive = item.is_active !== false;
+    const isHidden = item.is_hidden === true;   // v2.9.44 display-only flag
 
     // Best price across channels
     const prices = [
@@ -2203,7 +2306,7 @@ function renderTable() {
     if (qty <= 0) qtyClass = 'qty-out';
     else if (qty <= 3) qtyClass = 'qty-low';
 
-    return `<tr data-id="${item.id}" onclick="onRowClick(${item.id})">
+    return `<tr data-id="${item.id}" onclick="onRowClick(${item.id})"${isHidden ? ' style="opacity:0.4;"' : ''}>
       <td>
         <span class="sku-cell">${escHtml(sku)}</span>
         ${isBundle ? '<span class="badge badge-bundle">BUNDLE</span>' : ''}
@@ -2225,6 +2328,9 @@ function renderTable() {
       <td class="date-cell">${lastSale || '—'}</td>
       <td>
         <span class="badge ${isActive ? 'badge-active' : 'badge-inactive'}">${isActive ? 'Active' : 'Inactive'}</span>
+      </td>
+      <td style="text-align:center;">
+        <span onclick="toggleItemHidden(${item.id}, event)" title="${isHidden ? 'Hidden from list \u2014 click to restore' : 'Hide this row from the list (display only)'}" style="cursor:pointer;font-size:15px;user-select:none;opacity:${isHidden ? '1' : '0.35'};">${isHidden ? '\ud83d\udeab' : '\ud83d\udc41'}</span>
       </td>
     </tr>`;
   }).join('');
@@ -2266,6 +2372,8 @@ function renderFilterCount() {
   const f = state.filters;
   const parts = [];
   if (f.status !== 'all') parts.push(f.status);
+  if (f.hideZero) parts.push('in-stock');
+  if (f.showHidden) parts.push('incl. hidden');
   if (f.channel !== 'all') parts.push(f.channel);
   if (f.brand !== 'all') parts.push(f.brand);
   if (f.search) parts.push(`"${f.search}"`);
@@ -2305,6 +2413,8 @@ function clearSearch() {
 // Filter dropdowns
 function onFilterChange() {
   state.filters.status  = $('filterStatus').value;
+  state.filters.hideZero = ge('filterHideZero') ? $('filterHideZero').checked : false;
+  state.filters.showHidden = ge('filterShowHidden') ? $('filterShowHidden').checked : false;
   state.filters.channel = $('filterChannel').value;
   state.filters.brand   = $('filterBrand').value;
   state.page = 1;
@@ -2873,7 +2983,12 @@ function captureEdits() {
     f_par_tm_min: 'par_tm_min', f_par_tm_target: 'par_tm_target'
   };
   const numericCols = new Set(['wholesale_price','ib_shipping','tariff','ob_shipping','qty','etsy_qty','wix_qty','wayfair_qty','treasuremarts_qty','etsy_price','wix_price','wayfair_price','treasuremarts_price','shipping_weight','box_length','box_width','box_height','par_reorder_point','par_reorder_qty','par_max_stock','par_etsy_min','par_etsy_target','par_wix_min','par_wix_target','par_wayfair_min','par_wayfair_target','par_tm_min','par_tm_target']);
-  const nullIfEmptyCols = new Set(['description_last_updated','etsy_listing_id','wix_product_id','wix_variant_id','etsy_variant_id']);
+  // v2.9.42: wayfair_sku ADDED. It was the only channel identifier missing from
+  // this set, so clearing the field saved '' instead of NULL while every other
+  // channel ID nulled correctly. That produced 106 empty-string rows and forced
+  // every Wayfair query to use coalesce(wayfair_sku,'') <> '' rather than a plain
+  // NULL check - a footgun that produced at least one wrong collision query in S79.
+  const nullIfEmptyCols = new Set(['description_last_updated','etsy_listing_id','wix_product_id','wix_variant_id','etsy_variant_id','wayfair_sku']);
   for (const [domId, col] of Object.entries(fields)) {
     const el = $(domId);
     if (!el) continue;
@@ -3758,6 +3873,125 @@ function shipFromSale(idx) {
 // ═══════════════════════════════════════════════════════════
 // TAB: PURCHASES (matches prototype exactly)
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// v2.9.43: PURCHASE HISTORY EDITING — cost-basis rule "B1"
+// ───────────────────────────────────────────────────────────
+// WHY EDITABLE: backfill-era invoice_items rows populated neither `quantity`
+// nor `qty_ordered`, so they rendered blank with a $0.00 line total and could
+// not be repaired from the UI at all.
+//
+// COST-BASIS RULE — B1, clean weighted average over ALL purchase lines:
+//     wholesale_price = SUM(qty × unit_cost) / SUM(qty)
+//
+// This DIFFERS from the import-time rule, which is path-dependent:
+//     avgWs = oldQty > newQty ? blend(old, new) : newWs
+// i.e. a shipment larger than current stock discards the previous price
+// outright. That makes the stored value an artifact of arrival ORDER rather
+// than a function of purchase history — and therefore not recomputable.
+//
+// ACCEPTED CONSEQUENCE (Paul, S80): the first save on an item can move
+// wholesale_price further than the edit alone implies, because it replaces a
+// path-dependent artifact with a true average. Dashboard INVENTORY VALUE and
+// forward margins shift accordingly. This is expected, not a bug.
+//
+// NOT RETROACTIVE: existing sales_history rows keep their original cost and
+// profit. Only future sales use the corrected basis. (Option C — rewriting
+// past P&L — was explicitly rejected.)
+// ═══════════════════════════════════════════════════════════
+
+function phDirty(el) {
+  const tr = el.closest('tr');
+  if (tr) {
+    const q = pf(tr.querySelector('[data-f="qty"]').value);
+    const c = pf(tr.querySelector('[data-f="cost"]').value);
+    const cell = tr.querySelector('.ph-line');
+    if (cell) cell.textContent = '$' + (q * c).toFixed(2);
+  }
+  const btn = $('phSaveBtn');
+  if (btn) { btn.style.display = ''; btn.classList.add('btn-save'); }
+}
+
+async function savePurchaseEdits(sku) {
+  const btn = $('phSaveBtn');
+  const rows = Array.from(document.querySelectorAll('#sub-purchases tr[data-pid]'));
+  if (!rows.length) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
+  try {
+    // 1. Persist each line to the column names THIS row actually uses
+    for (const tr of rows) {
+      const id      = tr.getAttribute('data-pid');
+      const qtyCol  = tr.getAttribute('data-qtycol');
+      const costCol = tr.getAttribute('data-costcol');
+      const patch = {};
+      patch[qtyCol]  = Math.max(0, Math.round(pf(tr.querySelector('[data-f="qty"]').value)));
+      patch[costCol] = Math.max(0, pf(tr.querySelector('[data-f="cost"]').value));
+      patch.ib_shipping_pct = Math.max(0, pf(tr.querySelector('[data-f="ib"]').value));
+      const { error } = await sb.from('invoice_items').update(patch).eq('id', id);
+      if (error) throw new Error('Line ' + id + ': ' + error.message);
+    }
+
+    // 2. B1 recompute — re-read the FULL history from the DB, never trust the DOM
+    const { data: all, error: rErr } = await sb.from('invoice_items')
+      .select('quantity,qty_ordered,unit_price,unit_wholesale_price,ib_shipping_pct')
+      .eq('sku', sku);
+    if (rErr) throw rErr;
+
+    let totQty = 0, totCost = 0, ibWeighted = 0;
+    (all || []).forEach(r => {
+      const q = pi(r.qty_ordered ?? r.quantity) || 0;
+      const c = pf(r.unit_wholesale_price ?? r.unit_price) || 0;
+      totQty     += q;
+      totCost    += q * c;
+      ibWeighted += q * (pf(r.ib_shipping_pct) || 0);
+    });
+
+    if (totQty <= 0) {
+      alert('Lines saved, but total purchased qty is 0 — wholesale price left unchanged.');
+      if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udcbe Save Purchase Edits'; }
+      return;
+    }
+
+    const newWs = Math.round((totCost / totQty) * 100) / 100;
+    const newIb = Math.round((ibWeighted / totQty) * 100) / 100;
+
+    const item  = state.currentItem;
+    const oldWs = pf(item && item.wholesale_price);
+
+    const { error: uErr } = await sb.from('items')
+      .update({ wholesale_price: newWs, ib_shipping: newIb, updated_at: new Date().toISOString() })
+      .eq('sku', sku);
+    if (uErr) throw uErr;
+
+    // 3. Refresh in-memory state AND the open form, or the next saveItem()
+    //    writes back the stale value and silently reverts this. Same trap as
+    //    B-S39-15 in the invoice-import merge path.
+    if (item && item.sku === sku) {
+      item.wholesale_price = newWs;
+      item.ib_shipping     = newIb;
+      if (ge('f_wholesale')) $('f_wholesale').value = newWs.toFixed(2);
+      if (ge('f_ib'))        $('f_ib').value        = newIb;
+    }
+    const li = state.items.find(i => i.sku === sku);
+    if (li) { li.wholesale_price = newWs; li.ib_shipping = newIb; }
+
+    logActivity('INVENTORY', 'PURCHASE_HISTORY_EDITED', null,
+      `${sku}: ws $${oldWs.toFixed(2)} \u2192 $${newWs.toFixed(2)} (B1 weighted avg over ${totQty} units)`,
+      { sku, ws_old: oldWs, ws_new: newWs, ib_new: newIb, total_qty: totQty,
+        line_count: (all || []).length, rule: 'B1_weighted_average' },
+      sku);
+
+    alert('Saved.\n\nWholesale $' + oldWs.toFixed(2) + ' \u2192 $' + newWs.toFixed(2) +
+          '\nIB shipping ' + newIb + '%' +
+          '\nBased on ' + totQty + ' units across ' + (all || []).length + ' purchase lines.' +
+          '\n\nPast sales keep their original cost basis.');
+    await renderPurchases(item || { sku });
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udcbe Save Purchase Edits'; }
+  }
+}
+
 async function renderPurchases(item) {
   $('sub-purchases').innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading purchases...</div>';
   try {
@@ -3774,14 +4008,21 @@ async function renderPurchases(item) {
       const unitCost = pf(r.unit_price ?? r.unit_wholesale_price);
       const lineTotal = (qty * unitCost).toFixed(2);
       const invDate = (inv.order_date || inv.invoice_date || inv.created_at || '').substring(0,10);
-      return `<tr>
+      // v2.9.43: qty / unit cost / IB% are EDITABLE. Date, invoice # and vendor
+      // stay locked - they belong to the invoice, not the line.
+      // qtyCol/costCol capture which column THIS row actually uses: V2 import
+      // writes qty_ordered+unit_wholesale_price, older backfill rows use
+      // quantity+unit_price. Writing the wrong one silently no-ops.
+      const qtyCol  = (r.qty_ordered !== undefined && r.qty_ordered !== null) ? 'qty_ordered' : 'quantity';
+      const costCol = (r.unit_wholesale_price !== undefined && r.unit_wholesale_price !== null) ? 'unit_wholesale_price' : 'unit_price';
+      return `<tr data-pid="${r.id}" data-qtycol="${qtyCol}" data-costcol="${costCol}">
         <td><input class="form-input" type="date" value="${invDate}" style="width:130px;font-size:12px;" disabled></td>
         <td><input class="form-input" value="${escAttr(inv.invoice_number || '')}" style="width:100px;font-size:12px;" disabled></td>
         <td>${escHtml(inv.vendor || '')}</td>
-        <td><input class="form-input" type="number" value="${qty || ''}" style="width:55px;font-size:12px;" disabled></td>
-        <td><input class="form-input" value="$${unitCost.toFixed(2)}" style="width:70px;font-size:12px;" disabled></td>
-        <td class="mono">$${lineTotal}</td>
-        <td><input class="form-input" value="${pf(r.ib_shipping_pct)}%" style="width:55px;font-size:12px;" disabled></td>
+        <td><input class="form-input ph-edit" data-f="qty" type="number" min="0" step="1" value="${qty || ''}" style="width:60px;font-size:12px;" oninput="phDirty(this)"></td>
+        <td><input class="form-input ph-edit" data-f="cost" type="number" min="0" step="0.01" value="${unitCost.toFixed(2)}" style="width:75px;font-size:12px;" oninput="phDirty(this)"></td>
+        <td class="mono ph-line">$${lineTotal}</td>
+        <td><input class="form-input ph-edit" data-f="ib" type="number" min="0" step="0.01" value="${pf(r.ib_shipping_pct)}" style="width:60px;font-size:12px;" oninput="phDirty(this)"></td>
         <td><input class="form-input" value="${pf(r.line_tariff)}%" style="width:55px;font-size:12px;" disabled></td>
       </tr>`;
     }).join('');
@@ -3792,6 +4033,7 @@ async function renderPurchases(item) {
         <div class="section-title" style="margin-bottom:0;">Purchase History — ${escHtml(item.sku)}</div>
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:12px;color:var(--muted2);">${rows.length} invoices · ${totalUnits} units purchased</span>
+          <button class="btn-card" id="phSaveBtn" style="font-size:12px;padding:6px 14px;display:none;" onclick="savePurchaseEdits('${escAttr(item.sku)}')">\ud83d\udcbe Save Purchase Edits</button>
           <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="openInvoiceImport()">+ Import Invoice</button>
         </div>
       </div>
