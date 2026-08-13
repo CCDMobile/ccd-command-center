@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.44</title>
+<title>CCD Inventory System v2.9.45</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.44 · per-item list hide</div>
+    <div class="login-version">v2.9.45 · hide controls on list + item page</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.44</div>
+      <div class="topbar-version">v2.9.45</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -707,6 +707,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <option value="all">All Status</option>
         <option value="active" selected>Active</option>
         <option value="inactive">Inactive</option>
+        <option value="hidden">Hidden only</option>
       </select>
       <select class="filter-select" id="filterChannel" onchange="onFilterChange()">
         <option value="all">All Channels</option>
@@ -733,6 +734,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             <th data-col="product_name" onclick="onSort('product_name')">Product <span class="sort-arrow"></span></th>
             <th data-col="brand_name" onclick="onSort('brand_name')">Brand <span class="sort-arrow"></span></th>
             <th data-col="shelf_number" onclick="onSort('shelf_number')">Shelf <span class="sort-arrow"></span></th>
+            <th style="width:44px;text-align:center;" title="Hide/show this row in the list">Hide</th>
             <th data-col="qty" onclick="onSort('qty')">Qty <span class="sort-arrow"></span></th>
             <th data-col="wholesale_price" onclick="onSort('wholesale_price')">Wholesale <span class="sort-arrow"></span></th>
             <th>Best Price</th>
@@ -740,7 +742,6 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             <th>Sales</th>
             <th data-col="last_sold_date" onclick="onSort('last_sold_date')">Last Sale <span class="sort-arrow"></span></th>
             <th>Status</th>
-            <th style="width:44px;text-align:center;" title="Hide/show this row in the list">Hide</th>
           </tr>
         </thead>
         <tbody id="inventoryBody">
@@ -785,6 +786,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
           </div>
         </div>
         <div class="card-actions">
+          <button class="btn-card" id="cardHideBtn" onclick="toggleCurrentItemHidden()" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;" title="Hide this item from the inventory list. Display only \u2014 does not change Active, and does not affect any channel feed.">👁 Hide</button>
           <button class="btn-card btn-sell" onclick="quickSell()">🛒 Sell</button>
           <button class="btn-card btn-push" onclick="pushToChannels()">↻ Push to Channels</button>
           <button class="btn-card btn-push" onclick="pushToChannels(true)" title="Push this item + all siblings, bundle components, and parent bundles" style="font-size:11px;">↻ Push Family</button>
@@ -1721,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.44';
+const TOOL_VERSION = '2.9.45';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2126,12 +2128,18 @@ async function loadInventory() {
 
     // ── Filters ──
     const f = state.filters;
-    if (f.status === 'active')   query = query.eq('is_active', true);
-    if (f.status === 'inactive') query = query.eq('is_active', false);
+    // v2.9.45: 'hidden' is its own view. It must bypass the exclusion below,
+    // or the two filters cancel out and the list comes back empty.
+    if (f.status === 'hidden') {
+      query = query.eq('is_hidden', true);
+    } else {
+      if (f.status === 'active')   query = query.eq('is_active', true);
+      if (f.status === 'inactive') query = query.eq('is_active', false);
+      // v2.9.44: hidden rows excluded unless explicitly revealed
+      if (!f.showHidden)           query = query.or('is_hidden.is.null,is_hidden.eq.false');
+    }
     // v2.9.43: display-only in-stock filter (see state.filters.hideZero)
     if (f.hideZero)              query = query.gt('qty', 0);
-    // v2.9.44: hidden rows excluded unless explicitly revealed
-    if (!f.showHidden)           query = query.or('is_hidden.is.null,is_hidden.eq.false');
 
     if (f.channel === 'etsy')    query = query.not('etsy_listing_id', 'is', null);
     if (f.channel === 'wix')     query = query.not('wix_product_id', 'is', null);
@@ -2315,6 +2323,9 @@ function renderTable() {
       <td class="product-cell" title="${escHtml(name)}">${escHtml(name)}</td>
       <td class="brand-cell">${escHtml(brand)}</td>
       <td class="mono">${escHtml(shelf)}</td>
+      <td style="text-align:center;">
+        <span onclick="toggleItemHidden(${item.id}, event)" title="${isHidden ? 'Hidden from list \u2014 click to restore' : 'Hide this row from the list (display only)'}" style="cursor:pointer;font-size:15px;user-select:none;opacity:${isHidden ? '1' : '0.35'};">${isHidden ? '\ud83d\udeab' : '\ud83d\udc41'}</span>
+      </td>
       <td class="qty-cell ${qtyClass}">${qty}</td>
       <td class="price-cell">${wholesale > 0 ? '$' + wholesale.toFixed(2) : '—'}</td>
       <td class="price-cell">${bestPrice > 0 ? '$' + bestPrice.toFixed(2) : '—'}</td>
@@ -2328,9 +2339,6 @@ function renderTable() {
       <td class="date-cell">${lastSale || '—'}</td>
       <td>
         <span class="badge ${isActive ? 'badge-active' : 'badge-inactive'}">${isActive ? 'Active' : 'Inactive'}</span>
-      </td>
-      <td style="text-align:center;">
-        <span onclick="toggleItemHidden(${item.id}, event)" title="${isHidden ? 'Hidden from list \u2014 click to restore' : 'Hide this row from the list (display only)'}" style="cursor:pointer;font-size:15px;user-select:none;opacity:${isHidden ? '1' : '0.35'};">${isHidden ? '\ud83d\udeab' : '\ud83d\udc41'}</span>
       </td>
     </tr>`;
   }).join('');
@@ -3041,7 +3049,47 @@ function copyEtsyToWix() {
 // ═══════════════════════════════════════════════════════════
 // TAB: OVERVIEW (matches prototype exactly)
 // ═══════════════════════════════════════════════════════════
+// v2.9.45: keep the item-page Hide button in step with items.is_hidden.
+function syncCardHideBtn() {
+  const btn = $('cardHideBtn');
+  const item = state.currentItem;
+  if (!btn || !item) return;
+  const h = item.is_hidden === true;
+  btn.innerHTML = h ? '\ud83d\udeab Unhide' : '\ud83d\udc41 Hide';
+  btn.style.borderColor = h ? 'var(--yellow)' : 'var(--border)';
+  btn.style.color       = h ? 'var(--yellow)' : 'var(--muted)';
+  btn.title = h
+    ? 'This item is hidden from the inventory list. Click to restore it.'
+    : 'Hide this item from the inventory list. Display only \u2014 does not change Active, and does not affect any channel feed.';
+}
+
+async function toggleCurrentItemHidden() {
+  const item = state.currentItem;
+  if (!item || !item.id) return;
+  const next = !item.is_hidden;
+  const btn = $('cardHideBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const { error } = await sb.from('items')
+      .update({ is_hidden: next, updated_at: new Date().toISOString() })
+      .eq('id', item.id);
+    if (error) throw error;
+    item.is_hidden = next;
+    const li = state.items.find(i => i.id === item.id);
+    if (li) li.is_hidden = next;
+    logActivity('INVENTORY', next ? 'ITEM_HIDDEN' : 'ITEM_UNHIDDEN', null,
+      `${item.sku}: list ${next ? 'hidden' : 'unhidden'} (from item page)`,
+      { sku: item.sku, is_hidden: next }, item.sku);
+    syncCardHideBtn();
+  } catch (e) {
+    alert('Could not update hidden state: ' + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 function renderOverview(item) {
+  syncCardHideBtn();   // v2.9.45
   const wholesale = pf(item.wholesale_price);
   const ibPct = pf(item.ib_shipping);
   const tariffPct = pf(item.tariff);
