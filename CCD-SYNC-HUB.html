@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.5</title>
+    <title>CCD Sync Hub v4.6.6</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.5 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.6 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -885,7 +885,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.5';
+    const SH_VERSION = 'v4.6.6';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -907,6 +907,7 @@
         cascade_peer_decrement: true,
         true_up_heartbeat: { enabled: true, interval_minutes: 60 },
         sync_queue_processor: true,
+        edge_v2_push: false,   // S81 ADR-016 - edge owns v2 manual-push rows when true
     });
     let _serviceFlags = null;      // last merged flags
     let _serviceFlagsLoadedAt = 0; // epoch ms of last successful load
@@ -8102,6 +8103,18 @@
             // is 0 so they pass through immediately even when processed_at is NULL.
             const _now = Date.now();
             const _backoffSkipped = [];
+            // S81 (ADR-016): when the edge owns V2 manual-push rows, SH must not
+            // also process them (avoids the redundant second push). Same flag the
+            // edge reads; idempotent even without this, but keeps ownership clean.
+            if (getFlag('edge_v2_push') === true && Array.isArray(pending) && pending.length) {
+                const _keep = pending.filter(r => !(r.fields && r.fields._source === 'v2'));
+                const _skipped = pending.length - _keep.length;
+                if (_skipped > 0) {
+                    pending.length = 0;
+                    pending.push(..._keep);
+                    console.log('[Sync Queue ' + SH_VERSION + '] v2 rows skipped (' + _skipped + ') - edge owns them');
+                }
+            }
             const _readyToProcess = pending.filter(row => {
                 const rc = row.retry_count || 0;
                 const minWait = RETRY_BACKOFF_MS[rc] || 0;
