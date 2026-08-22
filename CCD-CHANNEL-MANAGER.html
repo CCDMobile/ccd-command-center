@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Channel Manager v2.5.1</title>
+<title>CCD Channel Manager v2.5.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
@@ -36,9 +36,9 @@
 </style>
 </head>
 <body>
-<div class="login-screen" id="loginScreen"><div class="login-card"><div class="login-logo">Country Charm Decor</div><div class="login-sub">Channel Manager v2.5.1</div><div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://your-project.supabase.co" autocomplete="off"></div><div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off"></div><button class="login-btn" onclick="doConnect()">Connect</button><div class="login-status" id="loginStatus"></div><div class="login-version">v2.5.1 · LC Blockers Phase 3 (Bulk)</div></div></div>
+<div class="login-screen" id="loginScreen"><div class="login-card"><div class="login-logo">Country Charm Decor</div><div class="login-sub">Channel Manager v2.5.2</div><div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://your-project.supabase.co" autocomplete="off"></div><div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off"></div><button class="login-btn" onclick="doConnect()">Connect</button><div class="login-status" id="loginStatus"></div><div class="login-version">v2.5.2 · activity_log insert fix (BM-4)</div></div></div>
 <div class="app" id="appShell">
-  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.5.1</div></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
+  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.5.2</div></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
   <div class="tab-bar"><button class="tab-btn active" onclick="switchTab('products',this)">📦 Products</button><button class="tab-btn" onclick="switchTab('editor',this)">✏️ Content Editor</button><button class="tab-btn" onclick="switchTab('pricing',this)">💰 Pricing Advisor</button><button class="tab-btn" onclick="switchTab('bulk',this)">⚡ Bulk Ops</button></div>
   <div class="main">
     <div id="tabProducts" class="tab-content visible">
@@ -109,7 +109,7 @@
 </div>
 <div class="detail-overlay" id="detailOverlay" onclick="closeDetail(event)"><div class="detail-panel" onclick="event.stopPropagation()"><div class="detail-header"><div class="detail-title"><span id="detailSku" class="sku-cell"></span><span id="detailName"></span></div><button class="detail-close" onclick="closeDetail()">✕</button></div><div class="detail-body" id="detailBody"></div></div></div>
 <script>
-const CM_VERSION='2.5.1',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
+const CM_VERSION='2.5.2',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
 const WORKER_URL='https://cold-field-4bb6.psmith-925.workers.dev/';
 const CHANNELS=['etsy','wix','wayfair','pinterest','instagram','facebook'];
 const CH_LABEL={etsy:'Etsy',wix:'Wix',wayfair:'Wayfair',pinterest:'Pinterest',instagram:'Instagram',facebook:'Facebook'};
@@ -150,7 +150,18 @@ function onCollectionsFilter(v){wixCollectionsFilter=v||'';const box=document.ge
 /* v2.5.0 H-LC2: Activate Etsy listing (sets state=active via proxy) */
 async function activateEtsyListing(id){const i=allItems.find(x=>x.id===id);if(!i||!i.etsy_listing_id)return;if(!etsyProxyUrl){alert('Etsy proxy URL not configured. Set it in Sync Hub Settings → Proxy URLs.');return;}if(!etsyApiKey){alert('Etsy API key not configured. Set it in Sync Hub Settings → Etsy API Key.');return;}if(!confirm('Activate Etsy listing '+i.etsy_listing_id+' for "'+i.product_name+'"?\n\nThis will set the listing state to ACTIVE on Etsy. If it is already active, Etsy will accept it as a no-op.\n\nProceed?'))return;const s=document.getElementById('pushStatus');if(s){s.className='inline-status show info';s.textContent='Activating Etsy listing '+i.etsy_listing_id+'...';}try{const r=await cmJsonp(etsyProxyUrl,{action:'activateListing',key:etsyApiKey,listingId:i.etsy_listing_id});if(!r||!r.success)throw new Error(r&&r.error?r.error:'Unknown proxy error');if(s){s.className='inline-status show ok';s.textContent='✓ Etsy listing '+i.etsy_listing_id+' activated';}logActivity('channel_manager','etsy_listing_activated','etsy','Listing '+i.etsy_listing_id+' ('+i.sku+') set to active');}catch(e){if(s){s.className='inline-status show error';s.textContent='Activate failed: '+e.message;}logActivity('channel_manager','etsy_listing_activate_failed','etsy','Listing '+i.etsy_listing_id+' ('+i.sku+'): '+e.message);}}
 async function registerVersion(){try{const{data}=await sbClient.from('settings').select('value').eq('key','tool_versions').limit(1);let v={};if(data&&data[0])v=typeof data[0].value==='string'?JSON.parse(data[0].value):data[0].value;if(v[CM_VERSION_KEY]===CM_VERSION)return;v[CM_VERSION_KEY]=CM_VERSION;await sbClient.from('settings').upsert({key:'tool_versions',value:v,updated_at:new Date().toISOString(),updated_by:'channelmanager'},{onConflict:'key'});}catch(e){}}
-function logActivity(c,a,ch,d){if(!sbClient)return;sbClient.from('activity_log').insert({category:c,action:a,channel:ch||null,details:d||'',device:'desktop',status:'success'}).then(()=>{}).catch(()=>{});}
+// v2.5.2 (BM-4): this insert had THREE independent 400s and every CM activity row
+// has always failed. (1) `status` is not a column on activity_log -> PGRST204.
+// (2) channel is NOT NULL DEFAULT 'system'; an explicit null is a value and fails
+//     the NOT NULL check (23502) — defaults apply only when a column is OMITTED.
+// (3) details is jsonb NOT NULL; '' is not valid JSON -> 22P02.
+// Also: .insert() resolves with {data,error}, it does not throw, so the old
+// .catch(()=>{}) was dead code and nothing was ever logged to the console.
+// NOTE on the 4th arg: all 12 call sites pass a human-readable SUMMARY string
+// ('CM v2.5.2', `Push ${sku}`, ...), but it was being written into `details`.
+// It now lands in the `summary` column where it belongs; `details` stays {}.
+// Signature and every call site are unchanged.
+function logActivity(c,a,ch,d){if(!sbClient)return;sbClient.from('activity_log').insert({category:c||'channel_manager',action:a||'',channel:ch||'system',summary:(typeof d==='string')?d:(d?JSON.stringify(d):''),details:(d&&typeof d==='object')?d:{},device:'desktop',user_name:'ChannelManager'}).then(({error})=>{if(error)console.warn('[activity_log] insert failed:',error.code,error.message);}).catch(e=>console.warn('[activity_log] insert threw:',e.message));}
 async function refreshData(){document.getElementById('sbLabel').textContent='Refreshing...';await loadAllData();document.getElementById('sbLabel').textContent='Connected';renderTable();}
 
 /* ── DATA ── */
