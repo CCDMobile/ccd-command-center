@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.46</title>
+<title>CCD Inventory System v2.9.47</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.46 · hide controls on list + item page</div>
+    <div class="login-version">v2.9.47 · activity_log channel fix (BM-4)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.46</div>
+      <div class="topbar-version">v2.9.47</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1723,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.46';
+const TOOL_VERSION = '2.9.47';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2010,13 +2010,26 @@ async function registerToolVersion(client, toolKey, toolVersion) {
 async function logActivity(category, action, channel, summary, details = {}, sku = null) {
   if (!sb) return;
   try {
-    await sb.from('activity_log').insert({
-      category, action, channel, summary,
-      details: { ...details, source: 'inventory_v2' },
+    // v2.9.47 (BM-4): activity_log.channel is NOT NULL DEFAULT 'system'. Postgres
+    // applies a column default only when the column is OMITTED — an explicit null
+    // is a value and fails the NOT NULL check (23502 -> PostgREST 400). ~35 of this
+    // file's ~40 call sites pass null for channel, so every one of them had been
+    // silently 400ing. Coalesce here rather than touching 40 call sites.
+    // Same reasoning guards category/action/summary/details (all NOT NULL w/ default).
+    const { error } = await sb.from('activity_log').insert({
+      category: category || 'system',
+      action:   action   || '',
+      channel:  channel  || 'system',
+      summary:  summary  || '',
+      details: { ...(details && typeof details === 'object' ? details : {}), source: 'inventory_v2' },
       sku, device: 'desktop',
       user_name: 'Paul'
     });
-  } catch(e) { console.log('Activity log skipped:', e.message); }
+    // v2.9.47 (BM-4): supabase-js .insert() RESOLVES with {data,error} — it does not
+    // throw. The old bare try/catch was dead code, which is why this failed silently
+    // for months. Never throw from the logger; just make the failure visible.
+    if (error) console.warn('[activity_log] insert failed:', error.code, error.message);
+  } catch(e) { console.warn('[activity_log] insert threw:', e.message); }
 }
 
 // ═══════════════════════════════════════════════════════════
