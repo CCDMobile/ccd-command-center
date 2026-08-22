@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.6</title>
+    <title>CCD Sync Hub v4.6.7</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.6 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.7 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -713,6 +713,10 @@
                         <label>Shippo Proxy</label>
                         <input type="text" id="shippoProxyUrl" />
                     </div>
+                    <div class="setting-row">
+                        <label>Shippo auto-sync window (days)</label>
+                        <input type="number" id="shippoAutoSyncDays" min="1" max="365" step="1" />
+                    </div>
                 </div>
                 <div class="settings-group">
                     <h4>⚡ Processing</h4>
@@ -819,7 +823,8 @@
                     <h3>📦 Shippo Shipping Reconciliation</h3>
                     <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                         <select id="shippoDateRange" onchange="updateShippoDateInputs()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-input); color: var(--text); font-size: 0.85rem;">
-                            <option value="30" selected>Last 30 days</option>
+                            <option value="7" selected>Last 7 days</option>
+                            <option value="30">Last 30 days</option>
                             <option value="90">Last 90 days</option>
                             <option value="180">Last 6 months</option>
                             <option value="365">Last 1 year</option>
@@ -885,7 +890,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.6';
+    const SH_VERSION = 'v4.6.7';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1074,6 +1079,7 @@
             wayfairProxyUrl: '',
             syncHubProxyUrl: '',
             shippoProxyUrl: '',
+            shippoAutoSyncDays: 7,   // v4.6.7: background window, was hardcoded 30
             autoProcessEnabled: false,
             pushQueueEnabled: true,
             retryFailedEnabled: true,
@@ -6871,7 +6877,7 @@
             return;
         }
         
-        const days = parseInt(val) || 30;
+        const days = parseInt(val) || 7;   // v4.6.7: default window 7d (was 30d)
         const fromDateObj = new Date(today.getTime() - (days * 24 * 60 * 60 * 1000));
         fromInput.value = fromDateObj.toISOString().substring(0, 10);
     }
@@ -7051,8 +7057,13 @@
         if (!sbClient || !sbConnected || !state.settings.shippoProxyUrl) return;
 
         try {
-            console.log('[Shippo Auto] Background sync starting...');
-            const transactions = await fetchShippoTransactions(30);
+            // v4.6.7: window is configurable (Settings → Shippo auto-sync window),
+            // default 7d. Was hardcoded 30d, which pulled 4x more from the Shippo
+            // API every 30 minutes than the reconcile actually needs. The manual
+            // date picker is unaffected — it stays free-range for ad-hoc audits.
+            const autoDays = parseInt(state.settings.shippoAutoSyncDays) || 7;
+            console.log(`[Shippo Auto] Background sync starting (${autoDays}d window)...`);
+            const transactions = await fetchShippoTransactions(autoDays);
             
             if (transactions.length === 0) {
                 console.log('[Shippo Auto] No transactions returned');
@@ -7061,17 +7072,28 @@
 
             const { inserted, skipped } = await upsertShippoTransactions(transactions);
             
-            // Only reconcile if we have new data or unmatched records
-            const { data: unmatchedCheck } = await sbClient
+            // v4.6.7 (B-S82-01): this guard was destructuring `data` from a
+            // head:true count query. A HEAD request returns no body, so `data`
+            // is ALWAYS null and the guard was permanently false — meaning the
+            // 30-minute background sync fetched and upserted but NEVER
+            // reconciled. Reconciliation only ever ran from the "Sync Shippo"
+            // or "Re-Reconcile" buttons. The count comes back on `count`.
+            const { count: unmatchedCount, error: unmatchedErr } = await sbClient
                 .from('shippo_transactions')
                 .select('id', { count: 'exact', head: true })
                 .eq('matched_to_sale', false)
                 .not('order_id', 'is', null);
 
+            if (unmatchedErr) console.warn('[Shippo Auto] Unmatched count failed:', unmatchedErr.message);
+
             let matched = 0;
-            if (unmatchedCheck) {
+            // Explicit > 0 so a genuine zero-unmatched result is distinguishable
+            // from a broken guard — that ambiguity is what hid this for months.
+            if (unmatchedCount > 0) {
                 const result = await reconcileShippoWithSales();
                 matched = result.matched;
+            } else {
+                console.log('[Shippo Auto] No unmatched transactions — reconcile skipped');
             }
 
             if (inserted > 0 || matched > 0) {
@@ -7652,6 +7674,7 @@
         document.getElementById('wayfairProxyUrl').value = state.settings.wayfairProxyUrl || '';
         document.getElementById('syncHubProxyUrl').value = state.settings.syncHubProxyUrl || '';
         document.getElementById('shippoProxyUrl').value = state.settings.shippoProxyUrl || '';
+        document.getElementById('shippoAutoSyncDays').value = state.settings.shippoAutoSyncDays || 7;
         document.getElementById('autoProcessEnabled').checked = state.settings.autoProcessEnabled;
         document.getElementById('pushQueueEnabled').checked = state.settings.pushQueueEnabled !== false;
         document.getElementById('retryFailedEnabled').checked = state.settings.retryFailedEnabled;
@@ -7675,6 +7698,8 @@
         state.settings.wayfairProxyUrl = document.getElementById('wayfairProxyUrl').value;
         state.settings.syncHubProxyUrl = document.getElementById('syncHubProxyUrl').value;
         state.settings.shippoProxyUrl = document.getElementById('shippoProxyUrl').value;
+        // v4.6.7: clamp 1..365 so a blank/garbage entry can't widen the API draw
+        state.settings.shippoAutoSyncDays = Math.min(365, Math.max(1, parseInt(document.getElementById('shippoAutoSyncDays').value) || 7));
         state.settings.autoProcessEnabled = document.getElementById('autoProcessEnabled').checked;
         state.settings.pushQueueEnabled = document.getElementById('pushQueueEnabled').checked;
         state.settings.retryFailedEnabled = document.getElementById('retryFailedEnabled').checked;
@@ -7713,6 +7738,7 @@
                     enableWayfairSync: state.settings.enableWayfairSync,
                     cancelReconEnabled: state.settings.cancelReconEnabled !== false,
                     notifyCancellationsEmail: state.settings.notifyCancellationsEmail === true,
+                    shippoAutoSyncDays: state.settings.shippoAutoSyncDays || 7,
                 }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
             } catch (e) { console.error('[Settings] Supabase save error:', e); }
         }
