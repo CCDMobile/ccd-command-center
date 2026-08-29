@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.7</title>
+    <title>CCD Sync Hub v4.6.8</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.7 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.8 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -890,7 +890,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.7';
+    const SH_VERSION = 'v4.6.8';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -7649,8 +7649,13 @@
                                 <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); processOrder('${order.id}')" title="Deduct inventory, record sale, queue channel updates (don't push yet)">✅ Process & Deduct Only</button>
                                 <button class="btn btn-sm" style="background: var(--info); color: white;" onclick="event.stopPropagation(); processOrderWithCascade('${order.id}')" title="Deduct inventory, record sale, AND push qty updates to all channels">📤 Process, Deduct & Push to Channels</button>
                                 <button class="btn btn-sm" style="background: #f59e0b; color: white;" onclick="event.stopPropagation(); markProcessedNoDeduct('${order.id}')" title="Mark as processed without changing inventory or recording a sale">🏷️ Mark Processed (No Deduct)</button>
+                                <button class="btn btn-sm" style="background: var(--error); color: white;" onclick="event.stopPropagation(); cancelPendingOrder('${order.id}')" title="Channel cancelled this order BEFORE it was processed — clear it without touching inventory">🚫 Cancel Order</button>
                             </div>
-                        ` : ''}
+                        ` : `
+                            <div class="order-actions" style="flex-wrap: wrap;">
+                                <button class="btn btn-sm" style="background: var(--error); color: white;" onclick="event.stopPropagation(); cancelProcessedOrder('${order.id}')" title="Channel cancelled this order AFTER processing — reverse the sale, restore inventory, push corrected quantities">↩ Cancel & Restore</button>
+                            </div>
+                        `}
                     </div>
                 </div>
             `;
@@ -8760,6 +8765,298 @@
 
 
     // === markOrderProcessed (line 8849) ===
+    // ════════════════════════════════════════════════════════════════════
+    // v4.6.8 (S86) — MANUAL CANCELLATION
+    // ════════════════════════════════════════════════════════════════════
+    // Two entry points, deliberately separate, because the two order states
+    // need OPPOSITE treatment:
+    //
+    //   PENDING   → nothing was deducted. Dismiss it. cancelPendingOrder().
+    //               Reversing here would INVENT STOCK.
+    //   PROCESSED → inventory is gone and sales_history has an active row.
+    //               cancelProcessedOrder() → reverseCancelledSale().
+    //
+    // Neither function contains cascade math. reverseCancelledSale() is
+    // byte-unchanged and remains the single implementation (S86 lock §3).
+    //
+    // WHY THIS EXISTS: Sync Hub has cancellation reconcilers for Etsy and Wix
+    // only. Wayfair has NONE — a Wayfair cancellation was never detected or
+    // reversed, leaving stock permanently missing and FR counting revenue we
+    // were never paid (B-S86-01). This covers every channel manually while
+    // the webhook path is built.
+    // ════════════════════════════════════════════════════════════════════
+
+    const CANCEL_TERMINAL_STATUSES = ['reversed', 'cancelled', 'shipped'];
+
+    /**
+     * PENDING order — cancel without deducting.
+     *
+     * Nothing reaches sales_history, so V2 and Financial Reporting are
+     * untouched. Uses a DISTINCT method marker ('cancelled_no_deduct') so this
+     * is never conflated with the backfill-driven 'no_deduct' case — see
+     * REG S86-02, where details.method proved unable to answer "did this
+     * deduct?" precisely because one marker carried two meanings.
+     */
+    async function cancelPendingOrder(orderId) {
+        const order = state.orders.all.find(o => o.id === orderId);
+        if (!order) { toast(`Order ${orderId} not found`, 'error'); return; }
+        if (order.processed) {
+            toast('Order already processed — use Cancel & Restore instead', 'error');
+            return;
+        }
+
+        const lines = (order.items || [])
+            .map(i => `  • ${i.sku} x${i.qty || 1}`).join('\n');
+
+        if (!confirm(
+            `🚫 CANCEL ORDER\n\n` +
+            `Order: ${orderId}\n` +
+            `Channel: ${order.channel}\n` +
+            `${lines}\n\n` +
+            `Nothing has been deducted for this order, so this will:\n` +
+            `  • Clear it from the pending list\n` +
+            `  • NOT change any inventory\n` +
+            `  • NOT record or reverse a sale\n\n` +
+            `Continue?`
+        )) return;
+
+        markOrderProcessed(orderId);
+
+        if (sbClient && sbConnected) {
+            try {
+                const { error } = await sbClient.from('processed_orders').upsert({
+                    order_id: orderId,
+                    channel: order.channel,
+                    processed_at: new Date().toISOString(),
+                    details: {
+                        device: localStorage.getItem('ccd_hostname') || 'SyncHub',
+                        method: 'cancelled_no_deduct',
+                        cancelled_via: 'sync_hub_manual',
+                        itemCount: order.items?.length || 0
+                    }
+                }, { onConflict: 'order_id' });
+                if (error) console.warn('[cancelPendingOrder] DB error:', error.message);
+            } catch (e) {
+                console.warn('[cancelPendingOrder] DB threw:', e.message);
+            }
+        }
+
+        addLog(`🚫 Order ${orderId} cancelled before processing (no deduction)`, 'warning');
+        logActivity('order', 'order_cancelled_pending', order.channel,
+            `🚫 Order ${orderId} cancelled before processing — no inventory change`,
+            {
+                orderId,
+                channel: order.channel,
+                items: (order.items || []).map(i => i.sku),
+                tool_version: SH_VERSION
+            }
+        );
+        toast(`Order ${orderId} cancelled (no deduction)`, 'success');
+    }
+
+    /**
+     * PROCESSED order — the channel cancelled after we deducted.
+     *
+     * Reverses every eligible sales_history row through the existing
+     * reverseCancelledSale(), which restores warehouse qty, the source-channel
+     * allocation and the ECOSYSTEM-011 peers, then queues the channel pushes.
+     *
+     * ── SKU TRAP (REG S86-04 / B-S31-04) ────────────────────────────────
+     * Rows are found by order_id ONLY. Do NOT match on the SKU shown in the
+     * order list: that is the CHANNEL-side SKU (item.sku), deliberately
+     * displayed so Mary can match it against the channel's own portal.
+     * sales_history stores the MASTER SKU (item.resolvedSku). For Wayfair
+     * these differ — CCDCWIG2489170 in the list vs G2489170-Set in the table —
+     * so a per-line SKU match finds nothing and silently reverses nothing.
+     * ────────────────────────────────────────────────────────────────────
+     */
+    async function cancelProcessedOrder(orderId) {
+        if (!sbClient || !sbConnected) {
+            toast('Not connected to the database', 'error');
+            return;
+        }
+
+        const order = state.orders.all.find(o => o.id === orderId);
+        const channel = order ? order.channel : 'unknown';
+
+        let rows = [];
+        try {
+            const { data, error } = await sbClient.from('sales_history')
+                .select('*').eq('order_id', orderId);
+            if (error) throw new Error(error.message);
+            rows = data || [];
+        } catch (e) {
+            toast(`Could not load sales for ${orderId}: ${e.message}`, 'error');
+            addLog(`❌ Cancel & Restore: sales lookup failed for ${orderId} — ${e.message}`, 'error');
+            return;
+        }
+
+        // No sale row → nothing was ever deducted. Reversing here would
+        // invent stock. This is the guard, not an edge case.
+        if (rows.length === 0) {
+            alert(
+                `No recorded sale for ${orderId}.\n\n` +
+                `Nothing was deducted for this order, so there is nothing to restore.\n\n` +
+                `If it still needs clearing, use "Mark Processed (No Deduct)".`
+            );
+            return;
+        }
+
+        const eligible = rows.filter(r =>
+            !CANCEL_TERMINAL_STATUSES.includes(String(r.status || '').toLowerCase()));
+
+        if (eligible.length === 0) {
+            alert(
+                `Order ${orderId} has ${rows.length} sale row(s), none eligible:\n\n` +
+                rows.map(r => `  • ${r.sku} — ${r.status || '(no status)'}`).join('\n') +
+                `\n\nAlready reversed, cancelled or shipped. Nothing to do.`
+            );
+            return;
+        }
+
+        const totalQty = eligible.reduce((n, r) => n + (parseInt(r.qty_sold) || 1), 0);
+        const detailLines = eligible.map(r =>
+            `  • ${r.sku} x${parseInt(r.qty_sold) || 1} @ $${(parseFloat(r.sale_price) || 0).toFixed(2)}`
+        ).join('\n');
+        const skippedCount = rows.length - eligible.length;
+
+        // ── PRE-IMAGE CAPTURE (S86) ─────────────────────────────────────
+        // There is NO undo for reverseCancelledSale anywhere in the
+        // ecosystem — not here, not in V2, not in the auto-reconcilers that
+        // have been running unattended since v4.4.18. If a real order is
+        // cancelled by mistake, recovery means restoring exact numbers.
+        // Capture them BEFORE anything mutates, and log them as their own
+        // activity_log entry immediately — a rollup written after the loop
+        // is lost if the loop throws or the tab closes, which is precisely
+        // the case where the pre-image is needed.
+        //
+        // Caller-only. reverseCancelledSale is unchanged.
+        // ─────────────────────────────────────────────────────────────────
+        const cancelStartedAt = new Date().toISOString();
+        const itemIds = [...new Set(eligible.map(r => r.item_id).filter(Boolean))];
+        let preImage = null;
+        try {
+            const { data: preItems, error: preErr } = await sbClient.from('items')
+                .select('id,sku,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty')
+                .in('id', itemIds);
+            if (preErr) throw new Error(preErr.message);
+            if (!preItems || preItems.length !== itemIds.length) {
+                throw new Error(`expected ${itemIds.length} item row(s), got ${(preItems || []).length}`);
+            }
+            preImage = {
+                capturedAt: cancelStartedAt,
+                items: preItems,
+                sales: eligible.map(r => ({
+                    sale_id: r.id,
+                    item_id: r.item_id,
+                    sku: r.sku,
+                    qty_sold: r.qty_sold,
+                    status: r.status || null,
+                    cancelled_at: r.cancelled_at || null,
+                    cancellation_reason: r.cancellation_reason || null,
+                    notes: r.notes || null
+                }))
+            };
+        } catch (e) {
+            // Cannot record the undo → do not perform the irreversible act.
+            // A failure reading items almost certainly means the writes
+            // would fail too; retry once it clears.
+            toast(`Aborted — could not capture recovery snapshot: ${e.message}`, 'error');
+            addLog(`⛔ Cancel & Restore ABORTED for ${orderId} — pre-image capture failed: ${e.message}. Nothing was changed.`, 'error');
+            alert(
+                `Cancel & Restore aborted.\n\n` +
+                `Could not read the current quantities, so there would be no way\n` +
+                `to undo this if it turned out to be a mistake.\n\n` +
+                `Reason: ${e.message}\n\n` +
+                `Nothing has been changed. Try again in a moment.`
+            );
+            return;
+        }
+
+        // Write the recovery snapshot FIRST, before a single mutation.
+        logActivity('order', 'order_cancel_preimage', channel,
+            `📷 Pre-cancellation snapshot for order ${orderId} — ${itemIds.length} item(s), ${eligible.length} sale row(s)`,
+            {
+                orderId,
+                channel,
+                cancelStartedAt,
+                preImage,
+                recovery: 'To undo: (1) set sync_queue rows for these item_ids with ' +
+                          "fields->>'trigger'='sale_cancellation' created at/after cancelStartedAt to " +
+                          "status='cancelled' — the edge cron fires every 2 minutes, so do this FIRST; " +
+                          '(2) restore each items row to preImage.items; (3) restore each sales_history ' +
+                          'row to preImage.sales; (4) re-push corrected quantities if the beat already fired.',
+                tool_version: SH_VERSION
+            }
+        );
+
+        if (!confirm(
+            `↩ CANCEL & RESTORE\n\n` +
+            `Order: ${orderId}\n` +
+            `Channel: ${channel}\n\n` +
+            `${detailLines}\n` +
+            (skippedCount > 0 ? `\n(${skippedCount} row(s) already terminal — skipped)\n` : '') +
+            `\nThis will:\n` +
+            `  • Mark ${eligible.length} sale row(s) CANCELLED\n` +
+            `  • Restore ${totalQty} unit(s) to the warehouse\n` +
+            `  • Restore channel allocations, including peer channels\n` +
+            `  • Queue corrected quantities to the channels\n\n` +
+            `WARNING: reverses the FULL quantity on each line. If the channel\n` +
+            `cancelled only PART of a line, stop and handle it manually.\n\n` +
+            `Continue?`
+        )) return;
+
+        const reason = `cancelled_via_${channel}_manual`;
+        let ok = 0;
+        const failures = [];
+
+        for (const sale of eligible) {
+            try {
+                const detail = await reverseCancelledSale(sale, reason);
+                ok++;
+                addLog(`🚫 Cancelled: ${detail.sku} x${detail.qty} on ${channel} — order ${orderId} restored (${detail.syncRowsQueued} push(es) queued)`, 'warning');
+            } catch (e) {
+                failures.push({ sale_id: sale.id, sku: sale.sku, error: e.message });
+                addLog(`❌ Cancel & Restore failed: ${sale.sku} order ${orderId} — ${e.message}`, 'error');
+            }
+        }
+
+        const summary = `Manual cancellation: order ${orderId} — ${ok} of ${eligible.length} row(s) reversed${failures.length ? `, ${failures.length} failed` : ''}`;
+        addLog(summary, failures.length ? 'error' : 'success');
+        if (ok > 0) {
+            addLog(`↩ Undo available: activity_log 'order_cancel_preimage' for ${orderId} @ ${cancelStartedAt}`, 'info');
+        }
+        logActivity('order', 'order_cancelled_manual', channel, `🚫 ${summary}`, {
+            orderId,
+            channel,
+            reason,
+            cancelStartedAt,
+            preImage,
+            rowsFound: rows.length,
+            rowsEligible: eligible.length,
+            rowsReversed: ok,
+            failures,
+            trigger: 'manual',
+            tool_version: SH_VERSION
+        });
+
+        if (ok > 0) {
+            try {
+                await loadFromSupabase();
+            } catch (e) {
+                console.warn('[cancelProcessedOrder] refresh failed:', e.message);
+            }
+            renderOrders();
+        }
+
+        toast(
+            failures.length
+                ? `${ok} reversed, ${failures.length} failed — see Log`
+                : `Order ${orderId} cancelled — ${totalQty} unit(s) restored`,
+            failures.length ? 'error' : 'success'
+        );
+    }
+
     /**
      * Mark order as processed without deducting inventory
      */
