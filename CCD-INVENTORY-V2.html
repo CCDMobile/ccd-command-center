@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.47</title>
+<title>CCD Inventory System v2.9.48</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.47 · activity_log channel fix (BM-4)</div>
+    <div class="login-version">v2.9.48 · sale-reversal pre-image (E-S86-01 route B)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.47</div>
+      <div class="topbar-version">v2.9.48</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1723,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.47';
+const TOOL_VERSION = '2.9.48';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -3729,10 +3729,117 @@ async function reverseSale(idx) {
     `• Restore ${qty} unit(s) to warehouse\n` +
     `• Restore channel allocations\n` +
     `• Push corrected qty to channels\n\n` +
+    `THIS CANNOT BE UNDONE from Inventory V2. A recovery snapshot is\n` +
+    `written to activity_log first, but restoring it is a manual\n` +
+    `database procedure.\n\n` +
     `Continue?`
   )) return;
 
   try {
+    // ══════════════════════════════════════════════════════════════════════
+    //   0. PRE-IMAGE CAPTURE   v2.9.48 (S88, E-S86-01 route B)
+    //
+    //   Caller-only. No mutation logic below this block is altered.
+    //
+    //   ORDERING. The items fetch was step 2, AFTER sales_history was
+    //   marked 'reversed'. A pre-image must snapshot pre-mutation state, so
+    //   it is hoisted here. Behaviour-identical on success; strictly safer
+    //   on failure — previously a failed fetch left an orphaned 'reversed'
+    //   sale with stock never restored, which is what step 4's own error
+    //   string ("sale IS marked reversed") warns about.
+    //
+    //   NOT logActivity(). That logger never throws and swallows every
+    //   error by design (v2.9.47, BM-4), so a snapshot written through it
+    //   cannot be confirmed and the abort guard below would be decorative.
+    //   Direct insert with an explicit error check. logActivity is
+    //   untouched — its ~40 other call sites keep their contract.
+    //
+    //   LOCAL STATE IS DISTRUSTED (REG S87-02). This function already
+    //   refetched the item for that reason; the sale row now gets the same
+    //   treatment, because a stale local status would put a wrong prior
+    //   value into the recovery record.
+    // ══════════════════════════════════════════════════════════════════════
+    const reverseStartedAt = new Date().toISOString();
+
+    // HOISTED from step 2. Body unchanged; `sku` added to the select so the
+    // snapshot is self-describing.
+    const { data: freshItem, error: fetchErr } = await sb.from('items')
+      .select('id,sku,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,is_bundle')
+      .eq('id', item.id).single();
+    if (fetchErr || !freshItem) throw new Error('Could not fetch current item data');
+
+    const { data: freshSale, error: saleReadErr } = await sb.from('sales_history')
+      .select('id,item_id,sku,qty_sold,status,reversed_at,notes')
+      .eq('id', sale.id).single();
+    if (saleReadErr || !freshSale) {
+      throw new Error(`Could not read the sale row: ${saleReadErr ? saleReadErr.message : 'not found'}`);
+    }
+
+    // Terminal-status guard. The ↩ Reverse button is suppressed at render
+    // time only; nothing in this body checked status, so a stale
+    // state.salesRows could reverse an already-reversed sale a second time
+    // and invent stock. The fresh read above makes the check free.
+    const REVERSE_TERMINAL_STATUSES = ['reversed', 'cancelled'];
+    if (REVERSE_TERMINAL_STATUSES.includes(String(freshSale.status || '').toLowerCase())) {
+      showCardStatus(`Sale ${sale.id} is already ${freshSale.status} — nothing to reverse. Refresh the card.`, 'error');
+      return;
+    }
+
+    const preImage = {
+      capturedAt: reverseStartedAt,
+      items: [{
+        id:                freshItem.id,
+        sku:               freshItem.sku,
+        qty:               freshItem.qty,
+        etsy_qty:          freshItem.etsy_qty,
+        wix_qty:           freshItem.wix_qty,
+        wayfair_qty:       freshItem.wayfair_qty,
+        treasuremarts_qty: freshItem.treasuremarts_qty
+      }],
+      sales: [{
+        sale_id:     freshSale.id,
+        item_id:     freshSale.item_id,
+        sku:         freshSale.sku,
+        qty_sold:    freshSale.qty_sold,
+        status:      freshSale.status || null,
+        reversed_at: freshSale.reversed_at || null,
+        notes:       freshSale.notes || null
+      }]
+    };
+
+    const { error: preErr } = await sb.from('activity_log').insert({
+      category: 'SALE',
+      action:   'sale_reversal_preimage',
+      channel:  channel || 'system',
+      summary:  `📷 Pre-reversal snapshot for sale ${sale.id} (${freshItem.sku} x${qty}, order ${orderId})`,
+      details: {
+        source: 'inventory_v2',
+        saleId: sale.id,
+        orderId,
+        channel,
+        reverseStartedAt,
+        preImage,
+        recovery:
+          'To undo: (1) set sync_queue rows for this item_id with ' +
+          "fields->>'trigger'='sale_reversal' created at/after reverseStartedAt " +
+          "to status='cancelled' — the edge cron fires every 2 minutes, so do " +
+          'this FIRST; (2) restore the items row to preImage.items[0]; ' +
+          '(3) restore the sales_history row to preImage.sales[0] (status, ' +
+          'reversed_at, notes); (4) re-push corrected quantities if the beat ' +
+          'already fired.',
+        tool_version: TOOL_VERSION
+      },
+      sku: freshItem.sku,
+      device: 'desktop',
+      user_name: 'Paul'
+    });
+
+    if (preErr) {
+      // Cannot record the undo -> do not perform the irreversible act.
+      showCardStatus(`Aborted — could not write the recovery snapshot: ${preErr.message}. Nothing was changed.`, 'error');
+      return;
+    }
+
     // ── 1. Mark sale as reversed ──
     const { error: saleErr } = await sb.from('sales_history').update({
       status: 'reversed',
@@ -3741,11 +3848,7 @@ async function reverseSale(idx) {
     }).eq('id', sale.id);
     if (saleErr) throw new Error(`Failed to mark sale: ${saleErr.message}`);
 
-    // ── 2. Fetch fresh item data ──
-    const { data: freshItem, error: fetchErr } = await sb.from('items')
-      .select('id,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku,is_bundle')
-      .eq('id', item.id).single();
-    if (fetchErr || !freshItem) throw new Error('Could not fetch current item data');
+    // ── 2. Fetch fresh item data ── HOISTED to step 0 (v2.9.48).
 
     // ── 3. Restore quantities ──
     const qtyUpdates = { qty: pi(freshItem.qty) + qty };

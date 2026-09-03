@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.8</title>
+    <title>CCD Sync Hub v4.6.10</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.8 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.10 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -454,7 +454,7 @@
     <!-- TAB BAR -->
     <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('orders')" id="tabOrders">📦 Orders <span class="badge" id="ordersBadge" style="display:none">0</span></button>
-        <button class="tab-btn" onclick="switchTab('review')" id="tabReview" title="Durable pending-order intake awaiting approval (v4.6.0 / ADR-013)">📥 Review <span class="badge" id="reviewBadge" style="display:none">0</span></button>
+        <button class="tab-btn" style="display:none" onclick="switchTab('review')" id="tabReview" title="Durable pending-order intake awaiting approval (v4.6.0 / ADR-013)">📥 Review <span class="badge" id="reviewBadge" style="display:none">0</span></button>
         <button class="tab-btn" onclick="switchTab('queue')" id="tabQueue">📤 Push Queue <span class="badge" id="queueBadge" style="display:none">0</span><span class="badge" id="failedBadge" style="display:none;background:var(--error);color:#fff;margin-left:4px;" title="Pushes that permanently failed in the last 24h — click Push Queue tab to review">0</span></button>
         <button class="tab-btn" onclick="switchTab('connections')" id="tabConnections">📡 Connections</button>
         <button class="tab-btn" onclick="switchTab('wayfair')" id="tabWayfair">🏠 Wayfair</button>
@@ -890,7 +890,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.8';
+    const SH_VERSION = 'v4.6.10';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1067,7 +1067,8 @@
             etsy: [],
             wix: [],
             wayfair: [],
-            processedIds: new Set()
+            processedIds: new Set(),
+            cancelledIds: new Set()   // B-S86-05 (S87)
         },
         // v4.2.0: queue removed — all pushes go through Supabase sync_queue
         log: [],
@@ -1854,7 +1855,12 @@
     }
     
     function addLog(message, type = 'info') {
-        const time = new Date().toLocaleTimeString();
+        // v4.6.10 (E-S89-01): millisecond precision. toLocaleTimeString() gives
+        // second resolution only, which at S89 made two invocations 120ms apart
+        // read as "4:16:34 / 4:16:35" — indistinguishable from two poll cycles,
+        // and it cost a wrong first diagnosis. Ordering evidence needs ms.
+        const _d = new Date();
+        const time = `${_d.toLocaleTimeString()}.${String(_d.getMilliseconds()).padStart(3, '0')}`;
         state.log.unshift({ time, message, type });
         if (state.log.length > 500) state.log = state.log.slice(0, 500);
         
@@ -1950,6 +1956,18 @@
                 console.log(`[Orders] Restored ${orders.length} orders from storage`);
             }
         } catch (e) { console.warn('Could not load orders from storage:', e.message); }
+
+        // B-S86-05 (S87) — cancellation is client-side state, so unlike
+        // processedIds (rehydrated from processed_orders at ~line 1341) it must
+        // be read back from localStorage. Own try block: a bad cancelled list
+        // must never cost us the order list.
+        try {
+            const savedCancelled = localStorage.getItem('ccd_sync_hub_cancelled_orders');
+            if (savedCancelled) {
+                state.orders.cancelledIds = new Set(JSON.parse(savedCancelled));
+                console.log(`[Orders] Restored ${state.orders.cancelledIds.size} cancelled order ID(s) from storage`);
+            }
+        } catch (e) { console.warn('Could not load cancelled order IDs:', e.message); }
     }
     
     // ============================================================
@@ -4424,6 +4442,19 @@
         // Rule 2: Cap each online channel independently at (warehouse − TM).
         // v4.4.6: etsy and wix are now independent — each checked separately against the cap.
         // v4.3.4: Only cap channels that have listing IDs.
+        // ── B-S87-02 (S87) — RE-READ AFTER PEER-DECREMENT ────────────────────────
+        // etsyQty / wixQty were captured at declaration (~line 4302), BEFORE the
+        // ECOSYSTEM-011 block above mutated channels.etsy / channels.wix. Rule 2
+        // then compared the STALE values, emitting a duplicate change entry and —
+        // where 0 < (oldQty - availableForOnline) < deductedQty — RAISING the
+        // channel back up, partially undoing the peer decrement. That is an
+        // oversell path. Impossible at deductedQty = 1 (the interval holds no
+        // integer); live from 2 upward, and prod carries 211 multi-unit online
+        // sales. wayfairQty is read fresh below and was never affected.
+        // Strict no-op when the peer-decrement block did not run.
+        etsyQty = parseInt(channels.etsy) || 0;
+        wixQty  = parseInt(channels.wix)  || 0;
+
         if (hasEtsyId && etsyQty > availableForOnline) {
             adjustments.changes.push({ channel: 'etsy', from: etsyQty, to: availableForOnline, reason: 'exceeds warehouse' });
             channels.etsy = availableForOnline;
@@ -4718,7 +4749,33 @@
      * Supports collision detection with auto-retry for auto-process mode
      * NOW INCLUDES: SKU validation (GAP 8) and Duplicate detection (GAP 9)
      */
+    // v4.6.10 (B-S89-02): RE-ENTRANCY GUARD.
+    // processOrderInner's only duplicate defence is `await isOrderProcessed()`
+    // at its head, but the processedIds Set is not written until
+    // markOrderProcessed()/persistProcessedOrder() at the END of the chain.
+    // Two entries inside that window both read false and both deduct. Observed
+    // in production 2026-09-02: ETSY-4162271925 processed twice 120ms apart,
+    // two sales_history rows, two cascade pairs, double deduction.
+    // The guard is claimed BEFORE the first await, so check-and-add is atomic
+    // under the single-threaded event loop. Released in `finally` so a throw
+    // cannot wedge the order permanently.
+    // Covers all four call sites (manual button, cascade, auto-process, bulk).
     async function processOrder(orderId, isAutoProcess = false) {
+        const inFlight = state.orders._inFlight || (state.orders._inFlight = new Set());
+        if (inFlight.has(orderId)) {
+            console.warn(`[Re-entrancy ${SH_VERSION}] Blocked concurrent processOrder for ${orderId}`);
+            addLog(`⏭️ Re-entrant process blocked: ${orderId}`, 'warning');
+            return;
+        }
+        inFlight.add(orderId);
+        try {
+            return await processOrderInner(orderId, isAutoProcess);
+        } finally {
+            inFlight.delete(orderId);
+        }
+    }
+
+    async function processOrderInner(orderId, isAutoProcess = false) {
         const order = state.orders.all.find(o => o.id === orderId);
         if (!order) {
             toast('Order not found', 'error');
@@ -5077,7 +5134,21 @@
                     
                     // Log each channel adjustment individually for detailed tracking
                     if (adjustResult.adjusted && adjustResult.changes.length > 0) {
-                        addLog(`🔄 Auto-adjusted channels for ${sku}: ${adjustResult.changes.map(c => `${c.channel} ${c.from}→${c.to}`).join(', ')}`, 'info');
+                        // v4.6.10 (B-S89-03): DISPLAY-ONLY de-duplication. The
+                        // changes array can carry the same channel twice, which
+                        // rendered as "wix 13→12, wayfair 13→12, wix 13→12" and
+                        // read as a duplicate write. It is not — sync_queue had
+                        // exactly two cascade rows. Verified against prod rows
+                        // 1770/1771. adjustResult.changes is NOT mutated; only
+                        // the log string is collapsed.
+                        const _seenAdj = new Set();
+                        const _dispAdj = adjustResult.changes.filter(c => {
+                            const k = `${c.channel}|${c.from}|${c.to}`;
+                            if (_seenAdj.has(k)) return false;
+                            _seenAdj.add(k);
+                            return true;
+                        });
+                        addLog(`🔄 Auto-adjusted channels for ${sku}: ${_dispAdj.map(c => `${c.channel} ${c.from}→${c.to}`).join(', ')}`, 'info');
                         
                         // Create detailed activity log entry for channel adjustments
                         logActivity('inventory', 'channel_auto_adjust', order.channel,
@@ -6759,12 +6830,20 @@
 
         addLog('🔗 Starting Shippo reconciliation...', 'info');
 
-        // Fetch all unmatched shippo transactions
+        // Fetch all unmatched shippo transactions.
+        // v4.6.10 (B-S89-04): was `.not('order_id','is',null)`, which made every
+        // null-order_id row INVISIBLE — not matched, and not counted as
+        // unmatched either, so the tool reported nothing wrong. 147 such rows
+        // ($1,289.54 of real label cost) had accumulated back to 2025-01-21.
+        // Most DO carry a usable number in order_number_raw: the description
+        // reads "Order 4160770879" and the regex extracted it, but
+        // parseShippoOrderId could not infer a channel, so order_id stayed null.
+        // Widened to include rows where EITHER identifier is present.
         const { data: unmatched, error: fetchErr } = await sbClient
             .from('shippo_transactions')
             .select('*')
             .eq('matched_to_sale', false)
-            .not('order_id', 'is', null);
+            .or('order_id.not.is.null,order_number_raw.not.is.null');
 
         if (fetchErr) {
             addLog(`❌ Failed to fetch unmatched Shippo records: ${fetchErr.message}`, 'error');
@@ -6783,28 +6862,48 @@
             try {
                 // Find matching sale by order_id
                 // v4.1.4: Also fetch sku to populate on shippo record
-                let sales;
-                const { data: directMatch, error: saleErr } = await sbClient
-                    .from('sales_history')
-                    .select('id, sku')
-                    .eq('order_id', shippo.order_id)
-                    .limit(1);
+                // v4.6.10 (B-S89-05): TERMINAL STATUS GUARD. Both lookups used
+                // `.limit(1)` with NO status filter, so on a multi-line or
+                // reversed order the label could attach to a reversed row and
+                // leave the live sale with null shipping. Confirmed on prod:
+                // ETSY-4162271925 has two sales_history rows, and the Shippo
+                // match landed on 5031 (later reversed) not 5032 (the live
+                // sale) — repaired by hand at S89. Mirrors REVERSE_TERMINAL_
+                // STATUSES in V2 v2.9.48.
+                const SHIPPO_TERMINAL_STATUSES = ['reversed', 'cancelled'];
 
-                if (saleErr) { errors++; continue; }
-                sales = directMatch;
+                let sales;
+                if (shippo.order_id) {
+                    const { data: directMatch, error: saleErr } = await sbClient
+                        .from('sales_history')
+                        .select('id, sku')
+                        .eq('order_id', shippo.order_id)
+                        .not('status', 'in', `(${SHIPPO_TERMINAL_STATUSES.join(',')})`)
+                        .limit(1);
+
+                    if (saleErr) { errors++; continue; }
+                    sales = directMatch;
+                }
                 
                 // v4.1.4: Fallback for Wix — order_id is WIX-{uuid} in sales but WIX-{number} in Shippo
-                // Match on order_number_raw (the sequential number) instead
-                if ((!sales || sales.length === 0) && shippo.order_number_raw && shippo.sale_channel === 'wix') {
-                    const { data: numberMatch, error: numErr } = await sbClient
+                // Match on order_number_raw (the sequential number) instead.
+                // v4.6.10 (B-S89-04): UNGATED from sale_channel === 'wix'. The
+                // channel constraint made this path unreachable for the 84 Etsy
+                // rows that have a number but no channel. Verified safe at S89:
+                // every duplicate order_number in sales_history has
+                // count(distinct sale_channel) = 1, so there are no
+                // cross-channel collisions to disambiguate.
+                if ((!sales || sales.length === 0) && shippo.order_number_raw) {
+                    let numQ = sbClient
                         .from('sales_history')
                         .select('id, sku')
                         .eq('order_number', shippo.order_number_raw)
-                        .eq('sale_channel', 'wix')
-                        .limit(1);
+                        .not('status', 'in', `(${SHIPPO_TERMINAL_STATUSES.join(',')})`);
+                    if (shippo.sale_channel) numQ = numQ.eq('sale_channel', shippo.sale_channel);
+                    const { data: numberMatch, error: numErr } = await numQ.limit(1);
                     if (!numErr && numberMatch && numberMatch.length > 0) {
                         sales = numberMatch;
-                        console.log(`[Shippo] Wix reconciled via order_number: ${shippo.order_number_raw}`);
+                        console.log(`[Shippo] Reconciled via order_number: ${shippo.order_number_raw}${shippo.sale_channel ? ' (' + shippo.sale_channel + ')' : ' (channel unknown)'}`);
                     }
                 }
                 
@@ -7626,7 +7725,10 @@
                 const stockColor = product && product.qty >= (item.qty || 1) ? 'var(--success)' : 'var(--error)';
                 return `<span style="font-size: 0.75rem; color: ${stockColor};">${item.sku}: ${inStock} in stock</span>`;
             }).join(' • ');
-            
+
+            // B-S86-05 (S87) — cancelled outranks processed in the row display.
+            const _cancelled = !!(state.orders.cancelledIds && state.orders.cancelledIds.has(order.id));
+
             return `
                 <div class="order-item ${order.processed ? 'processed' : ''}">
                     <div class="order-header" onclick="toggleOrderDetail(${idx})">
@@ -7638,13 +7740,13 @@
                             <span>${order.items?.length || 0} items</span>
                             <span>$${(order.total || 0).toFixed(2)}</span>
                             <span>${order.date ? new Date(order.date).toLocaleDateString() : ''}</span>
-                            ${order.processed ? '<span style="color: var(--success);">✅ Processed</span>' : '<span style="color: var(--warning);">⏳ Pending</span>'}
+                            ${_cancelled ? '<span style="color: var(--error);">🚫 Cancelled</span>' : (order.processed ? '<span style="color: var(--success);">✅ Processed</span>' : '<span style="color: var(--warning);">⏳ Pending</span>')}
                         </div>
                     </div>
                     <div class="order-items" id="orderDetail-${idx}">
                         ${itemsHtml}
                         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">${stockHtml}</div>
-                        ${!order.processed ? `
+                        ${_cancelled ? '' : (!order.processed ? `
                             <div class="order-actions" style="flex-wrap: wrap;">
                                 <button class="btn btn-sm btn-success" onclick="event.stopPropagation(); processOrder('${order.id}')" title="Deduct inventory, record sale, queue channel updates (don't push yet)">✅ Process & Deduct Only</button>
                                 <button class="btn btn-sm" style="background: var(--info); color: white;" onclick="event.stopPropagation(); processOrderWithCascade('${order.id}')" title="Deduct inventory, record sale, AND push qty updates to all channels">📤 Process, Deduct & Push to Channels</button>
@@ -7655,7 +7757,7 @@
                             <div class="order-actions" style="flex-wrap: wrap;">
                                 <button class="btn btn-sm" style="background: var(--error); color: white;" onclick="event.stopPropagation(); cancelProcessedOrder('${order.id}')" title="Channel cancelled this order AFTER processing — reverse the sale, restore inventory, push corrected quantities">↩ Cancel & Restore</button>
                             </div>
-                        `}
+                        `)}
                     </div>
                 </div>
             `;
@@ -8336,13 +8438,21 @@
             
             if (result && result.success) {
                 // Mark as completed
+                // v4.6.10 (B-S89-01): CLEAR the stale error_message on success.
+                // A row that failed once and then succeeded on retry kept its
+                // old error string while reading status='completed'. Any query
+                // filtering on `error_message is not null` then reports healthy
+                // rows as broken. Observed on prod sync_queue row 1775.
                 await sbClient.from('sync_queue').update({
                     status: 'completed',
+                    error_message: null,
                     processed_at: new Date().toISOString()
                 }).eq('id', row.id);
                 
                 console.log(`✅ [Sync Queue] ${channel} push succeeded for ${fields.sku}: ${result.message || 'OK'}`);
-                addLog(`✅ ${channel.toUpperCase()} push: ${fields.sku} — ${result.message || 'Success'}`, 'success');
+                // v4.6.10 (E-S89-02): queue row id in the log line so an entry
+                // can be correlated to its sync_queue row without inference.
+                addLog(`✅ ${channel.toUpperCase()} push: ${fields.sku} [q${row.id}] — ${result.message || 'Success'}`, 'success');
                 
                 logActivity('sync', 'queue_push_success', channel,
                     `✅ ${fields.sku}: ${channel} push via sync_queue`,
@@ -8365,7 +8475,7 @@
                 }).eq('id', row.id);
                 
                 console.warn(`⚠️ [Sync Queue] ${channel} push failed for ${fields.sku}: ${result?.error} (retry ${newRetry}/${SYNC_QUEUE_MAX_RETRIES})`);
-                addLog(`⚠️ ${channel.toUpperCase()} push failed: ${fields.sku} — ${result?.error} (retry ${newRetry})`, 'warning');
+                addLog(`⚠️ ${channel.toUpperCase()} push failed: ${fields.sku} [q${row.id}] — ${result?.error} (retry ${newRetry})`, 'warning');
                 
                 if (newStatus === 'failed') {
                     logActivity('error', 'queue_push_failed', channel,
@@ -8817,10 +8927,16 @@
             `  • Clear it from the pending list\n` +
             `  • NOT change any inventory\n` +
             `  • NOT record or reverse a sale\n\n` +
+            // E-S87-01 (S87): no operator-facing undo exists on either cancel
+            // branch. Say so at the point of decision rather than leaving it to
+            // be discovered afterwards.
+            `THIS CANNOT BE UNDONE from Sync Hub. Recovery requires a manual\n` +
+            `database procedure.\n\n` +
             `Continue?`
         )) return;
 
         markOrderProcessed(orderId);
+        markOrderCancelled(orderId);   // B-S86-05 (S87)
 
         if (sbClient && sbConnected) {
             try {
@@ -8895,9 +9011,16 @@
         // invent stock. This is the guard, not an edge case.
         if (rows.length === 0) {
             alert(
+                // B-S87-04 (S87): the previous text advised "Mark Processed
+                // (No Deduct)" — a button that renders ONLY on pending rows.
+                // This branch is reachable only from a PROCESSED row, so the
+                // operator was told to click something not on screen, in order
+                // to clear an order that is already cleared.
                 `No recorded sale for ${orderId}.\n\n` +
-                `Nothing was deducted for this order, so there is nothing to restore.\n\n` +
-                `If it still needs clearing, use "Mark Processed (No Deduct)".`
+                `Nothing was deducted for this order, so there is nothing to restore ` +
+                `and it is already cleared from the pending list.\n\n` +
+                `If the channel cancelled this order, no further action is needed — ` +
+                `inventory was never touched.`
             );
             return;
         }
@@ -9003,6 +9126,9 @@
             `  • Queue corrected quantities to the channels\n\n` +
             `WARNING: reverses the FULL quantity on each line. If the channel\n` +
             `cancelled only PART of a line, stop and handle it manually.\n\n` +
+            // E-S87-01 (S87)
+            `THIS CANNOT BE UNDONE from Sync Hub. A pre-image is written to\n` +
+            `activity_log first, but recovery is a manual database procedure.\n\n` +
             `Continue?`
         )) return;
 
@@ -9041,6 +9167,7 @@
         });
 
         if (ok > 0) {
+            markOrderCancelled(orderId);   // B-S86-05 (S87)
             try {
                 await loadFromSupabase();
             } catch (e) {
@@ -9095,6 +9222,29 @@
         );
 
         toast(`Order ${orderId} marked as processed (no deduction)`, 'success');
+    }
+
+    // ── B-S86-05 (S87) — CANCELLED IS A DISTINCT UI STATE ────────────────────
+    // The Orders row branched on order.processed alone, so a cancelled order
+    // rendered "✅ Processed" and still offered ↩ Cancel & Restore. The guards
+    // refuse a second run, so nothing unsafe occurred — it simply read wrong,
+    // and it read wrong in the direction that invites a second click.
+    //
+    // Tracked client-side on purpose. Load reads only order_id from
+    // processed_orders (~line 1341), so the DB carries no cancellation signal
+    // the UI can see, and merging a marker into details would be a
+    // last-write-wins upsert on the exact field REG S86-02 documents as unable
+    // to answer a question like this. Mirrors processedIds instead.
+    function markOrderCancelled(orderId) {
+        state.orders.cancelledIds.add(orderId);
+        try {
+            localStorage.setItem('ccd_sync_hub_cancelled_orders',
+                JSON.stringify([...state.orders.cancelledIds]));
+        } catch (e) {
+            console.warn('[markOrderCancelled] persist failed:', e.message);
+        }
+        updateOrderStats();
+        renderOrders();
     }
 
     function markOrderProcessed(orderId) {
