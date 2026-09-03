@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.10</title>
+    <title>CCD Sync Hub v4.6.11</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
         /* ============================================================
@@ -425,7 +425,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.10 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.11 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -890,7 +890,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.10';
+    const SH_VERSION = 'v4.6.11';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -7124,9 +7124,19 @@
                             ? '<span style="color: var(--success);">✅</span>'
                             : '<span style="color: var(--warning);">⏳</span>';
                         const channelBadge = r.sale_channel === 'etsy' ? '🛍️' : r.sale_channel === 'wix' ? '🌐' : '';
+                        // v4.6.11 (B-S89-06): DISPLAY-ONLY fallback. Rows matched
+                        // via the order_number_raw path (v4.6.10 / B-S89-04) show the
+                        // green matched badge but rendered "No order ID", because this
+                        // column reads order_id, which stays null for them --
+                        // parseShippoOrderId cannot infer a channel prefix from a bare
+                        // number. Fall back to order_number_raw, marked with a leading
+                        // # so it is not mistaken for a resolved channel order_id.
+                        // Rows with a null item_description (F-S89-04) still read
+                        // "No order ID" -- correct, they are genuinely unrecoverable.
+                        // NO query change: the fetch is already .select('*').
                         return `<tr style="border-bottom: 1px solid var(--border);">
                             <td style="padding: 6px 8px;">${date}</td>
-                            <td style="padding: 6px 8px;">${channelBadge} ${r.order_id || '<span style="color:var(--text-dim)">No order ID</span>'}</td>
+                            <td style="padding: 6px 8px;">${channelBadge} ${r.order_id || (r.order_number_raw ? '<span title="Matched via order number - no channel-prefixed order_id">#' + r.order_number_raw + '</span>' : '<span style="color:var(--text-dim)">No order ID</span>')}</td>
                             <td style="padding: 6px 8px;">${r.carrier || '—'}</td>
                             <td style="padding: 6px 8px; font-family: monospace; font-size: 0.75rem;">${r.tracking_number || '—'}</td>
                             <td style="padding: 6px 8px;">${r.recipient_name || '—'}${r.recipient_state ? ', ' + r.recipient_state : ''}</td>
