@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.49</title>
+<title>CCD Inventory System v2.9.50</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.49 · write-off loss message + audit entry (V2-B02)</div>
+    <div class="login-version">v2.9.50 · two undefined-function ReferenceErrors (S91 no-undef sweep)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.49</div>
+      <div class="topbar-version">v2.9.50</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1723,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.49';
+const TOOL_VERSION = '2.9.50';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -7369,7 +7369,11 @@ async function woLogOpenItem(sku) {
   const item = state.items.find(i => i.sku === sku);
   if (item) {
     state.shipReturnTab = 'writeoffs';
-    openCard(item.id);
+    // v2.9.50 (S91): was `openCard`, which is defined NOWHERE in this file — a
+    // ReferenceError, so clicking a SKU in the Write-Off Log never opened the card.
+    // Note state.shipReturnTab was already mutated above, so the throw left that
+    // side effect behind. onRowClick(id) is the canonical card opener (L2469).
+    onRowClick(item.id);
   }
 }
 
@@ -9651,7 +9655,15 @@ function importDeleteRow(idx) {
   const it = importData.items[idx];
   if (!it) return;
   if (it._imported) {
-    toast('This row already imported — cannot remove from review', 'error');
+    // v2.9.50 (S91): was `toast`, which is defined NOWHERE in this file — a
+    // ReferenceError. It failed safe (the throw exited before the splice, so the
+    // row was not removed) but the user got no message and a console error instead.
+    // Uses the import flow's own status element, matching importAllItems().
+    const status = $('impStatus');
+    if (status) {
+      status.textContent = '\u26a0 This row was already imported \u2014 it cannot be removed from review.';
+      status.style.color = 'var(--red)';
+    }
     return;
   }
   importData.items.splice(idx, 1);
