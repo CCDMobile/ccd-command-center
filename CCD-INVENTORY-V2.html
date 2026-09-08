@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.50</title>
+<title>CCD Inventory System v2.9.51</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.50 · two undefined-function ReferenceErrors (S91 no-undef sweep)</div>
+    <div class="login-version">v2.9.51 · Write-Off Log opens the item's Write-Off tab; back-button label derived from return context (B-S92-01); false "Save *" on cards opened from Shipping History</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.50</div>
+      <div class="topbar-version">v2.9.51</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1723,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.50';
+const TOOL_VERSION = '2.9.51';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2544,6 +2544,22 @@ async function onRowClick(itemId) {
 
   // Render first tab
   switchSub('overview');
+
+  // B-S92-01 (v2.9.51, S92): derive the back-button label from the return
+  // context, in ONE place, on every card open. Previously the label was static
+  // HTML (L767) and was reassigned only by the shipping path, and never reset —
+  // so once you entered a card from Shipping History, every card opened
+  // afterwards still read "Back to Shipping History" for the rest of the
+  // session. The v2.9.50 write-off path set state.shipReturnTab without
+  // touching the label at all, so the button said "Inventory" while
+  // _closeCard() (L2778) routed to writeoffsView.
+  if ($('cardBackBtn')) {
+    const backLabels = {
+      shipping:  '\u2190 Back to Shipping History',
+      writeoffs: '\u2190 Back to Write-Off Log'
+    };
+    $('cardBackBtn').textContent = backLabels[state.shipReturnTab] || '\u2190 Back to Inventory';
+  }
 
   logActivity('INVENTORY','ITEM_VIEW',null,`Viewed ${item.sku}`,{},item.sku);
 
@@ -7373,7 +7389,17 @@ async function woLogOpenItem(sku) {
     // ReferenceError, so clicking a SKU in the Write-Off Log never opened the card.
     // Note state.shipReturnTab was already mutated above, so the throw left that
     // side effect behind. onRowClick(id) is the canonical card opener (L2469).
-    onRowClick(item.id);
+    // v2.9.51 (S92): AWAIT the open, then land on the item's Write-Off tab
+    // (Paul, S92). onRowClick is async; the pre-existing shipping path calls
+    // switchSub after `await` for exactly this reason.
+    // cardRendered is reset to false first so switchSub() treats this as part
+    // of the initial render rather than a user tab switch — otherwise
+    // markUnsaved() (L2905) paints a false "Save *" on a card nobody edited.
+    // skipCapture=true: nothing has been edited yet, so there is nothing to
+    // capture from the overview form.
+    await onRowClick(item.id);
+    state.cardRendered = false;
+    switchSub('writeoff', true);
   }
 }
 
@@ -10822,9 +10848,17 @@ async function openItemShippingTab(sku, shipIdx) {
   const match = state.items.find(i => i.sku === sku);
   if (match) {
     await onRowClick(match.id);
-    // Set back button to return to shipping history
-    if ($('cardBackBtn')) $('cardBackBtn').textContent = '← Back to Shipping History';
-    switchSub('shipping');
+    // v2.9.51 (S92): the explicit cardBackBtn assignment that stood here is
+    // REMOVED. onRowClick now derives the label from state.shipReturnTab in one
+    // place (B-S92-01, L2548), which already yields "Back to Shipping History"
+    // here. Setting it in two places is the exact defect class B-S92-01 fixed —
+    // the two copies drift.
+    // Same guard as the write-off path: reset cardRendered so switchSub() reads
+    // this as part of the initial render, not a user tab switch. Without it,
+    // markUnsaved() painted a false "Save *" on every card opened from Shipping
+    // History — a card nobody had edited. skipCapture=true for the same reason.
+    state.cardRendered = false;
+    switchSub('shipping', true);
     // Pre-fill ship-to from previous shipment
     if (shipRow) {
       setTimeout(() => {
