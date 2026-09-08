@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.53</title>
+<title>CCD Inventory System v2.9.54</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.53 · Open Item actually opens the item (B-S92-04); Write-Off Log table fits (Status/Action no longer scroll off); record count reconciled with the tiles</div>
+    <div class="login-version">v2.9.54 · CWI SKU pattern no longer drops hyphenated or two-letter SKUs (V2-B03a); invoice # no longer parses as “Total” and is correctable after save (V2-B03b); invoice header totals now stored (V2-B03c); shipped / received / short recorded separately (V2-B11); purchase-history save no longer targets two columns that do not exist (B-S93-01)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.53</div>
+      <div class="topbar-version">v2.9.54</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1552,7 +1552,9 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
               <th style="width:30px;"></th>
               <th>SKU</th>
               <th>Description</th>
-              <th>Qty</th>
+              <th title="Quantity billed on the invoice">Ord</th>
+              <th title="Quantity actually received at scan-in">Recv</th>
+              <th title="Ordered minus received - breakage or shortfall">Short</th>
               <th>Unit Price</th>
               <th>IB %</th>
               <th>Tariff</th>
@@ -1723,7 +1725,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.53';
+const TOOL_VERSION = '2.9.54';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2937,7 +2939,13 @@ function switchSub(tab, skipCapture) {
   };
   if (renderers[tab]) renderers[tab](item);
   // Mark unsaved only if this isn't the initial card load
-  if (state.cardRendered) markUnsaved();
+  // v2.9.54 (F-S92-03): was `if (state.cardRendered)`, which is true after
+  // the first render, so clicking ANY card tab by hand painted "Save *" with
+  // nothing edited. hasUnsavedEdits is set only by the real input listener
+  // (L2781) and by the channel-qty handler, so gating on it makes the marker
+  // mean what it says. Cosmetic, but it was training the user to ignore a
+  // warning that sometimes matters, on Mary's daily path.
+  if (state.cardRendered && state.hasUnsavedEdits) markUnsaved();
   state.cardRendered = true;
 }
 
@@ -4136,14 +4144,14 @@ async function savePurchaseEdits(sku) {
 
     // 2. B1 recompute — re-read the FULL history from the DB, never trust the DOM
     const { data: all, error: rErr } = await sb.from('invoice_items')
-      .select('quantity,qty_ordered,unit_price,unit_wholesale_price,ib_shipping_pct')
+      .select('qty_ordered,unit_wholesale_price,ib_shipping_pct')
       .eq('sku', sku);
     if (rErr) throw rErr;
 
     let totQty = 0, totCost = 0, ibWeighted = 0;
     (all || []).forEach(r => {
-      const q = pi(r.qty_ordered ?? r.quantity) || 0;
-      const c = pf(r.unit_wholesale_price ?? r.unit_price) || 0;
+      const q = pi(r.qty_ordered) || 0;
+      const c = pf(r.unit_wholesale_price) || 0;
       totQty     += q;
       totCost    += q * c;
       ibWeighted += q * (pf(r.ib_shipping_pct) || 0);
@@ -4195,6 +4203,50 @@ async function savePurchaseEdits(sku) {
   }
 }
 
+// v2.9.54 (V2-B03b): an invoice's number and date could be corrected in the
+// import review but NOWHERE afterwards. Invoice 199 carries the parser artefact
+// "Total" as its number and could not be repaired from the UI at all.
+//
+// THE DUPLICATE CHECK IS NOT COSMETIC. importAllItems resolves an existing
+// invoice with .eq('invoice_number', n).maybeSingle(), and maybeSingle() ERRORS
+// when two rows share a value. Letting a duplicate through here would break the
+// next import of either invoice, so the edit refuses rather than warns.
+async function saveInvoiceHeaderField(invoiceId, field, rawValue, el) {
+  if (!sb || !invoiceId) return;
+  const value = (rawValue || '').trim();
+  const prev  = el ? (el.dataset.prev || '') : '';
+  const revert = () => { if (el) el.value = prev; };
+  if (value === prev) return;
+  try {
+    const patch = {};
+    if (field === 'invoice_number') {
+      if (!value) { alert('Invoice # cannot be empty.'); revert(); return; }
+      const { data: clash, error: cErr } = await sb.from('invoices')
+        .select('id').eq('invoice_number', value).neq('id', invoiceId).limit(1);
+      if (cErr) throw cErr;
+      if (clash && clash.length) {
+        alert('Invoice # "' + value + '" already belongs to another invoice.\n\n' +
+              'Import resolves invoices by number, so two rows cannot share one.');
+        revert(); return;
+      }
+      patch.invoice_number = value;
+    } else if (field === 'order_date') {
+      patch.order_date = value || null;
+    } else { return; }
+    patch.updated_at = new Date().toISOString();
+    const { error } = await sb.from('invoices').update(patch).eq('id', invoiceId);
+    if (error) throw error;
+    if (el) el.dataset.prev = value;
+    logActivity('INVENTORY', 'INVOICE_HEADER_EDITED', null,
+      `Invoice ${invoiceId}: ${field} "${prev}" \u2192 "${value}"`,
+      { invoice_id: invoiceId, field, old_value: prev, new_value: value });
+    if (state.currentItem) await renderPurchases(state.currentItem);
+  } catch (e) {
+    alert('Invoice header update failed: ' + e.message);
+    revert();
+  }
+}
+
 async function renderPurchases(item) {
   $('sub-purchases').innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading purchases...</div>';
   try {
@@ -4202,25 +4254,33 @@ async function renderPurchases(item) {
     const { data, error } = await sb.from('invoice_items').select('*,invoices(*)').eq('sku', item.sku).order('created_at', { ascending: false }).limit(100);
     if (error) throw error;
     const rows = data || [];
-    // Fallback: V2 writes 'quantity', backfill writes 'qty_ordered'
-    const totalUnits = rows.reduce((s,r) => s + (parseInt(r.quantity ?? r.qty_ordered) || 0), 0);
+    // v2.9.54 (B-S93-01): the 'quantity' / 'unit_price' fallbacks are gone.
+    // The comment they came from was wrong: invoice_items has neither column.
+    const totalUnits = rows.reduce((s,r) => s + (parseInt(r.qty_ordered) || 0), 0);
 
     const rowsHtml = rows.map(r => {
       const inv = r.invoices || {};
-      const qty = parseInt(r.quantity ?? r.qty_ordered) || 0;
-      const unitCost = pf(r.unit_price ?? r.unit_wholesale_price);
+      const qty = parseInt(r.qty_ordered) || 0;
+      const unitCost = pf(r.unit_wholesale_price);
       const lineTotal = (qty * unitCost).toFixed(2);
-      const invDate = (inv.order_date || inv.invoice_date || inv.created_at || '').substring(0,10);
-      // v2.9.43: qty / unit cost / IB% are EDITABLE. Date, invoice # and vendor
-      // stay locked - they belong to the invoice, not the line.
+      const invDate = (inv.order_date || inv.created_at || '').substring(0,10);
+      // v2.9.43: qty / unit cost / IB% are EDITABLE. Vendor stays locked.
+      // v2.9.54 (V2-B03b): invoice # and date are now editable too. They belong
+      // to the INVOICE, not the line, so they write to the `invoices` row and
+      // affect every line on that invoice - which is why the handler confirms
+      // nothing silently and re-renders from the database afterwards.
       // qtyCol/costCol capture which column THIS row actually uses: V2 import
       // writes qty_ordered+unit_wholesale_price, older backfill rows use
       // quantity+unit_price. Writing the wrong one silently no-ops.
-      const qtyCol  = (r.qty_ordered !== undefined && r.qty_ordered !== null) ? 'qty_ordered' : 'quantity';
-      const costCol = (r.unit_wholesale_price !== undefined && r.unit_wholesale_price !== null) ? 'unit_wholesale_price' : 'unit_price';
+      // v2.9.54 (B-S93-01): these used to fall back to 'quantity' / 'unit_price'.
+      // NEITHER COLUMN EXISTS on invoice_items (verified S93 against
+      // information_schema on prod), so the fallback arm addressed a column the
+      // database does not have and the update returned 42703.
+      const qtyCol  = 'qty_ordered';
+      const costCol = 'unit_wholesale_price';
       return `<tr data-pid="${r.id}" data-qtycol="${qtyCol}" data-costcol="${costCol}">
-        <td><input class="form-input" type="date" value="${invDate}" style="width:130px;font-size:12px;" disabled></td>
-        <td><input class="form-input" value="${escAttr(inv.invoice_number || '')}" style="width:100px;font-size:12px;" disabled></td>
+        <td><input class="form-input" type="date" value="${invDate}" data-prev="${escAttr(invDate)}" style="width:130px;font-size:12px;" ${inv.id ? `onchange="saveInvoiceHeaderField(${inv.id}, 'order_date', this.value, this)"` : 'disabled'}></td>
+        <td><input class="form-input mono" value="${escAttr(inv.invoice_number || '')}" data-prev="${escAttr(inv.invoice_number || '')}" style="width:110px;font-size:12px;" ${inv.id ? `onchange="saveInvoiceHeaderField(${inv.id}, 'invoice_number', this.value, this)"` : 'disabled'}></td>
         <td>${escHtml(inv.vendor || '')}</td>
         <td><input class="form-input ph-edit" data-f="qty" type="number" min="0" step="1" value="${qty || ''}" style="width:60px;font-size:12px;" oninput="phDirty(this)"></td>
         <td><input class="form-input ph-edit" data-f="cost" type="number" min="0" step="0.01" value="${unitCost.toFixed(2)}" style="width:75px;font-size:12px;" oninput="phDirty(this)"></td>
@@ -8993,7 +9053,22 @@ function parseInvoiceTextDataDriven(text) {
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
     /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i,
     /\*(\d{5,})\*/];
-  const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
+  // v2.9.54 (V2-B03b root cause, S93): 'total' ADDED, and this is the whole
+  // reason invoice 199 stored the number "Total". Proven against the real
+  // INV-001521099 text: /Invoice[#:\s-]+([A-Z0-9.-]+)/i finds three occurrences
+  // - "Invoice\\nCWI" (rejected, length 3), "Invoice Date" (rejected, in this
+  // set) and "Invoice Total  $834.02" -> "Total", which nothing rejected. It is
+  // returned, and /(INV-\\d{6,})/ - which matches the real number - sits LATER in
+  // invPatterns and is never reached.
+  //
+  // Fixed here rather than by reordering invPatterns: that list carries an
+  // @invariant against reordering without re-running every fixture, and this
+  // achieves the same result without touching precedence.
+  // 'total' is EVIDENCED. 'balance', 'amount' and 'subtotal' are same-family
+  // guards on the identical construction ("Invoice Balance", "Invoice Amount")
+  // and are NOT evidenced - no invoice in hand produces them.
+  const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit',
+                               'total','balance','amount','subtotal']);
   inv.invoiceNumber = pickInvoiceNumber(text, invPatterns, falsePosSet);
   const datePatterns = [/Invoice Date:\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i, /Date[:\s]+(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i, /(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/];
   for (const p of datePatterns) {
@@ -9258,7 +9333,7 @@ function validateParsedItems(inv, text) {
   });
   // Cross-foot against a printed subtotal when one is present. Catches DROPPED
   // rows, which no per-row check can see.
-  const sm = text && text.match(/Sub-?total:?\s*\$?([\d,]+\.\d{2})/i);
+  const sm = text && text.match(/Sub[\s-]?total:?\s*\$?([\d,]+\.\d{2})/i);
   if (sm && (inv.items || []).length) {
     const printed = parseFloat(sm[1].replace(/,/g, ''));
     const summed = inv.items.reduce((s, i) => s + (Number(i.lineTotal) || 0), 0);
@@ -9299,7 +9374,22 @@ function parseInvoiceText(text) {
     /(IN\d{10,})/, /(\d[A-Z]-\d{7}-\d{2})/, /(\d[A-Z]-\d{6,})/, /Invoice[#:\s-]+([A-Z0-9.-]+)/i,
     /(INV-\d{6,})/, /(SO-\d{6,})/, /(SO\d{6,})/, /(\d{7}-IN)/, /Order\s*#?:?\s*(\d[A-Z]-\d+)/i,
     /\*(\d{5,})\*/];
-  const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit']);
+  // v2.9.54 (V2-B03b root cause, S93): 'total' ADDED, and this is the whole
+  // reason invoice 199 stored the number "Total". Proven against the real
+  // INV-001521099 text: /Invoice[#:\s-]+([A-Z0-9.-]+)/i finds three occurrences
+  // - "Invoice\\nCWI" (rejected, length 3), "Invoice Date" (rejected, in this
+  // set) and "Invoice Total  $834.02" -> "Total", which nothing rejected. It is
+  // returned, and /(INV-\\d{6,})/ - which matches the real number - sits LATER in
+  // invPatterns and is never reached.
+  //
+  // Fixed here rather than by reordering invPatterns: that list carries an
+  // @invariant against reordering without re-running every fixture, and this
+  // achieves the same result without touching precedence.
+  // 'total' is EVIDENCED. 'balance', 'amount' and 'subtotal' are same-family
+  // guards on the identical construction ("Invoice Balance", "Invoice Amount")
+  // and are NOT evidenced - no invoice in hand produces them.
+  const falsePosSet = new Set(['invoice','acct','date','bill','ship','order','page','item','unit',
+                               'total','balance','amount','subtotal']);
   inv.invoiceNumber = pickInvoiceNumber(text, invPatterns, falsePosSet);
 
   // Date
@@ -9339,7 +9429,7 @@ function fmtDate(d) {
 // ── Vendor Parsers ──
 function parseCWI(text) {
   const flat = text.replace(/\n/g,' ').replace(/\s+/g,' '), items = [];
-  const p3 = /\b([A-Z]{1,4}\d{3,}[A-Z]?)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
+  const p3 = /\b([A-Z]{1,4}\d{3,}(?:-?[A-Z]{1,4})?)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
   let m;
   while ((m = p3.exec(flat)) !== null) {
     const desc = m[3].trim();
@@ -9347,7 +9437,7 @@ function parseCWI(text) {
     items.push({ sku:m[1], description:desc.replace(/\d+\.\d{6}/g,'').trim()||`CWI ${m[1]}`, qty:parseInt(m[2]), unitPrice:parseFloat(m[5].replace(/,/g,'')), lineTotal:parseFloat(m[6].replace(/,/g,'')), confidence:'high' });
   }
   if (!items.length) {
-    const p2 = /\b([A-Z]{1,4}\d{3,}[A-Z]?)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
+    const p2 = /\b([A-Z]{1,4}\d{3,}(?:-?[A-Z]{1,4})?)\s+(\d+)\s+(.*?)\s+\$?([\d,]+\.[\d]{2})\s+\$?([\d,]+\.[\d]{2})/gi;
     while ((m = p2.exec(flat)) !== null) {
       const desc = m[3].trim();
       if (/Merchandise|Subtotal|Sales Tax|Sub Total|Invoice Total/i.test(desc)) continue;
@@ -9662,6 +9752,14 @@ function showImportReview() {
   $('impShipCost').textContent = '$' + (importData.shippingCost || 0).toFixed(2);
   $('impItemCount').textContent = importData.items.length;
 
+  // v2.9.54 (V2-B11): capture the INVOICE's own quantity before the operator
+  // adjusts anything. Until now the scan-in adjustment was written over
+  // qty_ordered, so ordered-vs-received was unrecoverable and inbound
+  // shortfall left no trace at all (REG S92-07).
+  importData.items.forEach(it => {
+    if (it.qtyOrdered === undefined || it.qtyOrdered === null) it.qtyOrdered = it.qty;
+  });
+
   // v2.9.14 (B-S33-08): parse-failure warning + Import All button gating.
   // If parser returned 0 items, show the red warning banner and tell the user
   // to add rows manually. Import All button stays usable but we want the user
@@ -9711,15 +9809,93 @@ function showImportReview() {
   renderImportTable();
 }
 
+// v2.9.54 (V2-B11): ORD and RECV are separate numbers now.
+//
+// RECV FOLLOWS ORD until the operator touches RECV. So the old habit - edit the
+// one quantity box down to what actually turned up - still works: it lands on
+// ORD, RECV follows, the shortfall reads zero and the row behaves exactly as it
+// did before. The failure mode of the old habit is therefore "no shortfall
+// recorded", which is today's status quo, and never a fabricated one
+// (REG S92-06: prefer the error that loses information over the one that
+// invents it).
+//
+// lineTotal is priced on ORDERED, because that is what the invoice charges and
+// what its printed Sub Total cross-foots against.
+function impSetOrdered(idx, val) {
+  const it = importData.items[idx];
+  if (!it) return;
+  const n = Math.max(0, parseInt(val) || 0);
+  const following = !it._recvTouched;
+  it.qtyOrdered = n;
+  if (following) it.qty = n;
+  it.lineTotal = n * (Number(it.unitPrice) || 0);
+  renderImportTable();
+}
+
+function impSetReceived(idx, val) {
+  const it = importData.items[idx];
+  if (!it) return;
+  it.qty = Math.max(0, parseInt(val) || 0);
+  it._recvTouched = true;
+  if (it.qtyOrdered === undefined || it.qtyOrdered === null) it.qtyOrdered = it.qty;
+  renderImportTable();
+}
+
+// The three numbers an invoice_items row should have carried all along.
+function impReceiptFor(item) {
+  const received = Math.max(0, pi(item.qty) || 0);
+  const ordered  = (item.qtyOrdered === undefined || item.qtyOrdered === null)
+    ? received : Math.max(0, pi(item.qtyOrdered) || 0);
+  const damaged  = Math.max(0, ordered - received);
+  const notes    = (item.damageNotes || '').trim();
+  return {
+    // qty_shipped carries the SAME parsed figure, and that is the honest name
+    // for it: CWI's line-item table is Shipped | Not Shipped, the parser reads
+    // only the first column BY DESIGN (Paul, S93), and a back order is stock
+    // that has not arrived and must not be booked. So the invoice's number is
+    // what SHIPPED, not what was ordered - ordered would be shipped + not
+    // shipped, and this parse never sees the second figure.
+    //
+    // qty_ordered gets it too, because renderPurchases and savePurchaseEdits
+    // both resolve quantity from qty_ordered, and the B1 weighted-average cost
+    // basis is computed from it. Writing only qty_shipped would blank the
+    // purchase history and compute the cost basis over nothing.
+    ordered, shipped: ordered, received, damaged,
+    notes: notes || null,
+    date: new Date().toISOString().split('T')[0],
+    // receiving_status read 'received' on all 1,146 rows, so it distinguished
+    // nothing. It can finally mean something.
+    status: damaged > 0 ? 'short' : (received > ordered ? 'over' : 'received')
+  };
+}
+
+// v2.9.54 (V2-B03c): the invoice header's financial columns have always been
+// written NULL, so an invoice could not be reconciled against itself and a
+// subtotal-vs-lines check could not be run on stored data.
+function impInvoiceHeaderTotals(ibPct) {
+  const items = (importData && Array.isArray(importData.items)) ? importData.items : [];
+  const subtotal = items.reduce((s, i) => s + (Number(i.lineTotal) || 0), 0);
+  const ship = Number(importData && importData.shippingCost) || 0;
+  const r2 = n => Math.round(n * 100) / 100;
+  return {
+    invoice_subtotal: r2(subtotal),
+    shipping_cost: r2(ship),
+    total_invoice_amount: r2(subtotal + ship),
+    ib_shipping_pct: Number(ibPct) || 0
+  };
+}
+
 function renderImportTable() {
   const ibPct = parseFloat($('impIBPct').value) || 0;
   const tbody = $('importReviewBody');
   if (importData.items.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);font-style:italic;">No line items. Click <strong>+ Add Row</strong> below to enter manually.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text-dim);font-style:italic;">No line items. Click <strong>+ Add Row</strong> below to enter manually.</td></tr>';
     return;
   }
   tbody.innerHTML = importData.items.map((item, idx) => {
     const shipCost = (item.unitPrice * ibPct / 100 * item.qty).toFixed(2);
+    const ord   = (item.qtyOrdered === undefined || item.qtyOrdered === null) ? item.qty : item.qtyOrdered;
+    const short = Math.max(0, ord - item.qty);
     // v2.9.41 (B-S79-02): 'suspect' rows (failed the arithmetic guardrail) get a
     // red ⛔ and a red row tint so a misparse can't read as a normal row.
     const suspect = item.confidence === 'suspect';
@@ -9729,7 +9905,9 @@ function renderImportTable() {
       <td style="text-align:center;">${glyph}${item.duplicate ? '<br><span style="color:var(--yellow);font-size:10px;">Exists</span>' : ''}</td>
       <td><input class="card-field-input mono" value="${escAttr(item.sku)}" style="width:100%;font-size:11px;padding:4px 6px;" onchange="importData.items[${idx}].sku=this.value"></td>
       <td><input class="card-field-input" value="${escAttr(item.description)}" style="width:100%;font-size:11px;padding:4px 6px;" onchange="importData.items[${idx}].description=this.value"></td>
-      <td><input class="card-field-input mono" type="number" value="${item.qty}" style="width:50px;font-size:11px;padding:4px;text-align:center;" onchange="importData.items[${idx}].qty=parseInt(this.value)||0;importData.items[${idx}].lineTotal=importData.items[${idx}].qty*importData.items[${idx}].unitPrice;renderImportTable();"></td>
+      <td><input class="card-field-input mono" type="number" min="0" value="${ord}" style="width:48px;font-size:11px;padding:4px;text-align:center;" title="Quantity billed on the invoice" onchange="impSetOrdered(${idx}, this.value)"></td>
+      <td><input class="card-field-input mono" type="number" min="0" value="${item.qty}" style="width:48px;font-size:11px;padding:4px;text-align:center;${short > 0 ? 'border:1px solid var(--red);' : ''}" title="Quantity actually received at scan-in" onchange="impSetReceived(${idx}, this.value)"></td>
+      <td style="font-size:11px;white-space:nowrap;">${short > 0 ? `<span class="mono" style="color:var(--red);font-weight:700;">-${short}</span><input class="card-field-input" value="${escAttr(item.damageNotes || '')}" placeholder="broken / short-shipped" style="width:120px;font-size:10px;padding:3px 5px;margin-top:3px;" onchange="importData.items[${idx}].damageNotes=this.value"></input>` : '<span style="color:var(--muted);">\u2014</span>'}</td>
       <td><input class="card-field-input mono" type="number" step="0.01" value="${item.unitPrice.toFixed(2)}" style="width:70px;font-size:11px;padding:4px;text-align:right;" onchange="importData.items[${idx}].unitPrice=parseFloat(this.value)||0;importData.items[${idx}].lineTotal=importData.items[${idx}].qty*importData.items[${idx}].unitPrice;renderImportTable();"></td>
       <td class="mono" style="font-size:11px;color:var(--blue);">${ibPct > 0 ? ibPct.toFixed(1)+'%' : '—'}</td>
       <td class="mono" style="font-size:11px;color:${item.perUnitTariff ? 'var(--etsy)' : 'var(--muted)'};">${item.perUnitTariff ? '$'+item.perUnitTariff.toFixed(2) : '—'}</td>
@@ -9750,6 +9928,7 @@ function importAddManualRow() {
     sku: '',
     description: '',
     qty: 1,
+    qtyOrdered: 1,
     unitPrice: 0,
     lineTotal: 0,
     confidence: 'manual'
@@ -9837,7 +10016,8 @@ async function importAllItems() {
         const { data: newInv, error: invErr } = await sb.from('invoices').insert({
           invoice_number: invoiceNumber, vendor: vendor,
           order_date: invoiceDate || null, status: 'received',
-          created_by: 'inventory_v2'
+          created_by: 'inventory_v2',
+          ...impInvoiceHeaderTotals(ibPct)
         }).select('id').single();
         if (invErr) throw new Error('Invoice create failed: ' + invErr.message);
         invoiceId = newInv.id;
@@ -9887,7 +10067,7 @@ async function importSingleItem(idx) {
       const { data: existingInv } = await sb.from('invoices').select('id').eq('invoice_number', invoiceNumber).maybeSingle();
       invoiceId = existingInv ? existingInv.id : null;
       if (!invoiceId) {
-        const { data: newInv } = await sb.from('invoices').insert({ invoice_number: invoiceNumber, vendor, order_date: $('impInvDate').value.trim() || null, status:'received', created_by:'inventory_v2' }).select('id').single();
+        const { data: newInv } = await sb.from('invoices').insert({ invoice_number: invoiceNumber, vendor, order_date: $('impInvDate').value.trim() || null, status:'received', created_by:'inventory_v2', ...impInvoiceHeaderTotals(ibPct) }).select('id').single();
         invoiceId = newInv?.id;
       }
     }
@@ -9900,6 +10080,8 @@ async function importSingleItem(idx) {
 async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
   const item = importData.items[idx];
   if (item._imported) return;
+  // v2.9.54 (V2-B11): three numbers, not one.
+  const _rcv = impReceiptFor(item);
 
   if (item.duplicate && item.existingItem) {
     // Merge into existing: add qty, weighted avg wholesale, update IB%
@@ -9942,8 +10124,11 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
       const { error: liErr } = await sb.from('invoice_items').insert({
         invoice_id: invoiceId, item_id: ex.id, sku: item.sku,
         product_name: item.description.substring(0, 100),
-        qty_ordered: newQty, unit_wholesale_price: newWs, ib_shipping_pct: ibPct,
-        line_tariff: item.perUnitTariff || 0, receiving_status: 'received'
+        qty_ordered: _rcv.ordered, qty_shipped: _rcv.shipped,
+        qty_received: _rcv.received, qty_damaged: _rcv.damaged,
+        damage_notes: _rcv.notes, received_date: _rcv.date, receiving_status: _rcv.status,
+        unit_wholesale_price: newWs, ib_shipping_pct: ibPct,
+        line_tariff: item.perUnitTariff || 0
       });
       if (liErr) throw new Error('Invoice line insert failed: ' + liErr.message);
     }
@@ -9972,8 +10157,11 @@ async function importSingleItemToDb(idx, invoiceId, ibPct, vendor) {
       const { error: liErr } = await sb.from('invoice_items').insert({
         invoice_id: invoiceId, item_id: newItem.id, sku: item.sku,
         product_name: item.description.substring(0, 100),
-        qty_ordered: item.qty, unit_wholesale_price: item.unitPrice, ib_shipping_pct: ibPct,
-        line_tariff: item.perUnitTariff || 0, receiving_status: 'received'
+        qty_ordered: _rcv.ordered, qty_shipped: _rcv.shipped,
+        qty_received: _rcv.received, qty_damaged: _rcv.damaged,
+        damage_notes: _rcv.notes, received_date: _rcv.date, receiving_status: _rcv.status,
+        unit_wholesale_price: item.unitPrice, ib_shipping_pct: ibPct,
+        line_tariff: item.perUnitTariff || 0
       });
       if (liErr) throw new Error('Invoice line insert failed: ' + liErr.message);
     }
