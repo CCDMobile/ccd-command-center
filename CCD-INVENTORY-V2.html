@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.51</title>
+<title>CCD Inventory System v2.9.52</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.51 · Write-Off Log opens the item's Write-Off tab; back-button label derived from return context (B-S92-01); false "Save *" on cards opened from Shipping History</div>
+    <div class="login-version">v2.9.52 · search finds a SKU regardless of status; Write-Off Log opens any item (B-S92-02); write-off deduction/restore made symmetric (B-S92-03); WRITE_OFF log records row id + real qty movement (F-S92-02)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.51</div>
+      <div class="topbar-version">v2.9.52</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1723,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.51';
+const TOOL_VERSION = '2.9.52';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2141,6 +2141,15 @@ async function loadInventory() {
 
     // ── Filters ──
     const f = state.filters;
+    // v2.9.52 (S92, Paul): A SEARCH FINDS THE SKU REGARDLESS OF STATUS.
+    // status / is_hidden / hideZero are list-BROWSING filters. When the user is
+    // looking for a specific SKU they want that SKU, not "that SKU if it happens
+    // to satisfy the current view." Searching 71295 returned "No items found"
+    // purely because the row is is_hidden, and renderFilterCount() then reported
+    // "filtered by: active" — so the honest conclusion was "not a valid product".
+    // Brand and channel are a DIFFERENT AXIS and still apply.
+    const searching = !!(f.search && String(f.search).trim());
+    if (!searching) {
     // v2.9.45: 'hidden' is its own view. It must bypass the exclusion below,
     // or the two filters cancel out and the list comes back empty.
     if (f.status === 'hidden') {
@@ -2153,6 +2162,7 @@ async function loadInventory() {
     }
     // v2.9.43: display-only in-stock filter (see state.filters.hideZero)
     if (f.hideZero)              query = query.gt('qty', 0);
+    } // end !searching — see v2.9.52 note above
 
     if (f.channel === 'etsy')    query = query.not('etsy_listing_id', 'is', null);
     if (f.channel === 'wix')     query = query.not('wix_product_id', 'is', null);
@@ -2392,6 +2402,19 @@ function renderFilterCount() {
   const total = state.totalCount;
   const f = state.filters;
   const parts = [];
+  // v2.9.52 (S92): this summary is built from filter STATE, not from what was
+  // actually applied. Since a search now bypasses status/hidden/zero-qty, saying
+  // "filtered by: active" during a search would move the lie rather than fix it.
+  const searching = !!(f.search && String(f.search).trim());
+  if (searching) {
+    parts.push(`"${f.search}"`);
+    parts.push('all statuses');
+    if (f.channel !== 'all') parts.push(f.channel);
+    if (f.brand !== 'all') parts.push(f.brand);
+    $('filterCount').textContent =
+      `${total.toLocaleString()} items \u00b7 filtered by: ${parts.join(', ')}`;
+    return;
+  }
   if (f.status !== 'all') parts.push(f.status);
   if (f.hideZero) parts.push('in-stock');
   if (f.showHidden) parts.push('incl. hidden');
@@ -7169,12 +7192,21 @@ async function recordWriteoff() {
     ? (notes ? notes + ' ' : '') + `[manual cost override: $${costPerUnit.toFixed(2)}/unit vs auto $${autoLanded.toFixed(2)}]`
     : notes;
 
-  if (!confirm(`Record write-off?\n\n${item.sku} x ${qty}\nReason: ${reason}\nCost/Unit: $${costPerUnit.toFixed(2)}${manualCost ? ' (manual)' : ''}\nTotal Loss: $${(costPerUnit * qty).toFixed(2)}`)) return;
+  // B-S92-03 (v2.9.52, S92): the deduction below is floored at zero
+  // (Math.max(0, qty - requested)), so writing off more than is on hand moves
+  // less stock than the loss claims. Record what ACTUALLY moved so the reversal
+  // restores that instead of the requested amount and invents inventory.
+  // Paul's call (S92): allow the write-off, record the real movement.
+  const qtyDeducted = Math.min(pi(qty), Math.max(0, pi(item.qty)));
+  const shortfallNote = qtyDeducted < pi(qty)
+    ? `\n\n\u26a0 On hand: ${pi(item.qty)}. Only ${qtyDeducted} unit(s) will leave inventory; the full loss is still recorded.`
+    : '';
+  if (!confirm(`Record write-off?\n\n${item.sku} x ${qty}\nReason: ${reason}\nCost/Unit: $${costPerUnit.toFixed(2)}${manualCost ? ' (manual)' : ''}\nTotal Loss: $${(costPerUnit * qty).toFixed(2)}${shortfallNote}`)) return;
   state.saving = true;
 
   try {
     // Insert write-off record
-    const { error: woErr } = await sb.from('write_offs').insert({
+    const { data: woIns, error: woErr } = await sb.from('write_offs').insert({
       item_id: item.id,
       sku: item.sku,
       product_name: item.product_name,
@@ -7190,9 +7222,16 @@ async function recordWriteoff() {
       carrier: gv('wo_carrier') || null,
       claim_amount: pf((gv('wo_claim_amount') || '').replace('$','')) || null,
       date_filed: gv('wo_claim_date') || null,
-      amount_recovered: pf((gv('wo_recovered') || '').replace('$','')) || 0
-    });
+      amount_recovered: pf((gv('wo_recovered') || '').replace('$','')) || 0,
+      qty_deducted: qtyDeducted   // B-S92-03 (v2.9.52) — units that actually left inventory
+    }).select('id');
     if (woErr) throw new Error(`Write-off record failed: ${woErr.message}`);
+    // F-S92-02 (v2.9.52, S92): capture the new row's id for the activity log.
+    // DELIBERATELY no .single() and no throw here — the insert has ALREADY
+    // COMMITTED at this point, and a throw after a committed write is exactly
+    // REG S91-01: the user sees "failed", retries, and deducts again. If the id
+    // does not come back we log without it rather than fail the operation.
+    const woRowId = (woIns && woIns.length) ? woIns[0].id : null;
 
     // Deduct qty from items
     const newQty = Math.max(0, pi(item.qty) - qty);
@@ -7279,7 +7318,17 @@ async function recordWriteoff() {
     // succeeding, and retries produced DUPLICATE write-offs (prod write_offs 9/10/11,
     // SKU 113972, three in 58s). costPerUnit is also the correct value: it honours the
     // v2.9.40 manual override and matches write_offs.total_loss. `landed` did not.
-    logActivity('INVENTORY','WRITE_OFF',null,`Write-off: ${item.sku} x${qty} — ${reason} ($${(costPerUnit*qty).toFixed(2)})${woCascadeMsg}`,{},item.sku);
+    // F-S92-02 (v2.9.52, S92): record WHICH write_offs row this is and what
+    // actually moved. WRITEOFF_REVERSED has always carried write_off_id and
+    // qty_restored; WRITE_OFF carried neither, so an entry could not be tied to
+    // its write_offs row and never said whether stock actually left. That gap is
+    // what made write_offs 12 unreconstructable at S92 — its qty_deducted
+    // backfill had to be a judgement call rather than a determination.
+    logActivity('INVENTORY','WRITE_OFF',null,
+      `Write-off: ${item.sku} x${qty} — ${reason} ($${(costPerUnit*qty).toFixed(2)})${woCascadeMsg} (qty ${pi(item.qty)} \u2192 ${newQty})`,
+      { write_off_id: woRowId, qty_requested: pi(qty), qty_deducted: qtyDeducted,
+        qty_before: pi(item.qty), qty_after: newQty },
+      item.sku);
     state.cardDirty = true;
     state.saving = false;
     showCardStatus(`Write-off recorded: ${item.sku} x${qty} · $${(costPerUnit * qty).toFixed(2)} loss${woCascadeMsg}`, 'ok');
@@ -7382,8 +7431,25 @@ function renderWriteoffLog() {
 }
 
 async function woLogOpenItem(sku) {
-  const item = state.items.find(i => i.sku === sku);
-  if (item) {
+  if (!sku) return;
+  // B-S92-02 (v2.9.52, S92): resolve from the DATABASE, not state.items.
+  // state.items is ONE PAGE (PAGE_SIZE 50) of the CURRENT FILTERED query, so a
+  // write-off whose item is hidden, inactive, zero-qty, or simply on another page
+  // was silently unopenable — `if (item)` was false and the function just returned.
+  // Hide 0-qty is the default and write-offs skew toward depleted stock, so most
+  // rows could not be opened. A direct lookup is correct regardless of the list
+  // state AND leaves the user's current search/filters untouched (which the
+  // openItemShippingTab pattern of search-then-reload would have destroyed).
+  let woItemId = null;
+  try {
+    const { data } = await sb.from('items').select('id').eq('sku', sku).limit(1);
+    if (data && data.length) woItemId = data[0].id;
+  } catch(e) { console.log('woLogOpenItem lookup failed:', e.message); }
+  if (woItemId === null) {
+    alert(`No item found for SKU ${sku}.\n\nThe write-off record exists but no item row carries that SKU — it may have been renamed or deleted.`);
+    return;
+  }
+  {
     state.shipReturnTab = 'writeoffs';
     // v2.9.50 (S91): was `openCard`, which is defined NOWHERE in this file — a
     // ReferenceError, so clicking a SKU in the Write-Off Log never opened the card.
@@ -7397,21 +7463,39 @@ async function woLogOpenItem(sku) {
     // markUnsaved() (L2905) paints a false "Save *" on a card nobody edited.
     // skipCapture=true: nothing has been edited yet, so there is nothing to
     // capture from the overview form.
-    await onRowClick(item.id);
+    await onRowClick(woItemId);
     state.cardRendered = false;
     switchSub('writeoff', true);
   }
 }
 
 async function reverseWriteoff(woId, sku, qty) {
-  if (!confirm(`Reverse write-off?\n\nThis will restore ${qty} unit(s) of ${sku} back to warehouse inventory and mark this write-off as reversed.\n\nContinue?`)) return;
+  // B-S92-03 (v2.9.52, S92): restore what ACTUALLY left inventory, not what was
+  // requested. recordWriteoff() floors its deduction at zero, so a write-off of a
+  // zero-qty item moves nothing — and this function used to add the requested
+  // amount back UNCONDITIONALLY. A write-off/restore round trip on a zero-qty item
+  // therefore left qty at 1: inventory created from nothing.
+  // qty_deducted is NULL on rows written before v2.9.52; those fall back to the
+  // requested quantity, which is the pre-v2.9.52 behaviour and correct for any row
+  // that was not floored. A failed lookup falls back the same way.
+  let restoreQty = pi(qty);
+  try {
+    const { data: woRows } = await sb.from('write_offs').select('qty_deducted').eq('id', woId).limit(1);
+    if (woRows && woRows.length && woRows[0].qty_deducted !== null && woRows[0].qty_deducted !== undefined) {
+      restoreQty = pi(woRows[0].qty_deducted);
+    }
+  } catch(e) { console.log('qty_deducted lookup failed; using requested quantity:', e.message); }
+  const restoreNote = restoreQty !== pi(qty)
+    ? `\n\n\u26a0 ${qty} unit(s) were written off but only ${restoreQty} left inventory, so ${restoreQty} will be restored.`
+    : '';
+  if (!confirm(`Reverse write-off?\n\nThis will restore ${restoreQty} unit(s) of ${sku} back to warehouse inventory and mark this write-off as reversed.${restoreNote}\n\nContinue?`)) return;
 
   try {
     // 1. Add qty back to items
     const { data: itemData } = await sb.from('items').select('id,qty').eq('sku', sku).limit(1).single();
     if (!itemData) throw new Error(`Item ${sku} not found`);
 
-    const newQty = pi(itemData.qty) + pi(qty);
+    const newQty = pi(itemData.qty) + restoreQty;
     const { error: qtyErr } = await sb.from('items').update({ qty: newQty }).eq('id', itemData.id);
     if (qtyErr) throw new Error(`Failed to restore qty: ${qtyErr.message}`);
 
@@ -7424,8 +7508,8 @@ async function reverseWriteoff(woId, sku, qty) {
 
     // 3. Activity log
     logActivity('INVENTORY', 'WRITEOFF_REVERSED', null,
-      `Write-off reversed: ${sku} x${qty} restored to warehouse (${pi(itemData.qty)} → ${newQty})`,
-      { write_off_id: woId, qty_restored: qty }, sku);
+      `Write-off reversed: ${sku} x${restoreQty} restored to warehouse (${pi(itemData.qty)} \u2192 ${newQty})`,
+      { write_off_id: woId, qty_restored: restoreQty, qty_requested: pi(qty) }, sku);
 
     // 4. Update local state if item is loaded
     const localItem = state.items.find(i => i.sku === sku);
