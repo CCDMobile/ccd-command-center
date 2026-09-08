@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.52</title>
+<title>CCD Inventory System v2.9.53</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.52 · search finds a SKU regardless of status; Write-Off Log opens any item (B-S92-02); write-off deduction/restore made symmetric (B-S92-03); WRITE_OFF log records row id + real qty movement (F-S92-02)</div>
+    <div class="login-version">v2.9.53 · Open Item actually opens the item (B-S92-04); Write-Off Log table fits (Status/Action no longer scroll off); record count reconciled with the tiles</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.52</div>
+      <div class="topbar-version">v2.9.53</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1723,7 +1723,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.52';
+const TOOL_VERSION = '2.9.53';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -7394,7 +7394,14 @@ function renderWriteoffLog() {
   $('woStatRecovered').textContent = '$' + totalRecovered.toFixed(2);
   $('woStatRecoveredSub').textContent = totalLoss > 0 ? `${(totalRecovered / totalLoss * 100).toFixed(0)}% recovery rate` : '';
 
-  if ($('woLogResultCount')) $('woLogResultCount').textContent = `${rows.length} records`;
+  // v2.9.53 (S92): the stat tiles count ACTIVE rows only while this counted ALL
+  // of them, so the screen read "13 records" beside "TOTAL WRITE-OFFS 10" with
+  // nothing explaining the gap. Both numbers were right; neither said so.
+  if ($('woLogResultCount')) {
+    $('woLogResultCount').textContent = reversedRows.length > 0
+      ? `${rows.length} records \u00b7 ${activeRows.length} active, ${reversedRows.length} reversed`
+      : `${rows.length} records`;
+  }
 
   if (rows.length === 0) {
     el.innerHTML = '<div style="text-align:center;padding:40px;color:var(--muted);">No write-offs found matching filters.</div>';
@@ -7404,7 +7411,7 @@ function renderWriteoffLog() {
   el.innerHTML = `<div class="table-wrap"><table>
     <thead><tr>
       <th>Date</th><th>SKU</th><th>Product</th><th>Qty</th><th>Reason</th>
-      <th>Location</th><th>Loss</th><th>Insurance</th><th>Recovered</th>
+      <th>Location</th><th>Loss</th><th title="Insurance claim">Ins.</th><th title="Amount recovered">Rec.</th>
       <th>Status</th><th>Action</th>
     </tr></thead>
     <tbody>${rows.map(r => {
@@ -7412,15 +7419,15 @@ function renderWriteoffLog() {
       return `<tr class="${isReversed ? 'wo-reversed' : ''}">
         <td class="mono">${(r.created_at || '').substring(0,10)}</td>
         <td><span class="sku-cell" style="cursor:pointer;" onclick="woLogOpenItem('${escHtml(r.sku)}')">${escHtml(r.sku || '—')}</span></td>
-        <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.product_name || '')}">${escHtml(r.product_name || '—')}</td>
+        <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.product_name || '')}">${escHtml(r.product_name || '—')}</td>
         <td class="mono" style="text-align:center;">${r.quantity || 0}</td>
-        <td>${escHtml(r.reason || '—')}</td>
-        <td>${escHtml(r.location || '—')}</td>
+        <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.reason || '')}">${escHtml(r.reason || '—')}</td>
+        <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(r.location || '')}">${escHtml(r.location || '—')}</td>
         <td class="mono" style="color:var(--red);">$${pf(r.total_loss).toFixed(2)}</td>
         <td><span class="par-status ${r.claim_filed === 'Yes — Paid' ? 'par-ok' : (r.claim_filed && r.claim_filed !== 'No' ? 'par-warn' : 'sync-na')}">${escHtml(r.claim_filed || 'No')}</span></td>
         <td class="mono" style="color:var(--green);">$${pf(r.amount_recovered).toFixed(2)}</td>
         <td>${isReversed
-          ? `<span class="wo-badge-reversed">Reversed</span><div style="font-size:10px;color:var(--muted);margin-top:2px;">${(r.reversed_at || '').substring(0,10)}</div>`
+          ? `<span class="wo-badge-reversed" title="Reversed ${(r.reversed_at || '').substring(0,10)}">Reversed</span>`
           : '<span class="wo-badge-active">Active</span>'}</td>
         <td>${isReversed
           ? ''
@@ -10876,13 +10883,28 @@ async function renderUnshippedOrders(container, fromDate, toDate) {
   }
 }
 
-function openItemFromShipping(sku) {
+async function openItemFromShipping(sku) {
   if (!sku) return;
-  switchTopTab('inventory');
-  state.filters.search = sku;
-  if ($('searchInput')) $('searchInput').value = sku;
-  state.page = 1;
-  loadInventory();
+  // B-S92-04 (v2.9.53, S92): this used to switch to Inventory and run a SEARCH.
+  // It never opened anything — a button labelled "Open Item" that does not open
+  // the item (Paul, S92). It also overwrote whatever was in the search box, so
+  // using it destroyed the list the user was working in.
+  // Resolved the same way as woLogOpenItem (B-S92-02): look the id up in the
+  // DATABASE, which is correct regardless of filters, hidden state or which page
+  // is loaded, and leaves the user's list untouched. Lands on Overview —
+  // openItemShippingTab (the 🏷 Ship button) remains the way to land on the
+  // Shipping tab, so the two controls keep distinct jobs.
+  let shipItemId = null;
+  try {
+    const { data } = await sb.from('items').select('id').eq('sku', sku).limit(1);
+    if (data && data.length) shipItemId = data[0].id;
+  } catch(e) { console.log('openItemFromShipping lookup failed:', e.message); }
+  if (shipItemId === null) {
+    alert(`No item found for SKU ${sku}.\n\nThe shipment references that SKU but no item row carries it — it may have been renamed or deleted.`);
+    return;
+  }
+  state.shipReturnTab = 'shipping';
+  await onRowClick(shipItemId);
 }
 
 async function openItemShippingTab(sku, shipIdx) {
