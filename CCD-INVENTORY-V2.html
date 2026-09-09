@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.54</title>
+<title>CCD Inventory System v2.9.55</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.54 · CWI SKU pattern no longer drops hyphenated or two-letter SKUs (V2-B03a); invoice # no longer parses as “Total” and is correctable after save (V2-B03b); invoice header totals now stored (V2-B03c); shipped / received / short recorded separately (V2-B11); purchase-history save no longer targets two columns that do not exist (B-S93-01)</div>
+    <div class="login-version">v2.9.55 · write-off log now records the real quantity movement (B-S94-01); the parser cutover indicator reports UNTESTED instead of safe and the flip is gated on it (B-S94-05); purchase history and the B1 cost-basis recompute resolve through item_id, so a rename or set-split no longer hides an item’s own invoice lines (B-S94-06 / V2-B13a)</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.54</div>
+      <div class="topbar-version">v2.9.55</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1725,7 +1725,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.54';
+const TOOL_VERSION = '2.9.55';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -4122,7 +4122,7 @@ function phDirty(el) {
   if (btn) { btn.style.display = ''; btn.classList.add('btn-save'); }
 }
 
-async function savePurchaseEdits(sku) {
+async function savePurchaseEdits(sku, itemId) {
   const btn = $('phSaveBtn');
   const rows = Array.from(document.querySelectorAll('#sub-purchases tr[data-pid]'));
   if (!rows.length) return;
@@ -4143,10 +4143,38 @@ async function savePurchaseEdits(sku) {
     }
 
     // 2. B1 recompute — re-read the FULL history from the DB, never trust the DOM
-    const { data: all, error: rErr } = await sb.from('invoice_items')
-      .select('qty_ordered,unit_wholesale_price,ib_shipping_pct')
-      .eq('sku', sku);
-    if (rErr) throw rErr;
+    // v2.9.55 (B-S94-06 / V2-B13a, REG S94-05): resolve through item_id, the
+    // FOREIGN KEY, and keep sku only as a fallback for rows where item_id is
+    // null (10 of 1,146). Keyed on sku alone this re-read silently EXCLUDED
+    // every orphaned line: the line freezes the as-invoiced SKU at import and a
+    // rename or set-split moves the item's sku out from under it. Where ALL of
+    // an item's lines were orphaned totQty came back 0, the short-circuit below
+    // returned, and the screen still said "Saved." 40 items measured at S94.
+    //
+    // TWO .eq() QUERIES MERGED BY ROW id — NOT ONE .or(). A PostgREST .or() is an
+    // interpolated STRING and production SKUs are free text ("Set of 3",
+    // 14515A-1 - 10", "530534/530535"), so a comma or quote in a SKU would
+    // silently rewrite the filter. REG S91-05. `id` is selected because the merge
+    // de-duplicates on it — without it a line matching BOTH keys would be counted
+    // twice into the weighted average.
+    const curItem = state.currentItem;
+    const wantId = (itemId != null) ? itemId
+                 : (curItem && curItem.sku === sku && curItem.id != null) ? curItem.id
+                 : null;
+    const readQueries = [];
+    if (wantId != null) {
+      readQueries.push(sb.from('invoice_items')
+        .select('id,qty_ordered,unit_wholesale_price,ib_shipping_pct').eq('item_id', wantId));
+    }
+    if (sku) {
+      readQueries.push(sb.from('invoice_items')
+        .select('id,qty_ordered,unit_wholesale_price,ib_shipping_pct').eq('sku', sku));
+    }
+    const readResults = await Promise.all(readQueries);
+    for (const rr of readResults) { if (rr.error) throw rr.error; }
+    const allById = new Map();
+    for (const rr of readResults) { for (const r of (rr.data || [])) allById.set(r.id, r); }
+    const all = Array.from(allById.values());
 
     let totQty = 0, totCost = 0, ibWeighted = 0;
     (all || []).forEach(r => {
@@ -4169,9 +4197,13 @@ async function savePurchaseEdits(sku) {
     const item  = state.currentItem;
     const oldWs = pf(item && item.wholesale_price);
 
-    const { error: uErr } = await sb.from('items')
-      .update({ wholesale_price: newWs, ib_shipping: newIb, updated_at: new Date().toISOString() })
-      .eq('sku', sku);
+    // v2.9.55 (B-S94-06): write the recomputed cost basis back through the id
+    // when we have one. Updating .eq('sku', sku) addressed the item by the same
+    // mutable string the history lookup used to use.
+    let uq = sb.from('items')
+      .update({ wholesale_price: newWs, ib_shipping: newIb, updated_at: new Date().toISOString() });
+    uq = (wantId != null) ? uq.eq('id', wantId) : uq.eq('sku', sku);
+    const { error: uErr } = await uq;
     if (uErr) throw uErr;
 
     // 3. Refresh in-memory state AND the open form, or the next saveItem()
@@ -4187,16 +4219,17 @@ async function savePurchaseEdits(sku) {
     if (li) { li.wholesale_price = newWs; li.ib_shipping = newIb; }
 
     logActivity('INVENTORY', 'PURCHASE_HISTORY_EDITED', null,
-      `${sku}: ws $${oldWs.toFixed(2)} \u2192 $${newWs.toFixed(2)} (B1 weighted avg over ${totQty} units)`,
-      { sku, ws_old: oldWs, ws_new: newWs, ib_new: newIb, total_qty: totQty,
-        line_count: (all || []).length, rule: 'B1_weighted_average' },
+      `${sku}: ws $${oldWs.toFixed(2)} → $${newWs.toFixed(2)} (B1 weighted avg over ${totQty} units)`,
+      { sku, item_id: wantId, resolved_by: (wantId != null ? 'item_id+sku' : 'sku'),
+        ws_old: oldWs, ws_new: newWs, ib_new: newIb, total_qty: totQty,
+        line_count: all.length, rule: 'B1_weighted_average' },
       sku);
 
     alert('Saved.\n\nWholesale $' + oldWs.toFixed(2) + ' \u2192 $' + newWs.toFixed(2) +
           '\nIB shipping ' + newIb + '%' +
           '\nBased on ' + totQty + ' units across ' + (all || []).length + ' purchase lines.' +
           '\n\nPast sales keep their original cost basis.');
-    await renderPurchases(item || { sku });
+    await renderPurchases(item || { sku, id: wantId });
   } catch (e) {
     alert('Save failed: ' + e.message);
     if (btn) { btn.disabled = false; btn.textContent = '\ud83d\udcbe Save Purchase Edits'; }
@@ -4251,9 +4284,33 @@ async function renderPurchases(item) {
   $('sub-purchases').innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading purchases...</div>';
   try {
     // Use select('*,invoices(*)') — column names differ between backfill and V2 import
-    const { data, error } = await sb.from('invoice_items').select('*,invoices(*)').eq('sku', item.sku).order('created_at', { ascending: false }).limit(100);
-    if (error) throw error;
-    const rows = data || [];
+    // v2.9.55 (B-S94-06 / V2-B13a, REG S94-05): A LOOKUP KEYED ON A MUTABLE
+    // STRING SILENTLY LOSES ITS SUBJECT. This resolved history with
+    // .eq('sku', item.sku) while invoice_items.item_id — the foreign key — sits
+    // populated on 1,136 of 1,146 rows and was used by neither call site. Split a
+    // set or rename an item and the lines keep the old string, so the tab renders
+    // EMPTY with no error and no alert. 40 items had NO reachable purchase
+    // history at S94; 2 more had partial, which is worse — B1 averaged a subset
+    // and returned a confident wrong cost basis.
+    // Resolve through item_id, keep sku as the fallback, merge by row id.
+    // Two .eq() queries rather than one .or() — see savePurchaseEdits for why.
+    const wantId = (item && item.id != null) ? item.id : null;
+    const phQueries = [];
+    if (wantId != null) {
+      phQueries.push(sb.from('invoice_items').select('*,invoices(*)')
+        .eq('item_id', wantId).order('created_at', { ascending: false }).limit(100));
+    }
+    if (item && item.sku) {
+      phQueries.push(sb.from('invoice_items').select('*,invoices(*)')
+        .eq('sku', item.sku).order('created_at', { ascending: false }).limit(100));
+    }
+    const phResults = await Promise.all(phQueries);
+    for (const pr of phResults) { if (pr.error) throw pr.error; }
+    // De-duplicate by row id: a line matching BOTH keys must appear exactly once.
+    const phById = new Map();
+    for (const pr of phResults) { for (const r of (pr.data || [])) phById.set(r.id, r); }
+    const rows = Array.from(phById.values())
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
     // v2.9.54 (B-S93-01): the 'quantity' / 'unit_price' fallbacks are gone.
     // The comment they came from was wrong: invoice_items has neither column.
     const totalUnits = rows.reduce((s,r) => s + (parseInt(r.qty_ordered) || 0), 0);
@@ -4296,7 +4353,7 @@ async function renderPurchases(item) {
         <div class="section-title" style="margin-bottom:0;">Purchase History — ${escHtml(item.sku)}</div>
         <div style="display:flex;align-items:center;gap:10px;">
           <span style="font-size:12px;color:var(--muted2);">${rows.length} invoices · ${totalUnits} units purchased</span>
-          <button class="btn-card" id="phSaveBtn" style="font-size:12px;padding:6px 14px;display:none;" onclick="savePurchaseEdits('${escAttr(item.sku)}')">\ud83d\udcbe Save Purchase Edits</button>
+          <button class="btn-card" id="phSaveBtn" style="font-size:12px;padding:6px 14px;display:none;" onclick="savePurchaseEdits('${escAttr(item.sku)}', ${item.id != null ? item.id : 'null'})">💾 Save Purchase Edits</button>
           <button class="btn-card btn-push" style="font-size:12px;padding:6px 14px;" onclick="openInvoiceImport()">+ Import Invoice</button>
         </div>
       </div>
@@ -7294,7 +7351,16 @@ async function recordWriteoff() {
     const woRowId = (woIns && woIns.length) ? woIns[0].id : null;
 
     // Deduct qty from items
-    const newQty = Math.max(0, pi(item.qty) - qty);
+    // v2.9.55 (B-S94-01, REG S94-03): CAPTURE THE BEFORE-VALUE INTO ITS OWN
+    // BINDING, BEFORE ANYTHING MUTATES ITS SOURCE. item.qty is reassigned at the
+    // "Update local state" line below, ~70 lines before the logActivity call that
+    // used to read it back — so qty_before and qty_after BOTH evaluated to newQty
+    // and a real 15 → 14 was recorded as 14 → 14, in the details blob AND in the
+    // summary string. That defeated the very fields F-S92-02 added to say whether
+    // stock actually left. qtyDeducted above reads item.qty before this point and
+    // is correct — do not touch it.
+    const qtyBefore = pi(item.qty);
+    const newQty = Math.max(0, qtyBefore - qty);
     const woItemUpdates = { qty: newQty };
 
     // ── v2.8.5 WRITE-OFF CASCADE (closes G4): enforce oversale guard and push to channels ──
@@ -7385,9 +7451,9 @@ async function recordWriteoff() {
     // what made write_offs 12 unreconstructable at S92 — its qty_deducted
     // backfill had to be a judgement call rather than a determination.
     logActivity('INVENTORY','WRITE_OFF',null,
-      `Write-off: ${item.sku} x${qty} — ${reason} ($${(costPerUnit*qty).toFixed(2)})${woCascadeMsg} (qty ${pi(item.qty)} \u2192 ${newQty})`,
+      `Write-off: ${item.sku} x${qty} — ${reason} ($${(costPerUnit*qty).toFixed(2)})${woCascadeMsg} (qty ${qtyBefore} → ${newQty})`,
       { write_off_id: woRowId, qty_requested: pi(qty), qty_deducted: qtyDeducted,
-        qty_before: pi(item.qty), qty_after: newQty },
+        qty_before: qtyBefore, qty_after: newQty },
       item.sku);
     state.cardDirty = true;
     state.saving = false;
@@ -12512,7 +12578,11 @@ function renderParsersIndex() {
 //     legacyCount, ddCount,
 //     parityStatus: 'pass' | 'improved' | 'regressed' | 'both_empty' | 'mismatch' | 'no_fixture' | 'error',
 //     skusMatch:    bool (true when SKU SETs are equal),
-//     cutoverSafe:  bool (data-driven items count >= legacy items count)
+//     cutoverSafe:  true  = tested, and data-driven item count >= legacy count
+//                   false = tested, and data-driven REGRESSED against legacy
+//                   null  = UNTESTED (no fixture) — v2.9.55, B-S94-05
+//                   THREE STATES. Never fold null into true: a readiness
+//                   indicator that cannot say UNKNOWN will say SAFE.
 //   }
 function runTestAll() {
   const parsers = state.invoiceParsers || [];
@@ -12528,7 +12598,13 @@ function runTestAll() {
         hasFixture: false,
         parityStatus: 'no_fixture',
         legacyCount: 0, ddCount: 0,
-        cutoverSafe: true,  // vacuously safe — no data to regress
+        // v2.9.55 (B-S94-05, REG S94-02): was `cutoverSafe: true, // vacuously
+        // safe — no data to regress`. It is not safe, it is UNKNOWN — this parser
+        // was never run. Test All reported 8/8 having tested SEVEN, and because
+        // use_data_driven_parsers has been TRUE since 2026-05-06 that never gated
+        // a decision: it retroactively blessed a four-month-old cutover with one
+        // vendor (Happy Cow Lawn Decor) never validated at all.
+        cutoverSafe: null,
         skusMatch: true
       });
       continue;
@@ -12581,7 +12657,11 @@ function runAndRenderTestAll() {
   state.testAllResults = runTestAll();
   state.testAllExpanded = new Set();  // collapse all on fresh run
   const t1 = performance.now();
-  console.log(`[IP-S2] Test All completed in ${(t1-t0).toFixed(1)}ms — ${state.testAllResults.length} parser(s) tested`);
+  // v2.9.55 (B-S94-05): the denominator is what was TESTED, not what was enumerated.
+  const _tested = state.testAllResults.filter(r => r.cutoverSafe !== null).length;
+  const _untested = state.testAllResults.length - _tested;
+  console.log(`[IP-S2] Test All completed in ${(t1-t0).toFixed(1)}ms — ${_tested} parser(s) tested` +
+    (_untested > 0 ? `, ${_untested} UNTESTED (no fixture)` : ''));
   renderTestAllResults();
 }
 
@@ -12648,11 +12728,18 @@ function renderTestAllResults() {
     </table>`;
 
   // Footer: summary
-  const cutoverSafeCount = results.filter(r => r.cutoverSafe).length;
+  // v2.9.55 (B-S94-05, REG S94-02): THE DENOMINATOR MUST BE WHAT WAS TESTED,
+  // NEVER WHAT WAS ENUMERATED. A no-fixture parser now carries cutoverSafe:null
+  // and is reported as UNTESTED rather than counted into the safe total.
+  const testedCount       = results.filter(r => r.cutoverSafe !== null).length;
+  const cutoverSafeCount  = results.filter(r => r.cutoverSafe === true).length;
+  const untestedCount     = results.filter(r => r.cutoverSafe === null).length;
   const qualityIssueCount = results.filter(r => r.hasFixture && r.legacyCount === 0 && r.ddCount === 0).length;
   const improvedCount = results.filter(r => r.parityStatus === 'improved').length;
   if (footEl) {
-    let summary = `<span style="color:${cutoverSafeCount === results.length ? 'var(--green)' : 'var(--red)'};font-weight:600;">${cutoverSafeCount} / ${results.length} cutover-safe</span>`;
+    const allTestedSafe = testedCount > 0 && cutoverSafeCount === testedCount;
+    let summary = `<span style="color:${allTestedSafe ? 'var(--green)' : 'var(--red)'};font-weight:600;">${cutoverSafeCount} / ${testedCount} tested</span>`;
+    if (untestedCount > 0) summary += ` · <span style="color:var(--gold);font-weight:600;">⚠ ${untestedCount} UNTESTED (no fixture)</span>`;
     if (improvedCount > 0) summary += ` · <span style="color:var(--gold);">${improvedCount} improved</span>`;
     if (qualityIssueCount > 0) summary += ` · <span style="color:var(--red);">⚠ ${qualityIssueCount} parser(s) returning zero items in both engines</span>`;
     footEl.innerHTML = summary;
@@ -12756,21 +12843,29 @@ function renderCutoverPanel(results) {
   }
 
   const total = results.length;
-  const safe = results.filter(r => r.cutoverSafe).length;
+  // v2.9.55 (B-S94-05): three states, not two. cutoverSafe === null means the
+  // parser has NO FIXTURE and was never run — UNKNOWN, and unknown is not safe.
+  const tested    = results.filter(r => r.cutoverSafe !== null).length;
+  const safe      = results.filter(r => r.cutoverSafe === true).length;
+  const untested  = results.filter(r => r.cutoverSafe === null).length;
   const regressed = results.filter(r => r.parityStatus === 'regressed').length;
-  const errored = results.filter(r => r.parityStatus === 'error').length;
+  const errored   = results.filter(r => r.parityStatus === 'error').length;
   const qualityIssues = results.filter(r => r.hasFixture && r.legacyCount === 0 && r.ddCount === 0).length;
 
   let statusHtml = `Flag: <span style="color:${flagOn ? 'var(--green)' : 'var(--muted)'};font-weight:600;">${flagLabel}</span> · `;
-  if (regressed === 0 && errored === 0) {
-    statusHtml += `<span style="color:var(--green);font-weight:600;">✓ ${safe}/${total} cutover-safe</span>`;
-  } else {
+  if (regressed > 0 || errored > 0) {
     statusHtml += `<span style="color:var(--red);font-weight:600;">⚠ ${regressed} regressed / ${errored} errored — flip blocked</span>`;
+  } else if (untested > 0) {
+    statusHtml += `<span style="color:var(--gold);font-weight:600;">⚠ ${safe}/${tested} tested safe · ${untested} of ${total} UNTESTED — flip to data-driven blocked</span>`;
+  } else {
+    statusHtml += `<span style="color:var(--green);font-weight:600;">✓ ${safe}/${tested} cutover-safe</span>`;
   }
   statusEl.innerHTML = statusHtml;
 
-  // Enable button only when no regressions / errors
-  btn.disabled = !(regressed === 0 && errored === 0);
+  // v2.9.55 (B-S94-05): enable only when nothing regressed, nothing errored and
+  // nothing is untested. Turning the engine OFF is the safe direction, so while
+  // the flag is ON the button stays available — the block is on turning it ON.
+  btn.disabled = flagOn ? false : !(regressed === 0 && errored === 0 && untested === 0);
 
   if (noteEl) {
     if (qualityIssues > 0 && regressed === 0) {
@@ -12792,6 +12887,28 @@ async function flipDataDrivenFlag() {
   if (!sb) { alert('Not connected to Supabase.'); return; }
   const target = !state.useDataDrivenParsers;
   const targetLabel = target ? 'ON (data-driven engine ACTIVE)' : 'OFF (legacy engine)';
+  // v2.9.55 (B-S94-05, REG S94-02 + REG S92-02): A GATE MUST BE ABLE TO REPORT
+  // UNKNOWN, AND ITS REFUSAL PATH MUST BE OBSERVED. Turning the data-driven
+  // engine ON is gated on every parser having actually been RUN. Turning it OFF
+  // (back to legacy) is the safe direction and is never blocked. This refuses
+  // independently of btnFlipFlag's disabled state, which a stale render can lie
+  // about — a gate that only exists as a disabled attribute is not a gate.
+  if (target) {
+    const res = state.testAllResults;
+    if (!res || !res.length) {
+      alert('Run Test All before turning the data-driven engine ON.\n\n' +
+            'No parity results are loaded, so cutover readiness is UNKNOWN — and unknown is not safe.');
+      return;
+    }
+    const untestedNames = res.filter(r => r.cutoverSafe === null)
+                             .map(r => r.display_name || r.vendor_key);
+    if (untestedNames.length) {
+      alert('Cannot turn the data-driven engine ON.\n\n' + untestedNames.length +
+            ' parser(s) have NO FIXTURE and were never run:\n  ' + untestedNames.join('\n  ') +
+            '\n\nUntested is not safe. Capture a fixture for each, re-run Test All, then flip.');
+      return;
+    }
+  }
   if (!confirm(`Flip use_data_driven_parsers to ${targetLabel}?\n\nThis updates the settings row in Supabase and takes effect for all V2 instances on next page refresh.`)) {
     return;
   }
