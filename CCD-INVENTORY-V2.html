@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.57</title>
+<title>CCD Inventory System v2.9.58</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -631,7 +631,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -643,7 +643,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.57</div>
+      <div class="topbar-version">v2.9.58</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1204,6 +1204,10 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
             <div style="font-size:12px;font-weight:700;color:#4caf50;margin:10px 0 6px;">TreasureMarts</div>
             <div class="setting-row"><div class="setting-label">Overhead %</div><div class="setting-value"><input class="setting-input" id="fee_tm_oh" type="number" step="0.5" style="width:70px;"></div></div>
             <div class="setting-row"><div class="setting-label">Commission %</div><div class="setting-value"><input class="setting-input" id="fee_tm_comm" type="number" step="0.5" style="width:70px;"></div></div>
+            <div style="font-size:12px;font-weight:700;color:#e11d48;margin:10px 0 6px;">Crazy Chicks</div>
+            <div class="setting-row"><div class="setting-label">Overhead %</div><div class="setting-value"><input class="setting-input" id="fee_cc_oh" type="number" step="0.5" style="width:70px;"></div></div>
+            <div class="setting-row"><div class="setting-label">Commission %</div><div class="setting-value"><input class="setting-input" id="fee_cc_comm" type="number" step="0.5" style="width:70px;"></div></div>
+            <div style="font-size:10px;color:var(--muted);margin:2px 0 0 2px;">Flat commission, no card fee. Price is grossed up so the commission is recovered on retail.</div>
           </div>
           <!-- v2.8.13: Packing Slip Profiles (Supabase-backed, shared across users) -->
           <div class="settings-section">
@@ -1733,7 +1737,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.57';
+const TOOL_VERSION = '2.9.58';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1765,6 +1769,17 @@ const DEFAULT_FEES = {
   tm: {
     oh_pct: 10,              // Overhead % on marked-up wholesale (baked + deducted)
     commission_pct: 10       // Commission % on marked-up wholesale (baked + deducted)
+  },
+  // v2.9.58 (S97): CC WAS MISSING HERE IN v2.9.57 AND IT WAS A LIVE HAZARD.
+  // saveSettings() rebuilds settings.channel_fees from the FOUR blocks it can
+  // see, so a Settings save deleted channel_fees.cc outright; the reload then
+  // fell through to DEFAULT_FEES.cc, which did not exist, leaving state.fees.cc
+  // as {} -> oh 0%, commission 0% -> CC priced ~20% low, silently.
+  // ANY NEW CHANNEL MUST BE ADDED IN FOUR PLACES: here, the settings markup,
+  // renderSettings(), and the feeValues object in saveSettings().
+  cc: {
+    oh_pct: 10,              // Overhead % on marked-up wholesale (baked + deducted)
+    commission_pct: 15       // Crazy Chicks flat commission — NO card fee
   }
 };
 
@@ -2659,11 +2674,12 @@ function _blankItemSeed() {
     etsy_variant_id: null, wayfair_sku: null,
     wayfair_dimensions: '', wayfair_weight: '', wayfair_materials: '',
     wayfair_color: '', wayfair_props: '', wayfair_country: '',
-    etsy_pricing_notes: '', wix_pricing_notes: '', wayfair_pricing_notes: '', tm_pricing_notes: '',
+    etsy_pricing_notes: '', wix_pricing_notes: '', wayfair_pricing_notes: '', tm_pricing_notes: '', cc_pricing_notes: '',
     is_active: true, photographed: false, description_last_updated: null,
     par_reorder_point: null, par_reorder_qty: null, par_max_stock: null,
     par_etsy_min: null, par_etsy_target: null, par_wix_min: null, par_wix_target: null,
-    par_wayfair_min: null, par_wayfair_target: null, par_tm_min: null, par_tm_target: null
+    par_wayfair_min: null, par_wayfair_target: null, par_tm_min: null, par_tm_target: null,
+    par_cc_min: null, par_cc_target: null
   };
 }
 
@@ -2707,6 +2723,7 @@ function _dupItemSeed(src) {
     wix_pricing_notes: src.wix_pricing_notes || '',
     wayfair_pricing_notes: src.wayfair_pricing_notes || '',
     tm_pricing_notes: src.tm_pricing_notes || '',
+    cc_pricing_notes: src.cc_pricing_notes || '',
     // PAR levels — copied (product policy, not channel-linked)
     par_reorder_point: src.par_reorder_point ?? null,
     par_reorder_qty: src.par_reorder_qty ?? null,
@@ -2715,6 +2732,7 @@ function _dupItemSeed(src) {
     par_wix_min: src.par_wix_min ?? null, par_wix_target: src.par_wix_target ?? null,
     par_wayfair_min: src.par_wayfair_min ?? null, par_wayfair_target: src.par_wayfair_target ?? null,
     par_tm_min: src.par_tm_min ?? null, par_tm_target: src.par_tm_target ?? null,
+    par_cc_min: src.par_cc_min ?? null, par_cc_target: src.par_cc_target ?? null,
     // Quantities — ZEROED (decision #2). Physical stock is not duplicated.
     qty: 0, etsy_qty: 0, wix_qty: 0, wayfair_qty: 0, treasuremarts_qty: 0, crazychicks_qty: 0,
     // Channel LISTING IDs — BLANKED (non-negotiable: two rows must never point
@@ -3060,7 +3078,8 @@ function captureEdits() {
     f_par_etsy_min: 'par_etsy_min', f_par_etsy_target: 'par_etsy_target',
     f_par_wix_min: 'par_wix_min', f_par_wix_target: 'par_wix_target',
     f_par_wayfair_min: 'par_wayfair_min', f_par_wayfair_target: 'par_wayfair_target',
-    f_par_tm_min: 'par_tm_min', f_par_tm_target: 'par_tm_target'
+    f_par_tm_min: 'par_tm_min', f_par_tm_target: 'par_tm_target',
+    f_par_cc_min: 'par_cc_min', f_par_cc_target: 'par_cc_target'
   };
   const numericCols = new Set(['wholesale_price','ib_shipping','tariff','ob_shipping','qty','etsy_qty','wix_qty','wayfair_qty','treasuremarts_qty','crazychicks_qty','etsy_price','wix_price','wayfair_price','treasuremarts_price','crazychicks_price','shipping_weight','box_length','box_width','box_height','par_reorder_point','par_reorder_qty','par_max_stock','par_etsy_min','par_etsy_target','par_wix_min','par_wix_target','par_wayfair_min','par_wayfair_target','par_tm_min','par_tm_target']);
   // v2.9.42: wayfair_sku ADDED. It was the only channel identifier missing from
@@ -3082,7 +3101,7 @@ function captureEdits() {
   if ($('cardActive')) item.is_active = $('cardActive').checked;
   // Per-channel pricing notes — route to correct column based on active channel
   if (ge('f_pricing_notes')) {
-    const notesColMap = { etsy: 'etsy_pricing_notes', wix: 'wix_pricing_notes', wayfair: 'wayfair_pricing_notes', tm: 'tm_pricing_notes' };
+    const notesColMap = { etsy: 'etsy_pricing_notes', wix: 'wix_pricing_notes', wayfair: 'wayfair_pricing_notes', tm: 'tm_pricing_notes', cc: 'cc_pricing_notes' };
     const col = notesColMap[state.activePricingChannel];
     if (col) item[col] = $('f_pricing_notes').value || '';
   }
@@ -3458,12 +3477,13 @@ function renderPricing(item) {
       { label: `Wayfair Platform (${pPct}%)`, val: wayfairFee },
       { label: `Recovery Fee (${rPct}%)`, val: wayfairRecoveryDeduct }
     ];
-  } else if (activeCh.key === 'tm' || activeCh.key === 'cc') {
-    // S97: TreasureMarts and Crazy Chicks are both physical co-op booths and
-    // share one fee shape — commission + overhead on marked-up wholesale, no OB
-    // shipping. ONE branch on purpose: a fix here cannot land on one and miss
-    // the other. Only the rates differ (TM 10%, CC 15%), and they come from
-    // settings.channel_fees, never from a literal.
+  } else if (activeCh.key === 'tm') {
+    // TREASUREMARTS — ECOSYSTEM-019, LOCKED. DO NOT "FIX" THIS.
+    // Commission is built in on MARKED-UP WHOLESALE but charged by TM on RETAIL,
+    // so it under-recovers by (retail - markedUp) * commission. That gap is the
+    // circular reference in the FR manual, and Mary decided to leave it alone.
+    // v2.9.58 SPLIT THIS FROM CC DELIBERATELY: the two shapes now differ, so a
+    // shared branch would be a lie. See CCD-S97-Booth-Pricing-Formula.md.
     const ohPct = f.oh_pct || 0;
     const commPct = f.commission_pct || 0;
     const divisor = 1 + (ohPct + commPct) / 100;
@@ -3473,6 +3493,25 @@ function renderPricing(item) {
     saleFees = retailPrice * commPct / 100 + builtInOH;
     feeRows = [
       { label: `${activeCh.label} Commission (${commPct}%)`, val: retailPrice * commPct / 100 },
+      { label: `${activeCh.label} Overhead (${ohPct}%)`, val: builtInOH }
+    ];
+  } else if (activeCh.key === 'cc') {
+    // CRAZY CHICKS — v2.9.58 GROSS-UP. Commission is solved ON RETAIL, which is
+    // where the booth actually charges it:
+    //     P = ( U*(1+oh) + F ) / (1 - c)      U = wholesale*(1+markup), F = ib+tariff
+    // Reversing that for the analysis view:
+    //     U = ( P*(1-c) - F ) / (1+oh)   and the built-in commission is exactly P*c,
+    // so it equals what is deducted on sale and the rate stops affecting net.
+    // MEASURED over 930 items: CC@15% and TM@10% net within $0.0085 under this form.
+    const ohPct = f.oh_pct || 0;
+    const commPct = f.commission_pct || 0;
+    const cFrac = Math.min(commPct / 100, 0.95);   // guard: never divide by <=0
+    const muEstimate = (retailPrice * (1 - cFrac) - ibDollar - tariffDollar) / (1 + ohPct / 100);
+    builtInOH = muEstimate * ohPct / 100;
+    builtInCommission = retailPrice * cFrac;
+    saleFees = retailPrice * cFrac + builtInOH;
+    feeRows = [
+      { label: `${activeCh.label} Commission (${commPct}%)`, val: retailPrice * cFrac },
       { label: `${activeCh.label} Overhead (${ohPct}%)`, val: builtInOH }
     ];
   }
@@ -3496,7 +3535,7 @@ function renderPricing(item) {
       <div class="channel-sub-tabs">${tabsHtml}</div>
       <div style="display:flex;gap:8px;align-items:center;">
         ${activeCh.key === 'wix' ? `<button class="push-btn" style="background:rgba(99,102,241,0.15);color:var(--blue);border-color:rgba(99,102,241,0.3);" onclick="copyEtsyToWix()" title="Copy Etsy price and quantity to Wix (one-time, no automation)">← Copy from Etsy</button>` : ''}
-        <button class="push-btn" onclick="pushSingleChannel('${activeCh.key}')">↻ Push to ${activeCh.label}</button>
+        ${(activeCh.key === 'tm' || activeCh.key === 'cc') ? '' : `<button class="push-btn" onclick="pushSingleChannel('${activeCh.key}')">↻ Push to ${activeCh.label}</button>`}
       </div>
     </div>
     <div class="section-title" style="color:${activeCh.color};">${activeCh.label.toUpperCase()} PRICING</div>
@@ -3527,10 +3566,10 @@ function renderPricing(item) {
       <div class="fee-item"><div class="fee-label">Wholesale × Markup</div><div class="fee-val" style="color:var(--text);">$${(retailPrice - fixedCosts - totalBuiltIn).toFixed(2)}</div></div>
       <div class="fee-item"><div class="fee-label">IB + Tariff</div><div class="fee-val" style="color:var(--text);">$${(ibDollar + tariffDollar).toFixed(2)}</div></div>
       ${chHasOB ? `<div class="fee-item"><div class="fee-label">OB Shipping</div><div class="fee-val" style="color:var(--text);">$${effectiveOB.toFixed(2)}</div></div>` : ''}
-      ${builtInOH > 0 ? `<div class="fee-item"><div class="fee-label">Overhead (10%)</div><div class="fee-val" style="color:var(--text);">$${builtInOH.toFixed(2)}</div></div>` : ''}
+      ${builtInOH > 0 ? `<div class="fee-item"><div class="fee-label">Overhead (${f.oh_pct ?? 0}%)</div><div class="fee-val" style="color:var(--text);">$${builtInOH.toFixed(2)}</div></div>` : ''}
       ${builtInSurcharge > 0 ? `<div class="fee-item"><div class="fee-label">Surcharge (7% OB)</div><div class="fee-val" style="color:var(--text);">$${builtInSurcharge.toFixed(2)}</div></div>` : ''}
       ${builtInRecovery > 0 ? `<div class="fee-item"><div class="fee-label">Recovery Fee (4%)</div><div class="fee-val" style="color:var(--text);">$${builtInRecovery.toFixed(2)}</div></div>` : ''}
-      ${builtInCommission > 0 ? `<div class="fee-item"><div class="fee-label">TM Commission (10%)</div><div class="fee-val" style="color:var(--text);">$${builtInCommission.toFixed(2)}</div></div>` : ''}
+      ${builtInCommission > 0 ? `<div class="fee-item"><div class="fee-label">${activeCh.label} Commission (${f.commission_pct ?? 0}%)</div><div class="fee-val" style="color:var(--text);">$${builtInCommission.toFixed(2)}</div></div>` : ''}
       <div class="fee-item"><div class="fee-label" style="font-weight:700;">= Retail Price</div><div class="fee-val" style="color:var(--gold);font-weight:700;">$${retailPrice.toFixed(2)}</div></div>
     </div>
     ${feeRows.length > 0 ? `
@@ -3570,12 +3609,21 @@ function calcRetailFromMarkup(chKey, wholesale, ibDollar, tariffDollar, ob, pct)
     const recoveryFee = markedUp * (f.recovery_pct || 0) / 100;
     const ohFee = (wholesale + ibDollar + tariffDollar) * (f.oh_pct || 0) / 100;
     price += recoveryFee + ohFee;
-  } else if (chKey === 'tm' || chKey === 'cc') {
-    // S97: shared physical-booth shape (see renderPricing). Rates from
-    // settings.channel_fees — TM 10% commission, CC 15%.
+  } else if (chKey === 'tm') {
+    // TREASUREMARTS — ECOSYSTEM-019, LOCKED. Commission added on marked-up
+    // wholesale; TM charges it on retail. Under-recovers on purpose (Mary, FR
+    // manual). DO NOT align this with the CC branch below without her.
     const ohFee = markedUp * (f.oh_pct || 0) / 100;
     const commission = markedUp * (f.commission_pct || 0) / 100;
     price += ohFee + commission;
+  } else if (chKey === 'cc') {
+    // CRAZY CHICKS — v2.9.58 GROSS-UP:  P = ( U*(1+oh) + F ) / (1 - c)
+    // Divide by (1-c); do NOT multiply by (1+c). The commission is recovered on
+    // the retail price the booth actually charges it on, so CCD's net is the
+    // same whatever the rate. See CCD-S97-Booth-Pricing-Formula.md.
+    const ohFee = markedUp * (f.oh_pct || 0) / 100;
+    const cFrac = Math.min((f.commission_pct || 0) / 100, 0.95);
+    price = (price + ohFee) / (1 - cFrac);
   }
   return Math.round(price * 100) / 100;
 }
@@ -6335,6 +6383,8 @@ async function saveItem() {
       par_wayfair_target: gn('f_par_wayfair_target') ?? pi(item.par_wayfair_target),
       par_tm_min: gn('f_par_tm_min') ?? pi(item.par_tm_min),
       par_tm_target: gn('f_par_tm_target') ?? pi(item.par_tm_target),
+      par_cc_min: gn('f_par_cc_min') ?? pi(item.par_cc_min),
+      par_cc_target: gn('f_par_cc_target') ?? pi(item.par_cc_target),
       // Vendor
       vendor: gv('f_vendor') ?? item.vendor,
       // Per-channel pricing notes (captured by captureEdits routing)
@@ -6342,6 +6392,7 @@ async function saveItem() {
       wix_pricing_notes: item.wix_pricing_notes ?? '',
       wayfair_pricing_notes: item.wayfair_pricing_notes ?? '',
       tm_pricing_notes: item.tm_pricing_notes ?? '',
+      cc_pricing_notes: item.cc_pricing_notes ?? '',
       // Listing IDs (editable on Overview tab) — bigint columns need null not empty string
       // CRITICAL: ge() check prevents wiping IDs when saving from non-Overview tabs
       etsy_listing_id: ge('f_etsy_listing_id') ? (gv('f_etsy_listing_id') || null) : (item.etsy_listing_id || null),
@@ -11607,7 +11658,7 @@ let chState = {
   totalCount: 0,
   page: 1,
   search: '',
-  counts: { etsy:0, wix:0, wayfair:0, tm:0 }
+  counts: { etsy:0, wix:0, wayfair:0, tm:0, cc:0 }
 };
 let chSearchTimer = null;
 
@@ -12501,6 +12552,7 @@ async function loadSettings() {
     $('fee_wf_oh').value = f.wayfair.oh_pct; $('fee_wf_rec').value = f.wayfair.recovery_pct;
     $('fee_wf_plat').value = f.wayfair.platform_pct;
     $('fee_tm_oh').value = f.tm.oh_pct; $('fee_tm_comm').value = f.tm.commission_pct;
+    if ($('fee_cc_oh')) { $('fee_cc_oh').value = (f.cc || DEFAULT_FEES.cc).oh_pct; $('fee_cc_comm').value = (f.cc || DEFAULT_FEES.cc).commission_pct; }
   }
 
   // Render shipping rate filter checkboxes
@@ -13097,6 +13149,16 @@ async function saveSettingsToDb() {
       },
       tm: {
         oh_pct: parseFloat($('fee_tm_oh').value) || 0, commission_pct: parseFloat($('fee_tm_comm').value) || 0
+      },
+      // v2.9.58: THIS OBJECT REPLACES settings.channel_fees WHOLESALE. A channel
+      // missing here is DELETED from the database on save. That is what happened
+      // to cc in v2.9.57. Fall back to the live value, then the default, so a
+      // missing input can never zero a rate.
+      cc: {
+        oh_pct: $('fee_cc_oh') ? (parseFloat($('fee_cc_oh').value) || 0)
+                              : ((state.fees.cc || DEFAULT_FEES.cc).oh_pct),
+        commission_pct: $('fee_cc_comm') ? (parseFloat($('fee_cc_comm').value) || 0)
+                                        : ((state.fees.cc || DEFAULT_FEES.cc).commission_pct)
       }
     };
     const { data: existingFees } = await sb.from('settings').select('key').eq('key', 'channel_fees').limit(1);
