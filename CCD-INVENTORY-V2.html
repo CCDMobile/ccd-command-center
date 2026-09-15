@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.55</title>
+<title>CCD Inventory System v2.9.56</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -625,7 +625,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.55 · write-off log now records the real quantity movement (B-S94-01); the parser cutover indicator reports UNTESTED instead of safe and the flip is gated on it (B-S94-05); purchase history and the B1 cost-basis recompute resolve through item_id, so a rename or set-split no longer hides an item’s own invoice lines (B-S94-06 / V2-B13a)</div>
+    <div class="login-version">v2.9.56 · channel pushes from write-offs, sales, sale reversals and the Channels view now reach the channels with no Sync Hub tab open — every sync_queue insert is stamped _source:v2 centrally, so the edge processor owns them (S96 A2+A3). Requires the S96 claim-predicate change (B-S95-01) to be applied first.</div>
   </div>
 </div>
 
@@ -637,7 +637,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.55</div>
+      <div class="topbar-version">v2.9.56</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1725,7 +1725,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.55';
+const TOOL_VERSION = '2.9.56';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -3619,7 +3619,7 @@ function pushSingleChannel(chKey) {
   const price = pf(item[ch.priceField]);
   const fields = { sku: item.sku, quantity: qty, ...ch.fields, fieldTypes: ['quantity'], _source: 'v2' };  // S81 ADR-016
   if (chKey !== 'wayfair' && price > 0) { fields.price = price; fields.fieldTypes.push('price'); }
-  sb.from('sync_queue').insert({ item_id: item.id, channel: chKey, operation: 'update', fields, status: 'pending', created_at: new Date().toISOString() })
+  sb.from('sync_queue').insert(sqStamp({ item_id: item.id, channel: chKey, operation: 'update', fields, status: 'pending', created_at: new Date().toISOString() }))
     .then(({error}) => {
       if (error) showCardStatus(`Push failed: ${error.message}`, 'error');
       else showCardStatus(`Queued ${chKey} push — Sync Hub will process shortly`, 'ok');
@@ -3979,7 +3979,7 @@ async function reverseSale(idx) {
       }});
     }
     if (syncRows.length > 0) {
-      const { error: syncErr } = await sb.from('sync_queue').insert(syncRows);
+      const { error: syncErr } = await sb.from('sync_queue').insert(sqStamp(syncRows));
       if (syncErr) console.warn('[Sale Reversal] sync_queue insert failed:', syncErr.message);
     }
 
@@ -6780,10 +6780,10 @@ async function pushToChannels(includeFamily = false) {
         }
         fields.fieldTypes = fieldTypes;
 
-        const { error: insertErr } = await sb.from('sync_queue').insert({
+        const { error: insertErr } = await sb.from('sync_queue').insert(sqStamp({
           item_id: pushItem.id, channel: ch.key, operation: 'update', fields,
           status: 'pending', created_at: new Date().toISOString()
-        });
+        }));
         if (insertErr) throw new Error(`${ch.key} queue failed for ${pushItem.sku}: ${insertErr.message}`);
         queued++;
       }
@@ -7248,7 +7248,7 @@ async function confirmSell() {
     }
 
     if (syncRows.length > 0) {
-      const { error: syncErr } = await sb.from('sync_queue').insert(syncRows);
+      const { error: syncErr } = await sb.from('sync_queue').insert(sqStamp(syncRows));
       if (syncErr) console.warn('[Sync Queue] Insert failed (sale still recorded):', syncErr.message);
     }
 
@@ -7422,7 +7422,7 @@ async function recordWriteoff() {
       }
 
       if (woSyncRows.length > 0) {
-        const { error: woSyncErr } = await sb.from('sync_queue').insert(woSyncRows);
+        const { error: woSyncErr } = await sb.from('sync_queue').insert(sqStamp(woSyncRows));
         if (woSyncErr) console.warn('[Write-off Cascade] Sync queue insert failed:', woSyncErr.message);
         else woCascadeMsg = ` · ${woSyncRows.length} channel sync(s) queued`;
         console.log(`[Write-off Cascade] ${woSyncRows.length} sync rows queued`);
@@ -8866,6 +8866,53 @@ function stopTextareaScroll() {
 // ═══════════════════════════════════════════════════════════
 // UTILITIES
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// v2.9.56 (S96 · A2 + A3) — CENTRAL sync_queue SOURCE STAMP
+// ═══════════════════════════════════════════════════════════
+// THE OWNERSHIP PARTITION, read from the claim predicate on prod at S95:
+//   claim_sync_queue_rows claims  fields->>'_source' = ANY(['cascade','v2'])
+//   Sync Hub v4.6.12 (L8268)      removes ONLY  fields._source === 'v2'
+// So: 'v2' -> edge only (HEADLESS). 'cascade' -> both (B-S90-02).
+//     ABSENT -> SH ONLY, because NULL = ANY(...) is NULL, not true.
+// *** `trigger` IS CONSULTED BY NEITHER SIDE. *** Before this build, only
+// pushSingleChannel and the family push stamped _source, so a write-off
+// cascade, a sale, a sale reversal and every Channels-view push produced rows
+// NOTHING BUT AN OPEN BROWSER TAB WOULD EVER PROCESS. That is the defect this
+// closes: Mary must be able to update channels without opening Sync Hub.
+//
+// STAMPED CENTRALLY, ON PURPOSE. Ten insert sites exist and an eleventh will
+// be added one day; stamping at each one is how the first two got it and the
+// other eight did not. Route every insert through this and a new path
+// inherits the correct behaviour instead of silently becoming browser-only.
+//
+// *** THE operation GUARD IS LOAD-BEARING — DO NOT REMOVE IT. ***
+// The edge processor NEVER READS row.operation. It goes straight to
+// buildInventoryPayload / buildPricePayload. A row with operation 'create'
+// (the listing-create path) handed to the edge would be treated as an
+// inventory update against a listing_id that does not exist yet. Only
+// 'update' rows are safe on the headless path.
+//
+// PREREQUISITE, ALREADY SHIPPED: B-S95-01. The claim predicate used to carry
+// `created_at > now() - interval '4 hours'` for every source, and a 'v2' row
+// has no second processor — so a v2 row that missed that window was orphaned
+// PERMANENTLY. Moving traffic onto the headless path before that was fixed
+// would have converted "needs Mary's tab" into "silently lost after four
+// hours". S96 step 1 exempted v2 rows from the age term. IF THAT CHANGE IS
+// EVER ROLLED BACK, ROLL THIS BUILD BACK WITH IT.
+//
+// Idempotent: it never overwrites an existing _source, so the two paths that
+// already stamped 'v2' are unaffected, and a future 'cascade' writer keeps
+// its own label.
+function sqStamp(rows) {
+  const list = Array.isArray(rows) ? rows : [rows];
+  for (const row of list) {
+    if (!row || !row.fields) continue;
+    if (row.operation !== 'update') continue;          // see the guard note above
+    if (row.fields._source === undefined) row.fields._source = 'v2';
+  }
+  return rows;
+}
+
 function escHtml(str) {
   if (!str) return '';
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -11686,10 +11733,10 @@ async function pushSingleFromChView(itemId, ch) {
   const price = pf(item[cfg.priceCol]);
   if (ch !== 'wayfair' && price > 0) { fields.price = price; fields.fieldTypes.push('price'); }
 
-  const { error } = await sb.from('sync_queue').insert({
+  const { error } = await sb.from('sync_queue').insert(sqStamp({
     item_id: item.id, channel: ch, operation: 'update', fields,
     status: 'pending', created_at: new Date().toISOString()
-  });
+  }));
   if (error) {
     showChStatus(`Push failed: ${error.message}`, 'error');
   } else {
@@ -11721,10 +11768,10 @@ async function pushAllChannel() {
       const price = pf(item[cfg.priceCol]);
       if (ch !== 'wayfair' && price > 0) { fields.price = price; fields.fieldTypes.push('price'); }
 
-      await sb.from('sync_queue').insert({
+      await sb.from('sync_queue').insert(sqStamp({
         item_id: item.id, channel: ch, operation: 'update', fields,
         status: 'pending', created_at: new Date().toISOString()
-      });
+      }));
       queued++;
     }
     showChStatus(`Queued ${queued} items → ${cfg.label} · Sync Hub will process shortly`, 'ok');
@@ -11776,10 +11823,10 @@ async function createListing(itemId, ch) {
     }
   } catch(e) { /* channel_content may not exist yet */ }
 
-  const { error } = await sb.from('sync_queue').insert({
+  const { error } = await sb.from('sync_queue').insert(sqStamp({
     item_id: item.id, channel: ch, operation: 'create', fields,
     status: 'pending', created_at: new Date().toISOString()
-  });
+  }));
 
   if (error) {
     showChStatus(`Create failed: ${error.message}`, 'error');
@@ -12016,10 +12063,10 @@ async function executeBulkAction() {
         if (ch === 'wayfair') fields.wayfairSku = item.wayfair_sku;
         const price = pf(item[cfg.priceCol]);
         if (ch !== 'wayfair' && price > 0) { fields.price = price; fields.fieldTypes.push('price'); }
-        await sb.from('sync_queue').insert({
+        await sb.from('sync_queue').insert(sqStamp({
           item_id: id, channel: ch, operation: 'update', fields,
           status: 'pending', created_at: new Date().toISOString()
-        });
+        }));
       } else if (action === 'price_pct') {
         const updates = { updated_at: new Date().toISOString() };
         ['etsy_price','wix_price','wayfair_price','treasuremarts_price'].forEach(col => {
@@ -13385,7 +13432,7 @@ async function fixAllocations() {
       }
 
       if (syncRows.length > 0) {
-        const { error: syncErr } = await sb.from('sync_queue').insert(syncRows);
+        const { error: syncErr } = await sb.from('sync_queue').insert(sqStamp(syncRows));
         if (syncErr) console.warn('[Fix Alloc] Sync queue error for ' + item.sku + ':', syncErr.message);
         syncRowsTotal += syncRows.length;
       }
