@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.59</title>
+<title>CCD Inventory System v2.9.60</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -631,7 +631,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -643,7 +643,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.59</div>
+      <div class="topbar-version">v2.9.60</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1739,7 +1739,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.59';
+const TOOL_VERSION = '2.9.60';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2676,6 +2676,7 @@ function _blankItemSeed() {
     etsy_variant_id: null, wayfair_sku: null,
     wayfair_dimensions: '', wayfair_weight: '', wayfair_materials: '',
     wayfair_color: '', wayfair_props: '', wayfair_country: '',
+    wayfair_props_comments: '',
     etsy_pricing_notes: '', wix_pricing_notes: '', wayfair_pricing_notes: '', tm_pricing_notes: '', cc_pricing_notes: '',
     is_active: true, photographed: false, description_last_updated: null,
     par_reorder_point: null, par_reorder_qty: null, par_max_stock: null,
@@ -2719,6 +2720,7 @@ function _dupItemSeed(src) {
     wayfair_materials: src.wayfair_materials || '',
     wayfair_color: src.wayfair_color || '',
     wayfair_props: src.wayfair_props || '',
+    wayfair_props_comments: src.wayfair_props_comments || '',
     wayfair_country: src.wayfair_country || '',
     // Pricing notes — copied
     etsy_pricing_notes: src.etsy_pricing_notes || '',
@@ -3072,7 +3074,7 @@ function captureEdits() {
     f_etsy_price: 'etsy_price', f_wix_price: 'wix_price', f_wayfair_price: 'wayfair_price', f_tm_price: 'treasuremarts_price', f_cc_price: 'crazychicks_price',
     f_ship_weight: 'shipping_weight', f_box_l: 'box_length', f_box_w: 'box_width', f_box_h: 'box_height',
     f_wayfair_sku: 'wayfair_sku', f_wf_dim: 'wayfair_dimensions', f_wf_weight: 'wayfair_weight',
-    f_wf_mat: 'wayfair_materials', f_wf_color: 'wayfair_color', f_wf_props: 'wayfair_props', f_wf_country: 'wayfair_country',
+    f_wf_mat: 'wayfair_materials', f_wf_color: 'wayfair_color', f_wf_props: 'wayfair_props', f_wf_props_comments: 'wayfair_props_comments', f_wf_country: 'wayfair_country',
     f_desc_date: 'description_last_updated',
     f_etsy_listing_id: 'etsy_listing_id', f_wix_product_id: 'wix_product_id',
     f_wix_variant_id: 'wix_variant_id', f_etsy_variant_id: 'etsy_variant_id',
@@ -6020,6 +6022,38 @@ async function fetchVariantIds(parentSku) {
 // ═══════════════════════════════════════════════════════════
 // TAB: WAYFAIR FIELDS (matches prototype exactly)
 // ═══════════════════════════════════════════════════════════
+// S98 . A2 - WAYFAIR PROPS COMMENTS VISIBILITY. C4 = HIDE AND KEEP.
+//
+// The textarea is ALWAYS in the DOM and its value is ALWAYS written on save.
+// The Props select controls only whether it is SHOWN. A display change must
+// never be a data change (REG S94-04) - silently destroying typed text is
+// F-S97-01, the exact defect this feature was built to fix.
+//
+// When Props is not Yes AND a note exists, a marker is shown. Without it a
+// card holding a hidden note is indistinguishable from one holding none, and
+// a control that cannot say "there is something here" will say "nothing here"
+// (REG S94-02).
+function syncWfPropsComments() {
+  const sel  = $('f_wf_props');
+  const ta   = $('f_wf_props_comments');
+  const note = $('wf_props_comments_note');
+  const cell = $('wf_props_comments_cell');
+  if (!sel || !ta || !note || !cell) return;
+  const isYes     = sel.value === 'Y';
+  const hasText   = (ta.value || '').trim() !== '';
+  const revealed  = ta.dataset.revealed === '1';
+  const showInput = isYes || revealed;
+  cell.style.display = (showInput || hasText) ? '' : 'none';
+  ta.style.display   = showInput ? '' : 'none';
+  note.style.display = (!showInput && hasText) ? '' : 'none';
+}
+function revealWfPropsComments() {
+  const ta = $('f_wf_props_comments');
+  if (!ta) return;
+  ta.dataset.revealed = '1';
+  syncWfPropsComments();
+}
+
 function renderWayfair(item) {
   $('sub-wayfair').innerHTML = `
   <div class="section">
@@ -6062,11 +6096,20 @@ function renderWayfair(item) {
         <div class="wf-field-row">
           <div class="wf-label">Props (Y/N)</div>
           <div class="wf-value">
-            <select class="wo-select" id="f_wf_props" style="width:100%;">
+            <select class="wo-select" id="f_wf_props" style="width:100%;" onchange="syncWfPropsComments()">
               <option value="">—</option>
               <option value="Y" ${item.wayfair_props === 'Y' ? 'selected' : ''}>Yes</option>
               <option value="N" ${item.wayfair_props === 'N' ? 'selected' : ''}>No</option>
             </select>
+          </div>
+        </div>
+      </div>
+      <div style="grid-column:1/-1;" id="wf_props_comments_cell">
+        <div class="wf-field-row" style="align-items:flex-start;">
+          <div class="wf-label" style="padding-top:8px;">Props Comments</div>
+          <div class="wf-value">
+            <textarea class="form-input" id="f_wf_props_comments" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Notes about props for this item (saved with the card)" oninput="syncWfPropsComments()">${escHtml(item.wayfair_props_comments || '')}</textarea>
+            <div id="wf_props_comments_note" style="display:none;font-size:11px;color:var(--muted2);margin-top:4px;cursor:pointer;" onclick="revealWfPropsComments()">&#128221; A props note is saved on this item &mdash; click to show it</div>
           </div>
         </div>
       </div>
@@ -6078,6 +6121,7 @@ function renderWayfair(item) {
       </div>
     </div>
   </div>`;
+  syncWfPropsComments();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6378,6 +6422,7 @@ async function saveItem() {
       wayfair_materials: gv('f_wf_mat') ?? item.wayfair_materials,
       wayfair_color: gv('f_wf_color') ?? item.wayfair_color,
       wayfair_props: gv('f_wf_props') ?? item.wayfair_props,
+      wayfair_props_comments: gv('f_wf_props_comments') ?? item.wayfair_props_comments,
       wayfair_country: gv('f_wf_country') ?? item.wayfair_country,
       // PAR — map new prototype field IDs to existing DB columns
       min_par_level: gn('f_par_reorder_point') ?? pi(item.min_par_level),
