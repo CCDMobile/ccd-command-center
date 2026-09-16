@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.60</title>
+<title>CCD Inventory System v2.9.61</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -631,7 +631,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -643,7 +643,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.60</div>
+      <div class="topbar-version">v2.9.61</div>
     </div>
     <div class="topbar-right">
       <div class="topbar-status">
@@ -1739,7 +1739,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.60';
+const TOOL_VERSION = '2.9.61';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -6033,24 +6033,45 @@ async function fetchVariantIds(parentSku) {
 // card holding a hidden note is indistinguishable from one holding none, and
 // a control that cannot say "there is something here" will say "nothing here"
 // (REG S94-02).
+//
+// v2.9.61: THE REVEAL IS A ROUND TRIP, NOT A RATCHET. In v2.9.60 `revealed`
+// was only ever SET, never cleared, so once the marker was clicked the Props
+// select could no longer hide the box and there was no way to close it. A
+// latch with no clearing path is a one-way door - the same shape as the
+// parser cutover flip. Two clearing paths now exist: the Hide control, and
+// ANY change to the Props select.
 function syncWfPropsComments() {
   const sel  = $('f_wf_props');
   const ta   = $('f_wf_props_comments');
   const note = $('wf_props_comments_note');
+  const hide = $('wf_props_comments_hide');
   const cell = $('wf_props_comments_cell');
-  if (!sel || !ta || !note || !cell) return;
+  if (!sel || !ta || !note || !hide || !cell) return;
   const isYes     = sel.value === 'Y';
   const hasText   = (ta.value || '').trim() !== '';
   const revealed  = ta.dataset.revealed === '1';
   const showInput = isYes || revealed;
   cell.style.display = (showInput || hasText) ? '' : 'none';
   ta.style.display   = showInput ? '' : 'none';
+  hide.style.display = (revealed && !isYes) ? '' : 'none';
   note.style.display = (!showInput && hasText) ? '' : 'none';
 }
 function revealWfPropsComments() {
   const ta = $('f_wf_props_comments');
   if (!ta) return;
   ta.dataset.revealed = '1';
+  syncWfPropsComments();
+}
+function hideWfPropsComments() {
+  const ta = $('f_wf_props_comments');
+  if (!ta) return;
+  ta.dataset.revealed = '';
+  syncWfPropsComments();
+}
+// Changing Props ALWAYS clears the latch, so No -> Yes -> No hides again.
+function onWfPropsChange() {
+  const ta = $('f_wf_props_comments');
+  if (ta) ta.dataset.revealed = '';
   syncWfPropsComments();
 }
 
@@ -6096,7 +6117,7 @@ function renderWayfair(item) {
         <div class="wf-field-row">
           <div class="wf-label">Props (Y/N)</div>
           <div class="wf-value">
-            <select class="wo-select" id="f_wf_props" style="width:100%;" onchange="syncWfPropsComments()">
+            <select class="wo-select" id="f_wf_props" style="width:100%;" onchange="onWfPropsChange()">
               <option value="">—</option>
               <option value="Y" ${item.wayfair_props === 'Y' ? 'selected' : ''}>Yes</option>
               <option value="N" ${item.wayfair_props === 'N' ? 'selected' : ''}>No</option>
@@ -6109,6 +6130,7 @@ function renderWayfair(item) {
           <div class="wf-label" style="padding-top:8px;">Props Comments</div>
           <div class="wf-value">
             <textarea class="form-input" id="f_wf_props_comments" style="width:100%;min-height:60px;margin-top:4px;" placeholder="Notes about props for this item (saved with the card)" oninput="syncWfPropsComments()">${escHtml(item.wayfair_props_comments || '')}</textarea>
+            <div id="wf_props_comments_hide" style="display:none;font-size:11px;color:var(--muted2);margin-top:4px;cursor:pointer;" onclick="hideWfPropsComments()">&#9650; Hide note</div>
             <div id="wf_props_comments_note" style="display:none;font-size:11px;color:var(--muted2);margin-top:4px;cursor:pointer;" onclick="revealWfPropsComments()">&#128221; A props note is saved on this item &mdash; click to show it</div>
           </div>
         </div>
