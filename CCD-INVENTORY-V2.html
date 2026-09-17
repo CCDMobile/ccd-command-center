@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.63</title>
+<title>CCD Inventory System v2.9.64</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -177,6 +177,7 @@ tbody td{padding:10px 14px;white-space:nowrap;}
 .inline-status.show{display:block;}
 .inline-status.ok{background:rgba(45,212,160,0.2);color:#2dd4a0;border:2px solid rgba(45,212,160,0.5);box-shadow:0 0 12px rgba(45,212,160,0.15);}
 .inline-status.error{background:rgba(240,92,92,0.2);color:#f05c5c;border:2px solid rgba(240,92,92,0.5);box-shadow:0 0 12px rgba(240,92,92,0.15);}
+.inline-status.warn{background:rgba(240,180,41,0.18);color:#f0b429;border:2px solid rgba(240,180,41,0.5);box-shadow:0 0 12px rgba(240,180,41,0.15);}
 
 /* ═══════════════════════════════════════════
    RESPONSIVE
@@ -631,7 +632,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -643,7 +644,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.63</div>
+      <div class="topbar-version">v2.9.64</div>
     </div>
     <div class="topbar-right">
       <!-- v2.9.63 (S98): failed-push pill. Hidden while the queue is clean. -->
@@ -1750,7 +1751,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.63';
+const TOOL_VERSION = '2.9.64';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -6888,6 +6889,11 @@ async function saveItem() {
       updates.sku = newSku;
     }
 
+    // v2.9.64 (S100 · B2): capture the pre-mutation channel quantities from the
+    // DATABASE before anything writes (REG S94-03). state.currentItem is not a
+    // safe "before": it is one page of a filtered query and it can be stale.
+    const chqBefore = await chqRead(item.id);
+
     const { error } = await sb.from('items').update(updates).eq('id', item.id);
     if (error) throw error;
 
@@ -6957,11 +6963,26 @@ async function saveItem() {
           if (pi(bundle.etsy_qty) > derivedQty) bundleUpdates.etsy_qty = derivedQty;
           if (pi(bundle.wix_qty) > derivedQty) bundleUpdates.wix_qty = derivedQty;
           if (pi(bundle.wayfair_qty) > derivedQty) bundleUpdates.wayfair_qty = derivedQty;
-          await sb.from('items').update(bundleUpdates).eq('id', bundle.id);
+          const { error: bundleErr } = await sb.from('items').update(bundleUpdates).eq('id', bundle.id);
+          if (bundleErr) { console.warn(`[Save Cascade] Bundle ${bundle.sku} update FAILED:`, bundleErr.message); continue; }
           console.log(`[Save Cascade] Bundle ${bundle.sku}: ${pi(bundle.qty)} → ${derivedQty}`);
+          // v2.9.64 (S100 · B2): this cascade moves channel quantities on an item
+          // NOBODY OPENED, and it queued nothing. `after` here is the payload merged
+          // onto the row already read rather than a second read-back — the update is
+          // confirmed by its own error check now, and re-reading every affected
+          // bundle would add a database read per bundle to every single save.
+          await queueChannelQtyDeltas(bundle, Object.assign({}, bundle, bundleUpdates), 'component_recalc_save');
         }
       }
     }
+
+    // v2.9.64 (S100 · B2): read back what LANDED and queue a push for every
+    // channel quantity that moved — or say so durably when there is no channel
+    // id to push to. Deliberately placed AFTER the two bundle blocks above, so
+    // ONE read-back covers the main update AND the bundle auto-derive, which
+    // writes channel quantities a second time and has no error check of its own.
+    const chqAfter = await chqRead(item.id);
+    const chqResult = await queueChannelQtyDeltas(chqBefore, chqAfter, 'card_save');
 
     // Merge updates back into state
     Object.assign(state.currentItem, updates);
@@ -6984,12 +7005,17 @@ async function saveItem() {
     $('cardName').textContent = updates.product_name || 'Untitled';
     if (skuChanged) $('cardSku').textContent = newSku;
 
-    statusEl.className = 'inline-status show ok';
-    statusEl.textContent = skuChanged
+    // v2.9.64 (S100 · B2): a green "Saved successfully" printed over a channel
+    // that did not get pushed IS the defect. The outcome rides on the same line,
+    // and the card goes amber whenever something did not go.
+    const chqNote = chqText(chqResult);
+    const chqClean = !!chqResult && !chqResult.unknown && !chqResult.error && !chqResult.unpushable.length;
+    statusEl.className = chqClean ? 'inline-status show ok' : 'inline-status show warn';
+    statusEl.textContent = (skuChanged
       ? `✅ Saved — SKU changed: ${oldSku} → ${newSku}`
       : allocationCorrected
         ? `✅ Saved ${item.sku} — allocations auto-corrected (oversale guard: etsy/wix=${etsyQty}, wayfair=${wayfairQty})`
-        : `✅ Saved ${item.sku} successfully`;
+        : `✅ Saved ${item.sku} successfully`) + ` · ${chqNote}`;
     statusEl.style.display = 'block';
     logActivity('INVENTORY','ITEM_SAVED',null,`Saved ${item.sku}`,{},item.sku);
     clearUnsavedMark();
@@ -9299,6 +9325,163 @@ function stopTextareaScroll() {
 // Idempotent: it never overwrites an existing _source, so the two paths that
 // already stamped 'v2' are unaffected, and a future 'cascade' writer keeps
 // its own label.
+// ═══════════════════════════════════════════════════════════
+// v2.9.64 (S100 · B2) — A CHANNEL QUANTITY CANNOT MOVE IN SILENCE
+// ═══════════════════════════════════════════════════════════
+// S100 WATCHED THIS HAPPEN FOUR TIMES on SKU 370953 in twenty minutes: the card
+// Save moved etsy_qty and wix_qty and created ZERO sync_queue rows — no error,
+// no pending row, and nothing in activity_log naming a channel. One of those
+// four was a save made to put the item BACK, which left V2 reading 2 while Etsy
+// and Wix held 1. That is S97's 37-vs-36 at n=2, produced during cleanup rather
+// than during a contrived test.
+//
+// saveItem() wrote all five channel-quantity columns on EVERY save (the whole
+// `updates` object goes every time, so a price-only edit rewrote them too) and
+// queued nothing, ever. confirmSell, recordWriteoff, the sale reversal and the
+// cap tool all queue. The save path never did.
+//
+// THE RULE THIS ENFORCES: a channel quantity that moves must either QUEUE A
+// PUSH or SAY SO DURABLY.
+//
+// PAUL'S DECISION AT S100 on the no-id case: it does NOT block the save. 43
+// items carry a channel quantity with no channel id to push it to
+// (live-defects item 3) and one of them already holds Crazy Chicks stock, so
+// refusing would land on Mary immediately. It announces instead — in the card
+// AND as an activity_log row — so the movement is queryable afterwards instead
+// of being a toast that vanishes. Silence was the defect, not the save.
+//
+// WHY IT DIFFS RATHER THAN PUSHING WHAT IT WAS HANDED:
+//   - A DIFF IS IDEMPOTENT, and it has to be: the card fires TWO saveItem()
+//     calls for one user action whenever the unsaved-changes modal is answered
+//     with Save, and the write-off form arms that flag because the `input`
+//     listener is delegated to the whole card. S100 measured the double save
+//     twice. The second save sees no change and must do NOTHING — not re-queue,
+//     and not refuse a card that is already correct.
+//   - THE BEFORE VALUE IS READ FROM THE DATABASE, never from state.currentItem
+//     (REG S92-01, REG S94-03). state.items is one page of a filtered query and
+//     state can be minutes stale; S99 lost its opening plan to exactly that.
+//   - THE AFTER VALUE IS READ BACK FROM THE DATABASE TOO, so this reports what
+//     LANDED rather than what was sent (REG S91-02). That is also why it needs
+//     no separate hook in the bundle auto-derive, which writes channel
+//     quantities a second time after the main update and carries no error check
+//     of its own: one read-back covers both writes.
+//
+// WAYFAIR'S ID IS wayfair_sku, AND EMPTY STRING IS NOT AN ID. 64 items carry ''
+// there — saveItem itself writes it, because L6674 lacks the `|| null` that the
+// listing IDs two lines below have (S100 §3). A truthiness test would call
+// those items wired and queue a push against nothing. CH_CONFIG's own filter
+// has always used .not(...,'is',null).neq('wayfair_sku','') for this reason.
+const CHQ_PUSHABLE = [
+  { key: 'etsy',    label: 'Etsy',    qtyCol: 'etsy_qty',    idCol: 'etsy_listing_id' },
+  { key: 'wix',     label: 'Wix',     qtyCol: 'wix_qty',     idCol: 'wix_product_id' },
+  { key: 'wayfair', label: 'Wayfair', qtyCol: 'wayfair_qty', idCol: 'wayfair_sku' }
+];
+// Booths have no proxy and no push path at all. A booth quantity moving is not
+// a defect — but it changes available-online, so it is RECORDED rather than
+// ignored, otherwise the log cannot explain why an online cap moved.
+const CHQ_BOOTHS = [
+  { key: 'tm', label: 'TreasureMarts', qtyCol: 'treasuremarts_qty' },
+  { key: 'cc', label: 'Crazy Chicks',  qtyCol: 'crazychicks_qty' }
+];
+const CHQ_COLS = 'id,sku,qty,etsy_qty,wix_qty,wayfair_qty,treasuremarts_qty,crazychicks_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku';
+
+function chqHasId(ch, row) {
+  if (!row) return false;
+  const v = row[ch.idCol];
+  return v !== null && v !== undefined && String(v).trim() !== '';
+}
+
+// Resolved from the database, never from state (REG S92-01). Returns null on
+// any failure, and null is reported as UNVERIFIED rather than as "no change" —
+// a readiness indicator that cannot say UNKNOWN will say SAFE (REG S94-02).
+async function chqRead(itemId) {
+  if (!sb || !itemId) return null;
+  try {
+    const { data, error } = await sb.from('items').select(CHQ_COLS).eq('id', itemId).limit(1).single();
+    if (error) { console.warn('[ChannelQty] read failed:', error.message); return null; }
+    return data || null;
+  } catch(e) { console.warn('[ChannelQty] read threw:', e.message); return null; }
+}
+
+// The row shape is the one recordWriteoff already ships (L7801-7818) and the
+// bulk push already ships (L12594-12602). It is NOT re-derived here: operation
+// must be 'update' or sqStamp() refuses to stamp it, and an unstamped row is
+// Sync-Hub-only because NULL = ANY(...) is NULL, not true.
+function chqRowFor(ch, row, quantity, trigger) {
+  const fields = { sku: row.sku, quantity: pi(quantity), fieldTypes: ['quantity'], trigger: trigger };
+  if (ch.key === 'etsy') { fields.listingId = row.etsy_listing_id; if (row.etsy_variant_id) fields.etsyVariantId = row.etsy_variant_id; }
+  if (ch.key === 'wix') { fields.productId = row.wix_product_id; if (row.wix_variant_id) fields.wixVariantId = row.wix_variant_id; }
+  if (ch.key === 'wayfair') { fields.wayfairSku = row.wayfair_sku; }
+  return { item_id: row.id, channel: ch.key, operation: 'update', fields: fields, status: 'pending', created_at: new Date().toISOString() };
+}
+
+function chqText(r) {
+  if (!r) return 'channel push NOT VERIFIED';
+  const parts = [];
+  if (r.unknown) parts.push('⚠ channel push NOT VERIFIED — could not read the item before/after');
+  if (r.queued.length) parts.push(`queued ${r.queued.join(', ')}`);
+  if (r.error) parts.push(`⚠ QUEUE INSERT FAILED (${r.error}) — nothing was pushed`);
+  if (r.unpushable.length) parts.push(`⚠ NOT pushed, no channel ID: ${r.unpushable.join(', ')}`);
+  if (r.booth.length) parts.push(`booth only, no push exists: ${r.booth.join(', ')}`);
+  return parts.length ? parts.join(' · ') : 'no channel quantity changed';
+}
+
+// NEVER THROWS. The caller's row is already committed by the time this runs, so
+// throwing would turn a queue failure into a save that looks failed while
+// having succeeded — which is the v2.9.49 write-off bug that produced duplicate
+// write_offs rows. A failure here is reported, loudly, and returned.
+async function queueChannelQtyDeltas(before, after, trigger) {
+  const out = { queued: [], unpushable: [], booth: [], unknown: false, error: null };
+  if (!before || !after) {
+    out.unknown = true;
+    const sku = (after && after.sku) || (before && before.sku) || null;
+    if (sku) logActivity('INVENTORY','CHANNEL_QTY_UNVERIFIED',null,`Channel push NOT VERIFIED on ${sku} — the before/after read failed`,{ trigger: trigger },sku);
+    return out;
+  }
+  const rows = [], detail = {};
+  for (const ch of CHQ_PUSHABLE) {
+    const b = pi(before[ch.qtyCol]), a = pi(after[ch.qtyCol]);
+    if (b === a) continue;
+    detail[ch.key] = { before: b, after: a };
+    if (chqHasId(ch, after)) {
+      rows.push(chqRowFor(ch, after, a, trigger));
+      out.queued.push(`${ch.label} ${b}→${a}`);
+    } else {
+      out.unpushable.push(`${ch.label} ${b}→${a}`);
+    }
+  }
+  for (const ch of CHQ_BOOTHS) {
+    const b = pi(before[ch.qtyCol]), a = pi(after[ch.qtyCol]);
+    if (b === a) continue;
+    detail[ch.key] = { before: b, after: a };
+    out.booth.push(`${ch.label} ${b}→${a}`);
+  }
+  if (!out.queued.length && !out.unpushable.length && !out.booth.length) return out;
+  if (rows.length) {
+    try {
+      const { error } = await sb.from('sync_queue').insert(sqStamp(rows));
+      if (error) {
+        out.error = error.message;
+        out.queued = [];
+        console.warn('[ChannelQty] sync_queue insert failed:', error.message);
+      }
+    } catch(e) {
+      out.error = e.message;
+      out.queued = [];
+      console.warn('[ChannelQty] sync_queue insert threw:', e.message);
+    }
+  }
+  // The durable half of "queue or say so". The order path already writes this
+  // shape — beforeState / afterState / finalChannelState — and ITEM_SAVED
+  // carried nothing but {source}, which is why four channel moves today left no
+  // trace. This is that shape, applied to the save path.
+  logActivity('INVENTORY','CHANNEL_QTY_DELTA',null,
+    `Channel qty moved on ${after.sku}: ${chqText(out)}`,
+    { trigger: trigger, changes: detail, queued: out.queued, not_pushed_no_channel_id: out.unpushable, booths: out.booth, queue_error: out.error, warehouse_after: pi(after.qty) },
+    after.sku);
+  return out;
+}
+
 function sqStamp(rows) {
   const list = Array.isArray(rows) ? rows : [rows];
   for (const row of list) {
