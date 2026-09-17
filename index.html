@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.3</title>
+<title>CCD Command Center v3.3.2</title>
+<!-- v3.3.2 (S99): Desktop Inventory RETIRED - tool card, version fallback, and its two live entry points (Active SKUs KPI, New Invoice quick action) removed or repointed to Inventory V2. Retired long ago; the card outlived it. -->
+<!-- v3.3.2 (S99): credential fields masked (anon key x2, CCD key) - type=text -> password. Prevents shoulder-surfing and screenshot leakage. No reveal toggle by design (REG S98-07). No behaviour change. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
@@ -885,7 +887,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.3</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.3.2</span>
         </div>
     </div>
 
@@ -932,7 +934,7 @@ body::before {
         </div>
         <div class="form-group">
             <label class="form-label">Supabase Anon Key</label>
-            <input type="text" class="form-input" id="setupKey" placeholder="eyJhbGciOi...">
+            <input type="password" class="form-input" id="setupKey" placeholder="eyJhbGciOi...">
         </div>
         <div class="form-group">
             <label class="form-label">Your Name</label>
@@ -978,7 +980,7 @@ body::before {
                 <div class="kpi-value" id="kpiQueue">—</div>
                 <div class="kpi-sub">pending pushes</div>
             </div>
-            <div class="kpi-card" onclick="openTool('CCD-INVENTORY-SYSTEM.html')">
+            <div class="kpi-card" onclick="openTool('CCD-INVENTORY-V2.html')">
                 <div class="kpi-label">Active SKUs</div>
                 <div class="kpi-value" id="kpiSkus">—</div>
                 <div class="kpi-sub" id="kpiSkusSub">in stock</div>
@@ -1000,7 +1002,7 @@ body::before {
             <a class="qa-btn" href="#" onclick="openTool('CCD-SYNC-HUB.html');return false;">
                 <span class="icon">📥</span> Pull Orders
             </a>
-            <a class="qa-btn" href="#" onclick="openTool('CCD-INVENTORY-SYSTEM.html');return false;">
+            <a class="qa-btn" href="#" onclick="openTool('CCD-INVENTORY-V2.html');return false;">
                 <span class="icon">📄</span> New Invoice
             </a>
             <a class="qa-btn" href="#" onclick="openTool('CCD-FINANCIAL-REPORTING.html#pnl');return false;">
@@ -1243,7 +1245,7 @@ body::before {
             </div>
             <div class="form-group">
                 <label class="form-label">Supabase Anon Key</label>
-                <input type="text" class="form-input" id="settingsKey">
+                <input type="password" class="form-input" id="settingsKey">
             </div>
 
             <div class="form-section-title">Proxy URLs</div>
@@ -1271,7 +1273,7 @@ body::before {
             <div class="form-section-title">API Key</div>
             <div class="form-group">
                 <label class="form-label">CCD API Key</label>
-                <input type="text" class="form-input" id="settingsApiKey">
+                <input type="password" class="form-input" id="settingsApiKey">
                 <div class="form-hint">Shared key for all proxy endpoints</div>
             </div>
 
@@ -1293,7 +1295,14 @@ body::before {
    CONFIG & STATE
    ═══════════════════════════════════════════ */
 const BASE_URL = 'https://ccdmobile.github.io/ccd-command-center/';
-const API_KEY = 'ccd_VW5ORDOIcuh34shSTmbEwNjnrMVHTIdF';
+// v3.3.1 (S80): the retired CCD key was hardcoded here in a PUBLICLY SERVED
+// file. It only fired as a fallback when localStorage had no ccdApiKey - i.e.
+// a fresh browser - and after the S79 rotation that fallback was a DEAD key,
+// so every call 401'd with no obvious cause. All CCD tools share the
+// ccdmobile.github.io origin and V2 seeds ccdApiKey into localStorage from
+// settings.api_keys on load, so the real source is already in place.
+// Blank, never a literal. See REG S80-06.
+const API_KEY = '';
 
 let sb = null; // Supabase client
 let healthPanelOpen = false;
@@ -1340,7 +1349,6 @@ function resolveKey(key) {
    ═══════════════════════════════════════════ */
 const TOOLS = [
     // CORE OPERATIONS
-    { id: 'desktop', name: 'Desktop Inventory', file: 'CCD-INVENTORY-SYSTEM.html', versionKey: 'desktop', icon: '🖥', desc: 'Pricing engine, item management, source of truth', category: 'core', status: 'ok' },
     { id: 'inventoryv2', name: 'Inventory V2', file: 'CCD-INVENTORY-V2.html', versionKey: 'inventory_v2', icon: '🏪', desc: 'Next-gen inventory — channel pricing, shipping, analytics', category: 'core', status: 'ok' },
     { id: 'synchub', name: 'Sync Hub', file: 'CCD-SYNC-HUB.html', versionKey: 'synchub', icon: '🔄', desc: 'Order processing, channel sync, cascade push', category: 'core', status: 'ok' },
     { id: 'mobile', name: 'Mobile Warehouse', file: null, url: 'https://ccdmobile.github.io/CCD-Mobile/', versionKey: 'mobile', icon: '📱', desc: 'Warehouse operations, quick sell, barcode scan', category: 'core', status: 'ok' },
@@ -1382,11 +1390,16 @@ const CATEGORIES = [
 ];
 
 const DEFAULT_VERSIONS = {
-    desktop: '~137K', synchub: 'v5.0.0', mobile: 'v4.1',
-    financial: 'v1.7.0', remittance: 'v1.2', tmrecon: 'v1.0.0',
-    skuaudit: 'v1.0', channelmanager: 'v2.4.0',
-    marketintelligence: 'v2.0.0', inventory_v2: 'v2.6.0',
-    wforders: 'v1.2', wflisting: 'v1.2', wfproductadd: 'v2.0.3', etsyimages: 'v1.1', activitylog: 'v1.0'
+    // S99: EMPTIED DELIBERATELY. This map held 14 hardcoded versions; measured
+    // against settings.tool_versions on 2026-09-17, EIGHT were stale, FOUR named
+    // tools that report no version at all, and TWO were right. The worst was
+    // the Sync Hub entry, which named a version AHEAD of the deployed v4.6.12
+    // and one that has never existed. A fallback that states a version cannot but
+    // drift, and when it drifts it asserts something false with no error.
+    // The render chain already ends in `|| '-'` (L~1512) and `|| ''` (L~1840),
+    // so an unreadable version now shows a dash instead of a confident lie.
+    // DO NOT REPOPULATE THIS. If a tool's version matters, have the tool stamp
+    // its own key into settings.tool_versions at init, as the others do.
 };
 
 /* ═══════════════════════════════════════════
