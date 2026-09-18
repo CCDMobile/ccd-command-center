@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.66</title>
+<title>CCD Inventory System v2.9.67</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -632,7 +632,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.67 · FAMILIES, SETS AND BUNDLES — STAGING ONLY UNTIL PROMOTED. A new Family tab on every card, and four guided wizards: break an invoice item out into a hidden parent plus the pieces you sell; break out more units when a reorder lands on the parent; roll pieces back to the parent; and create a Set (from one family) or a bundle (from any items, sold as an option on one of their listings). Sets and bundles hold no stock: they are available while their pieces are, selling one takes the pieces out of stock, and their Etsy and Wix quantities are only ever lowered automatically. Every action runs inside the database engine in one step, so a cancelled or failed wizard leaves nothing behind, and every action is logged against the item. On a database without the engine (production, until promotion) the Family tab is hidden and V2 behaves exactly as v2.9.66. (S101) v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -644,7 +644,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.66</div>
+      <div class="topbar-version">v2.9.67</div>
     </div>
     <div class="topbar-right">
       <!-- v2.9.63 (S98): failed-push pill. Hidden while the queue is clean. -->
@@ -838,6 +838,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <button class="sub-tab" data-tab="purchases" onclick="switchSub('purchases')">Purchases</button>
         <button class="sub-tab" data-tab="shipping" onclick="switchSub('shipping')">Shipping</button>
         <button class="sub-tab" data-tab="variants" onclick="switchSub('variants')">Variants</button>
+        <button class="sub-tab" data-tab="family" onclick="switchSub('family')" style="display:none;">Family</button>
         <button class="sub-tab" data-tab="wayfair" onclick="switchSub('wayfair')">Wayfair Fields</button>
         <button class="sub-tab" data-tab="par" onclick="switchSub('par')">PAR Levels</button>
         <button class="sub-tab" data-tab="writeoff" onclick="switchSub('writeoff')">Write-Off</button>
@@ -851,6 +852,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
       <div class="sub-content" id="sub-purchases"></div>
       <div class="sub-content" id="sub-shipping"></div>
       <div class="sub-content" id="sub-variants"></div>
+      <div class="sub-content" id="sub-family"></div>
       <div class="sub-content" id="sub-wayfair"></div>
       <div class="sub-content" id="sub-par"></div>
       <div class="sub-content" id="sub-writeoff"></div>
@@ -1751,7 +1753,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.66';
+const TOOL_VERSION = '2.9.67';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2102,6 +2104,636 @@ function ccdHydrateProxyKeys(rows, readError) {
   }
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v2.9.67 (S101 · P2): FAMILIES, SETS AND BUNDLES
+// Design: claude\CCD-S101-Variant-Bundle-Design.md (§2 what the user sees, §9 guardrails).
+//
+// ONE ENGINE, IN THE DATABASE. Every family / Set / bundle action here calls a
+// ccd_* function through sb.rpc(). This file never writes a role, a recipe or a
+// composite's stock itself — the database guards refuse that anyway (REG S98-03:
+// the wizard is a front end, not a second implementation).
+//
+// INERT WHERE THE ENGINE IS ABSENT. V2 is one file served to production AND
+// staging. ccdDetectEngine() looks for the engine's columns at connect; without
+// them state.ccdEngine stays false, the Family tab says so, and every existing
+// path behaves exactly as v2.9.66.
+// ═══════════════════════════════════════════════════════════════════════════
+const CCD_ROLE_LABEL = { parent: 'PARENT', piece: 'PIECE', set: 'SET', bundle: 'BUNDLE' };
+
+async function ccdDetectEngine() {
+  state.ccdEngine = false;
+  try {
+    const { error: e1 } = await sb.from('items').select('item_role,parent_item_id,hold_back').limit(1);
+    if (e1) { console.log('[Families] engine absent on this database (' + e1.message + ')'); return; }
+    const { error: e2 } = await sb.from('ccd_families').select('parent_item_id').limit(1);
+    state.ccdEngine = !e2;
+  } catch (e) { state.ccdEngine = false; }
+  // Production's screen must not change until promotion: the tab button only appears where the engine is.
+  const tabBtn = $q('.sub-tab[data-tab="family"]');
+  if (tabBtn) tabBtn.style.display = state.ccdEngine ? '' : 'none';
+  console.log('[Families] engine ' + (state.ccdEngine ? 'PRESENT — Family tab shown' : 'absent — Family tab hidden'));
+}
+function ccdRole(item) { return (state.ccdEngine && item && item.item_role) ? item.item_role : 'single'; }
+function ccdIsComposite(item) { const r = ccdRole(item); return r === 'set' || r === 'bundle'; }
+function ccdActor() { return 'Inventory V2'; }
+function ccdNewRef(kind) {
+  const r = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
+  return 'v2-' + kind + '-' + r;
+}
+const ccdMoney = n => '$' + pf(n).toFixed(2);
+const ccdCents = n => Math.round(pf(n) * 100);
+
+// Engine refusals, in the words Mary should read. The raw message is kept after
+// the plain text so nothing the engine said is lost.
+const CCD_ERR_TEXT = [
+  ['CCD-COST-SPLIT', 'The piece costs do not add up to the invoice cost. They must match to the cent.'],
+  ['CCD-SPLIT', 'The quantities do not add up to the units being broken out.'],
+  ['CCD-SKU-EXISTS', 'That SKU is already in use by another item.'],
+  ['CCD-PARENT-WIRED', 'This item is already listed on a channel (or holds channel or booth stock). Listed items are converted later, one at a time — not with this wizard.'],
+  ['CCD-COMPOSITE-NO-STOCK', 'A Set or bundle has no stock of its own. Change its pieces instead, or sell it through Sell.'],
+  ['CCD-COMPOSITE-CAP', 'That channel quantity is more than the pieces can make right now.'],
+  ['CCD-COMPOSITE-SHORT', 'There are not enough pieces to sell that many.'],
+  ['CCD-COMPONENT-IN-USE', 'This item is part of an active Set or bundle. Retire that Set or bundle first.'],
+  ['CCD-NO-DELETE', 'Family members, Sets and bundles are retired, never deleted.'],
+  ['CCD-RECIPE-ENGINE-ONLY', 'Set and bundle recipes can only be changed through the Family tab.'],
+  ['CCD-RECIPE', 'That item cannot be part of this Set or bundle.'],
+  ['CCD-ROLE-ENGINE-ONLY', 'Family roles can only be changed through the Family tab.'],
+  ['CCD-OVERRIDE-PROTECTED', 'The wizard tried to set a field only the engine may set.'],
+  ['CCD-BREAKOUT', 'The parent does not have that many unassigned units.'],
+  ['CCD-ROLLBACK', 'That roll-back is not possible.'],
+  ['CCD-DEFINE', 'The Set or bundle could not be created.'],
+  ['CCD-SELL', 'This Set or bundle cannot be sold that way.'],
+  ['CCD-SHORT', 'A piece does not have enough stock for that.'],
+  ['CCD-MOVE', 'Only single items and pieces hold stock.'],
+  ['CCD-FAMILY', 'The family could not be created.'],
+  ['items_parent_not_sellable', 'A parent can never be listed on a channel or hold channel stock.'],
+  ['items_composite_online_only', 'Sets and bundles are Etsy and Wix only — never Wayfair or a booth.'],
+  ['items_hold_back_check', 'Hold-back can only be 0 or 1.']
+];
+function ccdFriendlyError(msg) {
+  const m = String(msg || '');
+  for (const [code, text] of CCD_ERR_TEXT) {
+    if (m.indexOf(code) !== -1) return text + '  (' + m.replace(/^[A-Z0-9-]+:\s*/, '') + ')';
+  }
+  return m;
+}
+async function ccdRpc(fn, args) {
+  const { data, error } = await sb.rpc(fn, args);
+  if (error) throw new Error(ccdFriendlyError(error.message));
+  return data;
+}
+
+// Availability, computed the way the engine does (ccd_composite_capacity):
+// the smallest across components of floor(available-online / qty), where
+// available-online = qty − Crazy Chicks − TreasureMarts and an INACTIVE component counts 0.
+function ccdAvailOnline(p) { return Math.max(0, pi(p.qty) - pi(p.crazychicks_qty) - pi(p.treasuremarts_qty)); }
+function ccdCapacity(comps, byId) {
+  let cap = null, limiting = null;
+  for (const c of comps) {
+    const p = byId[c.component_item_id];
+    const each = (!p || p.is_active === false) ? 0 : Math.floor(ccdAvailOnline(p) / Math.max(1, pi(c.component_qty)));
+    if (cap === null || each < cap) { cap = each; limiting = p ? p.sku : '?'; }
+  }
+  return { cap: cap === null ? 0 : cap, limiting };
+}
+
+// ─── The Family tab ─────────────────────────────────────────────────────────
+async function renderFamily(item) {
+  const el = $('sub-family');
+  if (!el) return;
+  if (!state.ccdEngine) {
+    el.innerHTML = `<div class="section"><div class="section-title">Family, Sets &amp; bundles</div>
+      <div style="color:var(--muted);font-size:13px;line-height:1.6;">Not available on this database yet. Families, Sets and bundles are being built and tested on <strong>staging</strong>; they reach production only after the staging test plan passes and Paul approves the promotion. Nothing on this tab changes anything here.</div></div>`;
+    return;
+  }
+  el.innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading family…</div>';
+  try {
+    const { data: me, error } = await sb.from('items').select('*').eq('id', item.id).single();
+    if (error) throw error;
+    const role = me.item_role || 'single';
+    let html = '';
+    if (role === 'single') html = await ccdRenderSingle(me);
+    else if (role === 'bundle') html = await ccdRenderBundle(me);
+    else html = await ccdRenderFamilyView(role === 'parent' ? me.id : me.parent_item_id, me);
+    if (state.currentItem && state.currentItem.id === item.id && $('sub-family')) $('sub-family').innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="section" style="color:var(--red);">Could not load the family: ${escHtml(ccdFriendlyError(e.message))}</div>`;
+  }
+}
+
+async function ccdUsedIn(itemId) {
+  const { data: rows } = await sb.from('bundle_components').select('bundle_item_id,component_qty').eq('component_item_id', itemId);
+  if (!rows || !rows.length) return [];
+  const ids = [...new Set(rows.map(r => r.bundle_item_id))];
+  const { data: comps } = await sb.from('items').select('id,sku,item_role,is_active').in('id', ids);
+  return (comps || []).map(c => ({ ...c, per: (rows.find(r => r.bundle_item_id === c.id) || {}).component_qty }));
+}
+function ccdUsedInHtml(list) {
+  if (!list.length) return '';
+  return `<div class="section"><div class="section-title">Used in</div><table class="card-table"><thead><tr><th>SKU</th><th>Type</th><th>Per unit</th><th>Status</th></tr></thead><tbody>${
+    list.map(c => `<tr><td><span class="vr-sku" onclick="onRowClick(${c.id})">${escHtml(c.sku)}</span></td><td>${escHtml(CCD_ROLE_LABEL[c.item_role] || c.item_role)}</td><td class="mono">${pi(c.per)}</td><td>${c.is_active === false ? 'Retired' : 'Active'}</td></tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+async function ccdRenderSingle(me) {
+  const wired = me.etsy_listing_id || (me.wix_product_id || '').trim() || (me.wayfair_sku || '').trim()
+    || pi(me.etsy_qty) + pi(me.wix_qty) + pi(me.wayfair_qty) + pi(me.crazychicks_qty) + pi(me.treasuremarts_qty) > 0;
+  const canBreak = !wired && pi(me.qty) > 0;
+  const why = wired ? 'This item is listed on a channel or holds channel/booth stock. Listed items are converted later, one family at a time (phase P8), not with this wizard.'
+            : pi(me.qty) <= 0 ? 'There are no units in the warehouse to break out.' : '';
+  const usedIn = await ccdUsedIn(me.id);
+  return `<div class="section"><div class="section-title">Family, Sets &amp; bundles</div>
+    <div style="color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.6;">
+      <strong style="color:var(--text);">${escHtml(me.sku)}</strong> is a single item.
+      Break it out when it was bought as a set or an assortment: it becomes a hidden <strong>parent</strong> (the invoice record) and the pieces you name become the items you sell.
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+      <button class="btn-card btn-push" ${canBreak ? '' : 'disabled style="opacity:.45;cursor:not-allowed;"'} onclick="ccdOpenFamilyWizard(${me.id})">🧩 Break out into a family…</button>
+      <button class="btn-card" style="border:1px solid var(--blue);color:var(--blue);" onclick="ccdOpenCompositeWizard('bundle', ${me.id})">🎁 Create a bundle hosted on this item…</button>
+    </div>
+    ${why ? `<div style="margin-top:10px;font-size:12px;color:var(--muted);">${escHtml(why)}</div>` : ''}
+  </div>${ccdUsedInHtml(usedIn)}`;
+}
+
+async function ccdLoadFamily(parentId) {
+  const [pRes, fRes, kidsRes, recRes, logRes] = await Promise.all([
+    sb.from('items').select('*').eq('id', parentId).single(),
+    sb.from('ccd_families').select('*').eq('parent_item_id', parentId).maybeSingle(),
+    sb.from('items').select('*').eq('parent_item_id', parentId).order('id'),
+    sb.from('family_recipes').select('*').eq('parent_item_id', parentId),
+    sb.from('family_events').select('id,created_at,event_type,item_id,actor,source,details').eq('parent_item_id', parentId).order('id', { ascending: false }).limit(15)
+  ]);
+  if (pRes.error) throw pRes.error;
+  const kids = kidsRes.data || [];
+  const pieces = kids.filter(k => k.item_role === 'piece');
+  const sets = kids.filter(k => k.item_role === 'set');
+  const setIds = sets.map(s => s.id);
+  let comps = [];
+  if (setIds.length) {
+    const { data } = await sb.from('bundle_components').select('*').in('bundle_item_id', setIds);
+    comps = data || [];
+  }
+  return { parent: pRes.data, fam: fRes.data, pieces, sets, comps, recipes: recRes.data || [], log: logRes.data || [] };
+}
+
+function ccdLogHtml(log) {
+  if (!log.length) return '';
+  return `<div class="section"><div class="section-title">Family log</div><table class="card-table"><thead><tr><th>When</th><th>What</th><th>By</th></tr></thead><tbody>${
+    log.map(l => `<tr><td class="mono" style="white-space:nowrap;">${escHtml(String(l.created_at || '').replace('T', ' ').substring(0, 16))}</td><td>${escHtml(String(l.event_type).replace(/_/g, ' '))}</td><td>${escHtml(l.actor || '')}</td></tr>`).join('')
+  }</tbody></table></div>`;
+}
+
+async function ccdRenderFamilyView(parentId, me) {
+  if (!parentId) return '<div class="section" style="color:var(--red);">This item has a family role but no parent. Tell Paul.</div>';
+  const F = await ccdLoadFamily(parentId);
+  const p = F.parent, byId = {};
+  F.pieces.forEach(x => { byId[x.id] = x; });
+  const mode = F.fam ? F.fam.mode : '?';
+  const isMeParent = me.id === p.id;
+  const piecesRows = F.pieces.map(x => `<tr ${x.id === me.id ? 'style="background:rgba(212,168,67,0.06);"' : ''}>
+      <td><span class="vr-sku" onclick="onRowClick(${x.id})">${escHtml(x.sku)}</span>${x.is_active === false ? ' <span class="badge badge-inactive">Retired</span>' : ''}</td>
+      <td class="mono">${pi(x.qty)}</td><td class="mono">${pi(x.crazychicks_qty) + pi(x.treasuremarts_qty)}</td><td class="mono">${ccdAvailOnline(x)}</td>
+      <td class="mono">${pi(x.etsy_qty)} / ${pi(x.wix_qty)} / ${pi(x.wayfair_qty)}</td><td class="mono">${ccdMoney(x.wholesale_price)}</td></tr>`).join('');
+  const setsRows = F.sets.map(s => {
+    const cs = F.comps.filter(c => c.bundle_item_id === s.id);
+    const { cap, limiting } = ccdCapacity(cs, byId);
+    const avail = Math.max(0, cap - pi(s.hold_back));
+    const recipe = cs.map(c => `${pi(c.component_qty)}× ${escHtml((byId[c.component_item_id] || {}).sku || '?')}`).join(' + ');
+    return `<tr ${s.id === me.id ? 'style="background:rgba(212,168,67,0.06);"' : ''}>
+      <td><span class="vr-sku" onclick="onRowClick(${s.id})">${escHtml(s.sku)}</span>${s.is_active === false ? ' <span class="badge badge-inactive">Retired</span>' : ''}</td>
+      <td style="font-size:11px;">${recipe}</td><td class="mono">${cap}</td>
+      <td><label style="font-size:11px;cursor:pointer;"><input type="checkbox" ${pi(s.hold_back) ? 'checked' : ''} ${s.is_active === false ? 'disabled' : ''} onchange="ccdSetHoldBack(${s.id}, this.checked ? 1 : 0, ${pi(s.hold_back)})"> hold 1</label></td>
+      <td class="mono" style="font-weight:700;">${avail}</td><td style="font-size:11px;">${escHtml(limiting || '')}</td>
+      <td class="mono">${pi(s.etsy_qty)} / ${pi(s.wix_qty)}</td>
+      <td>${s.is_active === false ? '' : `<button class="btn-card" style="font-size:10px;padding:3px 8px;color:var(--red);border-color:var(--red);" onclick="ccdRetireComposite(${s.id})">Retire</button>`}</td></tr>`;
+  }).join('');
+  const usedIn = me.item_role === 'piece' ? (await ccdUsedIn(me.id)).filter(c => c.item_role === 'bundle') : [];
+  return `<div class="section">
+      <div class="section-title">Family of <span class="vr-sku" onclick="onRowClick(${p.id})">${escHtml(p.sku)}</span>
+        <span class="badge" style="background:rgba(212,168,67,0.15);color:var(--gold);margin-left:6px;">${escHtml(mode.toUpperCase())}</span>
+        ${p.is_hidden ? '<span class="badge badge-inactive" style="margin-left:4px;">parent hidden</span>' : ''}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.6;">
+        Invoice cost <strong style="color:var(--text);">${ccdMoney(p.wholesale_price)}</strong> per unit ·
+        <strong style="color:${pi(p.qty) > 0 ? 'var(--gold)' : 'var(--text)'};">${pi(p.qty)}</strong> unit(s) awaiting breakout.
+        ${isMeParent ? '' : `<span class="vr-sku" onclick="onRowClick(${p.id})">Open parent →</span>`}
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn-card btn-push" ${pi(p.qty) > 0 ? '' : 'disabled style="opacity:.45;cursor:not-allowed;"'} onclick="ccdOpenBreakoutWizard(${p.id})">🧩 Break out ${pi(p.qty) > 0 ? pi(p.qty) + ' unit(s)' : 'units'}…</button>
+        <button class="btn-card" style="border:1px solid var(--border);" onclick="ccdOpenRollbackWizard(${p.id})">↩ Roll back to parent…</button>
+        <button class="btn-card" style="border:1px solid var(--blue);color:var(--blue);" onclick="ccdOpenCompositeWizard('set', ${p.id})">➕ Add a Set…</button>
+        ${me.item_role === 'piece' ? `<button class="btn-card" style="border:1px solid var(--blue);color:var(--blue);" onclick="ccdOpenCompositeWizard('bundle', ${me.id})">🎁 Bundle hosted on ${escHtml(me.sku)}…</button>` : ''}
+      </div>
+    </div>
+    <div class="section"><div class="section-title">Pieces — the only real stock</div>
+      <table class="card-table"><thead><tr><th>SKU</th><th>Warehouse</th><th>In booths</th><th>Available online</th><th>Etsy / Wix / Wayfair</th><th>Cost</th></tr></thead>
+      <tbody>${piecesRows || '<tr><td colspan="6" style="color:var(--muted);">No pieces.</td></tr>'}</tbody></table></div>
+    <div class="section"><div class="section-title">Sets — calculated, never stocked</div>
+      <table class="card-table"><thead><tr><th>SKU</th><th>Made of</th><th>Pieces allow</th><th>Hold-back</th><th>Available</th><th>Limited by</th><th>Etsy / Wix</th><th></th></tr></thead>
+      <tbody>${setsRows || '<tr><td colspan="8" style="color:var(--muted);">No Sets. Use “Add a Set”.</td></tr>'}</tbody></table>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">Etsy and Wix quantities on a Set are only ever LOWERED automatically. Raise them by hand on the Set's card, up to “Available”.</div></div>
+    ${ccdUsedInHtml(usedIn)}${ccdLogHtml(F.log)}`;
+}
+
+async function ccdRenderBundle(me) {
+  const { data: cs } = await sb.from('bundle_components').select('*').eq('bundle_item_id', me.id);
+  const ids = (cs || []).map(c => c.component_item_id);
+  const { data: parts } = ids.length ? await sb.from('items').select('*').in('id', ids) : { data: [] };
+  const byId = {}; (parts || []).forEach(x => { byId[x.id] = x; });
+  const { cap, limiting } = ccdCapacity(cs || [], byId);
+  const avail = Math.max(0, cap - pi(me.hold_back));
+  const { data: log } = await sb.from('family_events').select('id,created_at,event_type,item_id,actor').eq('item_id', me.id).order('id', { ascending: false }).limit(15);
+  return `<div class="section"><div class="section-title">Bundle ${escHtml(me.sku)} ${me.is_active === false ? '<span class="badge badge-inactive">Retired</span>' : ''}</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Its pieces allow <strong style="color:var(--text);">${cap}</strong> ·
+        <label style="cursor:pointer;"><input type="checkbox" ${pi(me.hold_back) ? 'checked' : ''} ${me.is_active === false ? 'disabled' : ''} onchange="ccdSetHoldBack(${me.id}, this.checked ? 1 : 0, ${pi(me.hold_back)})"> hold back 1</label>
+        · available <strong style="color:var(--gold);">${avail}</strong> · limited by ${escHtml(limiting || '—')} · cost ${ccdMoney(me.wholesale_price)} (sum of pieces)</div>
+      <table class="card-table"><thead><tr><th>Item</th><th>Per bundle</th><th>Warehouse</th><th>Available online</th></tr></thead><tbody>${
+        (cs || []).map(c => { const x = byId[c.component_item_id] || {}; return `<tr><td><span class="vr-sku" onclick="onRowClick(${x.id})">${escHtml(x.sku || '?')}</span></td><td class="mono">${pi(c.component_qty)}</td><td class="mono">${pi(x.qty)}</td><td class="mono">${ccdAvailOnline(x)}</td></tr>`; }).join('')
+      }</tbody></table>
+      ${me.is_active === false ? '' : `<div style="margin-top:12px;"><button class="btn-card" style="font-size:11px;color:var(--red);border-color:var(--red);" onclick="ccdRetireComposite(${me.id})">Retire this bundle</button></div>`}
+    </div>${ccdLogHtml(log || [])}`;
+}
+
+async function ccdSetHoldBack(id, value, oldValue) {
+  try {
+    const { data, error } = await sb.from('items').update({ hold_back: value }).eq('id', id).eq('hold_back', oldValue).select('id,hold_back');
+    if (error) throw new Error(ccdFriendlyError(error.message));
+    if (!data || !data.length) throw new Error('The hold-back had already been changed elsewhere — reloaded.');
+    showCardStatus(`Hold-back ${value ? 'on' : 'off'} — availability recalculated (Etsy/Wix are only ever lowered automatically).`, 'ok');
+  } catch (e) { showCardStatus(e.message, 'error'); }
+  if (state.currentItem) renderFamily(state.currentItem);
+}
+
+async function ccdRetireComposite(id) {
+  const { data: row } = await sb.from('items').select('sku').eq('id', id).single();
+  const sku = (row && row.sku) || ('item ' + id);
+  if (!confirm(`Retire ${sku}?\n\nIt stops selling: its Etsy and Wix quantities go to 0 and are pushed. Its pieces are not touched. It is kept (never deleted) so its sales history stays.`)) return;
+  try {
+    await ccdRpc('ccd_composite_retire', { p_id: id, p_actor: ccdActor(), p_ref: ccdNewRef('retire') });
+    showCardStatus(`${sku} retired.`, 'ok');
+  } catch (e) { showCardStatus(e.message, 'error'); }
+  if (state.currentItem) { await ccdReloadCurrent(); }
+}
+
+async function ccdReloadCurrent(openId) {
+  const id = openId || (state.currentItem && state.currentItem.id);
+  if (!id) return;
+  state.hasUnsavedEdits = false; clearUnsavedMark();
+  await onRowClick(id);
+  switchSub('family', true);
+}
+
+// ─── Wizard shell: a modal OUTSIDE the card, so typing in it never arms the
+// card's unsaved-changes prompt (REG S100-03 — the card's input listener is
+// delegated to #cardView).
+function ccdModal(title, bodyHtml) {
+  const prior = $('ccdWizard'); if (prior) prior.remove();   // NOT ccdCloseModal(): that clears state.ccdWiz, which the caller has just set
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay active';
+  ov.id = 'ccdWizard';
+  ov.innerHTML = `<div class="modal-box" style="max-width:860px;max-height:92vh;">
+      <div class="modal-title" style="display:flex;justify-content:space-between;align-items:center;">${title}
+        <button class="btn-card" style="background:transparent;border:1px solid var(--border);color:var(--muted);font-size:11px;" onclick="ccdCloseModal()">✕ Cancel</button></div>
+      <div id="ccdWizBody">${bodyHtml}</div>
+      <div class="inline-status" id="ccdWizStatus" style="margin-top:10px;"></div>
+    </div>`;
+  document.body.appendChild(ov);
+  return ov;
+}
+function ccdCloseModal() { const o = $('ccdWizard'); if (o) o.remove(); state.ccdWiz = null; }
+function ccdWizStatus(text, kind) {
+  const s = $('ccdWizStatus'); if (!s) return;
+  s.className = 'inline-status show' + (kind === 'error' ? ' error' : '');
+  s.style.display = text ? 'block' : 'none';
+  s.style.color = kind === 'ok' ? 'var(--green)' : kind === 'error' ? '' : 'var(--muted)';
+  s.textContent = text || '';
+}
+const CCD_IN = 'padding:6px 8px;background:var(--bg1);border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:12px;';
+
+// Live SKU uniqueness (exact match, case kept — K-T). One .eq() per SKU, never .or() (REG S91-05).
+async function ccdSkusTaken(skus) {
+  const taken = new Set();
+  for (const s of [...new Set(skus.filter(Boolean))]) {
+    const { data } = await sb.from('items').select('id').eq('sku', s).limit(1);
+    if (data && data.length) taken.add(s);
+  }
+  return taken;
+}
+function ccdPriceOverrides(etsy, wix) {
+  const o = {};
+  if (pf(etsy) > 0) o.etsy_price = pf(etsy);
+  if (pf(wix) > 0) o.wix_price = pf(wix);
+  return o;
+}
+
+// ─── 1 · Family wizard: break a single out into parent + pieces (+ Sets) ──────
+async function ccdOpenFamilyWizard(itemId) {
+  const { data: p, error } = await sb.from('items').select('*').eq('id', itemId).single();
+  if (error) { showCardStatus(ccdFriendlyError(error.message), 'error'); return; }
+  state.ccdWiz = { kind: 'family', parent: p, ref: ccdNewRef('family'), mode: 'assortment', units: pi(p.qty),
+    pieces: [{ sku: p.sku + '-', qty: '', cost: pf(p.wholesale_price).toFixed(2), ppu: 1, etsy: '', wix: '' },
+             { sku: p.sku + '-', qty: '', cost: pf(p.wholesale_price).toFixed(2), ppu: 1, etsy: '', wix: '' }],
+    sets: [] };
+  ccdModal(`🧩 Break out ${escHtml(p.sku)}`, '');
+  ccdFamilyWizRender();
+}
+function ccdFamilyWizRender() {
+  const w = state.ccdWiz, p = w.parent;
+  const kit = w.mode === 'kit';
+  const pieceRows = w.pieces.map((x, i) => `<tr>
+      <td><input style="${CCD_IN}width:170px;font-family:var(--mono);" value="${escAttr(x.sku)}" oninput="state.ccdWiz.pieces[${i}].sku=this.value;ccdFamilyWizCheck()"></td>
+      ${kit ? `<td><input type="number" min="1" style="${CCD_IN}width:60px;" value="${escAttr(x.ppu)}" oninput="state.ccdWiz.pieces[${i}].ppu=this.value;ccdFamilyWizCheck()"></td>` : ''}
+      <td><input type="number" min="0" style="${CCD_IN}width:70px;" ${kit ? 'readonly title="Kit: every unit gives this many of each piece"' : ''} value="${escAttr(kit ? pi(w.units) * Math.max(1, pi(x.ppu)) : x.qty)}" oninput="state.ccdWiz.pieces[${i}].qty=this.value;ccdFamilyWizCheck()"></td>
+      <td><input type="number" min="0" step="0.01" style="${CCD_IN}width:85px;" value="${escAttr(x.cost)}" oninput="state.ccdWiz.pieces[${i}].cost=this.value;ccdFamilyWizCheck()"></td>
+      <td><input type="number" min="0" step="0.01" placeholder="blank" style="${CCD_IN}width:80px;" value="${escAttr(x.etsy)}" oninput="state.ccdWiz.pieces[${i}].etsy=this.value"></td>
+      <td><input type="number" min="0" step="0.01" placeholder="blank" style="${CCD_IN}width:80px;" value="${escAttr(x.wix)}" oninput="state.ccdWiz.pieces[${i}].wix=this.value"></td>
+      <td>${w.pieces.length > 1 ? `<button class="btn-card" style="font-size:10px;padding:2px 7px;color:var(--red);" onclick="state.ccdWiz.pieces.splice(${i},1);ccdFamilyWizRender()">✕</button>` : ''}</td></tr>`).join('');
+  const setRows = w.sets.map((s, si) => `<div style="border:1px solid var(--border);border-radius:6px;padding:10px;margin-bottom:8px;">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <input style="${CCD_IN}width:170px;font-family:var(--mono);" value="${escAttr(s.sku)}" oninput="state.ccdWiz.sets[${si}].sku=this.value;ccdFamilyWizCheck()">
+        ${w.pieces.map((x, i) => `<label style="font-size:11px;color:var(--muted);">${escHtml(x.sku || '?')} ×<input type="number" min="0" style="${CCD_IN}width:48px;margin-left:3px;" value="${escAttr(s.per[i] || 0)}" oninput="state.ccdWiz.sets[${si}].per[${i}]=this.value;ccdFamilyWizCheck()"></label>`).join('')}
+        <label style="font-size:11px;"><input type="checkbox" ${s.hold ? 'checked' : ''} onchange="state.ccdWiz.sets[${si}].hold=this.checked;ccdFamilyWizCheck()"> hold back 1</label>
+        <input type="number" step="0.01" placeholder="Etsy $" style="${CCD_IN}width:75px;" value="${escAttr(s.etsy)}" oninput="state.ccdWiz.sets[${si}].etsy=this.value">
+        <input type="number" step="0.01" placeholder="Wix $" style="${CCD_IN}width:75px;" value="${escAttr(s.wix)}" oninput="state.ccdWiz.sets[${si}].wix=this.value">
+        <span class="mono" id="ccdSetCan${si}" style="font-size:11px;color:var(--gold);"></span>
+        <button class="btn-card" style="font-size:10px;padding:2px 7px;color:var(--red);" onclick="state.ccdWiz.sets.splice(${si},1);ccdFamilyWizRender()">✕</button>
+      </div></div>`).join('');
+  $('ccdWizBody').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">${escHtml(p.product_name || '')} · ${pi(p.qty)} unit(s) in the warehouse at ${ccdMoney(p.wholesale_price)} each.
+      Everything is created in <strong>one step</strong> when you confirm; cancelling at any point leaves nothing behind. Pieces copy the parent's name, description, category, vendor, dimensions and channel content. Prices start blank.</div>
+    <div class="section-title" style="font-size:12px;">1 · What was bought?</div>
+    <div style="display:flex;gap:16px;margin-bottom:14px;font-size:13px;">
+      <label style="cursor:pointer;"><input type="radio" name="ccdMode" ${!kit ? 'checked' : ''} onchange="state.ccdWiz.mode='assortment';ccdFamilyWizRender()"> <strong>Assortment</strong> — each unit is ONE piece (4 × “2 asst” → 2 Boy + 2 Girl)</label>
+      <label style="cursor:pointer;"><input type="radio" name="ccdMode" ${kit ? 'checked' : ''} onchange="state.ccdWiz.mode='kit';ccdFamilyWizRender()"> <strong>Kit</strong> — each unit contains EVERY piece (a Set-of-3 → 1 S + 1 M + 1 L)</label>
+    </div>
+    <div class="section-title" style="font-size:12px;">2 · How many units to break out?</div>
+    <input type="number" min="1" max="${pi(p.qty)}" style="${CCD_IN}width:80px;margin-bottom:14px;" value="${escAttr(w.units)}" oninput="state.ccdWiz.units=this.value;ccdFamilyWizRender()"> <span style="font-size:12px;color:var(--muted);">of ${pi(p.qty)}. The rest stay on the parent as unassigned.</span>
+    <div class="section-title" style="font-size:12px;margin-top:6px;">3 · Pieces — SKU must match Etsy and Wix exactly (case and spaces)</div>
+    <table class="card-table"><thead><tr><th>SKU</th>${kit ? '<th>Per unit</th>' : ''}<th>Qty</th><th>Cost each</th><th>Etsy $</th><th>Wix $</th><th></th></tr></thead><tbody>${pieceRows}</tbody></table>
+    <div style="display:flex;gap:8px;margin:8px 0 14px;">
+      <button class="btn-card" style="font-size:11px;" onclick="state.ccdWiz.pieces.push({sku:state.ccdWiz.parent.sku+'-',qty:'',cost:'',ppu:1,etsy:'',wix:''});ccdFamilyWizRender()">+ Add piece</button>
+      <button class="btn-card" style="font-size:11px;" onclick="ccdFamilyWizEvenSplit()">Split the cost evenly</button>
+    </div>
+    <div class="section-title" style="font-size:12px;">4 · Also sell as a Set? (optional)</div>
+    ${setRows}
+    <button class="btn-card" style="font-size:11px;margin-bottom:14px;" onclick="state.ccdWiz.sets.push({sku:state.ccdWiz.parent.sku+'-Set',per:state.ccdWiz.pieces.map(()=>1),hold:false,etsy:'',wix:''});ccdFamilyWizRender()">+ Add a Set</button>
+    <div class="section-title" style="font-size:12px;">5 · Check and confirm</div>
+    <div id="ccdFamCheck" style="font-size:12px;line-height:1.7;margin-bottom:10px;"></div>
+    <div class="modal-actions"><button class="btn-card btn-save" id="ccdFamGo" onclick="ccdFamilyWizConfirm()">✓ Create family</button></div>`;
+  ccdFamilyWizCheck();
+}
+function ccdFamilyWizEvenSplit() {
+  const w = state.ccdWiz, costC = ccdCents(w.parent.wholesale_price);
+  if (w.mode === 'assortment') { w.pieces.forEach(x => { x.cost = (costC / 100).toFixed(2); }); }
+  else {
+    const n = w.pieces.reduce((a, x) => a + Math.max(1, pi(x.ppu)), 0);
+    const base = Math.floor(costC / n);
+    let used = 0;
+    w.pieces.forEach((x, i) => {
+      const ppu = Math.max(1, pi(x.ppu));
+      if (i < w.pieces.length - 1) { x.cost = (base / 100).toFixed(2); used += base * ppu; }
+      else { x.cost = (((costC - used) / ppu) / 100).toFixed(2); }
+    });
+  }
+  ccdFamilyWizRender();
+}
+function ccdFamilyWizProblems() {
+  const w = state.ccdWiz, p = w.parent, kit = w.mode === 'kit', units = pi(w.units), out = [];
+  if (units < 1 || units > pi(p.qty)) out.push(`Units must be between 1 and ${pi(p.qty)}.`);
+  const skus = w.pieces.map(x => (x.sku || '').trim());
+  skus.forEach((s, i) => { if (!s || s === p.sku + '-' || s === p.sku) out.push(`Piece ${i + 1} needs its own SKU.`); });
+  const all = skus.concat(w.sets.map(s => (s.sku || '').trim()));
+  const dup = all.filter((s, i) => s && all.indexOf(s) !== i);
+  if (dup.length) out.push('The same SKU is used twice: ' + [...new Set(dup)].join(', '));
+  let qtySum = 0, costC = 0;
+  w.pieces.forEach(x => {
+    const q = kit ? units * Math.max(1, pi(x.ppu)) : pi(x.qty);
+    if (!kit && (x.qty === '' || pi(x.qty) < 0)) out.push(`Every piece needs a quantity (${x.sku || '?'}).`);
+    if (x.cost === '' || pf(x.cost) < 0) out.push(`Every piece needs a cost (${x.sku || '?'}).`);
+    qtySum += q; costC += q * ccdCents(x.cost);
+  });
+  if (!kit && qtySum !== units) out.push(`Assortment: ${units} unit(s) must become exactly ${units} piece(s); the quantities add up to ${qtySum}.`);
+  const invC = units * ccdCents(p.wholesale_price);
+  if (costC !== invC) out.push(`Cost: the pieces add up to ${ccdMoney(costC / 100)} but ${units} unit(s) cost ${ccdMoney(invC / 100)} on the invoice. They must match to the cent.`);
+  w.sets.forEach((s, si) => {
+    if (!(s.sku || '').trim()) out.push(`Set ${si + 1} needs a SKU.`);
+    const tot = s.per.reduce((a, v) => a + pi(v), 0);
+    if (tot < 2) out.push(`Set ${s.sku || si + 1} needs at least two pieces in it.`);
+  });
+  return { out, qtySum, costC, invC };
+}
+async function ccdFamilyWizCheck() {
+  const w = state.ccdWiz; if (!w || w.kind !== 'family') return;
+  const { out, costC, invC } = ccdFamilyWizProblems();
+  const kit = w.mode === 'kit', units = pi(w.units);
+  // Sets: how many can be made from the pieces being created.
+  w.sets.forEach((s, si) => {
+    let can = null;
+    w.pieces.forEach((x, i) => { const need = pi(s.per[i]); if (need > 0) { const q = kit ? units * Math.max(1, pi(x.ppu)) : pi(x.qty); const c = Math.floor(q / need); can = can === null ? c : Math.min(can, c); } });
+    const e = $('ccdSetCan' + si); if (e) e.textContent = can === null ? '' : `→ can make ${Math.max(0, can - (s.hold ? 1 : 0))}${s.hold ? ' (after hold-back)' : ''}`;
+  });
+  const chk = $('ccdFamCheck'), go = $('ccdFamGo'); if (!chk || !go) return;
+  const okLine = `<span style="color:var(--green);">✓ Cost ${ccdMoney(costC / 100)} = invoice ${ccdMoney(invC / 100)}</span>`;
+  chk.innerHTML = (out.length ? out.map(t => `<div style="color:var(--red);">✕ ${escHtml(t)}</div>`).join('') : okLine + '<div style="color:var(--muted);">Checking SKUs are free…</div>');
+  go.disabled = out.length > 0; go.style.opacity = out.length ? .45 : 1;
+  if (out.length) return;
+  const skus = w.pieces.map(x => x.sku.trim()).concat(w.sets.map(s => s.sku.trim()));
+  const stamp = skus.join('|'); w._skuStamp = stamp;
+  const taken = await ccdSkusTaken(skus);
+  if (!state.ccdWiz || state.ccdWiz._skuStamp !== stamp) return;   // a newer keystroke won
+  if (taken.size) { chk.innerHTML = okLine + `<div style="color:var(--red);">✕ Already in use: ${escHtml([...taken].join(', '))}</div>`; go.disabled = true; go.style.opacity = .45; }
+  else { chk.innerHTML = okLine + '<div style="color:var(--green);">✓ All SKUs are free</div>'; go.disabled = false; go.style.opacity = 1; }
+}
+async function ccdFamilyWizConfirm() {
+  const w = state.ccdWiz; if (!w || w.busy) return;
+  if (ccdFamilyWizProblems().out.length) return;
+  const kit = w.mode === 'kit', units = pi(w.units);
+  const pieces = w.pieces.map(x => ({ sku: x.sku.trim(), qty: kit ? units * Math.max(1, pi(x.ppu)) : pi(x.qty), unit_cost: pf(x.cost),
+    pieces_per_unit: kit ? Math.max(1, pi(x.ppu)) : 1, overrides: ccdPriceOverrides(x.etsy, x.wix) }));
+  const sets = w.sets.map(s => ({ sku: s.sku.trim(), hold_back: s.hold ? 1 : 0, overrides: ccdPriceOverrides(s.etsy, s.wix),
+    components: w.pieces.map((x, i) => ({ sku: x.sku.trim(), qty: pi(s.per[i]) })).filter(c => c.qty > 0) }));
+  w.busy = true; ccdWizStatus('Creating the family…');
+  try {
+    const r = await ccdRpc('ccd_family_create', { p_parent_id: w.parent.id, p_mode: w.mode, p_parent_units: units,
+      p_pieces: pieces, p_sets: sets, p_actor: ccdActor(), p_ref: w.ref });
+    const pid = w.parent.id;
+    ccdCloseModal();
+    showCardStatus(`Family created: ${(r.pieces || []).length} piece(s), ${(r.sets || []).length} Set(s). The parent ${w.parent.sku} is now hidden from the list.`, 'ok');
+    await ccdReloadCurrent(pid);
+  } catch (e) { w.busy = false; ccdWizStatus(e.message, 'error'); }
+}
+
+// ─── 2 · Break out more units (a reorder landed on the parent) ─────────────────
+async function ccdOpenBreakoutWizard(parentId) {
+  let F; try { F = await ccdLoadFamily(parentId); } catch (e) { showCardStatus(ccdFriendlyError(e.message), 'error'); return; }
+  const kit = F.fam && F.fam.mode === 'kit';
+  const units = pi(F.parent.qty);
+  const rows = F.pieces.filter(x => x.is_active !== false).map(x => {
+    const rc = F.recipes.find(r => r.piece_item_id === x.id) || {};
+    return { id: x.id, sku: x.sku, ppu: pi(rc.pieces_per_unit) || 1, qty: kit ? units * (pi(rc.pieces_per_unit) || 1) : (rc.last_split != null ? String(rc.last_split) : ''),
+             cost: rc.unit_cost != null ? pf(rc.unit_cost).toFixed(2) : pf(F.parent.wholesale_price).toFixed(2) };
+  });
+  state.ccdWiz = { kind: 'breakout', F, kit, units, rows, ref: ccdNewRef('breakout') };
+  ccdModal(`🧩 Break out units of ${escHtml(F.parent.sku)}`, '');
+  ccdBreakoutRender();
+}
+function ccdBreakoutRender() {
+  const w = state.ccdWiz, p = w.F.parent;
+  $('ccdWizBody').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">${pi(p.qty)} unassigned unit(s) at ${ccdMoney(p.wholesale_price)} each · ${w.kit ? 'KIT: every unit gives every piece' : 'ASSORTMENT: every unit becomes one piece'}. Last time's split and costs are filled in.</div>
+    Units to break out <input type="number" min="1" max="${pi(p.qty)}" style="${CCD_IN}width:80px;" value="${escAttr(w.units)}" oninput="state.ccdWiz.units=this.value;${w.kit ? 'ccdBreakoutKitFill();' : ''}ccdBreakoutCheck()">
+    <table class="card-table" style="margin-top:12px;"><thead><tr><th>Piece</th><th>Qty</th><th>Cost each</th></tr></thead><tbody>${
+      w.rows.map((r, i) => `<tr><td class="mono">${escHtml(r.sku)}</td>
+        <td><input type="number" min="0" id="ccdBoQ${i}" style="${CCD_IN}width:70px;" ${w.kit ? 'readonly' : ''} value="${escAttr(r.qty)}" oninput="state.ccdWiz.rows[${i}].qty=this.value;ccdBreakoutCheck()"></td>
+        <td><input type="number" min="0" step="0.01" style="${CCD_IN}width:85px;" value="${escAttr(r.cost)}" oninput="state.ccdWiz.rows[${i}].cost=this.value;ccdBreakoutCheck()"></td></tr>`).join('')
+    }</tbody></table>
+    <div id="ccdBoCheck" style="font-size:12px;margin:10px 0;"></div>
+    <div class="modal-actions"><button class="btn-card btn-save" id="ccdBoGo" onclick="ccdBreakoutConfirm()">✓ Break out</button></div>`;
+  ccdBreakoutCheck();
+}
+function ccdBreakoutKitFill() { const w = state.ccdWiz; w.rows.forEach((r, i) => { r.qty = pi(w.units) * r.ppu; const e = $('ccdBoQ' + i); if (e) e.value = r.qty; }); }
+function ccdBreakoutCheck() {
+  const w = state.ccdWiz, p = w.F.parent, units = pi(w.units), out = [];
+  if (units < 1 || units > pi(p.qty)) out.push(`Units must be between 1 and ${pi(p.qty)}.`);
+  let q = 0, c = 0;
+  w.rows.forEach(r => { if (r.qty === '' || pi(r.qty) < 0) out.push(`${r.sku} needs a quantity.`); q += pi(r.qty); c += pi(r.qty) * ccdCents(r.cost); });
+  if (!w.kit && q !== units) out.push(`${units} unit(s) must become exactly ${units} piece(s); the quantities add up to ${q}.`);
+  const inv = units * ccdCents(p.wholesale_price);
+  if (c !== inv) out.push(`Cost: pieces ${ccdMoney(c / 100)} vs invoice ${ccdMoney(inv / 100)} — must match to the cent.`);
+  $('ccdBoCheck').innerHTML = out.length ? out.map(t => `<div style="color:var(--red);">✕ ${escHtml(t)}</div>`).join('') : `<span style="color:var(--green);">✓ ${q} piece(s), cost ${ccdMoney(c / 100)} = invoice</span>`;
+  $('ccdBoGo').disabled = out.length > 0; $('ccdBoGo').style.opacity = out.length ? .45 : 1;
+  return out.length === 0;
+}
+async function ccdBreakoutConfirm() {
+  const w = state.ccdWiz; if (!w || w.busy || !ccdBreakoutCheck()) return;
+  w.busy = true; ccdWizStatus('Breaking out…');
+  try {
+    await ccdRpc('ccd_family_breakout', { p_parent_id: w.F.parent.id, p_units: pi(w.units),
+      p_split: w.rows.map(r => ({ item_id: r.id, qty: pi(r.qty), unit_cost: pf(r.cost) })), p_actor: ccdActor(), p_ref: w.ref });
+    ccdCloseModal(); showCardStatus(`Broke out ${pi(w.units)} unit(s). Sets using these pieces were recalculated.`, 'ok');
+    await ccdReloadCurrent();
+  } catch (e) { w.busy = false; ccdWizStatus(e.message, 'error'); }
+}
+
+// ─── 3 · Roll back to parent (K-G) ────────────────────────────────────────────
+async function ccdOpenRollbackWizard(parentId) {
+  let F; try { F = await ccdLoadFamily(parentId); } catch (e) { showCardStatus(ccdFriendlyError(e.message), 'error'); return; }
+  const kit = F.fam && F.fam.mode === 'kit';
+  const rows = F.pieces.map(x => ({ id: x.id, sku: x.sku, have: pi(x.qty), ppu: pi((F.recipes.find(r => r.piece_item_id === x.id) || {}).pieces_per_unit) || 1, qty: 0 }));
+  state.ccdWiz = { kind: 'rollback', F, kit, rows, kits: 0, ref: ccdNewRef('rollback') };
+  ccdModal(`↩ Roll back to ${escHtml(F.parent.sku)}`, '');
+  $('ccdWizBody').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">Moves pieces off sale and back onto the parent as unassigned units. ${kit ? '<strong>Kit:</strong> only whole kits can go back — one of every piece per kit.' : ''} Sets that use these pieces are recalculated, and their Etsy/Wix quantities are lowered if they must be.</div>
+    ${kit ? `Whole kits to return <input type="number" min="0" style="${CCD_IN}width:80px;" value="0" oninput="state.ccdWiz.kits=this.value;ccdRollbackCheck()"><div style="margin-top:8px;font-size:12px;color:var(--muted);">${rows.map(r => `${escHtml(r.sku)}: have ${r.have}, ${r.ppu} per kit`).join(' · ')}</div>`
+          : `<table class="card-table"><thead><tr><th>Piece</th><th>In warehouse</th><th>Return</th></tr></thead><tbody>${rows.map((r, i) => `<tr><td class="mono">${escHtml(r.sku)}</td><td class="mono">${r.have}</td><td><input type="number" min="0" max="${r.have}" style="${CCD_IN}width:70px;" value="0" oninput="state.ccdWiz.rows[${i}].qty=this.value;ccdRollbackCheck()"></td></tr>`).join('')}</tbody></table>`}
+    <div id="ccdRbCheck" style="font-size:12px;margin:10px 0;"></div>
+    <div class="modal-actions"><button class="btn-card btn-save" id="ccdRbGo" onclick="ccdRollbackConfirm()">↩ Roll back</button></div>`;
+  ccdRollbackCheck();
+}
+function ccdRollbackLines() {
+  const w = state.ccdWiz;
+  return w.kit ? w.rows.map(r => ({ item_id: r.id, sku: r.sku, have: r.have, qty: pi(w.kits) * r.ppu }))
+               : w.rows.map(r => ({ item_id: r.id, sku: r.sku, have: r.have, qty: pi(r.qty) })).filter(l => l.qty > 0);
+}
+function ccdRollbackCheck() {
+  const lines = ccdRollbackLines(), out = [];
+  if (!lines.length || lines.every(l => l.qty <= 0)) out.push('Nothing to roll back yet.');
+  lines.forEach(l => { if (l.qty > l.have) out.push(`${l.sku} has only ${l.have}.`); });
+  $('ccdRbCheck').innerHTML = out.length ? out.map(t => `<div style="color:var(--red);">✕ ${escHtml(t)}</div>`).join('') : `<span style="color:var(--green);">✓ ${lines.map(l => `${l.qty} × ${escHtml(l.sku)}`).join(', ')} back to the parent</span>`;
+  $('ccdRbGo').disabled = out.length > 0; $('ccdRbGo').style.opacity = out.length ? .45 : 1;
+  return out.length === 0;
+}
+async function ccdRollbackConfirm() {
+  const w = state.ccdWiz; if (!w || w.busy || !ccdRollbackCheck()) return;
+  w.busy = true; ccdWizStatus('Rolling back…');
+  try {
+    const r = await ccdRpc('ccd_family_rollback', { p_parent_id: w.F.parent.id, p_pieces: ccdRollbackLines().map(l => ({ item_id: l.item_id, qty: l.qty })), p_actor: ccdActor(), p_ref: w.ref });
+    ccdCloseModal(); showCardStatus(`Rolled back — the parent gained ${pi(r && r.units)} unit(s).`, 'ok');
+    await ccdReloadCurrent();
+  } catch (e) { w.busy = false; ccdWizStatus(e.message, 'error'); }
+}
+
+// ─── 4 · Set (inside a family) or bundle (across items, hosted on one item) ────
+async function ccdOpenCompositeWizard(role, ownerId) {
+  const { data: owner, error } = await sb.from('items').select('*').eq('id', ownerId).single();
+  if (error) { showCardStatus(ccdFriendlyError(error.message), 'error'); return; }
+  let rows = [];
+  if (role === 'set') {
+    const { data: ps } = await sb.from('items').select('*').eq('parent_item_id', ownerId).eq('item_role', 'piece').order('id');
+    rows = (ps || []).filter(x => x.is_active !== false).map(x => ({ item: x, qty: 1 }));
+  } else {
+    rows = [{ item: owner, qty: 1 }];
+  }
+  state.ccdWiz = { kind: 'composite', role, owner, rows, sku: owner.sku + (role === 'set' ? '-Set' : '-Bundle'), hold: false, etsy: '', wix: '', ref: ccdNewRef(role) };
+  ccdModal(role === 'set' ? `➕ Add a Set to ${escHtml(owner.sku)}` : `🎁 Bundle hosted on ${escHtml(owner.sku)}`, '');
+  ccdCompositeRender();
+}
+function ccdCompositeRender() {
+  const w = state.ccdWiz, isSet = w.role === 'set';
+  $('ccdWizBody').innerHTML = `
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">${isSet
+      ? 'A Set is made only from pieces of this family. It holds no stock: it is available while its pieces are, and selling one removes one of each piece.'
+      : `A bundle is sold as an option on <strong>${escHtml(w.owner.sku)}</strong>'s listing (K-E). Any single items or pieces can go in it. Content is copied from ${escHtml(w.owner.sku)}; its cost is the sum of its pieces.`}
+      Sets and bundles are Etsy and Wix only — never Wayfair or a booth.</div>
+    <div class="section-title" style="font-size:12px;">Made of</div>
+    <table class="card-table"><thead><tr><th>Item</th><th>Per ${isSet ? 'Set' : 'bundle'}</th><th>Available online</th><th></th></tr></thead><tbody>${
+      w.rows.map((r, i) => `<tr><td class="mono">${escHtml(r.item.sku)}</td>
+        <td><input type="number" min="0" style="${CCD_IN}width:60px;" value="${escAttr(r.qty)}" oninput="state.ccdWiz.rows[${i}].qty=this.value;ccdCompositeCheck()"></td>
+        <td class="mono">${ccdAvailOnline(r.item)}</td>
+        <td>${!isSet && r.item.id !== w.owner.id ? `<button class="btn-card" style="font-size:10px;padding:2px 7px;color:var(--red);" onclick="state.ccdWiz.rows.splice(${i},1);ccdCompositeRender()">✕</button>` : ''}</td></tr>`).join('')
+    }</tbody></table>
+    ${isSet ? '' : `<div style="display:flex;gap:8px;align-items:center;margin:8px 0;">Add item by exact SKU <input id="ccdAddSku" style="${CCD_IN}width:170px;font-family:var(--mono);"> <button class="btn-card" style="font-size:11px;" onclick="ccdCompositeAdd()">+ Add</button></div>`}
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+      SKU <input style="${CCD_IN}width:190px;font-family:var(--mono);" value="${escAttr(w.sku)}" oninput="state.ccdWiz.sku=this.value;ccdCompositeCheck()">
+      <label style="font-size:12px;"><input type="checkbox" ${w.hold ? 'checked' : ''} onchange="state.ccdWiz.hold=this.checked;ccdCompositeCheck()"> hold back 1</label>
+      Etsy $ <input type="number" step="0.01" style="${CCD_IN}width:80px;" value="${escAttr(w.etsy)}" oninput="state.ccdWiz.etsy=this.value">
+      Wix $ <input type="number" step="0.01" style="${CCD_IN}width:80px;" value="${escAttr(w.wix)}" oninput="state.ccdWiz.wix=this.value">
+    </div>
+    <div id="ccdCoCheck" style="font-size:12px;margin:10px 0;"></div>
+    <div class="modal-actions"><button class="btn-card btn-save" id="ccdCoGo" onclick="ccdCompositeConfirm()">✓ Create ${isSet ? 'Set' : 'bundle'}</button></div>`;
+  ccdCompositeCheck();
+}
+async function ccdCompositeAdd() {
+  const w = state.ccdWiz, sku = (($('ccdAddSku') || {}).value || '').trim();
+  if (!sku) return;
+  const { data } = await sb.from('items').select('*').eq('sku', sku).limit(1);
+  const it = data && data[0];
+  if (!it) { ccdWizStatus(`No item has the SKU “${sku}” exactly.`, 'error'); return; }
+  const r = it.item_role || 'single';
+  if (r !== 'single' && r !== 'piece') { ccdWizStatus(`${sku} is a ${r}; only single items and pieces can go in a bundle.`, 'error'); return; }
+  if (w.rows.some(x => x.item.id === it.id)) { ccdWizStatus(`${sku} is already in the bundle.`, 'error'); return; }
+  w.rows.push({ item: it, qty: 1 }); ccdWizStatus(''); ccdCompositeRender();
+}
+async function ccdCompositeCheck() {
+  const w = state.ccdWiz; if (!w || w.kind !== 'composite') return;
+  const out = [], used = w.rows.filter(r => pi(r.qty) > 0);
+  const sku = (w.sku || '').trim();
+  if (!sku) out.push('It needs a SKU.');
+  if (used.reduce((a, r) => a + pi(r.qty), 0) < 2) out.push('It needs at least two pieces in it.');
+  let can = null; used.forEach(r => { const c = Math.floor(ccdAvailOnline(r.item) / pi(r.qty)); can = can === null ? c : Math.min(can, c); });
+  const cost = used.reduce((a, r) => a + pi(r.qty) * pf(r.item.wholesale_price), 0);
+  const chk = $('ccdCoCheck'), go = $('ccdCoGo'); if (!chk || !go) return;
+  if (out.length) { chk.innerHTML = out.map(t => `<div style="color:var(--red);">✕ ${escHtml(t)}</div>`).join(''); go.disabled = true; go.style.opacity = .45; return; }
+  const line = `<span style="color:var(--gold);">You can sell ${Math.max(0, (can || 0) - (w.hold ? 1 : 0))} right now</span> · cost ${ccdMoney(cost)}`;
+  chk.innerHTML = line + '<div style="color:var(--muted);">Checking the SKU is free…</div>';
+  const stamp = sku; w._skuStamp = stamp;
+  const taken = await ccdSkusTaken([sku]);
+  if (!state.ccdWiz || state.ccdWiz._skuStamp !== stamp) return;
+  if (taken.size) { chk.innerHTML = line + `<div style="color:var(--red);">✕ ${escHtml(sku)} is already in use</div>`; go.disabled = true; go.style.opacity = .45; }
+  else { chk.innerHTML = line + '<div style="color:var(--green);">✓ SKU is free</div>'; go.disabled = false; go.style.opacity = 1; }
+}
+async function ccdCompositeConfirm() {
+  const w = state.ccdWiz; if (!w || w.busy) return;
+  const comps = w.rows.filter(r => pi(r.qty) > 0).map(r => ({ item_id: r.item.id, qty: pi(r.qty) }));
+  w.busy = true; ccdWizStatus(`Creating the ${w.role === 'set' ? 'Set' : 'bundle'}…`);
+  try {
+    const id = await ccdRpc('ccd_composite_define', { p_role: w.role, p_owner_id: w.owner.id, p_sku: w.sku.trim(), p_components: comps,
+      p_hold_back: w.hold ? 1 : 0, p_overrides: ccdPriceOverrides(w.etsy, w.wix), p_actor: ccdActor(), p_ref: w.ref });
+    ccdCloseModal(); showCardStatus(`${w.role === 'set' ? 'Set' : 'Bundle'} ${w.sku.trim()} created. Its Etsy and Wix quantities start at 0 — raise them on its card when it is listed.`, 'ok');
+    await ccdReloadCurrent(id || undefined);
+  } catch (e) { w.busy = false; ccdWizStatus(e.message, 'error'); }
+}
+
 async function showApp() {
   $('loginScreen').style.display = 'none';
   $('app').classList.add('visible');
@@ -2148,6 +2780,10 @@ async function showApp() {
     console.log('Settings hydration skipped:', e.message);
     ccdHydrateProxyKeys(null, e);  // v2.9.66 (item 8): never trust another project's keys
   }
+
+  // v2.9.67 (S101 · P2): is the families engine on THIS database? Production has
+  // no engine until promotion, and V2 must behave exactly as v2.9.66 there.
+  await ccdDetectEngine();
 
   // v2.9.15 (IP-S1): load invoice parser configs (independent of flag — we
   // load them either way so the engine is ready the moment the flag flips).
@@ -2759,6 +3395,7 @@ async function onRowClick(itemId) {
   metaHtml += `<span class="badge ${isActive ? 'badge-active' : 'badge-inactive'}">${isActive ? 'Active' : 'Inactive'}</span>`;
   if (isBundle) metaHtml += '<span class="badge badge-bundle">Bundle</span>';
   if (isVar) metaHtml += '<span class="badge badge-var">Variant</span>';
+  if (ccdRole(item) !== 'single') metaHtml += `<span class="badge" style="background:rgba(212,168,67,0.15);color:var(--gold);">${CCD_ROLE_LABEL[ccdRole(item)] || ccdRole(item)}</span>`;
   if (isPhoto) metaHtml += '<span class="badge badge-photo">📷 Photographed</span>';
   if (hasAds) metaHtml += '<span class="badge badge-ads">Offsite Ads</span>';
   $('cardMeta').innerHTML = metaHtml;
@@ -3191,12 +3828,17 @@ function switchSub(tab, skipCapture) {
     purchases: renderPurchases,
     shipping: renderShipping,
     variants: renderVariants,
+    family: renderFamily,
     wayfair: renderWayfair,
     par: renderPar,
     writeoff: renderWriteoff,
     activity: renderActivityTab
   };
   if (renderers[tab]) renderers[tab](item);
+  if (ccdIsComposite(item) && ge('f_qty')) {   // v2.9.67 (S101 · P2)
+    const q = $('f_qty'); q.readOnly = true; q.style.opacity = '0.6';
+    q.title = 'Calculated from its pieces. Change the pieces, or sell it with Sell.';
+  }
   // Mark unsaved only if this isn't the initial card load
   // v2.9.54 (F-S92-03): was `if (state.cardRendered)`, which is true after
   // the first render, so clicking ANY card tab by hand painted "Save *" with
@@ -4060,6 +4702,10 @@ async function reverseSale(idx) {
   if (!sale) return;
   const item = state.currentItem;
   if (!item) return;
+  if (ccdIsComposite(item)) {   // v2.9.67: never write stock onto a Set/bundle
+    alert('Reversing a Set or bundle sale is not built yet (S101 P2).\n\nNothing was changed. To undo it, add the pieces back on each piece\'s card and mark the sale by hand.');
+    return;
+  }
 
   const qty = parseInt(sale.qty_sold) || 1;
   const channel = sale.sale_channel || 'unknown';
@@ -5603,6 +6249,10 @@ function toggleShipDetail(idx) {
 // TAB: VARIANTS (matches prototype exactly)
 // ═══════════════════════════════════════════════════════════
 async function renderVariants(item) {
+  if (state.ccdEngine) {   // v2.9.67: its bundle editor writes bundle_components directly, which the engine refuses
+    $('sub-variants').innerHTML = '<div class="section"><div class="section-title">Variants &amp; bundles</div><div style="color:var(--muted);font-size:13px;line-height:1.6;">On this database, families, Sets and bundles are managed on the <span class="vr-sku" onclick="switchSub(\'family\')">Family tab →</span></div></div>';
+    return;
+  }
   const parentSku = item.parent_sku || item.sku;
   $('sub-variants').innerHTML = '<div class="section" style="text-align:center;padding:40px;color:var(--muted);">Loading variants...</div>';
   try {
@@ -6953,6 +7603,11 @@ async function saveItem() {
     // safe "before": it is one page of a filtered query and it can be stale.
     const chqBefore = await chqRead(item.id);
 
+    // v2.9.67 (S101 · P2): a Set/bundle's qty is CALCULATED by the engine from its
+    // pieces. The form holds the value from when the card was opened; sending it
+    // back would be refused (CCD-COMPOSITE-NO-STOCK) whenever a piece moved since.
+    if (ccdIsComposite(item)) delete updates.qty;
+
     const { error } = await sb.from('items').update(updates).eq('id', item.id);
     if (error) throw error;
 
@@ -7002,7 +7657,7 @@ async function saveItem() {
     }
 
     // ── COMPONENT SAVE CASCADE: If this item is a component of any bundle, recalculate those bundles ──
-    const { data: affectedBundles } = await sb.from('bundle_components')
+    const { data: affectedBundles } = state.ccdEngine ? { data: [] } /* v2.9.67: the engine's trigger recalculates */ : await sb.from('bundle_components')
       .select('bundle_item_id,items!bundle_components_bundle_item_id_fkey(id,sku,qty,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku)')
       .eq('component_item_id', item.id);
     if (affectedBundles && affectedBundles.length > 0) {
@@ -7087,7 +7742,7 @@ async function saveItem() {
   } catch(e) {
     state.saving = false;
     statusEl.className = 'inline-status show error';
-    statusEl.textContent = `❌ Save failed: ${e.message}`;
+    statusEl.textContent = `❌ Save failed: ${ccdFriendlyError(e.message)}`;
     statusEl.style.display = 'block';
     statusEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     console.error('[Save Error]', e);
@@ -7103,6 +7758,10 @@ async function deleteItem() {
   // New (unsaved) items have no DB row — just discard and close.
   if (item._isNew) { state.hasUnsavedEdits = false; clearUnsavedMark(); cancelCard(); return; }
   const statusEl = $('cardStatus');
+  if (ccdRole(item) !== 'single') {   // v2.9.67: refuse BEFORE the sync_queue cleanup below runs
+    alert(`${item.sku} is a ${ccdRole(item)} in a family, Set or bundle. These are retired, never deleted, so their history stays.\n\nNothing was changed.`);
+    return;
+  }
 
   try {
     // ── GUARD: Block if item is a bundle with components ──
@@ -7176,7 +7835,7 @@ async function deleteItem() {
 
   } catch(e) {
     statusEl.className = 'inline-status show error';
-    statusEl.textContent = `❌ Delete failed: ${e.message}`;
+    statusEl.textContent = `❌ Delete failed: ${ccdFriendlyError(e.message)}`;
     statusEl.style.display = 'block';
     console.error('[Delete Error]', e);
   }
@@ -7311,6 +7970,7 @@ function quickSell() {
     cascadeEl.style.display = 'none';
     cascadeEl.innerHTML = '';
   }
+  state._ccdSellRef = ccdNewRef('sell');   // v2.9.67: one ref per dialog — a double click sells once
   $('sellModal').classList.add('active');
 }
 
@@ -7413,9 +8073,25 @@ async function confirmSell() {
     }
   }
 
+  // v2.9.67 (S101 · P2): Sets/bundles sell on Etsy, Wix or as a manual sale only.
+  if (ccdIsComposite(item) && !['etsy','wix','quick-sale'].includes(channel)) {
+    statusEl.className='inline-status show error'; statusEl.textContent='Sets and bundles sell on Etsy or Wix (or as a quick sale) — never Wayfair or a booth.'; statusEl.style.display='block'; return;
+  }
+
   state.saving = true;
+  let ccdSold = null;
 
   try {
+    // v2.9.67 (S101 · P2): the ENGINE takes the pieces out of stock (all or nothing,
+    // row-locked, refuses if short) BEFORE any sale row is written, so a refusal
+    // leaves nothing behind. The sale row below is still written by the one
+    // existing path, so fees go through calculate_sale_profit as for any sale.
+    if (ccdIsComposite(item)) {
+      statusEl.textContent = 'Taking the pieces out of stock…';
+      ccdSold = await ccdRpc('ccd_sell_composite', { p_composite_id: item.id, p_qty: qty,
+        p_channel: channel === 'quick-sale' ? 'manual' : channel, p_actor: ccdActor(), p_source: 'v2', p_ref: state._ccdSellRef || null });
+    }
+
     // ── 1. Calculate profit via RPC (additive — fallback if RPC unavailable) ──
     const wholesale = pf(item.wholesale_price);
     const ibPct = pf(item.ib_shipping);
@@ -7481,6 +8157,20 @@ async function confirmSell() {
       accounting_category:   feeBreakdown ? feeBreakdown.accounting_category   : null
     });
     if (saleErr) throw new Error(`Sale record failed: ${saleErr.message}`);
+
+    // v2.9.67: for a Set/bundle the engine has already moved the pieces and queued
+    // every push. Nothing below applies to it: it has no stock of its own.
+    if (ccdSold) {
+      state.cardDirty = true;
+      const pcs = (ccdSold.pieces || []).map(m => `${m.sku} ${m.qty ? m.qty[0] + '→' + m.qty[1] : ''}`).join(', ');
+      logActivity('ORDER','MANUAL_SALE', channel, `Sold ${item.sku} x${qty} on ${channel} for $${totalRevenue.toFixed(2)} (${ccdRole(item).toUpperCase()} — pieces taken by the engine: ${pcs})`, { profit: netProfit.toFixed(2), feeCalc: !!feeBreakdown, composite: true, duplicate: !!ccdSold.duplicate }, item.sku);
+      closeSellModal();
+      state.saving = false;
+      state._ccdSellRef = null;
+      showCardStatus(`Sale recorded: ${item.sku} x${qty} on ${channel} · Profit: $${netProfit.toFixed(2)} · pieces: ${pcs}`, 'ok');
+      await onRowClick(item.id);
+      return;
+    }
 
     // ── 3. Deduct quantities from items table ──
     const qtyUpdates = { qty: Math.max(0, pi(item.qty) - qty) };
@@ -7637,7 +8327,7 @@ async function confirmSell() {
     }
 
     // ── 3c. COMPONENT RECALC: If this item is a component of any bundle, recalculate bundle qtys ──
-    const { data: affectedBundles } = await sb.from('bundle_components')
+    const { data: affectedBundles } = state.ccdEngine ? { data: [] } /* v2.9.67: the engine's trigger recalculates */ : await sb.from('bundle_components')
       .select('bundle_item_id,items!bundle_components_bundle_item_id_fkey(id,sku,qty,etsy_qty,wix_qty,wayfair_qty,etsy_listing_id,etsy_variant_id,wix_product_id,wix_variant_id,wayfair_sku)')
       .eq('component_item_id', item.id);
 
@@ -7768,7 +8458,7 @@ async function confirmSell() {
   } catch(e) {
     state.saving = false;
     statusEl.className='inline-status show error';
-    statusEl.textContent = `Sale failed: ${e.message}`;
+    statusEl.textContent = `Sale failed: ${ccdFriendlyError(e.message)}${ccdSold ? ' — NOTE: the pieces WERE already taken out of stock, but the sale row was NOT recorded. Tell Paul before retrying.' : ''}`;
   }
 }
 
