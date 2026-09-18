@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.65</title>
+<title>CCD Inventory System v2.9.66</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -632,7 +632,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -644,7 +644,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.65</div>
+      <div class="topbar-version">v2.9.66</div>
     </div>
     <div class="topbar-right">
       <!-- v2.9.63 (S98): failed-push pill. Hidden while the queue is clean. -->
@@ -1751,7 +1751,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.65';
+const TOOL_VERSION = '2.9.66';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2050,6 +2050,58 @@ function autoConnect() {
 // ═══════════════════════════════════════════════════════════
 // APP INIT
 // ═══════════════════════════════════════════════════════════
+// v2.9.66 (S101 · live-defects item 8): STAGING MUST NOT INHERIT PRODUCTION'S
+// PROXY URLS OR CCD KEY. The hydrate below used `if (val.etsy) setItem(...)`:
+// a blank value in the connected project left the previous project's value in
+// localStorage. Staging's proxy_urls and api_keys are all blank, so a staging
+// session kept PRODUCTION's Etsy/Wix/Wayfair/Shippo URLs and CCD key from the
+// last production login — and every direct proxy call in V2 (Shippo labels,
+// channel-ID lookups) would have gone to the live systems. The mitigation
+// "never test from the Pages origin" depended on remembering. This replaces it.
+// RULE: the connected project's five values ALWAYS replace the cached five; a
+// blank or missing value REMOVES the cached one. `ccdProxyProject` records which
+// project the cached values came from, so a failed read can refuse to trust
+// values that belong to a different project.
+const CCD_PROXY_LS_KEYS = { etsy: 'ccdEtsyProxy', wix: 'ccdWixProxy', wayfair: 'ccdWayfairProxy', shippo: 'ccdShippoProxy' };
+function ccdClearProxyKeys(project, why) {
+  for (const k of Object.values(CCD_PROXY_LS_KEYS)) localStorage.removeItem(k);
+  localStorage.removeItem('ccdApiKey');
+  localStorage.setItem('ccdProxyProject', project);
+  console.warn('[Item8 v2.9.66] proxy URLs and CCD key CLEARED — ' + why);
+}
+function ccdHydrateProxyKeys(rows, readError) {
+  const project = localStorage.getItem('ccdSupabaseUrl') || '';
+  const cachedFrom = localStorage.getItem('ccdProxyProject');
+  if (readError || !Array.isArray(rows)) {
+    if (cachedFrom !== project) {
+      ccdClearProxyKeys(project, 'settings read failed and the cached values came from ' + (cachedFrom || 'an unrecorded project'));
+    } else {
+      console.warn('[Item8 v2.9.66] settings read failed; keeping values already hydrated from this same project');
+    }
+    return;
+  }
+  let pu = {}, ak = {};
+  try {
+    const parse = v => (typeof v === 'string' ? JSON.parse(v) : v) || {};
+    const puRow = rows.find(r => r && r.key === 'proxy_urls');
+    const akRow = rows.find(r => r && r.key === 'api_keys');
+    pu = puRow ? parse(puRow.value) : {};
+    ak = akRow ? parse(akRow.value) : {};
+  } catch (e) {
+    ccdClearProxyKeys(project, 'proxy_urls / api_keys unreadable: ' + e.message);
+    return;
+  }
+  for (const [ch, k] of Object.entries(CCD_PROXY_LS_KEYS)) {
+    if (pu[ch]) localStorage.setItem(k, pu[ch]); else localStorage.removeItem(k);
+  }
+  if (ak.ccdApiKey) localStorage.setItem('ccdApiKey', ak.ccdApiKey); else localStorage.removeItem('ccdApiKey');
+  localStorage.setItem('ccdProxyProject', project);
+  const blank = Object.keys(CCD_PROXY_LS_KEYS).filter(ch => !pu[ch]);
+  if (blank.length || !ak.ccdApiKey) {
+    console.warn('[Item8 v2.9.66] connected project has no value for: ' + blank.concat(ak.ccdApiKey ? [] : ['ccdApiKey']).join(', ') + ' — those channels are unreachable from this session');
+  }
+}
+
 async function showApp() {
   $('loginScreen').style.display = 'none';
   $('app').classList.add('visible');
@@ -2062,19 +2114,13 @@ async function showApp() {
 
   // Hydrate localStorage with proxy URLs, API keys, and shipping filters from Supabase settings
   try {
-    const { data } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters','channel_fees','use_data_driven_parsers','invoice_parser_fixtures']);
+    const { data, error: _hydErr } = await sb.from('settings').select('key,value').in('key', ['proxy_urls','api_keys','shipping_filters','channel_fees','use_data_driven_parsers','invoice_parser_fixtures']);
+    ccdHydrateProxyKeys(data, _hydErr);  // v2.9.66 (item 8): replaces the truthy-guarded writes below
     if (data) {
       for (const row of data) {
         const val = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
-        if (row.key === 'proxy_urls') {
-          if (val.etsy) localStorage.setItem('ccdEtsyProxy', val.etsy);
-          if (val.wix) localStorage.setItem('ccdWixProxy', val.wix);
-          if (val.wayfair) localStorage.setItem('ccdWayfairProxy', val.wayfair);
-          if (val.shippo) localStorage.setItem('ccdShippoProxy', val.shippo);
-        }
-        if (row.key === 'api_keys') {
-          if (val.ccdApiKey) localStorage.setItem('ccdApiKey', val.ccdApiKey);
-        }
+        // v2.9.66 (item 8): proxy_urls / api_keys are hydrated by ccdHydrateProxyKeys()
+        // above. The truthy-guarded writes that lived here are the defect.
         if (row.key === 'shipping_filters') {
           state.shippingFilters = val;
         }
@@ -2098,7 +2144,10 @@ async function showApp() {
         }
       }
     }
-  } catch(e) { console.log('Settings hydration skipped:', e.message); }
+  } catch(e) {
+    console.log('Settings hydration skipped:', e.message);
+    ccdHydrateProxyKeys(null, e);  // v2.9.66 (item 8): never trust another project's keys
+  }
 
   // v2.9.15 (IP-S1): load invoice parser configs (independent of flag — we
   // load them either way so the engine is ready the moment the flag flips).

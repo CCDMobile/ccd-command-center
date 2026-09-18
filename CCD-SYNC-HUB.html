@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.13</title>
+    <title>CCD Sync Hub v4.6.14</title>
+<!-- v4.6.14 (S101): (1) Etsy pushes carry the variation ID (etsy_variant_id -> product_id) from the item map, queue rows and cascade rows, so the Etsy proxy v1.0.24+ writes THAT variation, not whichever one matches SKU text. (2) live-defects item 8, Sync Hub half: settings from the CONNECTED project now win even when empty, so connecting to staging no longer keeps production proxy URLs / CCD key cached from an earlier session. A key the project's row does not carry at all keeps its local value (prod carries no syncHub URL). -->
 <!-- v4.6.13 (S99): credential fields masked (anon key, CCD key, Etsy key) - type=text -> password. Prevents shoulder-surfing and screenshot leakage. No reveal toggle by design (REG S98-07). No behaviour change. -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
     <style>
@@ -426,7 +427,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.13 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.14 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -891,7 +892,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.13';
+    const SH_VERSION = 'v4.6.14';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1303,19 +1304,39 @@
             settings[row.key] = row.value;
         }
         
+        // v4.6.14 (S101 · live-defects item 8): the CONNECTED project's settings win.
+        // Was `db || local`: an EMPTY value in the connected project (staging keeps
+        // every URL and key blank) fell through to the value cached in
+        // localStorage from an earlier PRODUCTION session, so a "staging" Sync Hub
+        // pushed to live Etsy / Wix / Wayfair. Now: if the project's row carries
+        // the key, its value is used even when blank. A key the row does not carry
+        // at all keeps the local value (prod's proxy_urls has no syncHub entry).
+        const _own = (obj, k) => obj != null && Object.prototype.hasOwnProperty.call(obj, k);
+        const _pick = (obj, k, local) => _own(obj, k) ? (obj[k] || '') : local;
         // Apply proxy URLs
         if (settings.proxy_urls) {
-            state.settings.etsyProxyUrl = settings.proxy_urls.etsy || state.settings.etsyProxyUrl;
-            state.settings.wixProxyUrl = settings.proxy_urls.wix || state.settings.wixProxyUrl;
-            state.settings.wayfairProxyUrl = settings.proxy_urls.wayfair || state.settings.wayfairProxyUrl;
-            state.settings.syncHubProxyUrl = settings.proxy_urls.syncHub || state.settings.syncHubProxyUrl;
-            state.settings.shippoProxyUrl = settings.proxy_urls.shippo || state.settings.shippoProxyUrl;
+            const pu = settings.proxy_urls;
+            state.settings.etsyProxyUrl = _pick(pu, 'etsy', state.settings.etsyProxyUrl);
+            state.settings.wixProxyUrl = _pick(pu, 'wix', state.settings.wixProxyUrl);
+            state.settings.wayfairProxyUrl = _pick(pu, 'wayfair', state.settings.wayfairProxyUrl);
+            state.settings.syncHubProxyUrl = _pick(pu, 'syncHub', state.settings.syncHubProxyUrl);
+            state.settings.shippoProxyUrl = _pick(pu, 'shippo', state.settings.shippoProxyUrl);
+        } else {
+            // No proxy_urls row at all in this project: nothing here may push.
+            state.settings.etsyProxyUrl = '';
+            state.settings.wixProxyUrl = '';
+            state.settings.wayfairProxyUrl = '';
+            state.settings.shippoProxyUrl = '';
+            console.warn('[Settings v4.6.14] connected project has NO proxy_urls row — channel proxy URLs cleared');
         }
         
         // Apply API keys
         if (settings.api_keys) {
-            state.settings.ccdApiKey = settings.api_keys.ccdApiKey || state.settings.ccdApiKey;
-            state.settings.etsyApiKey = settings.api_keys.etsyApiKey || state.settings.etsyApiKey;
+            state.settings.ccdApiKey = _pick(settings.api_keys, 'ccdApiKey', state.settings.ccdApiKey);
+            state.settings.etsyApiKey = _pick(settings.api_keys, 'etsyApiKey', state.settings.etsyApiKey);
+        } else {
+            state.settings.ccdApiKey = '';
+            console.warn('[Settings v4.6.14] connected project has NO api_keys row — CCD key cleared');
         }
         
         // Apply sync settings
@@ -1715,6 +1736,7 @@
             wixProductId: row.wix_product_id,
             wixId: row.wix_product_id,
             wixVariantId: row.wix_variant_id,
+            etsyVariantId: row.etsy_variant_id || null,  // v4.6.14 (S101): Etsy variation targeting
             wayfairSku: row.wayfair_sku,
             supplierPartNumber: row.wayfair_sku,
             etsyTitle: row.etsy_sync_title,
@@ -5416,6 +5438,7 @@
                                     sku: lookupSku,
                                     quantity: etsyQty,
                                     listingId: product.etsyListingId || product.etsyListing,
+                                    etsyVariantId: product.etsyVariantId || null,  // v4.6.14 (S101)
                                     fieldTypes: ['quantity'],
                                     _source: 'cascade'
                                 }
@@ -5510,7 +5533,7 @@
                         try {
                             await sbClient.from('sync_queue').insert({
                                 item_id: compSbId, channel: 'etsy', operation: 'update', status: 'pending',
-                                fields: { sku: comp.sku, quantity: etsyQty, listingId: comp.etsyListingId || comp.etsyListing, fieldTypes: ['quantity'], _source: 'cascade' }
+                                fields: { sku: comp.sku, quantity: etsyQty, listingId: comp.etsyListingId || comp.etsyListing, etsyVariantId: comp.etsyVariantId || null, fieldTypes: ['quantity'], _source: 'cascade' }
                             });
                             cascadeCount++;
                         } catch (e) { console.error(`[Bundle Cascade] Etsy failed for ${comp.sku}:`, e.message); }
@@ -8422,6 +8445,7 @@
             wixProductId: fields.productId || null,
             productId: fields.productId || null,
             wixVariantId: fields.wixVariantId || fields.variantId || null,  // v4.1.3: variant-level targeting
+            etsyVariantId: fields.etsyVariantId || null,  // v4.6.14 (S101): Etsy variation targeting
             wayfairSku: fields.wayfairSku || null,
             // v4.2.6: Content fields — Channel Manager sends title/description/tags for content pushes
             name: fields.title || fields.name || fields.productName || '',
@@ -8626,6 +8650,9 @@
             quantity: qty,
             sku: product.sku
         };
+        // v4.6.14 (S101): target the variation by ID when known (Etsy proxy v1.0.24+).
+        const _etsyVid = product.etsyVariantId || product.etsy_variant_id || null;
+        if (_etsyVid) data.product_id = String(_etsyVid);
         return await etsyPostRequest(url, data);
     }
 
