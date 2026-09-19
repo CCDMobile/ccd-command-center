@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.67</title>
+<title>CCD Inventory System v2.9.68</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -632,7 +632,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.67 · FAMILIES, SETS AND BUNDLES — STAGING ONLY UNTIL PROMOTED. A new Family tab on every card, and four guided wizards: break an invoice item out into a hidden parent plus the pieces you sell; break out more units when a reorder lands on the parent; roll pieces back to the parent; and create a Set (from one family) or a bundle (from any items, sold as an option on one of their listings). Sets and bundles hold no stock: they are available while their pieces are, selling one takes the pieces out of stock, and their Etsy and Wix quantities are only ever lowered automatically. Every action runs inside the database engine in one step, so a cancelled or failed wizard leaves nothing behind, and every action is logged against the item. On a database without the engine (production, until promotion) the Family tab is hidden and V2 behaves exactly as v2.9.66. (S101) v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.68 · FAMILIES — FIXES FROM THE FIRST STAGING TEST, PLUS FAMILY HISTORY. The list now refreshes after any family action or Set sale. A retired Set or bundle shows "Retired · available 0" and cannot be sold. Delete on a family item says plainly that it cannot be deleted and what to do instead (Retire). Ticking a hold-back no longer lights up Save, and every hold-back change is now logged. The Reverse button is hidden on Set and bundle sales until reversal is built. The wizards warn when a Set or bundle cannot be made from its pieces yet. Days in stock never shows below 0. The family log shows your local time. New: the parent's Sales History tab shows a roll-up of every sale made by its pieces and Sets, and a piece's Sales History shows the Set and bundle sales that used it — a view only; each sale is still recorded once, on the item sold. (S101) v2.9.67 · FAMILIES, SETS AND BUNDLES — STAGING ONLY UNTIL PROMOTED. A new Family tab on every card, and four guided wizards: break an invoice item out into a hidden parent plus the pieces you sell; break out more units when a reorder lands on the parent; roll pieces back to the parent; and create a Set (from one family) or a bundle (from any items, sold as an option on one of their listings). Sets and bundles hold no stock: they are available while their pieces are, selling one takes the pieces out of stock, and their Etsy and Wix quantities are only ever lowered automatically. Every action runs inside the database engine in one step, so a cancelled or failed wizard leaves nothing behind, and every action is logged against the item. On a database without the engine (production, until promotion) the Family tab is hidden and V2 behaves exactly as v2.9.66. (S101) v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -644,7 +644,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.67</div>
+      <div class="topbar-version">v2.9.68</div>
     </div>
     <div class="topbar-right">
       <!-- v2.9.63 (S98): failed-push pill. Hidden while the queue is clean. -->
@@ -1753,7 +1753,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.67';
+const TOOL_VERSION = '2.9.68';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -2107,6 +2107,7 @@ function ccdHydrateProxyKeys(rows, readError) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // v2.9.67 (S101 · P2): FAMILIES, SETS AND BUNDLES
+// v2.9.68 (S101 · P2): staging-test fixes + parent/piece roll-up history (B7).
 // Design: claude\CCD-S101-Variant-Bundle-Design.md (§2 what the user sees, §9 guardrails).
 //
 // ONE ENGINE, IN THE DATABASE. Every family / Set / bundle action here calls a
@@ -2141,6 +2142,13 @@ function ccdNewRef(kind) {
   const r = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : (Date.now().toString(36) + Math.random().toString(36).slice(2));
   return 'v2-' + kind + '-' + r;
 }
+// v2.9.68: timestamps are stored in UTC; show them in the viewer's local time.
+function ccdWhen(ts) {
+  const d = new Date(ts);
+  if (!ts || isNaN(d.getTime())) return String(ts || '');
+  const z = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`;
+}
 const ccdMoney = n => '$' + pf(n).toFixed(2);
 const ccdCents = n => Math.round(pf(n) * 100);
 
@@ -2160,6 +2168,7 @@ const CCD_ERR_TEXT = [
   ['CCD-RECIPE', 'That item cannot be part of this Set or bundle.'],
   ['CCD-ROLE-ENGINE-ONLY', 'Family roles can only be changed through the Family tab.'],
   ['CCD-OVERRIDE-PROTECTED', 'The wizard tried to set a field only the engine may set.'],
+  ['CCD-HOLDBACK', 'The hold-back could not be changed.'],
   ['CCD-BREAKOUT', 'The parent does not have that many unassigned units.'],
   ['CCD-ROLLBACK', 'That roll-back is not possible.'],
   ['CCD-DEFINE', 'The Set or bundle could not be created.'],
@@ -2280,7 +2289,7 @@ async function ccdLoadFamily(parentId) {
 function ccdLogHtml(log) {
   if (!log.length) return '';
   return `<div class="section"><div class="section-title">Family log</div><table class="card-table"><thead><tr><th>When</th><th>What</th><th>By</th></tr></thead><tbody>${
-    log.map(l => `<tr><td class="mono" style="white-space:nowrap;">${escHtml(String(l.created_at || '').replace('T', ' ').substring(0, 16))}</td><td>${escHtml(String(l.event_type).replace(/_/g, ' '))}</td><td>${escHtml(l.actor || '')}</td></tr>`).join('')
+    log.map(l => `<tr><td class="mono" style="white-space:nowrap;">${escHtml(ccdWhen(l.created_at))}</td><td>${escHtml(String(l.event_type).replace(/_/g, ' '))}</td><td>${escHtml(l.actor || '')}</td></tr>`).join('')
   }</tbody></table></div>`;
 }
 
@@ -2298,12 +2307,12 @@ async function ccdRenderFamilyView(parentId, me) {
   const setsRows = F.sets.map(s => {
     const cs = F.comps.filter(c => c.bundle_item_id === s.id);
     const { cap, limiting } = ccdCapacity(cs, byId);
-    const avail = Math.max(0, cap - pi(s.hold_back));
+    const avail = s.is_active === false ? 0 : Math.max(0, cap - pi(s.hold_back));   // v2.9.68: a retired Set sells nothing
     const recipe = cs.map(c => `${pi(c.component_qty)}× ${escHtml((byId[c.component_item_id] || {}).sku || '?')}`).join(' + ');
     return `<tr ${s.id === me.id ? 'style="background:rgba(212,168,67,0.06);"' : ''}>
       <td><span class="vr-sku" onclick="onRowClick(${s.id})">${escHtml(s.sku)}</span>${s.is_active === false ? ' <span class="badge badge-inactive">Retired</span>' : ''}</td>
-      <td style="font-size:11px;">${recipe}</td><td class="mono">${cap}</td>
-      <td><label style="font-size:11px;cursor:pointer;"><input type="checkbox" ${pi(s.hold_back) ? 'checked' : ''} ${s.is_active === false ? 'disabled' : ''} onchange="ccdSetHoldBack(${s.id}, this.checked ? 1 : 0, ${pi(s.hold_back)})"> hold 1</label></td>
+      <td style="font-size:11px;">${recipe}</td><td class="mono">${s.is_active === false ? '—' : cap}</td>
+      <td><label style="font-size:11px;cursor:pointer;"><input type="checkbox" ${pi(s.hold_back) ? 'checked' : ''} ${s.is_active === false ? 'disabled' : ''} oninput="event.stopPropagation()" onchange="ccdSetHoldBack(${s.id}, this.checked ? 1 : 0, ${pi(s.hold_back)})"> hold 1</label></td>
       <td class="mono" style="font-weight:700;">${avail}</td><td style="font-size:11px;">${escHtml(limiting || '')}</td>
       <td class="mono">${pi(s.etsy_qty)} / ${pi(s.wix_qty)}</td>
       <td>${s.is_active === false ? '' : `<button class="btn-card" style="font-size:10px;padding:3px 8px;color:var(--red);border-color:var(--red);" onclick="ccdRetireComposite(${s.id})">Retire</button>`}</td></tr>`;
@@ -2341,11 +2350,13 @@ async function ccdRenderBundle(me) {
   const { data: parts } = ids.length ? await sb.from('items').select('*').in('id', ids) : { data: [] };
   const byId = {}; (parts || []).forEach(x => { byId[x.id] = x; });
   const { cap, limiting } = ccdCapacity(cs || [], byId);
-  const avail = Math.max(0, cap - pi(me.hold_back));
+  const retired = me.is_active === false;
+  const avail = retired ? 0 : Math.max(0, cap - pi(me.hold_back));
   const { data: log } = await sb.from('family_events').select('id,created_at,event_type,item_id,actor').eq('item_id', me.id).order('id', { ascending: false }).limit(15);
   return `<div class="section"><div class="section-title">Bundle ${escHtml(me.sku)} ${me.is_active === false ? '<span class="badge badge-inactive">Retired</span>' : ''}</div>
-      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;">Its pieces allow <strong style="color:var(--text);">${cap}</strong> ·
-        <label style="cursor:pointer;"><input type="checkbox" ${pi(me.hold_back) ? 'checked' : ''} ${me.is_active === false ? 'disabled' : ''} onchange="ccdSetHoldBack(${me.id}, this.checked ? 1 : 0, ${pi(me.hold_back)})"> hold back 1</label>
+      ${retired ? `<div style="font-size:13px;color:var(--red);margin-bottom:12px;font-weight:600;">Retired — not for sale · available 0. Its pieces are untouched and keep their own stock.</div>` : ''}
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;${retired ? 'display:none;' : ''}">Its pieces allow <strong style="color:var(--text);">${cap}</strong> ·
+        <label style="cursor:pointer;"><input type="checkbox" ${pi(me.hold_back) ? 'checked' : ''} ${me.is_active === false ? 'disabled' : ''} oninput="event.stopPropagation()" onchange="ccdSetHoldBack(${me.id}, this.checked ? 1 : 0, ${pi(me.hold_back)})"> hold back 1</label>
         · available <strong style="color:var(--gold);">${avail}</strong> · limited by ${escHtml(limiting || '—')} · cost ${ccdMoney(me.wholesale_price)} (sum of pieces)</div>
       <table class="card-table"><thead><tr><th>Item</th><th>Per bundle</th><th>Warehouse</th><th>Available online</th></tr></thead><tbody>${
         (cs || []).map(c => { const x = byId[c.component_item_id] || {}; return `<tr><td><span class="vr-sku" onclick="onRowClick(${x.id})">${escHtml(x.sku || '?')}</span></td><td class="mono">${pi(c.component_qty)}</td><td class="mono">${pi(x.qty)}</td><td class="mono">${ccdAvailOnline(x)}</td></tr>`; }).join('')
@@ -2356,10 +2367,9 @@ async function ccdRenderBundle(me) {
 
 async function ccdSetHoldBack(id, value, oldValue) {
   try {
-    const { data, error } = await sb.from('items').update({ hold_back: value }).eq('id', id).eq('hold_back', oldValue).select('id,hold_back');
-    if (error) throw new Error(ccdFriendlyError(error.message));
-    if (!data || !data.length) throw new Error('The hold-back had already been changed elsewhere — reloaded.');
-    showCardStatus(`Hold-back ${value ? 'on' : 'off'} — availability recalculated (Etsy/Wix are only ever lowered automatically).`, 'ok');
+    // v2.9.68: through the engine, so the change is LOGGED and the old value is checked there.
+    const r = await ccdRpc('ccd_composite_set_hold_back', { p_id: id, p_value: value, p_old: oldValue, p_actor: ccdActor(), p_ref: ccdNewRef('holdback') });
+    showCardStatus(`Hold-back ${value ? 'on' : 'off'} — available now ${pi(r && r.available)} (Etsy/Wix are only ever lowered automatically).`, 'ok');
   } catch (e) { showCardStatus(e.message, 'error'); }
   if (state.currentItem) renderFamily(state.currentItem);
 }
@@ -2379,6 +2389,7 @@ async function ccdReloadCurrent(openId) {
   const id = openId || (state.currentItem && state.currentItem.id);
   if (!id) return;
   state.hasUnsavedEdits = false; clearUnsavedMark();
+  state.ccdListStale = true;   // v2.9.68: onRowClick() clears cardDirty, so the list needs its own flag
   await onRowClick(id);
   switchSub('family', true);
 }
@@ -2533,7 +2544,9 @@ async function ccdFamilyWizCheck() {
     const e = $('ccdSetCan' + si); if (e) e.textContent = can === null ? '' : `→ can make ${Math.max(0, can - (s.hold ? 1 : 0))}${s.hold ? ' (after hold-back)' : ''}`;
   });
   const chk = $('ccdFamCheck'), go = $('ccdFamGo'); if (!chk || !go) return;
-  const okLine = `<span style="color:var(--green);">✓ Cost ${ccdMoney(costC / 100)} = invoice ${ccdMoney(invC / 100)}</span>`;
+  const zeroSets = w.sets.filter((s, si) => { const e = $('ccdSetCan' + si); return e && /can make 0\b/.test(e.textContent); }).map(s => s.sku || '?');
+  const warn = zeroSets.length ? `<div style="color:var(--gold);">⚠ ${escHtml(zeroSets.join(', '))} can't be made from these pieces right now. You can still create it (it will show 0 available until there are enough pieces).</div>` : '';
+  const okLine = `<span style="color:var(--green);">✓ Cost ${ccdMoney(costC / 100)} = invoice ${ccdMoney(invC / 100)}</span>` + warn;
   chk.innerHTML = (out.length ? out.map(t => `<div style="color:var(--red);">✕ ${escHtml(t)}</div>`).join('') : okLine + '<div style="color:var(--muted);">Checking SKUs are free…</div>');
   go.disabled = out.length > 0; go.style.opacity = out.length ? .45 : 1;
   if (out.length) return;
@@ -2714,7 +2727,9 @@ async function ccdCompositeCheck() {
   const cost = used.reduce((a, r) => a + pi(r.qty) * pf(r.item.wholesale_price), 0);
   const chk = $('ccdCoCheck'), go = $('ccdCoGo'); if (!chk || !go) return;
   if (out.length) { chk.innerHTML = out.map(t => `<div style="color:var(--red);">✕ ${escHtml(t)}</div>`).join(''); go.disabled = true; go.style.opacity = .45; return; }
-  const line = `<span style="color:var(--gold);">You can sell ${Math.max(0, (can || 0) - (w.hold ? 1 : 0))} right now</span> · cost ${ccdMoney(cost)}`;
+  const nowCan = Math.max(0, (can || 0) - (w.hold ? 1 : 0));
+  const line = `<span style="color:var(--gold);">You can sell ${nowCan} right now</span> · cost ${ccdMoney(cost)}` +
+    (nowCan === 0 ? `<div style="color:var(--gold);">⚠ Its pieces can't make one right now. You can still create it; it will show 0 available until they can.</div>` : '');
   chk.innerHTML = line + '<div style="color:var(--muted);">Checking the SKU is free…</div>';
   const stamp = sku; w._skuStamp = stamp;
   const taken = await ccdSkusTaken([sku]);
@@ -2732,6 +2747,93 @@ async function ccdCompositeConfirm() {
     ccdCloseModal(); showCardStatus(`${w.role === 'set' ? 'Set' : 'Bundle'} ${w.sku.trim()} created. Its Etsy and Wix quantities start at 0 — raise them on its card when it is listed.`, 'ok');
     await ccdReloadCurrent(id || undefined);
   } catch (e) { w.busy = false; ccdWizStatus(e.message, 'error'); }
+}
+
+// ─── v2.9.68 · B7 · roll-up history (design §5) ───────────────────────────────
+// Every sale is recorded ONCE, on the item actually sold. Nothing is copied to a
+// parent or a piece, so Financial Reporting cannot double-count. What follows is a
+// read-only VIEW appended under the Sales History tab.
+async function ccdRenderSalesWithFamily(item) {
+  await renderSales(item);
+  if (!state.ccdEngine || !item) return;
+  let html = '';
+  try {
+    const { data: me } = await sb.from('items').select('id,sku,item_role,parent_item_id,qty').eq('id', item.id).single();
+    if (!me) return;
+    if (me.item_role === 'parent') html = await ccdParentHistoryHtml(me);
+    else if (me.item_role === 'piece' || me.item_role === 'single') html = await ccdUsedInSalesHtml(me);
+  } catch (e) {
+    html = `<div class="section" style="color:var(--red);">Could not load the family history: ${escHtml(ccdFriendlyError(e.message))}</div>`;
+  }
+  const el = $('sub-sales');
+  if (html && el && state.currentItem && state.currentItem.id === item.id) el.insertAdjacentHTML('beforeend', html);
+}
+
+// Only the columns this view shows — sales_history also holds buyer names and addresses.
+const CCD_SALE_COLS = 'id,item_id,sku,sale_date,sale_channel,qty_sold,sale_price,net_profit,status';
+
+// Pieces taken by Set/bundle sales, from the engine's own log. Matched by item id;
+// a sale logged before v2.9.68 carries only the SKU, so that is the fallback.
+function ccdPieceMoves(ev, piece) {
+  const list = (ev.qty_change && ev.qty_change.pieces) || [];
+  const m = list.find(x => x.item_id != null ? Number(x.item_id) === Number(piece.id) : x.sku === piece.sku);
+  if (!m || !Array.isArray(m.qty)) return 0;
+  return pi(m.qty[0]) - pi(m.qty[1]);
+}
+
+async function ccdUsedInSalesHtml(me) {
+  const usedIn = await ccdUsedIn(me.id);
+  if (!usedIn.length) return '';
+  const byId = {}; usedIn.forEach(c => { byId[c.id] = c; });
+  const { data: evs } = await sb.from('family_events').select('id,created_at,item_id,qty_change').eq('event_type', 'composite_sale')
+    .in('item_id', usedIn.map(c => c.id)).order('id', { ascending: false }).limit(100);
+  const rows = (evs || []).map(ev => ({ ev, n: ccdPieceMoves(ev, me) })).filter(r => r.n > 0);
+  const total = rows.reduce((a, r) => a + r.n, 0);
+  return `<div class="section"><div class="flex-between mb-8"><div class="section-title" style="margin-bottom:0;">Used in Set / bundle sales — ${escHtml(me.sku)}</div>
+      <span style="font-size:12px;color:var(--muted2);">${total} taken from stock</span></div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">These sales are recorded on the Set or bundle that was sold (above is only this item's own sales). This list shows the ${escHtml(me.sku)} each one used.</div>
+    ${rows.length ? `<table class="card-table"><thead><tr><th>When</th><th>Sold as</th><th>Channel</th><th>${escHtml(me.sku)} taken</th></tr></thead><tbody>${
+      rows.map(r => `<tr><td class="mono">${escHtml(ccdWhen(r.ev.created_at))}</td>
+        <td><span class="vr-sku" onclick="onRowClick(${r.ev.item_id})">${escHtml((byId[r.ev.item_id] || {}).sku || '?')}</span></td>
+        <td>${escHtml((r.ev.qty_change && r.ev.qty_change.channel) || '')}</td><td class="mono">${r.n}</td></tr>`).join('')
+    }</tbody></table>` : '<div style="color:var(--muted);font-size:12px;">None yet.</div>'}</div>`;
+}
+
+async function ccdParentHistoryHtml(p) {
+  const { data: kids } = await sb.from('items').select('id,sku,item_role,qty,is_active').eq('parent_item_id', p.id).order('id');
+  const members = kids || [];
+  const pieces = members.filter(k => k.item_role === 'piece');
+  const ids = members.map(k => k.id);
+  const bySku = {}; members.forEach(k => { bySku[k.id] = k.sku; });
+  const { data: sales } = ids.length
+    ? await sb.from('sales_history').select(CCD_SALE_COLS).in('item_id', ids).order('sale_date', { ascending: false }).limit(200)
+    : { data: [] };
+  const live = (sales || []).filter(r => r.status !== 'reversed' && r.status !== 'cancelled');
+  const sold = live.reduce((a, r) => a + pi(r.qty_sold), 0);
+  const rev = live.reduce((a, r) => a + pf(r.sale_price), 0);
+  const onHand = pieces.reduce((a, k) => a + pi(k.qty), 0);
+  const { data: evs } = await sb.from('family_events').select('id,created_at,item_id,qty_change').eq('parent_item_id', p.id)
+    .eq('event_type', 'composite_sale').order('id', { ascending: false }).limit(100);
+  const moveRows = (evs || []).map(ev => {
+    const took = pieces.map(k => ({ sku: k.sku, n: ccdPieceMoves(ev, k) })).filter(x => x.n > 0);
+    return { ev, took };
+  }).filter(r => r.took.length);
+  const stat = (label, v) => `<div style="flex:1;min-width:120px;"><div style="font-size:10px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase;">${label}</div><div class="mono" style="font-size:18px;color:var(--text);">${v}</div></div>`;
+  return `<div class="section"><div class="section-title">Family roll-up — ${escHtml(p.sku)}</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">A view of every sale made by this family's pieces and Sets. Each sale is recorded once, on the item sold; nothing is copied to the parent, so reports do not double-count.</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;">${stat('Sold', sold)}${stat('Revenue', ccdMoney(rev))}${stat('Pieces on hand', onHand)}${stat('Unassigned on parent', pi(p.qty))}</div>
+    ${(sales || []).length ? `<table class="card-table"><thead><tr><th>Date</th><th>Item sold</th><th>Channel</th><th>Qty</th><th>Price</th><th>Profit</th><th></th></tr></thead><tbody>${
+      sales.map(r => { const dead = r.status === 'reversed' || r.status === 'cancelled';
+        return `<tr style="${dead ? 'opacity:.45;text-decoration:line-through;' : ''}"><td class="mono">${escHtml((r.sale_date || '').substring(0, 10))}</td>
+          <td><span class="vr-sku" onclick="onRowClick(${r.item_id})">${escHtml(bySku[r.item_id] || r.sku || '?')}</span></td>
+          <td>${escHtml(r.sale_channel || '')}</td><td class="mono">${pi(r.qty_sold)}</td><td class="mono">${ccdMoney(r.sale_price)}</td>
+          <td class="mono" style="color:${pf(r.net_profit) >= 0 ? 'var(--green)' : 'var(--red)'};">${ccdMoney(r.net_profit)}</td>
+          <td style="font-size:10px;color:var(--red);">${dead ? escHtml(String(r.status).toUpperCase()) : ''}</td></tr>`; }).join('')
+    }</tbody></table>` : '<div style="color:var(--muted);font-size:12px;">No sales yet.</div>'}
+    ${moveRows.length ? `<div class="section-title" style="font-size:12px;margin-top:14px;">Pieces taken by Set sales</div><table class="card-table"><thead><tr><th>When</th><th>Set</th><th>Pieces</th></tr></thead><tbody>${
+      moveRows.map(r => `<tr><td class="mono">${escHtml(ccdWhen(r.ev.created_at))}</td><td><span class="vr-sku" onclick="onRowClick(${r.ev.item_id})">${escHtml(bySku[r.ev.item_id] || '?')}</span></td>
+        <td>${r.took.map(x => `${x.n} × ${escHtml(x.sku)}`).join(', ')}</td></tr>`).join('')
+    }</tbody></table>` : ''}</div>`;
 }
 
 async function showApp() {
@@ -3497,7 +3599,7 @@ async function populateKpiRow(item) {
     if (addedDate) {
       const added = new Date(addedDate);
       const now = new Date();
-      daysInStock = Math.floor((now - added) / 86400000);
+      daysInStock = Math.max(0, Math.floor((now - added) / 86400000));   // v2.9.68
     }
 
     // Velocity (sales per month over last 90 days)
@@ -3728,7 +3830,8 @@ function _closeCard() {
   const restoreY = state.priorScrollY;
   state.priorScrollY = null;
 
-  if (state.cardDirty) {
+  if (state.cardDirty || state.ccdListStale) {   // v2.9.68: ccdListStale survives onRowClick()
+    state.ccdListStale = false;
     loadInventory()
       .catch(e => console.error('[E18] loadInventory failed:', e))
       .finally(() => {
@@ -3824,7 +3927,7 @@ function switchSub(tab, skipCapture) {
   const renderers = {
     overview: renderOverview,
     pricing: renderPricing,
-    sales: renderSales,
+    sales: ccdRenderSalesWithFamily,
     purchases: renderPurchases,
     shipping: renderShipping,
     variants: renderVariants,
@@ -4623,7 +4726,7 @@ async function renderSales(item) {
           ? '<span style="font-size:10px;color:var(--red);font-weight:600;">REVERSED</span>'
           : isCancelled
             ? `<span style="font-size:10px;color:var(--red);font-weight:600;" title="${cancelTooltip}">CANCELLED</span>`
-            : `<button class="btn-packing" onclick="openPackingSlip(${idx})">🖨 Slip</button><button class="btn-packing" onclick="shipFromSale(${idx})">📦 Ship</button><button class="btn-packing" style="color:var(--red);" onclick="reverseSale(${idx})">↩ Reverse</button>`}</td>
+            : `<button class="btn-packing" onclick="openPackingSlip(${idx})">🖨 Slip</button><button class="btn-packing" onclick="shipFromSale(${idx})">📦 Ship</button>${ccdIsComposite(item) ? '<span style="font-size:10px;color:var(--muted);" title="Reversing a Set or bundle sale is not built yet (S101)">no reverse yet</span>' : `<button class="btn-packing" style="color:var(--red);" onclick="reverseSale(${idx})">↩ Reverse</button>`}`}</td>
         <td><button class="expand-btn" onclick="toggleFeeDetail(this,${idx})">▶</button></td>
       </tr>`;
     }).join('');
@@ -4940,7 +5043,7 @@ async function reverseSale(idx) {
     // ── 8. Refresh UI ──
     if (ge('f_qty')) $('f_qty').value = qtyUpdates.qty;
     populateKpiRow(item);
-    renderSales(item);
+    ccdRenderSalesWithFamily(item);
     showCardStatus(`Sale reversed: ${item.sku} x${qty} — qty restored, ${syncRows.length} channel pushes queued`, 'ok');
 
   } catch(e) {
@@ -7759,7 +7862,7 @@ async function deleteItem() {
   if (item._isNew) { state.hasUnsavedEdits = false; clearUnsavedMark(); cancelCard(); return; }
   const statusEl = $('cardStatus');
   if (ccdRole(item) !== 'single') {   // v2.9.67: refuse BEFORE the sync_queue cleanup below runs
-    alert(`${item.sku} is a ${ccdRole(item)} in a family, Set or bundle. These are retired, never deleted, so their history stays.\n\nNothing was changed.`);
+    alert(`Can't delete ${item.sku}.\n\nIt is a ${ccdRole(item)} in a family, Set or bundle. These are never deleted, so their sales history stays intact.\n\n${ccdIsComposite(item) ? 'To take it off sale, open the Family tab and press Retire.' : 'To take its stock off sale, open the Family tab and roll it back to the parent.'}\n\nNothing was changed.`);
     return;
   }
 
@@ -8074,6 +8177,9 @@ async function confirmSell() {
   }
 
   // v2.9.67 (S101 · P2): Sets/bundles sell on Etsy, Wix or as a manual sale only.
+  if (ccdIsComposite(item) && item.is_active === false) {   // v2.9.68
+    statusEl.className='inline-status show error'; statusEl.textContent=`${item.sku} is retired — it cannot be sold. Nothing was changed.`; statusEl.style.display='block'; return;
+  }
   if (ccdIsComposite(item) && !['etsy','wix','quick-sale'].includes(channel)) {
     statusEl.className='inline-status show error'; statusEl.textContent='Sets and bundles sell on Etsy or Wix (or as a quick sale) — never Wayfair or a booth.'; statusEl.style.display='block'; return;
   }
@@ -8167,6 +8273,7 @@ async function confirmSell() {
       closeSellModal();
       state.saving = false;
       state._ccdSellRef = null;
+      state.ccdListStale = true;   // v2.9.68: onRowClick() below clears cardDirty
       showCardStatus(`Sale recorded: ${item.sku} x${qty} on ${channel} · Profit: $${netProfit.toFixed(2)} · pieces: ${pcs}`, 'ok');
       await onRowClick(item.id);
       return;
