@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.14</title>
+    <title>CCD Sync Hub v4.6.15</title>
+<!-- v4.6.15 (S101 · P3, census claude\CCD-S101-P3-Writer-Census.md): (1) W3 — before deducting an order line, the item is RE-READ from the database (the item cache is only loaded at connect/Refresh and could be hours old), and the save writes ONLY qty + etsy/wix/wayfair qty + last_sold_date (+ a Wayfair SKU learned by the matcher), not the whole cached row; a failed re-read HOLDS the order with nothing written. (2) W1 — a Set/bundle line is sold by the family engine (ccd_sell_composite, ref per order line so a re-run cannot take pieces twice) BEFORE any other save in the order; a refusal holds the order. Its own cascade rows are skipped (the engine queues them). (3) W2 — cancelling a Set/bundle sale goes to ccd_reverse_composite_sale (pieces restored). (4) saveItemToSupabase failures now reach the Log, and an order-line save failure raises a toast instead of logging a success. On a database without the engine every item reads as 'single' and only (1) and (4) change behaviour. -->
 <!-- v4.6.14 (S101): (1) Etsy pushes carry the variation ID (etsy_variant_id -> product_id) from the item map, queue rows and cascade rows, so the Etsy proxy v1.0.24+ writes THAT variation, not whichever one matches SKU text. (2) live-defects item 8, Sync Hub half: settings from the CONNECTED project now win even when empty, so connecting to staging no longer keeps production proxy URLs / CCD key cached from an earlier session. A key the project's row does not carry at all keeps its local value (prod carries no syncHub URL). -->
 <!-- v4.6.13 (S99): credential fields masked (anon key, CCD key, Etsy key) - type=text -> password. Prevents shoulder-surfing and screenshot leakage. No reveal toggle by design (REG S98-07). No behaviour change. -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -427,7 +428,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.14 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.15 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -892,7 +893,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.14';
+    const SH_VERSION = 'v4.6.15';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1394,10 +1395,34 @@
             return true;
         } catch (e) {
             console.error(`[Supabase] Save error for ${item.sku}:`, e);
+            addLog(`❌ Save refused for ${item.sku}: ${(e && e.message) || e}`, 'error');   // v4.6.15: was console-only
             return false;
         }
     }
     
+    // v4.6.15 (S101 · P3, census W3): the ORDER path's save. The item was re-read from the
+    // database at the start of this order line, so these values are fresh + this order's
+    // deduction. Writes only what an order changes; everything else on the row is left alone.
+    // THROWS on any failure (saveItemToSupabase returns false, which its order-path caller
+    // used to ignore and log as a success).
+    async function shSaveOrderDeduction(product) {
+        if (!sbClient || !sbConnected) throw new Error('Supabase not connected');
+        const full = itemToSbRow(product);
+        const row = {
+            qty: full.qty,
+            etsy_qty: full.etsy_qty,
+            wix_qty: full.wix_qty,
+            wayfair_qty: full.wayfair_qty,
+            updated_at: new Date().toISOString()
+        };
+        if (full.last_sold_date) row.last_sold_date = full.last_sold_date;
+        if (product._shWfLearned && full.wayfair_sku) row.wayfair_sku = full.wayfair_sku;
+        const { data, error } = await sbClient.from('items').update(row).eq('id', product.id).select('id');
+        if (error) throw new Error(error.message);
+        if (!data || data.length !== 1) throw new Error(`no row updated for item id ${product.id}`);
+        return true;
+    }
+
     async function saveItemsBatchToSupabase(items) {
         if (!sbClient || !sbConnected) return 0;
         let saved = 0;
@@ -1743,6 +1768,7 @@
             etsyPrice: row.etsy_sync_price != null ? parseFloat(row.etsy_sync_price) : null,
             etsyQuantity: row.etsy_sync_quantity,
             isBundle: row.is_bundle || false,
+            itemRole: row.item_role || 'single',  // v4.6.15 (S101 · P3): set/bundle lines go to the family engine
             parentSku: row.parent_sku || null,
             orderDate: row.order_date,
             orderNumber: row.order_number || '',
@@ -3781,6 +3807,25 @@
         const itemId = sale.item_id;
         
         if (!itemId) throw new Error(`No item_id on sale ${sale.id} — cannot cascade`);
+
+        // v4.6.15 (S101 · P3, census W2): a Set/bundle sale is reversed by the family engine,
+        // which puts the PIECES back and marks the sale reversed. select('*') so this read
+        // also works on a database without the engine (no item_role column there).
+        {
+            const { data: roleRow, error: roleErr } = await sbClient.from('items').select('*').eq('id', itemId).maybeSingle();
+            if (roleErr) throw new Error(`Could not read item ${itemId}: ${roleErr.message} — nothing was changed`);
+            if (roleRow && (roleRow.item_role === 'set' || roleRow.item_role === 'bundle')) {
+                const { data: rv, error: rvErr } = await sbClient.rpc('ccd_reverse_composite_sale', {
+                    p_sale_id: sale.id, p_actor: 'sync_hub', p_ref: `sh-cancel-${sale.id}`
+                });
+                if (rvErr) throw new Error(`Family engine refused to reverse ${roleRow.sku} sale ${sale.id}: ${rvErr.message} — nothing was changed`);
+                await sbClient.from('sales_history').update({ cancellation_reason: reason || ('cancelled_via_' + channel) }).eq('id', sale.id);
+                logActivity('sale', 'sale_cancelled', channel,
+                    `Set/bundle sale cancelled (${channelLabel}): ${roleRow.sku} x${qty} — Order #${orderId} — pieces restored by the family engine`,
+                    { sale_id: sale.id, order_id: orderId, qty, channel, reason: reason || ('cancelled_via_' + channel), sku: roleRow.sku, engine: rv, tool_version: SH_VERSION });
+                return { sku: roleRow.sku, qty, channel, orderId, syncRowsQueued: 0, newWarehouseQty: null };
+            }
+        }
         
         // ── 1. Mark sale cancelled ──
         const nowIso = new Date().toISOString();
@@ -4866,6 +4911,7 @@
         const products = getProductsArray();
         const updates = [];
         const changes = []; // For change log
+        const ccdCompositeSales = []; // v4.6.15 (S101 · P3): Set/bundle lines, sold by the family engine
         
         // ===== GAP 3: INVENTORY DEDUCTION WRAPPER =====
         // Check if inventory deduction is enabled via feature flag
@@ -5060,6 +5106,44 @@
                     continue;
                 }
                 
+                // v4.6.15 (S101 · P3, census W3): re-read THIS item from the database before
+                // touching it. The item cache is loaded at connect and on Refresh only, so it can
+                // be hours old, and the whole-row save that used to follow wrote that stale copy
+                // back over anything V2 or the family engine had changed since.
+                // A failed read HOLDS the order: nothing in it has been written yet.
+                {
+                    const _preWfSku = product.wayfairSku;
+                    let _fresh = null, _freshErr = null;
+                    try {
+                        const _r = await sbClient.from('items').select('*').eq('id', product.id).maybeSingle();
+                        _fresh = _r.data; _freshErr = _r.error;
+                    } catch (e) { _freshErr = e; }
+                    if (_freshErr || !_fresh) {
+                        const _why = _freshErr ? ((_freshErr.message) || String(_freshErr)) : 'item not found';
+                        order.status = 'failed';
+                        order.error = `Could not re-read ${product.sku} before deducting (${_why}) — order held, nothing changed`;
+                        addLog(`❌ Order ${orderId} held: could not re-read ${product.sku} (${_why}). Nothing was changed.`, 'error');
+                        toast(`❌ Order ${orderId} held — could not re-read ${product.sku}.\n\nNothing was changed. Try again.`, 'error');
+                        updateOrdersDisplay();
+                        return;
+                    }
+                    Object.assign(product, sbRowToItem(_fresh));
+                    if (order.channel === 'wayfair' && _preWfSku && _preWfSku !== product.wayfairSku) {
+                        product.wayfairSku = _preWfSku;          // keep the Wayfair SKU the matcher learned above
+                        product.supplierPartNumber = _preWfSku;
+                        product._shWfLearned = true;
+                    }
+                }
+                // v4.6.15 (S101 · P3, census W1): a Set or bundle holds no stock of its own.
+                // The family engine sells it (takes its pieces, all or nothing) further down,
+                // BEFORE anything else in this order is saved. Nothing is deducted here.
+                if (product.itemRole === 'set' || product.itemRole === 'bundle') {
+                    if (enableDeduction) {
+                        ccdCompositeSales.push({ product, qty: parseInt(item.qty) || 1, sku: product.sku, lineIndex: order.items.indexOf(item) });
+                    }
+                    continue;
+                }
+
                 // Declare variables outside conditional blocks for proper scoping
                 let currentQty = product.warehouseQty || product.qty || product.quantity || 0;
                 let newQty = currentQty;
@@ -5288,6 +5372,48 @@
                 }
             }
             
+            // ===== v4.6.15 (S101 · P3, census W1): Sets and bundles go to the family engine =====
+            // BEFORE any other save in this order, so a refusal leaves the order's ordinary
+            // lines untouched. Each line carries a ref, so processing the same order again
+            // (after a hold) returns "duplicate" for a line already sold instead of taking
+            // its pieces twice.
+            for (const cs of ccdCompositeSales) {
+                const ref = `sh-${orderId}-${cs.lineIndex}-${cs.product.id}`;
+                let res = null, err = null;
+                try {
+                    const _r = await sbClient.rpc('ccd_sell_composite', {
+                        p_composite_id: cs.product.id, p_qty: cs.qty, p_channel: order.channel,
+                        p_actor: 'sync_hub', p_source: 'sync_hub_order', p_ref: ref
+                    });
+                    res = _r.data; err = _r.error;
+                } catch (e) { err = e; }
+                if (err) {
+                    const msg = (err && err.message) || String(err);
+                    order.status = 'failed';
+                    order.error = `${cs.sku}: the family engine refused this sale — ${msg}`;
+                    addLog(`❌ Order ${orderId} held: ${cs.sku} (${cs.product.itemRole}) — engine refused: ${msg}. Nothing else in this order was changed.`, 'error');
+                    logActivity('inventory', 'composite_sale_refused', order.channel,
+                        `❌ ${cs.sku}: family engine refused order ${orderId}`,
+                        { sku: cs.sku, orderId: orderId, qty: cs.qty, ref: ref, error: msg, tool_version: SH_VERSION });
+                    toast(`❌ Order ${orderId} held\n\n${cs.sku} could not be sold:\n${msg}\n\nNothing else in this order was changed.`, 'error');
+                    updateOrdersDisplay();
+                    return;
+                }
+                const dup = !!(res && res.duplicate === true);
+                addLog(`🧩 ${cs.sku} x${cs.qty}: ${dup ? 'already sold by the engine for this order line — not taken again' : 'pieces taken from stock by the family engine'}`, 'success');
+                logActivity('inventory', dup ? 'composite_sale_duplicate' : 'composite_sale', order.channel,
+                    `🧩 ${cs.sku} x${cs.qty} sold through the family engine (order ${orderId})`,
+                    { sku: cs.sku, orderId: orderId, qty: cs.qty, ref: ref, result: res, tool_version: SH_VERSION });
+                try {   // refresh the Set and its pieces in the cache
+                    const _ids = [cs.product.id].concat(((res && res.pieces) || []).map(p => p && p.item_id).filter(Boolean));
+                    const { data: _rows } = await sbClient.from('items').select('*').in('id', _ids);
+                    for (const _row of (_rows || [])) {
+                        const _p = products.find(x => x.id === _row.id);
+                        if (_p) Object.assign(_p, sbRowToItem(_row));
+                    }
+                } catch (e) { console.warn('[v4.6.15] cache refresh after engine sale failed:', e && e.message); }
+            }
+
             // ===== v4.2.0: SAVE DIRECTLY TO SUPABASE (per-item) =====
             // No collision retry needed — Supabase handles concurrent writes.
             if (updates.length > 0 && sbConnected) {
@@ -5295,10 +5421,11 @@
                     const product = products.find(p => (p.sku || p.SKU) === u.sku);
                     if (product) {
                         try {
-                            await saveItemToSupabase(product);
+                            await shSaveOrderDeduction(product);   // v4.6.15: order columns only; throws on failure
                             addLog(`✅ ${u.sku}: ${u.oldQty} → ${u.newQty} (-${u.deducted})`, 'success');
                         } catch (saveErr) {
                             addLog(`❌ Failed to save ${u.sku}: ${saveErr.message}`, 'error');
+                            toast(`❌ ${u.sku} was NOT saved: ${saveErr.message}\n\nThe order is still recorded — check this item's stock.`, 'error');
                             console.error(`[processOrder] Save failed for ${u.sku}:`, saveErr);
                         }
                     }
@@ -5414,6 +5541,7 @@
                 const product = products.find(p => (p.sku || p.SKU) === lookupSku);
                 if (!product) continue;
                 
+                if (product.itemRole === 'set' || product.itemRole === 'bundle') continue;   // v4.6.15: the engine queued its pushes
                 const sbId = product._sbId || product.id;
                 const sourceChannel = order.channel;
                 const channels = product.channels || {};
