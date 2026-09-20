@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Inventory System v2.9.72</title>
+<title>CCD Inventory System v2.9.73</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <!-- v2.8.14: html2pdf for Save-as-PDF on packing slips (bundle includes jsPDF + html2canvas) -->
@@ -632,7 +632,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
     </div>
     <button class="login-btn" id="loginBtn" onclick="connectSupabase()">Connect</button>
     <div class="login-status" id="loginStatus"></div>
-    <div class="login-version">v2.9.72 · FAMILIES — AVAILABILITY IN THE ALLOCATION PANEL (v2.9.71 showed an empty panel on a Set's card; fixed).  On a Set or bundle's card, Inventory & Allocations now says how many Etsy and Wix may show (what the pieces allow, less the hold-back), names the piece that limits it, warns as you type if Etsy or Wix goes above it, and locks the Wayfair and booth boxes (Sets and bundles are Etsy and Wix only). On a piece's card it lists every Set and bundle that piece is in, with what each can offer right now and which piece limits it. Break-out: last time's split is only filled in when it adds up to the units being broken out; otherwise the wizard asks for this delivery's split. (S101) v2.9.70 · FAMILIES — RECEIVING. An invoice imports exactly as before. When a line is a family parent (the supplier's set or assortment SKU), its units land on the parent as "awaiting breakout" — and because the parent is hidden from the list, V2 now says so in three places: on the import review row, in the import result, and in a banner above the list and on the parent's card, with a button that opens the break-out wizard (last time's split is filled in). A line that is a Set or bundle is refused with the reason, because they hold no stock. (S101) v2.9.69 · FAMILIES — REVERSING A SET OR BUNDLE SALE. Reverse now works on a Set or bundle sale: the sale is marked reversed, every piece goes back into the warehouse and the Set recalculates, all in one step (if anything fails, nothing changes). Etsy and Wix quantities are not raised automatically — raise them by hand if the item goes back on sale. The family history shows reversed sales as pieces returned. A retired Set or bundle now says "retired" when you try to sell it. (S101) v2.9.68 · FAMILIES — FIXES FROM THE FIRST STAGING TEST, PLUS FAMILY HISTORY. The list now refreshes after any family action or Set sale. A retired Set or bundle shows "Retired · available 0" and cannot be sold. Delete on a family item says plainly that it cannot be deleted and what to do instead (Retire). Ticking a hold-back no longer lights up Save, and every hold-back change is now logged. The Reverse button is hidden on Set and bundle sales until reversal is built. The wizards warn when a Set or bundle cannot be made from its pieces yet. Days in stock never shows below 0. The family log shows your local time. New: the parent's Sales History tab shows a roll-up of every sale made by its pieces and Sets, and a piece's Sales History shows the Set and bundle sales that used it — a view only; each sale is still recorded once, on the item sold. (S101) v2.9.67 · FAMILIES, SETS AND BUNDLES — STAGING ONLY UNTIL PROMOTED. A new Family tab on every card, and four guided wizards: break an invoice item out into a hidden parent plus the pieces you sell; break out more units when a reorder lands on the parent; roll pieces back to the parent; and create a Set (from one family) or a bundle (from any items, sold as an option on one of their listings). Sets and bundles hold no stock: they are available while their pieces are, selling one takes the pieces out of stock, and their Etsy and Wix quantities are only ever lowered automatically. Every action runs inside the database engine in one step, so a cancelled or failed wizard leaves nothing behind, and every action is logged against the item. On a database without the engine (production, until promotion) the Family tab is hidden and V2 behaves exactly as v2.9.66. (S101) v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
+    <div class="login-version">v2.9.73 · FAMILIES TAB. A new 🧩 Families tab in the top bar shows every family in one place: its pieces (in stock, at booths, available online, Etsy / Wix / Wayfair), its Sets (what they are made from, how many can be made, hold-back, available, and what Etsy and Wix show, flagged ⚠ if a channel shows more than the pieces allow), plus every bundle and any units awaiting breakout. Click any SKU to open its card. The item list has a matching Family filter (in a family / parents / pieces / Sets &amp; bundles). The old Variants tab on the item card is removed: families, Sets and bundles live on the Family tab. Both new controls appear only on a database that has the family engine. (S102) v2.9.72 · FAMILIES — AVAILABILITY IN THE ALLOCATION PANEL (v2.9.71 showed an empty panel on a Set's card; fixed).  On a Set or bundle's card, Inventory & Allocations now says how many Etsy and Wix may show (what the pieces allow, less the hold-back), names the piece that limits it, warns as you type if Etsy or Wix goes above it, and locks the Wayfair and booth boxes (Sets and bundles are Etsy and Wix only). On a piece's card it lists every Set and bundle that piece is in, with what each can offer right now and which piece limits it. Break-out: last time's split is only filled in when it adds up to the units being broken out; otherwise the wizard asks for this delivery's split. (S101) v2.9.70 · FAMILIES — RECEIVING. An invoice imports exactly as before. When a line is a family parent (the supplier's set or assortment SKU), its units land on the parent as "awaiting breakout" — and because the parent is hidden from the list, V2 now says so in three places: on the import review row, in the import result, and in a banner above the list and on the parent's card, with a button that opens the break-out wizard (last time's split is filled in). A line that is a Set or bundle is refused with the reason, because they hold no stock. (S101) v2.9.69 · FAMILIES — REVERSING A SET OR BUNDLE SALE. Reverse now works on a Set or bundle sale: the sale is marked reversed, every piece goes back into the warehouse and the Set recalculates, all in one step (if anything fails, nothing changes). Etsy and Wix quantities are not raised automatically — raise them by hand if the item goes back on sale. The family history shows reversed sales as pieces returned. A retired Set or bundle now says "retired" when you try to sell it. (S101) v2.9.68 · FAMILIES — FIXES FROM THE FIRST STAGING TEST, PLUS FAMILY HISTORY. The list now refreshes after any family action or Set sale. A retired Set or bundle shows "Retired · available 0" and cannot be sold. Delete on a family item says plainly that it cannot be deleted and what to do instead (Retire). Ticking a hold-back no longer lights up Save, and every hold-back change is now logged. The Reverse button is hidden on Set and bundle sales until reversal is built. The wizards warn when a Set or bundle cannot be made from its pieces yet. Days in stock never shows below 0. The family log shows your local time. New: the parent's Sales History tab shows a roll-up of every sale made by its pieces and Sets, and a piece's Sales History shows the Set and bundle sales that used it — a view only; each sale is still recorded once, on the item sold. (S101) v2.9.67 · FAMILIES, SETS AND BUNDLES — STAGING ONLY UNTIL PROMOTED. A new Family tab on every card, and four guided wizards: break an invoice item out into a hidden parent plus the pieces you sell; break out more units when a reorder lands on the parent; roll pieces back to the parent; and create a Set (from one family) or a bundle (from any items, sold as an option on one of their listings). Sets and bundles hold no stock: they are available while their pieces are, selling one takes the pieces out of stock, and their Etsy and Wix quantities are only ever lowered automatically. Every action runs inside the database engine in one step, so a cancelled or failed wizard leaves nothing behind, and every action is logged against the item. On a database without the engine (production, until promotion) the Family tab is hidden and V2 behaves exactly as v2.9.66. (S101) v2.9.66 · STAGING CAN NO LONGER REACH THE LIVE CHANNELS (live-defects item 8). Connecting V2 to a project used to copy that project's proxy URLs and CCD key into the browser ONLY IF THEY WERE NOT BLANK — and staging keeps them blank, so a staging session kept the PRODUCTION values from the last production login and could buy Shippo labels or call Etsy/Wix for real. Now every connect replaces all five with the connected project's values, removing any that are blank, and stamps which project they came from. If the settings read fails, keys from a DIFFERENT project are removed rather than trusted. Production behaviour is unchanged (all five are set there). (S101) v2.9.65 · TWO PLACES WHERE A FIX HAD BEEN APPLIED ONCE AND NOT TWICE. (1) Saving a card wrote wayfair_sku = EMPTY STRING on every item that has no Wayfair SKU. v2.9.42 fixed exactly this in captureEdits and the comment there records that it had already "produced 106 empty-string rows and forced every Wayfair query to use coalesce(wayfair_sku,'') <> ''" — but saveItem's own field builder never got the same treatment, so the writer never stopped. 65 items carry it. It now uses the identical guard the listing IDs four lines below have always used, which means SAVING ANY AFFECTED ITEM NOW HEALS IT rather than needing a migration. (2) The bundle-recalculation cascade in a sale queued Etsy and Wix and NOT WAYFAIR — it capped bundleUpdates.wayfair_qty and then built no Wayfair row, so a Wayfair-listed bundle whose quantity was recalculated by a component sale silently stopped matching Wayfair. The component cascade forty lines above has had all three legs the whole time; this one was missing its third. The same update also had NO ERROR CHECK, so a failed write would still have queued a push for a value that never landed — it now checks, and skips the push if the write failed. NOT in this build: the two reversal paths writing different columns (that one touches Sync Hub too) and the write-off reverse restore (that one needs a schema change). (S100) v2.9.64 · A CHANNEL QUANTITY CAN NO LONGER MOVE IN SILENCE. Saving a card used to write all five channel-quantity columns and queue NOTHING — no error, no pending row, nothing in the log naming a channel. S100 watched it four times on one SKU in twenty minutes, including once on a save made to put the item back, which left V2 reading 2 while Etsy and Wix held 1. Every channel quantity that moves on a save now either QUEUES A PUSH or says so where you can see it and query it afterwards: the card names what was queued, and a CHANNEL_QTY_DELTA row records before/after per channel. An item with NO channel id does not block the save — 43 items carry a channel quantity with nothing to push it to, and one already holds Crazy Chicks stock — but the card turns amber and says which channel did not go. It DIFFS what landed against what was there, read from the database both times, so it is idempotent when the unsaved-changes prompt fires a second save, it reports what actually landed rather than what was sent, and it covers the bundle auto-derive for free. The component cascade, which writes channel quantities on items nobody opened, is covered too and now checks its own update for errors. NOT covered, deliberately: the write-off reverse still restores warehouse qty only and leaves the channel caps behind — that needs a capture column and it is B5, not B2. (S100) v2.9.63 · THREE FAILURES YOU COULD NOT SEE, MADE VISIBLE. (1) Find by SKU used to print "found X, V2 has Y — not overwritten" and stop there, so correcting a wrong listing ID meant retyping it by hand and in practice nobody did — item 93112 carried a wrong wix_product_id from August for exactly that reason. The warning now carries a Use-this button. It is still a DELIBERATE CLICK and it still only fills the FORM FIELD: nothing reaches the database until you Save, which is what queues the push. (2) The fetch transport had NO CEILING — v2.9.59 traded a 15s wall for no wall at all, so a genuinely stuck call hung forever instead of failing. fetch now aborts at 90s, JSONP keeps its 45s, and the WHOLE lookup hard-stops at 240s (above the 209s worst case ever observed, so the historical outlier would still have completed). A live elapsed counter runs throughout, because a 90-second wait with no indicator reads as a hang. (3) A FAILED PUSH WAS COUNTED BY NOTHING. The topbar now carries a pill when the queue holds rows that did not get where they were going: status failed / stale / skipped, plus any pending or processing row older than 30 minutes. It deliberately EXCLUDES cancelled and superseded, which are deliberate outcomes, and it says so when you open it. It reads status, NOT error_message — 23 completed rows carry a stale error_message and would have inflated it (B11). Measured at build time: 7 failed, 3 stale, 1 skipped, 0 stuck. (S98) v2.9.62 · THE RENAME HAZARD IS CLOSED. Sales and write-off history now resolve THROUGH items.item_id, with the SKU as a fallback for pre-migration rows — so renaming a SKU no longer detaches an item’s history. Four call sites route through one central helper, and a fifth inherits it. Measured at S98: 866 sales_history rows were ALREADY unreachable and 511 more were one rename away; the 511 were backfilled first. A fourth site nobody had recorded — the buyer email on the tracking-notification prompt — was found and fixed too. NOT covered: activity_log, whose item_id is populated on 0 of 20,482 rows. (S98) v2.9.61 · Fixes a one-way latch in v2.9.60’s props-comment marker: clicking "click to show it" revealed the box permanently, with no way to close it and no way for the Props select to hide it again. The reveal is now a round trip — a Hide control closes it, and ANY change to Props clears the reveal, so No → Yes → No hides it as expected. Found by Paul at S98 by toggling it, which is the only way this class of defect is ever found. v2.9.60 · Wayfair Props now has a comment box beneath it, written to the database whenever the card is saved. Props controls only whether the box is SHOWN: switching away from Yes HIDES the text and KEEPS it (C4), because a display change must not be a data change (REG S94-04). A hidden note shows a marker so it is never silent. Ships with the S98 migration that rescued 19 free-text prop notes the Y/N dropdown had been destroying on save (F-S97-01). (S98) v2.9.59 · Crazy Chicks accent is now GOLD (#f0b429), CC is selectable in both channel filters, and the Etsy/Wix listing-ID lookup no longer gives up at 15 seconds: it tries fetch first, falls back to JSONP on a 45s budget, retries a timeout once, stops throwing a ReferenceError when a late answer lands, and records its own elapsed ms into the activity log. Every lookup is now logged — the old code skipped the row when BOTH channels failed. v2.9.58 · Crazy Chicks fee rates are now editable in Settings, and CC pricing uses the GROSS-UP formula P = (U*(1+oh) + F) / (1 - c) so the 15% commission is recovered on retail. TreasureMarts keeps ECOSYSTEM-019 unchanged — the two booth branches are deliberately SEPARATE. Fixes a v2.9.57 hazard where saving Settings deleted channel_fees.cc and dropped CC to 0% fees, and a CC pricing-notes field that discarded input. v2.9.57 · Crazy Chicks (CC) added as a fifth channel — allocation card, pricing tab, PAR row, channels view and reporting. CC is a PHYSICAL BOOTH like TreasureMarts: it shares TM's fee shape (commission + overhead on marked-up wholesale, no OB shipping, rates from settings.channel_fees) and it SUBTRACTS FROM THE ONLINE POOL, so available-online is now warehouse − TM − CC at all four cap sites. CC is deliberately NOT in onlineChannels, so ECOSYSTEM-011 peer-decrement does not touch it. No listing IDs, no channel push. (S97)</div>
   </div>
 </div>
 
@@ -644,7 +644,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <div class="topbar">
     <div class="topbar-left">
       <div class="topbar-brand">CCD Inventory</div>
-      <div class="topbar-version">v2.9.72</div>
+      <div class="topbar-version">v2.9.73</div>
     </div>
     <div class="topbar-right">
       <!-- v2.9.63 (S98): failed-push pill. Hidden while the queue is clean. -->
@@ -669,6 +669,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
   <!-- Tab Bar -->
   <div class="tab-bar">
     <button class="tab-btn active" data-tab="inventory" onclick="switchTopTab('inventory')">📦 Inventory</button>
+    <button class="tab-btn" data-tab="families" onclick="switchTopTab('families')" style="display:none;">🧩 Families</button>
     <button class="tab-btn" data-tab="channels" onclick="switchTopTab('channels')">🏪 Channels</button>
     <button class="tab-btn" data-tab="bulk" onclick="switchTopTab('bulk')">⚡ Bulk Ops</button>
     <button class="tab-btn" data-tab="shipping" onclick="switchTopTab('shipping')">🚚 Shipping</button>
@@ -734,6 +735,13 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <option value="wayfair">Wayfair</option>
         <option value="tm">TreasureMarts</option>
         <option value="cc">Crazy Chicks</option>
+      </select>
+      <select class="filter-select" id="filterFamily" onchange="onFilterChange()" style="display:none;" title="v2.9.73: show items by their family role. Parents are hidden items, so this filter includes hidden rows.">
+        <option value="all">All items</option>
+        <option value="family">🧩 In a family</option>
+        <option value="parent">Parents</option>
+        <option value="piece">Pieces</option>
+        <option value="composite">Sets &amp; bundles</option>
       </select>
       <select class="filter-select" id="filterBrand" onchange="onFilterChange()">
         <option value="all">All Brands</option>
@@ -841,7 +849,6 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
         <button class="sub-tab" data-tab="sales" onclick="switchSub('sales')">Sales History</button>
         <button class="sub-tab" data-tab="purchases" onclick="switchSub('purchases')">Purchases</button>
         <button class="sub-tab" data-tab="shipping" onclick="switchSub('shipping')">Shipping</button>
-        <button class="sub-tab" data-tab="variants" onclick="switchSub('variants')">Variants</button>
         <button class="sub-tab" data-tab="family" onclick="switchSub('family')" style="display:none;">Family</button>
         <button class="sub-tab" data-tab="wayfair" onclick="switchSub('wayfair')">Wayfair Fields</button>
         <button class="sub-tab" data-tab="par" onclick="switchSub('par')">PAR Levels</button>
@@ -855,7 +862,6 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
       <div class="sub-content" id="sub-sales"></div>
       <div class="sub-content" id="sub-purchases"></div>
       <div class="sub-content" id="sub-shipping"></div>
-      <div class="sub-content" id="sub-variants"></div>
       <div class="sub-content" id="sub-family"></div>
       <div class="sub-content" id="sub-wayfair"></div>
       <div class="sub-content" id="sub-par"></div>
@@ -863,6 +869,18 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
       <div class="sub-content" id="sub-activity"></div>
 
     </div><!-- end card-view -->
+
+    <!-- ═══════════════════════════════════════ FAMILIES VIEW (v2.9.73) ═══════════════════════════════════════ -->
+    <div class="top-view" id="familiesView">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <div class="section-title" style="margin:0;">🧩 Families, Sets &amp; bundles</div>
+        <div class="search-box" style="max-width:320px;"><input type="text" id="famSearch" placeholder="Find a SKU or product…" oninput="ccdRenderFamiliesView()"></div>
+        <button class="btn-card" onclick="ccdLoadFamiliesView()" style="padding:7px 14px;font-size:12px;">↻ Refresh</button>
+        <span style="font-size:11px;color:var(--muted);">Read-only. To change a family, open an item and use its Family tab.</span>
+      </div>
+      <div id="familiesSummary"></div>
+      <div id="familiesBody"></div>
+    </div>
 
     <!-- ═══════════════════════════════════════ CHANNEL VIEWS ═══════════════════════════════════════ -->
     <div class="top-view" id="channelsView">
@@ -1757,7 +1775,7 @@ textarea.form-input{scrollbar-width:auto;scrollbar-color:var(--muted) var(--bg1)
 //   lines ~3113 and ~5605 are preserved verbatim from v2.9.0. See
 //   CCD-Regression-Registry.md → ECOSYSTEM-011 and Locked Invariants (Model B).
 // ─────────────────────────────────────────────────────────────────────────────
-const TOOL_VERSION = '2.9.72';
+const TOOL_VERSION = '2.9.73';
 const TOOL_KEY     = 'inventory_v2';
 const PAGE_SIZE    = 50;
 const SEARCH_DELAY = 300;
@@ -1824,7 +1842,9 @@ let state = {
     // v1.3.3 >20% shrink guard and abort the compliance heartbeat. Default off.
     hideZero: false,
     // v2.9.44: reveal rows flagged items.is_hidden (display-only flag)
-    showHidden: false
+    showHidden: false,
+    // v2.9.73: family role filter (all / family / parent / piece / composite); only offered where the engine is
+    family: 'all'
   },
   brands: [],             // Unique brand list for filter dropdown
   categories: [],         // Unique category list for dropdown
@@ -2116,6 +2136,7 @@ function ccdHydrateProxyKeys(rows, readError) {
 // v2.9.70 (S101 · P2): receiving — invoice units that land on a family parent are announced.
 // v2.9.71 (S101 · P2): B9 — the card's allocation panel shows Set/bundle availability; break-out pre-fill fix.
 // v2.9.72 (S101 · P2): v2.9.71's panel used V2's ge() as an element getter — ge() returns true/false. Fixed.
+// v2.9.73 (S102): the Families top tab (every family, Set and bundle in one place, read-only) + the list's Family filter.
 // Design: claude\CCD-S101-Variant-Bundle-Design.md (§2 what the user sees, §9 guardrails).
 //
 // ONE ENGINE, IN THE DATABASE. Every family / Set / bundle action here calls a
@@ -2141,6 +2162,13 @@ async function ccdDetectEngine() {
   // Production's screen must not change until promotion: the tab button only appears where the engine is.
   const tabBtn = $q('.sub-tab[data-tab="family"]');
   if (tabBtn) tabBtn.style.display = state.ccdEngine ? '' : 'none';
+  // v2.9.73: the Families top tab and the list's Family filter follow the same rule
+  const topBtn = $q('.tab-bar .tab-btn[data-tab="families"]');
+  if (topBtn) topBtn.style.display = state.ccdEngine ? '' : 'none';
+  if (ge('filterFamily')) {
+    $('filterFamily').style.display = state.ccdEngine ? '' : 'none';
+    if (!state.ccdEngine) { $('filterFamily').value = 'all'; state.filters.family = 'all'; }
+  }
   console.log('[Families] engine ' + (state.ccdEngine ? 'PRESENT — Family tab shown' : 'absent — Family tab hidden'));
 }
 function ccdRole(item) { return (state.ccdEngine && item && item.item_role) ? item.item_role : 'single'; }
@@ -3013,6 +3041,123 @@ async function ccdAllocInfo(item) {
   } catch (e) { el.innerHTML = ''; }
 }
 
+// ─── v2.9.73 · THE FAMILIES TOP TAB ─────────────────────────────────────────
+// One place to see every family, Set and bundle (Paul, S102). READ-ONLY: it
+// changes nothing. Every action stays on the item card's Family tab, so there is
+// still one front end per engine call (REG S98-03). Numbers are read from the
+// database each time the tab opens (REG S92-01), through sbFetchAll (REG S76-01).
+// Hidden where the engine is absent, like the card's Family tab.
+const ccdFam = { data: null };
+async function ccdLoadFamiliesView() {
+  const body = $('familiesBody'); if (!body) return;
+  if (!state.ccdEngine) {
+    body.innerHTML = '<div class="section" style="color:var(--muted);font-size:13px;">Families are not available on this database.</div>';
+    return;
+  }
+  body.innerHTML = '<div class="section" style="color:var(--muted);font-size:13px;">Loading families…</div>';
+  try {
+    const [fams, members, comps] = await Promise.all([
+      sbFetchAll(() => sb.from('ccd_families').select('parent_item_id,mode').order('parent_item_id')),
+      sbFetchAll(() => sb.from('items').select('id,sku,product_name,item_role,parent_item_id,hold_back,is_active,qty,crazychicks_qty,treasuremarts_qty,etsy_qty,wix_qty,wayfair_qty').neq('item_role', 'single').order('id')),
+      sbFetchAll(() => sb.from('bundle_components').select('id,bundle_item_id,component_item_id,component_qty').order('id'))
+    ]);
+    const byId = {};
+    members.forEach(m => { byId[m.id] = m; });
+    // a bundle may be built from ordinary (single) items: read those too
+    const missing = [...new Set(comps.map(c => c.component_item_id).filter(id => !byId[id]))];
+    for (let i = 0; i < missing.length; i += 200) {
+      const { data, error } = await sb.from('items').select('id,sku,product_name,item_role,parent_item_id,hold_back,is_active,qty,crazychicks_qty,treasuremarts_qty,etsy_qty,wix_qty,wayfair_qty').in('id', missing.slice(i, i + 200));
+      if (error) throw error;
+      (data || []).forEach(m => { byId[m.id] = m; });
+    }
+    ccdFam.data = { fams, members, comps, byId };
+    ccdRenderFamiliesView();
+  } catch (e) {
+    body.innerHTML = `<div class="section" style="color:var(--red);font-size:13px;">Could not load families: ${escHtml(e.message || String(e))}</div>`;
+    console.error('[Families view]', e);
+  }
+}
+
+// what a Set or bundle can offer: the pieces allow `cap`, less the hold-back; a retired one offers 0
+function ccdFamCompositeRow(s, D) {
+  const cs = D.comps.filter(c => c.bundle_item_id === s.id);
+  const { cap, limiting } = ccdCapacity(cs, D.byId);
+  const retired = s.is_active === false;
+  const avail = retired ? 0 : Math.max(0, cap - pi(s.hold_back));
+  const recipe = cs.map(c => `${pi(c.component_qty)}× ${escHtml((D.byId[c.component_item_id] || {}).sku || '?')}`).join(' + ') || '<span style="color:var(--red);">no recipe</span>';
+  const over = !retired && (pi(s.etsy_qty) > avail || pi(s.wix_qty) > avail);
+  return `<tr${retired ? ' style="opacity:0.5;"' : ''}>
+    <td><span class="vr-sku" onclick="onRowClick(${s.id})">${escHtml(s.sku)}</span>${retired ? ' <span class="badge badge-inactive">Retired</span>' : ''}</td>
+    <td style="font-size:11px;">${recipe}</td>
+    <td class="mono">${retired ? '—' : cap}</td>
+    <td class="mono">${pi(s.hold_back) ? '1' : '—'}</td>
+    <td class="mono" style="font-weight:700;">${avail}</td>
+    <td style="font-size:11px;">${retired ? '' : escHtml(limiting || '')}</td>
+    <td class="mono"${over ? ' style="color:var(--red);font-weight:700;" title="Showing more than the pieces allow"' : ''}>${pi(s.etsy_qty)} / ${pi(s.wix_qty)}${over ? ' ⚠' : ''}</td></tr>`;
+}
+const CCD_FAM_COMP_HEAD = '<tr><th>SKU</th><th>Made from</th><th>Can make</th><th>Hold</th><th>Available</th><th>Limited by</th><th>Etsy / Wix</th></tr>';
+
+function ccdRenderFamiliesView() {
+  const body = $('familiesBody'); if (!body || !ccdFam.data) return;
+  const D = ccdFam.data;
+  const q = (ge('famSearch') ? $('famSearch').value : '').trim().toLowerCase();
+  const hit = it => !q || String(it.sku || '').toLowerCase().includes(q) || String(it.product_name || '').toLowerCase().includes(q);
+  const famIds = new Set(D.fams.map(f => f.parent_item_id));
+  const kidsOf = pid => D.members.filter(m => m.parent_item_id === pid);
+
+  let awaiting = 0, nPieces = 0, nSets = 0;
+  const cards = [];
+  D.fams.map(f => ({ f, p: D.byId[f.parent_item_id] || { id: f.parent_item_id, sku: '(parent ' + f.parent_item_id + ' not found)' } }))
+    .sort((a, b) => String(a.p.sku).localeCompare(String(b.p.sku)))
+    .forEach(({ f, p }) => {
+      const kids = kidsOf(p.id);
+      const pieces = kids.filter(k => k.item_role === 'piece');
+      const sets = kids.filter(k => k.item_role === 'set');
+      awaiting += pi(p.qty); nPieces += pieces.length; nSets += sets.length;
+      if (q && !hit(p) && !kids.some(hit)) return;
+      const pieceRows = pieces.map(x => `<tr${x.is_active === false ? ' style="opacity:0.5;"' : ''}>
+        <td><span class="vr-sku" onclick="onRowClick(${x.id})">${escHtml(x.sku)}</span>${x.is_active === false ? ' <span class="badge badge-inactive">Retired</span>' : ''}</td>
+        <td class="mono">${pi(x.qty)}</td><td class="mono">${pi(x.crazychicks_qty) + pi(x.treasuremarts_qty)}</td><td class="mono">${ccdAvailOnline(x)}</td>
+        <td class="mono">${pi(x.etsy_qty)} / ${pi(x.wix_qty)} / ${pi(x.wayfair_qty)}</td></tr>`).join('');
+      cards.push(`<div class="section" style="padding:16px 18px;">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+          <span class="vr-sku" style="font-size:15px;" onclick="onRowClick(${p.id})">🧩 ${escHtml(p.sku)}</span>
+          <span style="color:var(--text);font-size:13px;">${escHtml(p.product_name || '')}</span>
+          <span class="badge" style="background:rgba(212,168,67,0.15);color:var(--gold);">${f.mode === 'kit' ? 'KIT' : f.mode === 'assortment' ? 'ASSORTMENT' : escHtml(String(f.mode || '?').toUpperCase())}</span>
+          ${pi(p.qty) > 0 ? `<span class="badge" style="background:rgba(212,168,67,0.25);color:var(--gold);" title="Received and not yet split into pieces — open the parent to break them out">📦 ${pi(p.qty)} awaiting breakout</span>` : ''}
+        </div>
+        <table class="card-table"><thead><tr><th>Piece</th><th>In stock</th><th>At booths</th><th>Available online</th><th>Etsy / Wix / Wayfair</th></tr></thead>
+          <tbody>${pieceRows || '<tr><td colspan="5" style="color:var(--muted);">No pieces yet</td></tr>'}</tbody></table>
+        ${sets.length ? `<table class="card-table" style="margin-top:10px;"><thead>${CCD_FAM_COMP_HEAD.replace('<th>SKU</th>', '<th>Set</th>')}</thead><tbody>${sets.map(s => ccdFamCompositeRow(s, D)).join('')}</tbody></table>` : ''}
+      </div>`);
+    });
+
+  const bundles = D.members.filter(m => m.item_role === 'bundle');
+  const shownBundles = bundles.filter(b => !q || hit(b) || D.comps.some(c => c.bundle_item_id === b.id && D.byId[c.component_item_id] && hit(D.byId[c.component_item_id])));
+  // REG S99-01: say so when something has a family role and no family to show it under
+  const orphans = D.members.filter(m => (m.item_role === 'parent' && !famIds.has(m.id)) || ((m.item_role === 'piece' || m.item_role === 'set') && !famIds.has(m.parent_item_id)));
+
+  $('familiesSummary').innerHTML = `<div style="display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin-bottom:12px;">
+    <span><strong style="color:var(--text);">${D.fams.length}</strong> famil${D.fams.length === 1 ? 'y' : 'ies'}</span>
+    <span><strong style="color:var(--text);">${nPieces}</strong> piece${nPieces === 1 ? '' : 's'}</span>
+    <span><strong style="color:var(--text);">${nSets}</strong> Set${nSets === 1 ? '' : 's'}</span>
+    <span><strong style="color:var(--text);">${bundles.length}</strong> bundle${bundles.length === 1 ? '' : 's'}</span>
+    <span${awaiting ? ' style="color:var(--gold);"' : ''}><strong>${awaiting}</strong> unit${awaiting === 1 ? '' : 's'} awaiting breakout</span>
+  </div>`;
+
+  let html = '';
+  if (!D.fams.length && !bundles.length) {
+    html = `<div class="section" style="color:var(--muted);font-size:13px;line-height:1.6;">No families, Sets or bundles yet. To start one, open the item that came in on the invoice and use its <strong>Family</strong> tab.</div>`;
+  } else {
+    html += cards.join('') || (D.fams.length ? '<div class="section" style="color:var(--muted);font-size:13px;">No family matches.</div>' : '');
+    if (shownBundles.length) html += `<div class="section" style="padding:16px 18px;"><div class="section-title" style="margin-bottom:10px;">🎁 Bundles</div>
+      <table class="card-table"><thead>${CCD_FAM_COMP_HEAD.replace('<th>SKU</th>', '<th>Bundle</th>')}</thead><tbody>${shownBundles.map(b => ccdFamCompositeRow(b, D)).join('')}</tbody></table></div>`;
+  }
+  if (orphans.length) html += `<div class="section" style="border-color:var(--red);font-size:12px;"><div class="section-title" style="color:var(--red);margin-bottom:8px;">Not attached to a family — tell Paul</div>${
+    orphans.map(o => `<span class="vr-sku" onclick="onRowClick(${o.id})">${escHtml(o.sku)}</span> (${escHtml(CCD_ROLE_LABEL[o.item_role] || o.item_role)})`).join(' · ')}</div>`;
+  body.innerHTML = html;
+}
+
 async function showApp() {
   $('loginScreen').style.display = 'none';
   $('app').classList.add('visible');
@@ -3283,6 +3428,7 @@ async function loadInventory() {
     // "filtered by: active" — so the honest conclusion was "not a valid product".
     // Brand and channel are a DIFFERENT AXIS and still apply.
     const searching = !!(f.search && String(f.search).trim());
+    const fam = state.ccdEngine ? (f.family || 'all') : 'all';   // v2.9.73
     if (!searching) {
     // v2.9.45: 'hidden' is its own view. It must bypass the exclusion below,
     // or the two filters cancel out and the list comes back empty.
@@ -3292,7 +3438,8 @@ async function loadInventory() {
       if (f.status === 'active')   query = query.eq('is_active', true);
       if (f.status === 'inactive') query = query.eq('is_active', false);
       // v2.9.44: hidden rows excluded unless explicitly revealed
-      if (!f.showHidden)           query = query.or('is_hidden.is.null,is_hidden.eq.false');
+      // v2.9.73: …or unless a family filter is on (every family parent is a hidden row)
+      if (!f.showHidden && fam === 'all') query = query.or('is_hidden.is.null,is_hidden.eq.false');
     }
     // v2.9.43: display-only in-stock filter (see state.filters.hideZero)
     if (f.hideZero)              query = query.gt('qty', 0);
@@ -3305,6 +3452,11 @@ async function loadInventory() {
     if (f.channel === 'cc')      query = query.gt('crazychicks_qty', 0);
 
     if (f.brand && f.brand !== 'all') query = query.eq('brand_name', f.brand);
+    // v2.9.73: family role — a different axis, like channel and brand, so it applies during a search too
+    if (fam === 'family')    query = query.neq('item_role', 'single');
+    if (fam === 'parent')    query = query.eq('item_role', 'parent');
+    if (fam === 'piece')     query = query.eq('item_role', 'piece');
+    if (fam === 'composite') query = query.in('item_role', ['set', 'bundle']);
 
     if (f.search) {
       const s = f.search.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_').replace(/'/g, "''");
@@ -3480,6 +3632,7 @@ function renderTable() {
         <span class="sku-cell">${escHtml(sku)}</span>
         ${isBundle ? '<span class="badge badge-bundle">BUNDLE</span>' : ''}
         ${isVariant ? '<span class="badge badge-var">VAR</span>' : ''}
+        ${ccdRole(item) !== 'single' ? `<span class="badge" style="background:rgba(212,168,67,0.15);color:var(--gold);">${CCD_ROLE_LABEL[ccdRole(item)] || escHtml(ccdRole(item))}</span>` : ''}
       </td>
       <td class="product-cell" title="${escHtml(name)}">${escHtml(name)}</td>
       <td class="brand-cell">${escHtml(brand)}</td>
@@ -3549,6 +3702,7 @@ function renderFilterCount() {
     parts.push('all statuses');
     if (f.channel !== 'all') parts.push(f.channel);
     if (f.brand !== 'all') parts.push(f.brand);
+    if (state.ccdEngine && f.family && f.family !== 'all') parts.push(({ family: 'in a family', parent: 'parents', piece: 'pieces', composite: 'Sets & bundles' })[f.family]);   // v2.9.73
     $('filterCount').textContent =
       `${total.toLocaleString()} items \u00b7 filtered by: ${parts.join(', ')}`;
     return;
@@ -3558,6 +3712,7 @@ function renderFilterCount() {
   if (f.showHidden) parts.push('incl. hidden');
   if (f.channel !== 'all') parts.push(f.channel);
   if (f.brand !== 'all') parts.push(f.brand);
+  if (state.ccdEngine && f.family && f.family !== 'all') parts.push(({ family: 'in a family', parent: 'parents', piece: 'pieces', composite: 'Sets & bundles' })[f.family]);   // v2.9.73
   if (f.search) parts.push(`"${f.search}"`);
 
   $('filterCount').textContent = parts.length > 0
@@ -3599,6 +3754,7 @@ function onFilterChange() {
   state.filters.showHidden = ge('filterShowHidden') ? $('filterShowHidden').checked : false;
   state.filters.channel = $('filterChannel').value;
   state.filters.brand   = $('filterBrand').value;
+  state.filters.family  = ge('filterFamily') ? $('filterFamily').value : 'all';   // v2.9.73
   state.page = 1;
   loadInventory();
 }
@@ -3994,12 +4150,13 @@ function _closeCard() {
   // Return to shipping tab if we came from there
   const returnTab = state.shipReturnTab || state.activeTopTab || 'inventory';
   state.shipReturnTab = null; // Clear after use
-  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', writeoffs:'writeoffsView', analytics:'analyticsView', settings:'settingsView' };
+  const viewMap = { inventory:'inventoryView', families:'familiesView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', writeoffs:'writeoffsView', analytics:'analyticsView', settings:'settingsView' };
   const viewId = viewMap[returnTab];
   if (viewId) $(viewId).classList.add('active');
   state.activeTopTab = returnTab;
   state.currentItem = null;
   state.activePricingChannel = null;
+  if (returnTab === 'families') ccdLoadFamiliesView();   // v2.9.73: numbers may have changed on the card
 
   // E18 (v2.9.3, S27): restore scroll position captured in onRowClick.
   // Dirty path: wait for loadInventory() re-render before scrolling.
@@ -4108,7 +4265,6 @@ function switchSub(tab, skipCapture) {
     sales: ccdRenderSalesWithFamily,
     purchases: renderPurchases,
     shipping: renderShipping,
-    variants: renderVariants,
     family: renderFamily,
     wayfair: renderWayfair,
     par: renderPar,
@@ -6531,6 +6687,11 @@ function toggleShipDetail(idx) {
 
 // ═══════════════════════════════════════════════════════════
 // TAB: VARIANTS (matches prototype exactly)
+// v2.9.73 (S102): THE VARIANTS TAB IS REMOVED — its button, container and renderer
+// entry are gone, so nothing below is reachable (renderVariants, addVariantFromItem,
+// toggleBundle, add/removeBundleComponent, fetchVariantIds are called only from its
+// own HTML). Kept, unchanged, as a record of the old parent_sku grouping until P8
+// converts the existing families. Families, Sets and bundles: the Family tab.
 // ═══════════════════════════════════════════════════════════
 async function renderVariants(item) {
   if (state.ccdEngine) {   // v2.9.67: its bundle editor writes bundle_components directly, which the engine refuses
@@ -8110,7 +8271,7 @@ async function deleteItem() {
     state.cardDirty = false;
     $('cardView').classList.remove('visible');
     const returnTab = state.activeTopTab || 'inventory';
-    const viewMap = { inventory: 'inventoryView', shipping: 'shippingView', channels: 'channelsView', reorder: 'reorderView', ai: 'aiView' };
+    const viewMap = { inventory: 'inventoryView', families: 'familiesView', shipping: 'shippingView', channels: 'channelsView', reorder: 'reorderView', ai: 'aiView' };
     const viewId = viewMap[returnTab];
     if (viewId) $(viewId).classList.add('active');
     await loadInventory();
@@ -13326,7 +13487,7 @@ async function switchTopTab(tab) {
   if (btn) btn.classList.add('active');
   // Toggle views
   $qa('.top-view').forEach(v => v.classList.remove('active'));
-  const viewMap = { inventory:'inventoryView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', writeoffs:'writeoffsView', analytics:'analyticsView', settings:'settingsView' };
+  const viewMap = { inventory:'inventoryView', families:'familiesView', channels:'channelsView', bulk:'bulkView', shipping:'shippingView', writeoffs:'writeoffsView', analytics:'analyticsView', settings:'settingsView' };
   if (viewMap[tab]) $(viewMap[tab]).classList.add('active');
   // Load data for the tab
   if (tab === 'channels') { loadChannelCounts(); loadChannelView(state.activeChannel || 'etsy'); }
@@ -13335,6 +13496,7 @@ async function switchTopTab(tab) {
   if (tab === 'writeoffs') { loadWriteoffLog(); }
   if (tab === 'analytics') { loadAnalytics(); }
   if (tab === 'settings') { loadSettings(); }
+  if (tab === 'families') { ccdLoadFamiliesView(); }   // v2.9.73
 }
 
 // ═══════════════════════════════════════════════════════════
