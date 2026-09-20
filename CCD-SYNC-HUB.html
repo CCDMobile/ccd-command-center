@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.15</title>
+    <title>CCD Sync Hub v4.6.16</title>
+<!-- v4.6.16 (S102): the online cap after an order is warehouse − TreasureMarts − CRAZY CHICKS (it left Crazy Chicks out, so online channels could show booth stock). Display: "total" = warehouse (booth units are inside it, not on top); the Wayfair list shows both booths. -->
 <!-- v4.6.15 (S101 · P3, census claude\CCD-S101-P3-Writer-Census.md): (1) W3 — before deducting an order line, the item is RE-READ from the database (the item cache is only loaded at connect/Refresh and could be hours old), and the save writes ONLY qty + etsy/wix/wayfair qty + last_sold_date (+ a Wayfair SKU learned by the matcher), not the whole cached row; a failed re-read HOLDS the order with nothing written. (2) W1 — a Set/bundle line is sold by the family engine (ccd_sell_composite, ref per order line so a re-run cannot take pieces twice) BEFORE any other save in the order; a refusal holds the order. Its own cascade rows are skipped (the engine queues them). (3) W2 — cancelling a Set/bundle sale goes to ccd_reverse_composite_sale (pieces restored). (4) saveItemToSupabase failures now reach the Log, and an order-line save failure raises a toast instead of logging a success. On a database without the engine every item reads as 'single' and only (1) and (4) change behaviour. -->
 <!-- v4.6.14 (S101): (1) Etsy pushes carry the variation ID (etsy_variant_id -> product_id) from the item map, queue rows and cascade rows, so the Etsy proxy v1.0.24+ writes THAT variation, not whichever one matches SKU text. (2) live-defects item 8, Sync Hub half: settings from the CONNECTED project now win even when empty, so connecting to staging no longer keeps production proxy URLs / CCD key cached from an earlier session. A key the project's row does not carry at all keeps its local value (prod carries no syncHub URL). -->
 <!-- v4.6.13 (S99): credential fields masked (anon key, CCD key, Etsy key) - type=text -> password. Prevents shoulder-surfing and screenshot leakage. No reveal toggle by design (REG S98-07). No behaviour change. -->
@@ -428,7 +429,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.15 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.16 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -893,7 +894,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.15';
+    const SH_VERSION = 'v4.6.16';
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4308,8 +4309,8 @@
     // Ensures channel allocations stay valid after order processing.
     // Rules (shared inventory model):
     // - Each online channel (etsy, wix, wayfair) is INDEPENDENT
-    // - Each online channel ≤ (Warehouse Qty − TM Qty)
-    // - TreasureMarts is physical location, reduces available online pool
+    // - Each online channel ≤ (Warehouse Qty − TM Qty − Crazy Chicks Qty)   (v4.6.16: CC added)
+    // - TreasureMarts and Crazy Chicks are physical locations; both reduce the available online pool
     // - Source channel is deducted externally by processOrder; this function only CAPS
     // ============================================================================
     function autoAdjustChannelAllocations(product, sourceChannel = null, deductedQty = 0) {
@@ -4362,10 +4363,13 @@
         const warehouseQty = product.warehouseQty || product.qty || product.quantity || 0;
         const channels = product.channels;
         
-        // Available for online = warehouse qty minus TM (physical location)
+        // Available for online = warehouse qty minus BOTH booths (physical locations)
         // v4.3.9: Shared inventory model — online channels show the same pool
+        // v4.6.16 (S102): Crazy Chicks was missing here, so after an online order the other online channels were capped
+        // at (warehouse − TM) and could show units sitting at the Crazy Chicks booth. Same formula as V2's ccdAvailOnline.
         const tmQty = parseInt(channels.treasuremarts) || 0;
-        const availableForOnline = Math.max(0, warehouseQty - tmQty);
+        const ccQty = parseInt(channels.crazychicks) || 0;
+        const availableForOnline = Math.max(0, warehouseQty - tmQty - ccQty);
         
         // ==========================================================================
         // VALIDATION v3.3.5.11 - Snapshot physical location allocations
@@ -5281,7 +5285,7 @@
                     product.lastSoldDate = new Date().toISOString();
                     
                     // ✅ v3.3.5.13: Update totalActual
-                    product.totalActual = (product.qty || product.warehouseQty || 0) + (product.channels?.treasuremarts || 0);
+                    product.totalActual = (product.qty || product.warehouseQty || 0);   // v4.6.16: booth units are inside qty, not on top
                     
                     updates.push({
                         sku: item.resolvedSku || sku,
@@ -9835,7 +9839,7 @@
         try {
             const { data, error } = await sbClient
                 .from('items')
-                .select('sku, wayfair_sku, product_name, qty, wayfair_qty, treasuremarts_qty, is_active')
+                .select('sku, wayfair_sku, product_name, qty, wayfair_qty, treasuremarts_qty, crazychicks_qty, is_active')
                 .not('wayfair_sku', 'is', null)
                 .order('sku')
                 .limit(5000);
@@ -9878,8 +9882,8 @@
                         <th style="padding: 8px 10px; text-align: left;">Wayfair SKU</th>
                         <th style="padding: 8px 10px; text-align: left;">Product</th>
                         <th style="padding: 8px 10px; text-align: right; width: 70px;" title="Warehouse total quantity (authoritative inventory in CCD)">Total Qty</th>
-                        <th style="padding: 8px 10px; text-align: right; width: 70px; cursor: help;" title="The exact value pushed to Wayfair. TRUE_UP sends items.wayfair_qty verbatim — the proxy does NOT recompute it. Warehouse-minus-TM is applied by Sync Hub when this allocation is MAINTAINED, not at push time.">WF Qty</th>
-                        <th style="padding: 8px 10px; text-align: right; width: 70px;" title="Reserved TreasureMarts inventory (physical store) — excluded from Wayfair-available stock">TM Qty</th>
+                        <th style="padding: 8px 10px; text-align: right; width: 70px; cursor: help;" title="The exact value pushed to Wayfair. TRUE_UP sends items.wayfair_qty verbatim — the proxy does NOT recompute it. Warehouse-minus-booths (TreasureMarts + Crazy Chicks, v4.6.16) is applied by Sync Hub when this allocation is MAINTAINED, not at push time.">WF Qty</th>
+                        <th style="padding: 8px 10px; text-align: right; width: 70px;" title="Units at the booths (TreasureMarts + Crazy Chicks) — part of the warehouse total, excluded from Wayfair-available stock">Booths</th>
                     </tr>
                 </thead>
                 <tbody id="wfDiffTableBody">
@@ -9890,7 +9894,7 @@
             const name = item.product_name || '—';
             const qty = (item.qty != null) ? item.qty : '—';
             const wfQty = (item.wayfair_qty != null) ? item.wayfair_qty : '—';
-            const tmQty = (item.treasuremarts_qty != null) ? item.treasuremarts_qty : 0;
+            const tmQty = (parseInt(item.treasuremarts_qty) || 0) + (parseInt(item.crazychicks_qty) || 0);   // v4.6.16: both booths
             const rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
             // Bug #3 fix: escape all values used in attributes AND cells. A product
             // name like `5" Vintage Vase` would break the data-search attribute.
