@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Channel Manager v2.8.0</title>
+<title>CCD Channel Manager v2.8.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap');
@@ -78,7 +78,7 @@ a.lw-btn{text-decoration:none;}
 <body>
 <div class="login-screen" id="loginScreen"><div class="login-card"><div class="login-logo">Country Charm Decor</div><div class="login-sub">Channel Manager v2.7.0</div><div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://your-project.supabase.co" autocomplete="off"></div><div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off"></div><button class="login-btn" onclick="doConnect()">Connect</button><div class="login-status" id="loginStatus"></div><div class="login-version">v2.7.0 · 🛍 Create on Wix (hidden, reviewed, then Reveal; Country Home Decor on every listing) · 🛒 Create on Etsy (a draft, reviewed, then Go live; weight and box size from V2; sent as a supply by default) · 🗂 Drafts · Etsy-only description footer · Content Editor, Bulk Ops and the old push/create buttons taken off · 📝 Listing workspace · ⚙ Settings</div></div></div>
 <div class="app" id="appShell">
-  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.8.0</div><span class="lw-proj unknown" id="lwProjBadge">project?</span></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
+  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.8.1</div><span class="lw-proj unknown" id="lwProjBadge">project?</span></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
   <div class="tab-bar"><button class="tab-btn active" onclick="switchTab('products',this)">📦 Products</button><button class="tab-btn" id="lwTabBtn" onclick="switchTab('listing',this)">📝 Listing</button><button class="tab-btn" onclick="switchTab('drafts',this);dvLoad();">🗂 Drafts</button><button class="tab-btn" onclick="switchTab('pricing',this)">💰 Pricing Advisor</button><button class="tab-btn" onclick="switchTab('settings',this);lwRenderSettings();">⚙ Settings</button><button class="tab-btn" id="avTabBtn" onclick="switchTab('activity',this);avLoad();">📋 Activity</button><button class="tab-btn" id="wfTabBtn" onclick="switchTab('wayfair',this);wfRender();">🟪 Wayfair</button></div>
   <div class="main">
     <div id="tabProducts" class="tab-content visible">
@@ -159,7 +159,7 @@ a.lw-btn{text-decoration:none;}
 </div>
 <div class="detail-overlay" id="detailOverlay" onclick="closeDetail(event)"><div class="detail-panel" onclick="event.stopPropagation()"><div class="detail-header"><div class="detail-title"><span id="detailSku" class="sku-cell"></span><span id="detailName"></span></div><button class="detail-close" onclick="closeDetail()">✕</button></div><div class="detail-body" id="detailBody"></div></div></div>
 <script>
-const CM_VERSION='2.8.0',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
+const CM_VERSION='2.8.1',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
 const WORKER_URL='https://cold-field-4bb6.psmith-925.workers.dev/';
 const CHANNELS=['etsy','wix','wayfair','pinterest','instagram','facebook'];
 const CH_LABEL={etsy:'Etsy',wix:'Wix',wayfair:'Wayfair',pinterest:'Pinterest',instagram:'Instagram',facebook:'Facebook'};
@@ -1177,10 +1177,19 @@ async function wfHealth(){if(WF.busy)return;WF.busy=true;const b=document.getEle
     - The Etsy footer goes to Etsy only; Wix gets the description as typed (V-7).
     - Photos (V-3/V-4): Etsy — move, alt text, replace with an uploaded image, add; removing is done by hand in Etsy.
       Wix follows Etsy: same photos, same order, added first and the old ones removed after.
+   2.8.1 (S111, from Paul's first real Load on 109952): Etsy returns its text with HTML entities (&#39; &quot; &amp;).
+    Everything read from Etsy is DECODED on load, so the footer is recognised and taken off, the review compares like
+    with like, Wix never receives "&#39;", and a read-back that differs only by entities counts as confirmed.
+    Weight is compared after unit conversion (12 oz = 0.75 lb). Filling section 3 from the live listing also ticks the
+    product's live Wix collections in section 6 when none are ticked yet.
    ══════════════════════════════════════════════════════════════════════════════════════ */
 const LWL_ETSY_MIN='1.0.29',LWL_WIX_MIN='2.0.27';
 let LWL={itemId:null,it:null,shared:0,etsy:null,wix:null,loadingE:false,loadingW:false,errE:null,errW:null,msgE:null,msgW:null,running:false,tickE:true,tickW:true,recent:[],fill:null,noReply:{}};
 function lwlReset(){LWL={itemId:null,it:null,shared:0,etsy:null,wix:null,loadingE:false,loadingW:false,errE:null,errW:null,msgE:null,msgW:null,running:false,tickE:true,tickW:true,recent:[],fill:null,noReply:{}};}
+function lwlDe(s){if(s==null)return s;return String(s).replace(/&#(\d+);/g,(m,d)=>{const n=+d;return n>0&&n<0x110000?String.fromCodePoint(n):m;}).replace(/&#x([0-9a-f]+);/gi,(m,h)=>{const n=parseInt(h,16);return n>0&&n<0x110000?String.fromCodePoint(n):m;}).replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&');}
+function lwlDeEtsy(r){const L=a=>Array.isArray(a)?a.map(lwlDe):a;const o={...r,title:lwlDe(r.title||''),description:lwlDe(r.description||''),tags:L(r.tags),materials:L(r.materials),styles:L(r.styles)};o.properties=(r.properties||[]).map(p=>({...p,property_name:lwlDe(p.property_name),values:L(p.values)}));o.images=(r.images||[]).map(im=>({...im,alt_text:lwlDe(im.alt_text||'')}));return o;}
+function lwlSameDe(a,b){if(Array.isArray(a)||Array.isArray(b))return lwlSet((Array.isArray(a)?a:[]).map(lwlDe))===lwlSet((Array.isArray(b)?b:[]).map(lwlDe));if(typeof a==='number'||typeof b==='number')return Number(a)===Number(b);return lwlTxt(lwlDe(a))===lwlTxt(lwlDe(b));}
+function lwlToLb(v,u){const n=Number(v);if(!isFinite(n))return null;const f={lb:1,oz:1/16,g:0.00220462262,kg:2.20462262}[String(u||'').toLowerCase()];return f?n*f:null;}
 function lwlNL(s){return String(s==null?'':s).replace(/\r\n?/g,'\n');}
 function lwlTxt(s){return lwlNL(s).replace(/\s+$/,'');}
 function lwlWs(s){return String(s==null?'':s).replace(/\s+/g,' ').trim();}
@@ -1213,7 +1222,7 @@ async function lwlLoad(ch,keep){const it=LWL.it,id=LW.item&&LW.item.id;if(ch==='
   try{const r=ch==='etsy'?await lwlCall('etsy',{action:'getLiveListing',listing_id:String(it.etsy_listing_id),sku:lwlEtsySku()}):await lwlCall('wix',{action:'wxGetLive',product_id:String(it.wix_product_id),sku:lwlWixSku()});
     if(!LW.item||LW.item.id!==id)return;
     if(!r.success)throw new Error(`${ch==='etsy'?'Etsy':'Wix'} refused the read: `+lwlProblem(ch,r));
-    const v={live:r,at:new Date().toISOString()};if(ch==='etsy')LWL.etsy=v;else LWL.wix=v;
+    const v={live:ch==='etsy'?lwlDeEtsy(r):r,at:new Date().toISOString()};if(ch==='etsy')LWL.etsy=v;else LWL.wix=v;
     await lwlRecentLoad();const open=lwlOpen(ch);if(open)await lwlSettle(ch,open);
   }catch(e){if(ch==='etsy'){LWL.errE=String(e.message||e);LWL.msgE=null;LWL.etsy=null;}else{LWL.errW=String(e.message||e);LWL.msgW=null;LWL.wix=null;}}
   finally{if(ch==='etsy')LWL.loadingE=false;else LWL.loadingW=false;}}
@@ -1246,6 +1255,8 @@ async function lwlFillFromLive(auto){const c=LW.copy;if(!c)return;const e=LWL.et
   else if(w){c.title=String(w.name||'').trim();c.description=String(w.description_text||'').trim();}
   if(w){if(auto?!String(c.seoTitle||'').trim():true)c.seoTitle=String(w.seo_title||'');if(auto?!String(c.seoDesc||'').trim():true)c.seoDesc=String(w.seo_description||'');}
   c.dirty=true;const g=document.getElementById('lwCopy');if(g)g.innerHTML=lwCopyHtml();const ok=await lwSaveCopy(true);
+  /* after the copy is saved: lwSaveFacts must not run while section 3 still shows the old form */
+  if(w&&LW.facts){const x=LW.facts.extra||{};if(!Array.isArray(x.wix_collection_ids)||!x.wix_collection_ids.length){const ids=(w.collectionIds||[]).map(String).filter(id=>id!==LW_WIX_ALL_PRODUCTS&&id!==LW_WIX_ALWAYS.id);if(ids.length){LW.facts.extra={...x,wix_collection_ids:ids};LW.facts._dirty=true;try{await lwSaveFacts();}catch(e){}if(typeof lwWixRender==='function')lwWixRender();}}}
   LWL.fill={at:new Date().toISOString(),from:e?'etsy':'wix',auto:!!auto,saved:ok};logActivity('channel_manager','LIVE_COPY_LOADED',e?'etsy':'wix',`${LW.item.sku}: listing copy ${auto?'filled (it was empty)':'replaced'} from the live ${e?'Etsy listing':'Wix product'} — nothing sent`);lwlRender();}
 /* the one difference allowed between Etsy and Wix is the footer (V-7): anything else is flagged */
 function lwlDiffers(){const e=LWL.etsy&&LWL.etsy.live,w=LWL.wix&&LWL.wix.live;if(!e||!w)return [];const out=[];if(String(e.title||'').trim()!==String(w.name||'').trim())out.push('title');if(lwlWs(lwlStripFooter(e.description).text)!==lwlWs(w.description_text))out.push('description');return out;}
@@ -1259,7 +1270,7 @@ function lwlEtsyPlan(){const l=LWL.etsy&&LWL.etsy.live;if(!l)return [];const c=L
   lst('tags','Tags',13,20);lst('materials','Materials',13,45);lst('styles','Styles',2,45);
   const tx=c.taxonomyId?String(c.taxonomyId):'';lwlRow(rows,'taxonomy_id','Category',l.taxonomy_id==null?'':String(l.taxonomy_id),tx?(c.taxonomyPath?c.taxonomyPath+' ('+tx+')':tx):'',{empty:!tx,liveEmpty:l.taxonomy_id==null,same:tx===String(l.taxonomy_id==null?'':l.taxonomy_id),val:tx});
   const sec=lwEtsySectionId()?String(lwEtsySectionId()):'';lwlRow(rows,'shop_section_id','Shop section',l.shop_section_id==null?'':String(l.shop_section_id),sec?(typeof lwEtsySectName==='function'?lwEtsySectName(sec):sec):'',{empty:!sec,liveEmpty:l.shop_section_id==null,same:sec===String(l.shop_section_id==null?'':l.shop_section_id),val:sec});
-  const lw=l.item_weight==null?'':`${l.item_weight} ${l.item_weight_unit||''}`.trim();lwlRow(rows,'weight','Weight (V2)',lw,pk.w?pk.w+' lb':'',{empty:!pk.w,liveEmpty:!lw,same:!!pk.w&&l.item_weight_unit==='lb'&&Number(l.item_weight)===Number(pk.w),val:{item_weight:pk.w,item_weight_unit:'lb'}});
+  const lw=l.item_weight==null?'':`${l.item_weight} ${l.item_weight_unit||''}`.trim();lwlRow(rows,'weight','Weight (V2)',lw,pk.w?pk.w+' lb':'',{empty:!pk.w,liveEmpty:!lw,same:!!pk.w&&l.item_weight!=null&&lwlToLb(l.item_weight,l.item_weight_unit)!=null&&Math.abs(lwlToLb(l.item_weight,l.item_weight_unit)-Number(pk.w))<0.005,val:{item_weight:pk.w,item_weight_unit:'lb'}});
   const hasBox=!!(pk.l&&pk.wi&&pk.h),ls=l.item_length==null?'':`${l.item_length} × ${l.item_width} × ${l.item_height} ${l.item_dimensions_unit||''}`.trim();
   lwlRow(rows,'size','Size (V2 box, L × W × H)',ls,hasBox?`${pk.l} × ${pk.wi} × ${pk.h} in`:'',{empty:!hasBox,liveEmpty:!ls,same:hasBox&&l.item_dimensions_unit==='in'&&Number(l.item_length)===Number(pk.l)&&Number(l.item_width)===Number(pk.wi)&&Number(l.item_height)===Number(pk.h),val:{item_length:pk.l,item_width:pk.wi,item_height:pk.h,item_dimensions_unit:'in'}});
   const txRow=rows.find(r=>r.k==='taxonomy_id'),catOk=txRow.status==='same'||txRow.status==='send';
@@ -1306,7 +1317,7 @@ async function lwlSendEtsy(plan){const it=LWL.it,l=LWL.etsy.live,lid=String(it.e
     if(upd.length){if(after.description!==undefined){const s=await lwlStage('etsy',after.description,'cml'+row.id);p.description_stage_id=s.sid;p.description_sha256=s.sha;}
       lwlProg('etsy','Changing the listing on Etsy…');const r=await lwlCall('etsy',p,120000);
       if(!r.success){await lwlJournalEnd(row,'failed',steps.concat([{step:'update',ok:false,error:r.error||null}]),lwlProblem('etsy',r));LWL.errE='Etsy did not change: '+lwlProblem('etsy',r);logActivity('channel_manager','LIVE_UPDATE_FAILED','etsy',`${LW.item.sku}: live Etsy listing ${lid} not changed (update ${row.id}): ${lwlProblem('etsy',r)}`);return;}
-      steps.push({step:'update',ok:true,confirmed:r.confirmed===true,sent_fields:r.sent_fields||[],mismatches:r.mismatches||[],at:new Date().toISOString()});}
+      const mm=(r.mismatches||[]).filter(x=>!lwlSameDe(x.sent,x.etsy_has));steps.push({step:'update',ok:true,confirmed:r.confirmed===true||(Array.isArray(r.mismatches)&&r.mismatches.length>0&&!mm.length),sent_fields:r.sent_fields||[],mismatches:mm,entity_only:(r.mismatches||[]).length-mm.length,at:new Date().toISOString()});}
     for(const r of props){const pid=r.k.slice(5);lwlProg('etsy',`Attribute ${r.label.replace('Attribute: ','')}…`);let x;try{x=r.val===null?await lwlCall('etsy',{action:'deleteLiveProperty',listing_id:lid,sku,property_id:pid}):await lwlCall('etsy',{action:'setLiveProperty',listing_id:lid,sku,property_id:pid,values:JSON.stringify(r.val.values),value_ids:JSON.stringify(r.val.value_ids||[]),...(r.val.scale_id?{scale_id:String(r.val.scale_id)}:{})});}catch(ne){x={success:false,error:String(ne.message||ne)};}
       steps.push({step:r.val===null?'clear:'+pid:'attr:'+pid,ok:!!x.success,error:x.success?null:lwlProblem('etsy',x)});}
     const bad=steps.filter(s=>!s.ok),mism=steps.filter(s=>s.step==='update'&&!s.confirmed);
@@ -1377,7 +1388,7 @@ function lwlChanHtml(ch){const E=ch==='etsy',v=E?LWL.etsy:LWL.wix,err=E?LWL.errE
   const rows=E?lwlEtsyPlan():lwlWixPlan(),n=rows.filter(r=>r.status==='send').length;body+=lwlPlanHtml(ch,rows);body+=`<div class="lw-muted">${n?`${n} change(s) will be sent.`:'Nothing to send — the live '+(E?'listing':'product')+' matches the workspace.'} Price and quantity are not changed here (Inventory V2 and the phone).</div>`;
   if(!E){const extra=lwlWixExtraColls();if(extra.length)body+=`<div class="lwl-colls">Also in: ${extra.map(id=>`<span class="lw-chip">${esc(lwWixCollName(id))} <button class="lw-mini" ${LWL.running?'disabled':''} onclick="lwLiveWixCollRemove('${escA(id)}')">remove</button></span>`).join(' ')} <span class="lw-muted">(not ticked in section 6; removed only if you press remove)</span></div>`;}
   body+=E?lwlEtsyPhotosHtml():lwlWixPhotosHtml();return head+body;}
-function lwlEtsyPhotosHtml(){const ims=lwlEtsyImgs(),ours=lwlOurImgs(),opt=ours.map(o=>`<option value="${o.id}">#${o.rank} ${esc(String(o.alt_text||o.url.split('/').pop()).slice(0,40))}</option>`).join(''),dis=LWL.running?'disabled':'';
+function lwlEtsyPhotosHtml(){const ims=lwlEtsyImgs(),ours=lwlOurImgs(),opt=ours.map(o=>`<option value="${o.id}">Photo ${o.rank} · ${esc(String(o.alt_text||o.url.split('/').pop()).slice(0,40))}</option>`).join(''),dis=LWL.running?'disabled':'';
   return `<div class="lwl-ph-h">Photos on Etsy (${ims.length}) <span class="lw-muted">move · alt text · replace with an uploaded image (section 2) · add. To remove a photo, delete it in Etsy, then Load.</span></div><div class="lwl-photos">${ims.map((im,i)=>`<div class="lwl-ph" data-id="${im.listing_image_id}"><img src="${escA(im.url_570xN||im.url_fullxfull||'')}" alt=""><div class="lwl-ph-b"><div><b>${im.rank}</b> <button class="lw-mini" ${dis||(i===0?'disabled':'')} onclick="lwLiveEtsyMove('${im.listing_image_id}',-1)">↑</button><button class="lw-mini" ${dis||(i===ims.length-1?'disabled':'')} onclick="lwLiveEtsyMove('${im.listing_image_id}',1)">↓</button></div>
 <input id="lwlAlt_${im.listing_image_id}" data-lpignore="true" data-1p-ignore data-bwignore autocomplete="off" maxlength="500" value="${escA(im.alt_text||'')}" placeholder="alt text"><button class="lw-mini" ${dis} onclick="lwLiveEtsyAlt('${im.listing_image_id}')">Save alt</button>
 ${ours.length?`<select id="lwlRep_${im.listing_image_id}">${opt}</select><button class="lw-mini" ${dis} onclick="lwLiveEtsyReplace('${im.listing_image_id}')">Replace</button>`:''}</div></div>`).join('')}</div>
