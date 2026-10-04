@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.16</title>
+    <title>CCD Sync Hub v4.6.17</title>
+<!-- v4.6.17 (2026-10-04, FIX-W1): the duplicate-sale check before recording a channel order line used .maybeSingle(), which ERRORS when two rows already share (order_id, sku) — and an error was treated as 'not found', so the line was inserted AGAIN. So once two copies existed, any reprocessing of that order line added another (a possible contributor to the 152 duplicate (order_id, sku) groups; not proven). The check now reads up to one row with .limit(1); a failed check is logged. Nothing else changed. Spec: APP-FIXES-2026-10-04.md -->
 <!-- v4.6.16 (S102): the online cap after an order is warehouse − TreasureMarts − CRAZY CHICKS (it left Crazy Chicks out, so online channels could show booth stock). Display: "total" = warehouse (booth units are inside it, not on top); the Wayfair list shows both booths. -->
 <!-- v4.6.15 (S101 · P3, census claude\CCD-S101-P3-Writer-Census.md): (1) W3 — before deducting an order line, the item is RE-READ from the database (the item cache is only loaded at connect/Refresh and could be hours old), and the save writes ONLY qty + etsy/wix/wayfair qty + last_sold_date (+ a Wayfair SKU learned by the matcher), not the whole cached row; a failed re-read HOLDS the order with nothing written. (2) W1 — a Set/bundle line is sold by the family engine (ccd_sell_composite, ref per order line so a re-run cannot take pieces twice) BEFORE any other save in the order; a refusal holds the order. Its own cascade rows are skipped (the engine queues them). (3) W2 — cancelling a Set/bundle sale goes to ccd_reverse_composite_sale (pieces restored). (4) saveItemToSupabase failures now reach the Log, and an order-line save failure raises a toast instead of logging a success. On a database without the engine every item reads as 'single' and only (1) and (4) change behaviour. -->
 <!-- v4.6.14 (S101): (1) Etsy pushes carry the variation ID (etsy_variant_id -> product_id) from the item map, queue rows and cascade rows, so the Etsy proxy v1.0.24+ writes THAT variation, not whichever one matches SKU text. (2) live-defects item 8, Sync Hub half: settings from the CONNECTED project now win even when empty, so connecting to staging no longer keeps production proxy URLs / CCD key cached from an earlier session. A key the project's row does not carry at all keeps its local value (prod carries no syncHub URL). -->
@@ -429,7 +430,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.16 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.17 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -894,7 +895,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.16';
+    const SH_VERSION = 'v4.6.17';   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1477,12 +1478,17 @@
             // v4.1.5: Duplicate prevention — check if this order_id + sku already exists
             // Catches: reprocessed orders, backfilled sales, double-clicks
             if (orderId) {
-                const { data: existing, error: checkErr } = await sbClient
+                // FIX-W1 2026-10-04: was .maybeSingle(), which ERRORS when 2+ rows already match —
+                // and an error fell through to the insert, adding a THIRD copy. .limit(1) returns
+                // an array whatever the count. Behaviour for 0 or 1 existing rows is unchanged.
+                const { data: existingRows, error: checkErr } = await sbClient
                     .from('sales_history')
                     .select('id')
                     .eq('order_id', orderId)
                     .eq('sku', item.sku)
-                    .maybeSingle();
+                    .limit(1);
+                const existing = (existingRows && existingRows.length) ? existingRows[0] : null;   // FIX-W1 2026-10-04
+                if (checkErr) console.warn(`[Sales] FIX-W1 duplicate check failed for ${orderId} / ${item.sku}: ${checkErr.message} — recording as before`);
                 
                 if (!checkErr && existing) {
                     console.log(`[Sales] ⏭️ Skipped duplicate: order ${orderId} / SKU ${item.sku} already in sales_history`);

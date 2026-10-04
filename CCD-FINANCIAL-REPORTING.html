@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.11</title>
+<title>CCD Financial Intelligence v1.8.14</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -337,6 +337,30 @@ body {
 .val-dim { color: var(--muted); }
 .val-gold { color: var(--gold); }
 
+/* v1.8.13 F: Scorecard */
+.sc-sub { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.sc-legend, .sc-caveat { font-size: 11px; color: var(--dim); margin-bottom: 12px; }
+.sc-caveat { color: var(--gold); }
+.sc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.sc-grid .kpi-value { font-size: 22px; }
+.sc-note { font-size: 10px; color: var(--muted); }
+.sc-err { font-size: 12px; color: var(--red); }
+.sc-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+.sc-bar { height: 10px; background: var(--bg3); border-radius: 5px; overflow: hidden; margin: 8px 0; }
+.sc-bar > div { height: 100%; background: var(--gold); }
+.sc-banner { padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 12px; font-weight: 600;
+  background: rgba(240,92,92,.08); border: 1px solid rgba(240,92,92,.3); color: var(--red); }
+.sc-amber { color: #f59e0b; }
+
+/* v1.8.14 L1/L2: live-refresh pill + feed-health banner */
+.fr-live { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.fr-live-pill { align-self: flex-start; background: transparent; border: 1px solid var(--border2); border-radius: 12px;
+  padding: 2px 8px; font-size: 10px; font-weight: 600; cursor: pointer; white-space: nowrap; color: var(--muted); }
+.fr-live-sub { font-size: 9.5px; color: var(--muted); }
+.fr-health-banner { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; border-radius: 6px;
+  font-size: 12px; font-weight: 600; background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.35); color: #f59e0b; }
+.sc-grey { color: var(--muted); }
+
 /* Channel badges */
 .ch-badge {
   display: inline-flex; align-items: center; gap: 4px;
@@ -536,7 +560,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.11</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.14</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -583,6 +607,10 @@ body {
     <!-- SIDEBAR -->
     <div class="sidebar">
       <span class="sidebar-label">Reports</span>
+      <!-- v1.8.13 F: Scorecard (database views only) -->
+      <button class="nav-item" data-page="scorecard" onclick="navTo('scorecard')">
+        <span class="nav-icon">◎</span> Scorecard
+      </button>
       <button class="nav-item active" data-page="dashboard" onclick="navTo('dashboard')">
         <span class="nav-icon">◈</span> Executive
       </button>
@@ -667,11 +695,104 @@ body {
           <div class="conn-dot"></div>
           <span id="connLabel" style="font-size:10px;">Connected</span>
         </div>
+        <!-- v1.8.14 L1: live-refresh status pill (click = check now) + auto-refresh toggle ('frAutoRefresh') -->
+        <div class="fr-live">
+          <button type="button" id="frLivePill" class="fr-live-pill" onclick="lsForceCheck()">● Checking…</button>
+          <div id="frLastRefreshed" class="fr-live-sub"></div>
+          <label class="fr-live-sub" style="cursor:pointer;"><input type="checkbox" id="frAutoRefreshToggle" checked onchange="lsSetAuto(this.checked)" style="vertical-align:middle;margin:0 4px 0 0;">Auto-refresh</label>
+        </div>
       </div>
     </div>
 
     <!-- MAIN CONTENT -->
     <div class="main-content" id="mainContent">
+      <!-- v1.8.14 L2: feed-health banner (DEAD / LATE feeds), shown on every page, dismissible for the session -->
+      <div id="frHealthBanner" class="fr-health-banner" style="display:none;"></div>
+
+      <!-- ─── SCORECARD (v1.8.13 F) — every figure is read from ONE database view; no business maths in the browser ─── -->
+      <section class="page-section" id="page-scorecard">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Scorecard</div>
+            <div class="page-subtitle" id="sc-period-label">Loading...</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Books (from QuickBooks)</div><div class="sc-sub">qb_monthly_summary · QuickBooks figures · latest month loaded</div></div></div>
+          <div class="card-body" id="sc-books"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Channel contribution</div><div class="sc-sub">v_channel_contribution · QuickBooks figures · selected date range</div></div></div>
+          <div class="card-body">
+            <div class="sc-legend">Cash = as the QuickBooks P&amp;L shows it. Economic = yearly/two-yearly fixed costs spread evenly.</div>
+            <div id="sc-channels"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Crazy Chicks break-even</div><div class="sc-sub">v_channel_contribution (crazychicks, latest month) · QuickBooks figures</div></div></div>
+          <div class="card-body" id="sc-cc"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Inventory (landed cost)</div><div class="sc-sub">v_kpi_inventory · FR figures</div></div></div>
+          <div class="card-body">
+            <div class="sc-caveat">FR inventory is indicative until the baseline is built; the Master Inventory spreadsheet is the source of truth for now.</div>
+            <div id="sc-inventory"></div>
+          </div>
+        </div>
+
+        <!-- v1.8.14 S1: inventory movement ledger + write-offs -->
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Inventory movements (from 2026-10-04 baseline)</div><div class="sc-sub">v_inventory_movements_monthly · FR figures · every month since the ledger started</div></div></div>
+          <div class="card-body" id="sc-movements"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Write-offs</div><div class="sc-sub">v_writeoffs_monthly · FR figures · every month</div></div></div>
+          <div class="card-body" id="sc-writeoffs"></div>
+        </div>
+
+        <!-- v1.8.14 S2: point-in-time inventory from the movement ledger -->
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Inventory as at</div><div class="sc-sub">inventory_asof(p_at) · FR figures · valid from the 2026-10-04 baseline only</div></div></div>
+          <div class="card-body">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+              <input type="datetime-local" id="scAsofAt" style="padding:7px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
+              <button class="btn-export" onclick="scInventoryAsOf()">Value inventory</button>
+            </div>
+            <div id="sc-asof"><div class="sc-empty">Pick a date and time on or after 2026-10-04.</div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Sales KPIs</div><div class="sc-sub">v_kpi_sales_monthly (channel = all) · FR figures · selected date range</div></div></div>
+          <div class="card-body" id="sc-sales"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Reconciliation (FR vs QuickBooks)</div><div class="sc-sub">v_channel_reconciliation · FR figures tested against QuickBooks figures · revenue lines · selected date range</div></div></div>
+          <div class="card-body" id="sc-recon"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Close status</div><div class="sc-sub">v_close_health · QuickBooks load + FR inventory count + reconciliation</div></div></div>
+          <div class="card-body" id="sc-close"></div>
+        </div>
+
+        <div class="chart-grid-4">
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">Data quality</div><div class="sc-sub">v_data_quality · FR figures (counted, not fixed)</div></div></div>
+            <div class="card-body" id="sc-dq"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div><div class="card-title">Feed health</div><div class="sc-sub">v_feed_health · FR feeds</div></div></div>
+            <div class="card-body" id="sc-feeds"></div>
+          </div>
+        </div>
+      </section>
 
       <!-- ─── EXECUTIVE DASHBOARD ─── -->
       <section class="page-section active" id="page-dashboard">
@@ -691,7 +812,8 @@ body {
         <!-- KPI Row -->
         <div class="kpi-grid" id="kpiGrid">
           <div class="kpi-card"><div class="kpi-label">Revenue</div><div class="kpi-value" id="kpi-revenue">—</div><div class="kpi-delta neutral" id="kpi-revenue-d">—</div></div>
-          <div class="kpi-card"><div class="kpi-label">Net Profit</div><div class="kpi-value positive" id="kpi-profit">—</div><div class="kpi-delta neutral" id="kpi-profit-d">—</div></div>
+          <!-- v1.8.13 E-D10: this is FR modelled sales contribution, not net income -->
+          <div class="kpi-card"><div class="kpi-label">FR sales contribution</div><div style="font-size:9px;color:var(--muted);margin:-6px 0 8px;">modelled, not net income — see Scorecard for QuickBooks</div><div class="kpi-value positive" id="kpi-profit">—</div><div class="kpi-delta neutral" id="kpi-profit-d">—</div></div>
           <div class="kpi-card"><div class="kpi-label">Avg Margin</div><div class="kpi-value" id="kpi-margin">—</div><div class="kpi-delta neutral" id="kpi-margin-d">—</div></div>
           <div class="kpi-card"><div class="kpi-label">Orders</div><div class="kpi-value" id="kpi-orders">—</div><div class="kpi-delta neutral" id="kpi-orders-d">—</div></div>
           <div class="kpi-card"><div class="kpi-label">Units Sold</div><div class="kpi-value" id="kpi-units">—</div><div class="kpi-delta neutral" id="kpi-units-d">—</div></div>
@@ -1494,7 +1616,72 @@ body {
 // v1.8.11 (S102): Crazy Chicks is a channel (one channel list, CHANNELS); booth statement check for TM or Crazy Chicks;
 //   reversed/cancelled sales leave every total (shFrom) and get their own Returns & reversals page; inventory value = warehouse
 //   qty (booth stock is inside it, not on top) with Sets/bundles excluded; shipping reconciliation is an allow-list (etsy, wix).
-const FR_VERSION = 'v1.8.11';
+// v1.8.12 (session 10, 2026-10-03, package D of 17-FR-DEEP-DIVE.md / 18-FR-DATA-PLAN.md):
+//   D1  every total now reads public.v_sales_active (active rows, duplicates removed on the online channels;
+//       booth rows always kept). Before: raw sales_history, so 152 duplicate groups (~3,241 of revenue, all years)
+//       were in every total. The Returns page still reads sales_history directly - it must see reversed/cancelled rows.
+//   D6  sbFetchAll adds .order('id') as the LAST sort key, so paging past 1,000 rows can no longer skip or repeat
+//       rows. Tables without an id column (monthly_expenses) fall back automatically.
+//   D11 fmt() returns the LOCAL calendar date. Before: UTC, so after 8 pm Eastern "today" was tomorrow.
+//       Compare-mode now parses dates at local noon so the prior-year range is not shifted a day.
+//   D18 fetchAgg selects marketplace_deduction (the Channel page fee row read 0 because the column was never loaded).
+// v1.8.13 (2026-10-04, Scorecard + screen corrections):
+//   F      New Scorecard page (first under Reports). Every section reads ONE view - qb_monthly_summary,
+//          v_channel_contribution, v_kpi_inventory, v_kpi_sales_monthly, v_channel_reconciliation, v_close_health,
+//          v_data_quality, v_feed_health - and shows its own error in place. BREAK_EVEN_CC = 294 is the only constant.
+//          Default landing page left as Executive (making Scorecard the default is not a one-line change).
+//   E-D2   oh_fee + surcharge shown as "Internal overhead allocation (not a channel charge)" with a "Channel charges"
+//          subtotal (= total_fees − oh_fee − surcharge) beside "Total incl. internal overhead": Sales drill, Channel fee
+//          table, P&L. Products "Fees" → "Fees incl. internal OH"; Monthly Income YTD Fees / Fee Ratio labelled likewise.
+//   E-D3   Estimated shipping summed only where actual_shipping_cost > 0 (Shipping page, P&L overlay, P&L export).
+//          Shipping page keeps "Estimated, all orders" as a separate figure. P&L now selects actual_shipping_cost.
+//   E-D7   P&L discounts are a dim memo line ("already deducted in revenue"), not a block above Net Profit;
+//          Net Margin % denominator is total_revenue (was gross_revenue).
+//   E-D8   Orders = DISTINCT order_id (frOrderKey / countDistinctOrders); booth channels and NULL order_id count
+//          each row ('row-'+id). aggregate()/fetchAgg, Daily, P&L (+export), Custom, Geo, Customers, Trends.
+//   E-D9   P&L prior-year accumulator initialises commission and discounts and accumulates discounts.
+//   E-D10  Executive "Net Profit" tile → "FR sales contribution" (modelled, not net income); value now signed.
+//   E-D12  Customers: email coverage %; repeat / one-time / LTV over buyer_email customers only; no-email orders
+//          counted separately.
+//   E-D13  Wayfair Recon expected revenue per PO = SUM over all of the order's rows (was the last row).
+//   E-D14  Etsy Ads: offsite = etsy_offsite_ads_fee > 0, fee = that column (was 9% ratio test + 5.5% guess).
+//   E-D19  Shipping by-state revenue = total_revenue (was net_profit); Executive donut lists below-zero channels;
+//          P&L varCell shows "n/a" when prior <= 0 (was +100%).
+//   Not changed: oh_fee/surcharge calculation, net_profit, database writes, Returns page, connect/settings.
+// v1.8.14 (2026-10-04, live refresh + health pre-check + Scorecard inventory ledger):
+//   L1  LIVE REFRESH. startLiveSync() runs after initApp(): every 30 s it reads public.v_fr_change_stamp
+//       (table_name, change_counter; one row per table FR depends on). PAGE_DEPENDS maps each page to the tables
+//       its loader (and the views it reads) depend on. The current page is re-loaded when ANY of its tables'
+//       counters differ from the snapshot taken when that page last loaded (ls.seen[page]) - so a change that
+//       lands while the user is typing, the tab is hidden or a refresh is running is deferred, never lost.
+//       Guards: one refresh at a time; paused while document.hidden (checks at once on return); deferred while
+//       the user is typing in a focused input/select/textarea inside #mainContent; 'custom' never auto-runs.
+//       Scroll position (#mainContent and window) is restored after the loader's promise resolves.
+//       refreshCurrentPageAsync() is the dispatcher and returns the loader's promise; refreshCurrentPage() keeps
+//       its old fire-and-forget contract and also records the page's snapshot + "page refreshed" time.
+//       'settings' triggers a refresh only on pages that read channel fees (scenarios, monthlyincome, tmrecon);
+//       any settings change reloads frFees in the background. FR's own registerToolVersion write is awaited
+//       (<= 5 s) before the baseline, and settings differences in the first 90 s after it are absorbed.
+//       Sidebar pill beside #connLabel: Live · synced <time> / Updating... / Paused (tab hidden) /
+//       Offline - retrying (back-off 30 -> 60 -> 120 s, reset on success) / Auto-refresh (timed) / off.
+//       Click = immediate check + refresh of the current page. Toggle persisted in localStorage 'frAutoRefresh'.
+//       If v_fr_change_stamp is missing (404 / PGRST205 / 42P01) FR falls back to re-loading the current page
+//       every 5 minutes. Nothing in the live-sync path throws.
+//   L2  HEALTH PRE-CHECK on open: one parallel read of v_feed_health, v_data_quality and v_fr_change_stamp
+//       (which also becomes the live-sync baseline). Any feed DEAD or LATE (RETIRED excluded) shows a banner at
+//       the top of every page, dismissible for the session. DESIGN NOTE: FR deliberately does NOT preload or
+//       cache datasets - every page reads the database fresh when it opens, which is what "pull all necessary
+//       tables on open" means here; a global cache would be a second copy that can go stale.
+//   S1  Scorecard: "Inventory movements (from 2026-10-04 baseline)" (v_inventory_movements_monthly) and
+//       "Write-offs" (v_writeoffs_monthly, qty_deducted_missing > 0 in amber) sections.
+//   S2  Scorecard: "Inventory as at" tool - sbClient.rpc('inventory_asof', { p_at }) summed to qty / landed /
+//       wholesale. Refuses (message, no call) for a time before the 2026-10-04 ledger baseline.
+//   S3  Scorecard feed health: status coloured (OK green, LATE amber, DEAD red, RETIRED grey), note wraps.
+//       Data quality (14 rows, sort 1..14) renders NULL groups / amount_at_risk as "—" (unchanged helpers).
+//   loadTmRecon() now returns its promise (was dropped) so the auto-refresh can await it.
+//   Not changed: every loader's queries and maths, net_profit, oh_fee/surcharge, database writes (only the
+//   existing registerToolVersion), localStorage keys other than the new 'frAutoRefresh'.
+const FR_VERSION = 'v1.8.14';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -1628,7 +1815,7 @@ const CH_KEY   = Object.fromEntries(CHANNELS.map(c => [c.db, c.key]));   // db v
 // They are reported on their own page (loadReturnsReport), which reads sbClient directly.
 const SH_LIVE = 'status.is.null,status.not.in.(reversed,cancelled)';
 function shFrom() {
-  const t = sbClient.from('sales_history');
+  const t = sbClient.from('v_sales_active');   // v1.8.12 D1: de-duplicated view (status filter kept as a belt-and-braces no-op)
   return { select: (cols, opt) => t.select(cols, opt).or(SH_LIVE) };
 }
 
@@ -1643,7 +1830,7 @@ async function initConnect() {
     sbClient = window.supabase.createClient(url, key);
     const { error } = await sbClient.from('sales_history').select('id', { count:'exact', head:true });
     if (error) throw error;
-    registerToolVersion(sbClient, FR_VERSION_KEY, FR_VERSION);
+    frRegisterPromise = registerToolVersion(sbClient, FR_VERSION_KEY, FR_VERSION);   // v1.8.14: kept so live sync can wait for it
     const vLabel = document.getElementById('frVersionLabel');
     if (vLabel) vLabel.textContent = FR_VERSION;
     localStorage.setItem('ccdSupabaseUrl', url);
@@ -1653,6 +1840,7 @@ async function initConnect() {
     document.getElementById('app').classList.add('active');
     document.getElementById('connLabel').textContent = url.match(/\/\/([^.]+)/)?.[1] || 'Connected';
     initApp();
+    startLiveSync();   // v1.8.14 L1/L2: health pre-check + change-stamp polling (never throws)
   } catch(e) {
     err.textContent = 'Connection failed: ' + e.message;
   }
@@ -1668,7 +1856,9 @@ function autoConnect() {
 }
 
 // ── DATE RANGES ────────────────────────────────────────────────────────────
-function fmt(d) { return d.toISOString().split('T')[0]; }
+function fmt(d) {   // v1.8.12 D11: LOCAL calendar date (was toISOString = UTC)
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
 
 function getRange() {
   const today = new Date();
@@ -1695,7 +1885,7 @@ function getRange() {
   }
   let priorFrom, priorTo;
   if (compareMode) {
-    const f = new Date(from), t = new Date(to);
+    const f = new Date(from + 'T12:00:00'), t = new Date(to + 'T12:00:00');   // v1.8.12: parse at local noon
     f.setFullYear(f.getFullYear()-1); t.setFullYear(t.getFullYear()-1);
     priorFrom = fmt(f); priorTo = fmt(t);
   }
@@ -1779,30 +1969,366 @@ function updateBackButton() {
   }
 }
 
-function refreshCurrentPage() {
-  if      (currentPage === 'dashboard') loadDashboard();
-  else if (currentPage === 'sales')     loadSalesDetail();
-  else if (currentPage === 'daily')     loadDailyReport();
-  else if (currentPage === 'channel')   loadChannelReport();
-  else if (currentPage === 'products')  loadProductReport();
-  else if (currentPage === 'brands')    loadBrandReport();
-  else if (currentPage === 'shipping')  loadShippingReport();
-  else if (currentPage === 'inventory') loadInventoryReport();
-  else if (currentPage === 'wayfairrecon') loadWayfairReconReport();
-  else if (currentPage === 'pnl')       loadPnlReport();
+// v1.8.14 L1: the dispatcher now RETURNS the loader's promise (resolves undefined for 'custom' / unknown pages),
+// so the auto-refresh can await it. Same loaders, same order, same 'custom' exclusion as before.
+function refreshCurrentPageAsync() {
+  if      (currentPage === 'dashboard') return loadDashboard();
+  else if (currentPage === 'sales')     return loadSalesDetail();
+  else if (currentPage === 'daily')     return loadDailyReport();
+  else if (currentPage === 'channel')   return loadChannelReport();
+  else if (currentPage === 'products')  return loadProductReport();
+  else if (currentPage === 'brands')    return loadBrandReport();
+  else if (currentPage === 'shipping')  return loadShippingReport();
+  else if (currentPage === 'inventory') return loadInventoryReport();
+  else if (currentPage === 'wayfairrecon') return loadWayfairReconReport();
+  else if (currentPage === 'pnl')       return loadPnlReport();
   // custom: user clicks Run manually
-  else if (currentPage === 'geo')        loadGeoReport();
-  else if (currentPage === 'customers')  loadCustomerReport();
-  else if (currentPage === 'trends')     loadTrendsReport();
-  else if (currentPage === 'datahealth') loadDataHealth();
-  else if (currentPage === 'scenarios') loadScenarioPlanner();
-  else if (currentPage === 'vendorspend') loadVendorSpend();
-  else if (currentPage === 'etsyads') loadEtsyAdsReport();
-  else if (currentPage === 'pricecomp') loadPriceCompare();
-  else if (currentPage === 'monthlyincome') loadMonthlyIncome();
-  else if (currentPage === 'tmrecon') { loadTmRecon(); boothReconChannelChanged(); }
-  else if (currentPage === 'returns') loadReturnsReport();   // v1.8.11
+  else if (currentPage === 'geo')        return loadGeoReport();
+  else if (currentPage === 'customers')  return loadCustomerReport();
+  else if (currentPage === 'trends')     return loadTrendsReport();
+  else if (currentPage === 'datahealth') return loadDataHealth();
+  else if (currentPage === 'scenarios') return loadScenarioPlanner();
+  else if (currentPage === 'vendorspend') return loadVendorSpend();
+  else if (currentPage === 'etsyads') return loadEtsyAdsReport();
+  else if (currentPage === 'pricecomp') return loadPriceCompare();
+  else if (currentPage === 'monthlyincome') return loadMonthlyIncome();
+  else if (currentPage === 'tmrecon') return Promise.all([loadTmRecon(), boothReconChannelChanged()]);
+  else if (currentPage === 'returns') return loadReturnsReport();   // v1.8.11
+  else if (currentPage === 'scorecard') return loadScorecard();      // v1.8.13 F
+  return Promise.resolve();
 }
+// Unchanged contract for every existing caller (navTo, setChannel, date pills, ...): fire-and-forget.
+// v1.8.14: also records which change-stamp snapshot this page was loaded against, and the "page refreshed" time.
+function refreshCurrentPage() {
+  const page = currentPage;
+  lsMarkSeen(page);
+  let p;
+  try { p = refreshCurrentPageAsync(); } catch (e) { console.error('refresh ' + page + ':', e); return; }
+  Promise.resolve(p).then(() => lsPageLoaded(page), e => console.error('refresh ' + page + ':', e));
+}
+
+// ── LIVE SYNC (v1.8.14 L1/L2) ──────────────────────────────────────────────
+// Polls public.v_fr_change_stamp and re-loads the CURRENT page when a table it depends on changed.
+// Correctness rule: ls.seen[page] is the snapshot the page was last loaded against; the page is stale while
+// any of its PAGE_DEPENDS counters differ from it. A deferred refresh therefore stays pending - never lost.
+// Nothing here writes to the database and nothing here throws.
+const LS_STAMP_VIEW   = 'v_fr_change_stamp';
+const LS_POLL_MS      = 30000;
+const LS_BACKOFF_MS   = [30000, 60000, 120000];   // index = consecutive failures (capped)
+const LS_TIMED_MS     = 300000;                   // fallback when the stamp view is missing
+const LS_TYPING_MS    = 60000;                    // focus + key/input/change within this window = "typing"
+const LS_SETTINGS_GRACE_MS = 90000;               // settings diffs absorbed after baseline (FR's own tool_versions write)
+const LS_PREF_KEY     = 'frAutoRefresh';
+
+// Tables behind v_sales_active / v_kpi_sales_monthly etc. data_corrections is included wherever sales_history
+// is read (it records edits to sales rows; including it costs at most a spare refresh).
+const LS_SALES = ['sales_history', 'data_corrections'];
+// Every watched table except settings. The Scorecard reads v_feed_health, which depends on all of them.
+const LS_ALL_DATA = ['sales_history','items','invoices','invoice_items','shippo_transactions','monthly_expenses',
+  'wayfair_vendor_charges','wayfair_remittance_lines','wayfair_remittances','tm_monthly_financials',
+  'qb_monthly_summary','qb_monthly_actuals','fixed_expenses','inventory_counts','inventory_count_lines',
+  'write_offs','crazychicks_tags','channel_settlement_lag','fr_qb_account_map','inventory_movements','data_corrections'];
+// page -> tables. Derived from each loader's sbClient.from()/shFrom() reads (see v1.8.14 notes in the report).
+// 'settings' appears only on pages that read channel fees (frFees) or booth rent from settings.
+const PAGE_DEPENDS = {
+  scorecard:     LS_ALL_DATA,                                                                  // 10 views + inventory_asof
+  dashboard:     [...LS_SALES, 'wayfair_remittance_lines'],                                    // fetchAgg, charts, buildAlerts
+  sales:         LS_SALES,
+  daily:         LS_SALES,
+  channel:       LS_SALES,
+  products:      [...LS_SALES, 'items'],
+  brands:        [...LS_SALES, 'items'],
+  shipping:      [...LS_SALES, 'shippo_transactions'],
+  inventory:     [...LS_SALES, 'items', 'inventory_movements', 'inventory_counts', 'inventory_count_lines', 'write_offs'],
+  wayfairrecon:  [...LS_SALES, 'wayfair_remittance_lines', 'wayfair_remittances', 'wayfair_vendor_charges'],
+  pnl:           [...LS_SALES, 'monthly_expenses', 'wayfair_vendor_charges'],
+  custom:        [],                                                                           // never auto-run
+  geo:           [...LS_SALES, 'shippo_transactions'],
+  customers:     LS_SALES,
+  trends:        LS_SALES,
+  datahealth:    LS_SALES,
+  scenarios:     [...LS_SALES, 'items', 'settings'],
+  vendorspend:   ['invoices', 'invoice_items', 'items'],
+  etsyads:       LS_SALES,                       // its Etsy ledger part is an external API, not a watched table
+  pricecomp:     ['items'],
+  monthlyincome: [...LS_SALES, 'settings'],
+  tmrecon:       [...LS_SALES, 'tm_monthly_financials', 'settings'],
+  returns:       LS_SALES                        // reads raw sales_history (sees reversed/cancelled)
+};
+
+let frRegisterPromise = Promise.resolve();   // set by initConnect to registerToolVersion's promise
+const ls = {
+  started: false, enabled: true,
+  mode: 'starting',          // starting | live | timed
+  latest: null,              // { table_name: counter } from the last successful read
+  seen: {},                  // page -> snapshot the page was last loaded against
+  busy: false, ticking: false, timer: null, failures: 0,
+  lastSync: null, lastPageRefresh: null, settingsGraceUntil: 0, lastInputAt: 0, state: ''
+};
+
+const lsSleep = ms => new Promise(r => setTimeout(r, ms));
+const lsTime = d => d ? d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit', second:'2-digit' }) : '—';
+function lsReadPref() {
+  try { return localStorage.getItem(LS_PREF_KEY) !== '0'; } catch (e) { return true; }   // default ON
+}
+function lsWritePref(on) {
+  try { localStorage.setItem(LS_PREF_KEY, on ? '1' : '0'); } catch (e) { /* per-viewer convenience only */ }
+}
+function lsMarkSeen(page) {
+  if (ls.latest) ls.seen[page] = Object.assign({}, ls.latest);
+}
+function lsPageLoaded(page) {
+  if (page !== currentPage) return;
+  ls.lastPageRefresh = new Date();
+  lsRenderPill();
+}
+// Tables in PAGE_DEPENDS[page] whose counter differs from the page's snapshot. ANY difference counts (resets too).
+function lsChangedFor(page) {
+  const deps = PAGE_DEPENDS[page] || [];
+  const seen = ls.seen[page], now = ls.latest;
+  if (!seen || !now) return [];
+  return deps.filter(t => String(now[t]) !== String(seen[t]));
+}
+function lsIsMissingView(e) {
+  if (!e) return false;
+  const s = [e.code, e.message, e.details, e.hint].filter(Boolean).join(' ');
+  return e.status === 404 || /PGRST205|PGRST200|42P01/.test(s) ||
+         /does not exist|could not find the table|schema cache/i.test(s);
+}
+async function lsReadStamp() {
+  const res = await sbClient.from(LS_STAMP_VIEW).select('table_name,change_counter');
+  if (res.error) { const e = res.error; if (e.status == null && res.status != null) e.status = res.status; throw e; }
+  const rows = res.data || [];
+  if (!rows.length) { const e = new Error(LS_STAMP_VIEW + ' returned no rows'); e.code = 'PGRST205'; throw e; }
+  const snap = {};
+  rows.forEach(r => { snap[r.table_name] = r.change_counter; });
+  return snap;
+}
+// User is typing inside the page: a focused text field / select in #mainContent touched in the last minute.
+function lsUserTyping() {
+  const a = document.activeElement, mc = document.getElementById('mainContent');
+  if (!a || !mc || !mc.contains(a) || !/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName || '')) return false;
+  return Date.now() - ls.lastInputAt < LS_TYPING_MS;
+}
+function lsSchedule(ms) {
+  clearTimeout(ls.timer);
+  ls.timer = null;
+  if (!ls.enabled || document.hidden) return;
+  ls.timer = setTimeout(() => lsTick(false), ms);
+}
+function lsRenderPill(state, extra) {
+  if (state) ls.state = state;
+  const pill = document.getElementById('frLivePill');
+  const sub  = document.getElementById('frLastRefreshed');
+  if (pill) {
+    const st = ls.state;
+    const map = {
+      live:     ['#10b981', `● Live · synced ${lsTime(ls.lastSync)}`],
+      updating: ['#d4a843', '● Updating…'],
+      paused:   ['#8a94a6', '● Paused (tab hidden)'],
+      offline:  ['#f59e0b', `● Offline – retrying${extra ? ' in ' + extra : ''}`],
+      timed:    ['#d4a843', '● Auto-refresh (timed)'],
+      off:      ['#8a94a6', '● Auto-refresh off'],
+      starting: ['#8a94a6', '● Checking…']
+    };
+    const [col, txt] = map[st] || map.starting;
+    pill.textContent = txt;
+    pill.style.color = col;
+    pill.style.borderColor = col;
+    pill.title = 'Click to check the database now and refresh this page';
+  }
+  if (sub) sub.textContent = ls.lastPageRefresh ? 'Page refreshed ' + lsTime(ls.lastPageRefresh) : '';
+}
+
+// One guarded re-load of the current page. Returns true when a loader actually ran.
+async function lsRefreshNow(reason) {
+  const page = currentPage;
+  if (page === 'custom' || ls.busy) return false;
+  ls.busy = true;
+  lsRenderPill('updating');
+  const mc = document.getElementById('mainContent');
+  const top = mc ? mc.scrollTop : 0, y = window.scrollY || 0;
+  try {
+    lsMarkSeen(page);
+    await refreshCurrentPageAsync();
+    lsPageLoaded(page);
+  } catch (e) {
+    console.error('auto-refresh ' + page + ' (' + reason + '):', e);
+  } finally {
+    ls.busy = false;
+    if (currentPage === page) {          // the user may have navigated meanwhile - then leave their scroll alone
+      const restore = () => { if (mc) mc.scrollTop = top; if (y) window.scrollTo(0, y); };
+      restore();
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);   // after charts lay out
+    }
+  }
+  return true;
+}
+
+// One poll. force = user clicked the pill: check now and refresh the current page whatever the counters say.
+async function lsTick(force) {
+  if (ls.ticking) return;
+  ls.ticking = true;
+  clearTimeout(ls.timer); ls.timer = null;
+  try {
+    if (!sbClient) { lsSchedule(LS_POLL_MS); return; }
+    if (!ls.enabled && !force) { lsRenderPill('off'); return; }
+    if (document.hidden && !force) { lsRenderPill('paused'); return; }   // visibilitychange resumes
+
+    if (ls.mode === 'timed') {            // no stamp view: re-load the current page every 5 minutes
+      if (force || (!lsUserTyping() && !ls.busy)) await lsRefreshNow(force ? 'manual' : 'timed');
+      lsRenderPill(ls.enabled ? 'timed' : 'off');
+      lsSchedule(LS_TIMED_MS);
+      return;
+    }
+
+    let snap;
+    try {
+      snap = await lsReadStamp();
+    } catch (e) {
+      if (lsIsMissingView(e)) {
+        console.log('Live sync: ' + LS_STAMP_VIEW + ' unavailable (' + (e.message || e.code) + ') - timed refresh every 5 min');
+        ls.mode = 'timed';
+        if (force) await lsRefreshNow('manual');
+        lsRenderPill('timed');
+        lsSchedule(LS_TIMED_MS);
+        return;
+      }
+      ls.failures++;
+      const wait = LS_BACKOFF_MS[Math.min(ls.failures, LS_BACKOFF_MS.length - 1)];
+      console.log('Live sync check failed (' + ls.failures + '):', e && e.message);
+      lsRenderPill('offline', (wait / 1000) + ' s');
+      lsSchedule(wait);
+      return;
+    }
+
+    ls.failures = 0;
+    ls.mode = 'live';
+    const prev = ls.latest;
+    ls.latest = snap;
+    ls.lastSync = new Date();
+    if (!prev) ls.settingsGraceUntil = Date.now() + LS_SETTINGS_GRACE_MS;   // first baseline taken here
+    if (prev && String(prev.settings) !== String(snap.settings)) {
+      if (Date.now() < ls.settingsGraceUntil) {
+        Object.keys(ls.seen).forEach(p => { ls.seen[p].settings = snap.settings; });   // FR's own tool_versions write
+      } else {
+        loadChannelFees();   // keep frFees current for every page (fire-and-forget, never throws)
+      }
+    }
+    if (!ls.seen[currentPage]) lsMarkSeen(currentPage);   // page loaded before the first snapshot
+
+    const changed = lsChangedFor(currentPage);
+    if (currentPage !== 'custom' && (force || changed.length)) {
+      if (!force && (ls.busy || lsUserTyping())) {
+        // deferred: ls.seen[currentPage] is untouched, so the next tick sees the same difference
+      } else {
+        await lsRefreshNow(force ? 'manual' : 'changed: ' + changed.join(','));
+      }
+    }
+    lsRenderPill(ls.enabled ? 'live' : 'off');
+    lsSchedule(LS_POLL_MS);
+  } catch (e) {
+    console.error('Live sync tick:', e);   // belt and braces: never let the poller die
+    lsSchedule(LS_POLL_MS);
+  } finally {
+    ls.ticking = false;
+  }
+}
+
+function lsForceCheck() {
+  if (ls.ticking) return;
+  lsTick(true);
+}
+function lsSetAuto(on) {
+  ls.enabled = !!on;
+  lsWritePref(ls.enabled);
+  const cb = document.getElementById('frAutoRefreshToggle');
+  if (cb) cb.checked = ls.enabled;
+  if (ls.enabled) lsTick(false);
+  else { clearTimeout(ls.timer); ls.timer = null; lsRenderPill('off'); }
+}
+function lsOnVisibility() {
+  if (document.hidden) { clearTimeout(ls.timer); ls.timer = null; if (ls.enabled) lsRenderPill('paused'); }
+  else if (ls.enabled) lsTick(false);   // check at once on return
+}
+
+// L2: one parallel read on open. The change-stamp result is also the live-sync baseline.
+let frHealthDismissed = false;
+function frFeedName(r) {
+  return r.feed ?? r.feed_name ?? r.name ?? r.table_name ?? r.source ?? Object.values(r).find(v => typeof v === 'string') ?? '?';
+}
+function frFeedStatus(r) {
+  return String(r.status ?? r.feed_status ?? r.health ?? '').trim().toUpperCase();
+}
+async function frHealthPrecheck() {
+  const [feeds, dq, stamp] = await Promise.allSettled([
+    sbClient.from('v_feed_health').select('*'),
+    sbClient.from('v_data_quality').select('sort,defect,rows_affected'),
+    lsReadStamp()
+  ]);
+  // baseline
+  if (stamp.status === 'fulfilled') {
+    ls.latest = stamp.value; ls.mode = 'live'; ls.lastSync = new Date();
+    ls.settingsGraceUntil = Date.now() + LS_SETTINGS_GRACE_MS;
+    lsMarkSeen(currentPage);
+  } else if (lsIsMissingView(stamp.reason)) {
+    ls.mode = 'timed';
+    console.log('Live sync: ' + LS_STAMP_VIEW + ' unavailable - timed refresh every 5 min');
+  } else {
+    ls.failures = 1;   // network / server error: the first tick retries with back-off
+  }
+  // banner
+  const fr = feeds.status === 'fulfilled' && !feeds.value.error ? (feeds.value.data || []) : null;
+  const dqRows = dq.status === 'fulfilled' && !dq.value.error ? (dq.value.data || []) : null;
+  if (!fr) console.log('Health pre-check: v_feed_health unreadable');
+  const dead = (fr || []).filter(r => frFeedStatus(r).startsWith('DEAD')).map(frFeedName);
+  const late = (fr || []).filter(r => frFeedStatus(r).startsWith('LATE')).map(frFeedName);   // RETIRED never matches
+  const dqOpen = (dqRows || []).filter(r => (parseFloat(r.rows_affected) || 0) > 0).length;
+  frRenderHealthBanner(dead, late, dqRows ? dqOpen : null);
+}
+function frRenderHealthBanner(dead, late, dqOpen) {
+  const el = document.getElementById('frHealthBanner');
+  if (!el) return;
+  if (frHealthDismissed || (!dead.length && !late.length)) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const list = a => a.map(n => escapeHtml(String(n))).join(', ');
+  el.innerHTML = `<div style="flex:1;">⚠ Feed health:
+      ${dead.length ? `<b>DEAD</b> — ${list(dead)}` : ''}${dead.length && late.length ? ' · ' : ''}${late.length ? `<b>LATE</b> — ${list(late)}` : ''}.
+      Figures fed by these tables are out of date.
+      ${dqOpen != null ? `<span style="font-weight:400;opacity:.8;"> Data quality: ${dqOpen} check${dqOpen === 1 ? '' : 's'} with rows affected.</span>` : ''}
+      <a href="#scorecard" onclick="navTo('scorecard');return false;" style="color:inherit;text-decoration:underline;margin-left:6px;">Scorecard</a></div>
+    <button onclick="frDismissHealthBanner()" title="Dismiss for this session" style="background:none;border:none;color:inherit;cursor:pointer;font-size:14px;line-height:1;">✕</button>`;
+  el.style.display = 'flex';
+}
+function frDismissHealthBanner() {
+  frHealthDismissed = true;
+  const el = document.getElementById('frHealthBanner');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+
+async function startLiveSync() {
+  try {
+    if (ls.started) { if (ls.enabled) lsTick(false); return; }   // reconnect: keep one poller
+    ls.started = true;
+    ls.enabled = lsReadPref();
+    const cb = document.getElementById('frAutoRefreshToggle');
+    if (cb) cb.checked = ls.enabled;
+    document.addEventListener('visibilitychange', lsOnVisibility);
+    const mark = () => { ls.lastInputAt = Date.now(); };
+    ['keydown', 'input', 'change'].forEach(ev => document.addEventListener(ev, mark, true));
+    lsRenderPill('starting');
+    // FR writes settings.tool_versions on connect - let it land before the baseline is taken
+    try { await Promise.race([frRegisterPromise, lsSleep(5000)]); } catch (e) { /* ignore */ }
+    await frHealthPrecheck();
+    if (!ls.enabled) { lsRenderPill('off'); return; }
+    if (document.hidden) { lsRenderPill('paused'); return; }
+    if (ls.mode === 'timed') { lsRenderPill('timed'); lsSchedule(LS_TIMED_MS); }
+    else if (ls.mode === 'live') { lsRenderPill('live'); lsSchedule(LS_POLL_MS); }
+    else { lsRenderPill('offline', '60 s'); lsSchedule(LS_BACKOFF_MS[1]); }
+  } catch (e) {
+    console.error('startLiveSync:', e);
+  }
+}
+// ── END LIVE SYNC (v1.8.14) ─────────────────────────────────────────────────
 
 // ── SUPABASE QUERY HELPERS ─────────────────────────────────────────────────
 /* S77 REG S76-01: paginate full-dataset loads — PostgREST silently caps single-page
@@ -1810,9 +2336,14 @@ function refreshCurrentPage() {
    Advance-by-received, stop-on-short/empty. Order-preserving. Changes only WHICH rows
    load, never any per-row value. */
 async function sbFetchAll(makeQuery, pageSize = 1000) {
-  let all = [], offset = 0;
+  let all = [], offset = 0, tiebreak = true;   // v1.8.12 D6: stable paging
   for (;;) {
-    const { data, error } = await makeQuery().range(offset, offset + pageSize - 1);
+    let q = makeQuery();
+    if (tiebreak) q = q.order('id', { ascending: true });   // appended LAST: a secondary key, never overrides the caller's sort
+    const { data, error } = await q.range(offset, offset + pageSize - 1);
+    if (error && tiebreak && /\bid\b/.test(error.message || '') && /does not exist|column/i.test(error.message || '')) {
+      tiebreak = false; continue;   // table has no id column (e.g. monthly_expenses): retry this page unordered
+    }
     if (error) throw error;
     if (!data || !data.length) break;
     all = all.concat(data);
@@ -1831,8 +2362,9 @@ function buildQuery(table, cols) {
 
 async function fetchAgg(from, to, ch) {
   const data = await sbFetchAll(() => {
+    // v1.8.13 E-D8: id + order_id added so aggregate() can count distinct orders
     let q = shFrom()
-      .select('sale_channel,total_revenue,net_profit,qty_sold,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,total_fees,etsy_offsite_ads_fee,actual_shipping_cost,ob_shipping,profit_margin,discount_amount')
+      .select('id,order_id,sale_channel,total_revenue,net_profit,qty_sold,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,etsy_offsite_ads_fee,actual_shipping_cost,ob_shipping,profit_margin,discount_amount')
       .gte('sale_date', from).lte('sale_date', to);
     if (ch) q = q.eq('sale_channel', ch);
     return q;
@@ -1840,11 +2372,26 @@ async function fetchAgg(from, to, ch) {
   return data || [];
 }
 
+// v1.8.13 E-D8: an order is a distinct order_id, not a row. Booth channels (treasuremarts, crazychicks) carry a
+// free-text order_id, so each booth row is its own order. A row with no order_id is its own order ('row-'+id).
+const BOOTH_ORDER_CHANNELS = ['treasuremarts', 'crazychicks'];
+function frOrderKey(r) {
+  if (!r) return 'row-undefined';
+  const oid = r.order_id == null ? '' : String(r.order_id).trim();
+  if (BOOTH_ORDER_CHANNELS.includes(r.sale_channel) || !oid) return 'row-' + r.id;
+  return (r.sale_channel || '') + '|' + oid;
+}
+function countDistinctOrders(rows) {
+  const s = new Set();
+  (rows || []).forEach(r => s.add(frOrderKey(r)));
+  return s.size;
+}
+
 function aggregate(rows) {
   const revenue   = rows.reduce((s,r) => s + (parseFloat(r.total_revenue)||0), 0);
   const profit    = rows.reduce((s,r) => s + (parseFloat(r.net_profit)||0), 0);
   const units     = rows.reduce((s,r) => s + (parseInt(r.qty_sold)||0), 0);
-  const orders    = rows.length;
+  const orders    = countDistinctOrders(rows);   // v1.8.13 E-D8: distinct orders (was rows.length)
   const shipping  = rows.reduce((s,r) => s + (parseFloat(r.actual_shipping_cost)||0), 0);
   const discounts = rows.reduce((s,r) => s + (parseFloat(r.discount_amount)||0), 0);
   const margin    = revenue > 0 ? (profit/revenue)*100 : 0;
@@ -1872,6 +2419,358 @@ function chBadge(ch) {
   return `<span class="ch-badge ${map[ch]||''}">${CH_LABEL[ch]||ch}</span>`;
 }
 
+// ── SCORECARD (v1.8.13 F) ──────────────────────────────────────────────────
+// Every section reads ONE database view through sbClient.from(view).select(...). The browser only formats, and
+// sums rows a view returns over the selected months (plus AOV / units-per-order / margin % as sum ÷ sum).
+// Each section catches its own errors and shows them in place, so one failed view never blanks the page.
+// ASSUMPTION: *_pct columns are already percentages (17.44 = 17.44%), rendered as-is.
+const BREAK_EVEN_CC = 294;   // Crazy Chicks monthly break-even gross: 15% commission, 250/month rent (250 / 0.85 ≈ 294)
+const SC_VERDICTS = ['MATCH','WITHIN 2%','VARIANCE','NO ACTIVITY','QB NOT LOADED','NOT_COMPARABLE','INTERNAL','UNMAPPED'];
+let scLoadSeq = 0;
+
+function scMon(d) {
+  if (!d) return '—';
+  const [y, m] = String(d).substring(0, 7).split('-');
+  return new Date(+y, +m - 1).toLocaleDateString('en-US', { month:'short', year:'numeric' });
+}
+function scMonthBounds() {
+  const { from, to } = getRange();
+  return { fromMonth: from.substring(0, 7) + '-01', toMonth: to.substring(0, 7) + '-01' };
+}
+const scN = v => (v == null || v === '' || isNaN(parseFloat(v))) ? null : parseFloat(v);
+const scSum = (rows, k) => (rows || []).reduce((s, r) => s + (scN(r[k]) || 0), 0);
+const scMoney = v => scN(v) == null ? '—' : $$n(v);
+const scPct = v => scN(v) == null ? '—' : scN(v).toFixed(1) + '%';
+const scNum = v => scN(v) == null ? '—' : scN(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
+function scTile(label, value, note, cls) {
+  return `<div class="kpi-card"><div class="kpi-label">${label}</div><div class="kpi-value ${cls || ''}">${value}</div>${note ? `<div class="sc-note">${note}</div>` : ''}</div>`;
+}
+function scErr(el, view, e) {
+  el.innerHTML = `<div class="sc-err">⚠ ${escapeHtml(view)}: ${escapeHtml((e && (e.message || e.details)) || String(e))}</div>`;
+}
+function scCell(v) {
+  if (v == null) return '<span class="val-dim">—</span>';
+  if (typeof v === 'object') return escapeHtml(JSON.stringify(v));
+  return escapeHtml(String(v));
+}
+function scGenericTable(rows) {
+  const cols = [];
+  rows.forEach(r => Object.keys(r).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+  return `<div class="data-table-wrap"><table class="data-table">
+    <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${scCell(r[c])}</td>`).join('')}</tr>`).join('')}</tbody>
+  </table></div>`;
+}
+// Runs one section: fetch → (still current?) → render. Errors land in that section only.
+async function scSection(elId, view, seq, fetchFn, renderFn) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const { data, error } = await fetchFn();
+    if (seq !== scLoadSeq) return;
+    if (error) { scErr(el, view, error); return; }
+    renderFn(el, data || []);
+  } catch (e) {
+    if (seq === scLoadSeq) scErr(el, view, e);
+  }
+}
+
+async function loadScorecard() {
+  const seq = ++scLoadSeq;
+  const { fromMonth, toMonth } = scMonthBounds();
+  const lbl = document.getElementById('sc-period-label');
+  if (lbl) lbl.textContent = `${periodLabel()} · months ${scMon(fromMonth)} – ${scMon(toMonth)} · every figure from a database view`;
+
+  await Promise.allSettled([
+    // 1 · Books — latest month in qb_monthly_summary
+    scSection('sc-books', 'qb_monthly_summary', seq,
+      () => sbClient.from('qb_monthly_summary').select('period_month,line,amount,source').order('period_month', { ascending:false }),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">Not loaded yet (close Step 6B)</div>'; return; }
+        const latest = data[0].period_month;
+        const rows = data.filter(r => r.period_month === latest);
+        const get = line => rows.find(r => r.line === line);
+        const tile = (label, line) => {
+          const r = get(line);
+          const v = r ? scN(r.amount) : null;
+          return scTile(label, v == null ? '—' : $$n(v),
+            `from QuickBooks · ${scMon(latest)}${r && r.source ? ' · ' + escapeHtml(r.source) : ''}${r ? '' : ' · line not loaded'}`,
+            v != null && v < 0 ? 'negative' : '');
+        };
+        el.innerHTML = `<div class="sc-grid">
+          ${tile('Net income', 'net_income')}
+          ${tile('Gross profit', 'gross_profit')}
+          ${tile('Total expenses', 'total_expenses')}
+          ${tile('Inventory asset', 'inventory_asset')}
+        </div>`;
+      }),
+
+    // 2 · Channel contribution — selected months
+    scSection('sc-channels', 'v_channel_contribution', seq,
+      () => sbClient.from('v_channel_contribution')
+        .select('period_month,channel,qb_revenue_net,qb_direct_cost,cash_contribution,less_lumpy_cash_already_in_qb,plus_fixed_amortised,economic_contribution,economic_cost_pct')
+        .gte('period_month', fromMonth).lte('period_month', toMonth).order('period_month'),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">No channel contribution rows for these months.</div>'; return; }
+        const chans = [...CH_LIST, ...[...new Set(data.map(r => r.channel))].filter(c => !CH_LIST.includes(c))]
+          .filter(c => data.some(r => r.channel === c));
+        el.innerHTML = `<div class="sc-grid">${chans.map(ch => {
+          const rs = data.filter(r => r.channel === ch);
+          const last = rs[rs.length - 1];
+          const cash = scSum(rs, 'cash_contribution'), econ = scSum(rs, 'economic_contribution');
+          return `<div class="kpi-card">
+            <div class="kpi-label">${escapeHtml(CH_LABEL[ch] || ch)}</div>
+            <div class="kpi-value ${econ < 0 ? 'negative' : ''}">${$$n(econ)}</div>
+            <div class="sc-note">Economic contribution${rs.length > 1 ? ` (${rs.length} months)` : ''}</div>
+            <div class="sc-note">Cash: <span class="${cash < 0 ? 'val-neg' : ''}">${$$n(cash)}</span> · Revenue: ${$$n(scSum(rs, 'qb_revenue_net'))}</div>
+            <div class="sc-note">Economic cost: ${scPct(last.economic_cost_pct)} <span class="val-dim">(${scMon(last.period_month)})</span></div>
+          </div>`;
+        }).join('')}</div>`;
+      }),
+
+    // 3 · Crazy Chicks break-even — latest month
+    scSection('sc-cc', 'v_channel_contribution', seq,
+      () => sbClient.from('v_channel_contribution')
+        .select('period_month,channel,qb_revenue_net,cash_contribution,economic_contribution')
+        .eq('channel', 'crazychicks').order('period_month', { ascending:false }).limit(1),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">No Crazy Chicks month in v_channel_contribution yet.</div>'; return; }
+        const r = data[0];
+        const rev = scN(r.qb_revenue_net) || 0;
+        const w = Math.max(0, Math.min(100, rev / BREAK_EVEN_CC * 100));
+        const short = BREAK_EVEN_CC - rev;
+        el.innerHTML = `<div style="font-size:12px;">${scMon(r.period_month)}: revenue <b>${$$n(rev)}</b> vs break-even <b>${$$(BREAK_EVEN_CC)}</b>
+            <span class="${short > 0 ? 'val-neg' : 'val-pos'}">${short > 0 ? '— ' + $$(short) + ' short' : '— above break-even by ' + $$(-short)}</span></div>
+          <div class="sc-bar"><div style="width:${w.toFixed(1)}%;background:${short > 0 ? 'var(--red)' : 'var(--green)'};"></div></div>
+          <div class="sc-note">${w.toFixed(0)}% of break-even · cash contribution ${scMoney(r.cash_contribution)} · economic ${scMoney(r.economic_contribution)} · break-even = 250 rent ÷ (1 − 15% commission)</div>`;
+      }),
+
+    // 4 · Inventory (landed cost)
+    scSection('sc-inventory', 'v_kpi_inventory', seq,
+      () => sbClient.from('v_kpi_inventory')
+        .select('as_of,skus_in_stock,units_on_hand,cc_booth_units,tm_booth_units,value_landed,value_wholesale,cc_booth_value,last_count_date,last_count_value,fr_vs_count_amount,fr_vs_count_pct,count_status,days_since_count,dead_stock_value_90d,dead_stock_value_180d,skus_no_sale_365d,value_no_sale_365d,sell_through_90d_pct,stock_turns_annualised,dq_stocked_no_cost,dq_negative_qty,dq_future_dated_invoices,dq_receipts_without_date')
+        .limit(1),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">v_kpi_inventory returned no row.</div>'; return; }
+        const r = data[0];
+        const status = r.count_status == null ? '—' : String(r.count_status);
+        const statusOk = status.toUpperCase().startsWith('OK');
+        el.innerHTML = `<div class="sc-grid">
+          ${scTile('Value (landed)', scMoney(r.value_landed), `as of ${escapeHtml(r.as_of || '—')} · wholesale ${scMoney(r.value_wholesale)}`)}
+          ${scTile('Units on hand', scNum(r.units_on_hand), `${scNum(r.skus_in_stock)} SKUs in stock`)}
+          ${scTile('Crazy Chicks booth', scNum(r.cc_booth_units) + ' units', `value ${scMoney(r.cc_booth_value)} · TM booth ${scNum(r.tm_booth_units)} units`)}
+          ${scTile('Last count', escapeHtml(r.last_count_date || '—'), `value ${scMoney(r.last_count_value)} · ${scNum(r.days_since_count)} days ago<br>FR vs count: ${scMoney(r.fr_vs_count_amount)} (${scPct(r.fr_vs_count_pct)})<br><span class="${statusOk ? 'val-pos' : 'val-neg'}">${escapeHtml(status)}</span>`)}
+          ${scTile('Dead stock 90d', scMoney(r.dead_stock_value_90d), `180d: ${scMoney(r.dead_stock_value_180d)}`)}
+          ${scTile('Unsold 365d', scMoney(r.value_no_sale_365d), `${scNum(r.skus_no_sale_365d)} SKUs`)}
+          ${scTile('Sell-through 90d', scPct(r.sell_through_90d_pct), '')}
+          ${scTile('Stock turns', scNum(r.stock_turns_annualised), 'annualised')}
+        </div>
+        <div class="sc-note" style="margin-top:10px;">Data quality: ${scNum(r.dq_stocked_no_cost)} stocked with no cost · ${scNum(r.dq_negative_qty)} negative qty · ${scNum(r.dq_future_dated_invoices)} future-dated invoices · ${scNum(r.dq_receipts_without_date)} receipts without date</div>`;
+      }),
+
+    // 5 · Sales KPIs — channel 'all', summed over the selected months
+    scSection('sc-sales', 'v_kpi_sales_monthly', seq,
+      () => sbClient.from('v_kpi_sales_monthly')
+        .select('period_month,channel,orders,units,revenue,product_margin,channel_charges_modelled,internal_overhead_allocation,ship_estimated_matched,ship_actual,ship_variance_like_for_like')
+        .eq('channel', 'all').gte('period_month', fromMonth).lte('period_month', toMonth),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">No sales months in range.</div>'; return; }
+        const orders = scSum(data, 'orders'), units = scSum(data, 'units'), revenue = scSum(data, 'revenue');
+        const margin = scSum(data, 'product_margin');
+        const shipVar = scSum(data, 'ship_variance_like_for_like');
+        const ioh = scSum(data, 'internal_overhead_allocation'), chg = scSum(data, 'channel_charges_modelled');
+        el.innerHTML = `<div class="sc-grid">
+          ${scTile('Orders', num(orders), `${data.length} month${data.length === 1 ? '' : 's'} · revenue ${$$n(revenue)}`)}
+          ${scTile('Avg order value', orders > 0 ? $$n(revenue / orders) : '—', 'sum revenue ÷ sum orders')}
+          ${scTile('Units / order', orders > 0 ? (units / orders).toFixed(2) : '—', `${num(units)} units`)}
+          ${scTile('Product margin %', revenue > 0 ? pct(margin / revenue * 100) : '—', `product margin ${$$n(margin)}`)}
+          ${scTile('Shipping variance', $$n(shipVar), `like-for-like · est. ${$$n(scSum(data, 'ship_estimated_matched'))} vs actual ${$$n(scSum(data, 'ship_actual'))}`, shipVar < 0 ? 'negative' : '')}
+          ${scTile('Internal OH vs channel charges', $$n(ioh), `internal overhead allocation vs ${$$n(chg)} channel charges (modelled)`)}
+        </div>`;
+      }),
+
+    // 6 · Reconciliation (FR vs QuickBooks) — revenue verdicts per qb_month
+    scSection('sc-recon', 'v_channel_reconciliation', seq,
+      () => sbClient.from('v_channel_reconciliation')
+        .select('qb_month,channel,line,qb_account,fr_month,lag_months,fr_amount,qb_amount,qb_refunds,variance,verdict,note')
+        .gte('qb_month', fromMonth).lte('qb_month', toMonth).order('qb_month'),
+      (el, data) => {
+        const rev = data.filter(r => r.line === 'revenue');
+        if (!rev.length) { el.innerHTML = '<div class="sc-empty">No revenue reconciliation rows for these months.</div>'; return; }
+        const months = [...new Set(rev.map(r => r.qb_month))].sort();
+        const verdicts = SC_VERDICTS.filter(v => rev.some(r => r.verdict === v))
+          .concat([...new Set(rev.map(r => r.verdict))].filter(v => !SC_VERDICTS.includes(v)));
+        const notLoaded = rev.filter(r => r.verdict === 'QB NOT LOADED');
+        const variances = rev.filter(r => r.verdict === 'VARIANCE');
+        const vCls = v => v === 'MATCH' ? 'val-pos' : v === 'WITHIN 2%' ? 'sc-amber' : (v === 'VARIANCE' || v === 'QB NOT LOADED' || v === 'UNMAPPED') ? 'val-neg' : 'val-dim';
+        el.innerHTML = `
+          ${notLoaded.length ? `<div class="sc-banner">QB NOT LOADED — ${[...new Set(notLoaded.map(r => scMon(r.qb_month)))].join(', ')}: QuickBooks actuals missing for ${notLoaded.length} channel-month${notLoaded.length === 1 ? '' : 's'}. Load them (close Step 6B) before reading this section.</div>` : ''}
+          <div class="data-table-wrap"><table class="data-table">
+            <thead><tr><th>QB month</th>${verdicts.map(v => `<th class="text-right ${vCls(v)}">${escapeHtml(v)}</th>`).join('')}</tr></thead>
+            <tbody>${months.map(m => `<tr><td>${scMon(m)}</td>${verdicts.map(v => {
+              const n = rev.filter(r => r.qb_month === m && r.verdict === v).length;
+              return `<td class="text-right ${n ? vCls(v) : 'val-dim'}">${n || '—'}</td>`;
+            }).join('')}</tr>`).join('')}</tbody>
+          </table></div>
+          <div style="font-size:12px;font-weight:600;margin:14px 0 6px;">Variances ${variances.length ? '' : '<span class="val-pos" style="font-weight:400;">— none</span>'}</div>
+          ${variances.length ? `<div class="data-table-wrap"><table class="data-table">
+            <thead><tr><th>Channel</th><th>QB month</th><th class="text-right">FR amount</th><th class="text-right">QB amount</th><th class="text-right">Variance</th><th>Note</th></tr></thead>
+            <tbody>${variances.map(r => `<tr>
+              <td>${chBadge(r.channel)}</td><td>${scMon(r.qb_month)}</td>
+              <td class="text-right">${scMoney(r.fr_amount)}</td><td class="text-right">${scMoney(r.qb_amount)}</td>
+              <td class="text-right val-neg">${scMoney(r.variance)}</td><td style="white-space:normal;">${scCell(r.note)}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>` : ''}`;
+      }),
+
+    // 7 · Close status
+    scSection('sc-close', 'v_close_health', seq,
+      () => sbClient.from('v_close_health')
+        .select('period_month,qb_rows,qb_loaded_at,qb_loaded,inventory_count_date,inventory_count_value,inventory_counted,rev_match,rev_within_2pct,rev_variance,unmapped,close_status')
+        .order('period_month', { ascending:false }),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">v_close_health returned no months.</div>'; return; }
+        const stCls = s => s === 'CLOSED CLEAN' ? 'val-pos' : s === 'CLOSED WITH FR VARIANCES' ? 'sc-amber' : s === 'OPEN' ? 'val-neg' : 'val-dim';
+        const yn = b => b === true ? '<span class="val-pos">yes</span>' : b === false ? '<span class="val-neg">no</span>' : '—';
+        el.innerHTML = `<div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>Month</th><th>QB loaded</th><th class="text-right">QB rows</th><th>Loaded at</th><th>Inventory counted</th><th class="text-right">Match</th><th class="text-right">Within 2%</th><th class="text-right">Variance</th><th class="text-right">Unmapped</th><th>Status</th></tr></thead>
+          <tbody>${data.map(r => `<tr>
+            <td>${scMon(r.period_month)}</td><td>${yn(r.qb_loaded)}</td><td class="text-right">${scNum(r.qb_rows)}</td>
+            <td>${r.qb_loaded_at ? escapeHtml(String(r.qb_loaded_at).substring(0, 16).replace('T', ' ')) : '—'}</td>
+            <td>${yn(r.inventory_counted)}${r.inventory_count_date ? ' · ' + escapeHtml(r.inventory_count_date) + ' · ' + scMoney(r.inventory_count_value) : ''}</td>
+            <td class="text-right">${scNum(r.rev_match)}</td><td class="text-right">${scNum(r.rev_within_2pct)}</td>
+            <td class="text-right ${scN(r.rev_variance) > 0 ? 'val-neg' : ''}">${scNum(r.rev_variance)}</td>
+            <td class="text-right ${scN(r.unmapped) > 0 ? 'val-neg' : ''}">${scNum(r.unmapped)}</td>
+            <td class="${stCls(r.close_status)}" style="font-weight:700;">${escapeHtml(r.close_status || '—')}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+      }),
+
+    // 8a · Data quality
+    scSection('sc-dq', 'v_data_quality', seq,
+      () => sbClient.from('v_data_quality').select('sort,defect,groups,rows_affected,amount_at_risk,note').order('sort'),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">No defects listed.</div>'; return; }
+        el.innerHTML = `<div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>Defect</th><th class="text-right">Groups</th><th class="text-right">Rows</th><th class="text-right">Amount at risk</th><th>Note</th></tr></thead>
+          <tbody>${data.map(r => `<tr>
+            <td>${scCell(r.defect)}</td><td class="text-right">${scNum(r.groups)}</td><td class="text-right">${scNum(r.rows_affected)}</td>
+            <td class="text-right">${scMoney(r.amount_at_risk)}</td><td style="white-space:normal;">${scCell(r.note)}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`;
+      }),
+
+    // 8b · Feed health — schema unknown: render whatever comes back
+    // v1.8.14 S3: status coloured (OK / LATE / DEAD / RETIRED), note column wraps
+    scSection('sc-feeds', 'v_feed_health', seq,
+      () => sbClient.from('v_feed_health').select('*'),
+      (el, data) => {
+        el.innerHTML = data.length ? scFeedTable(data) : '<div class="sc-empty">v_feed_health returned no rows.</div>';
+      }),
+
+    // 9 · v1.8.14 S1: inventory movement ledger by month (started 2026-10-04)
+    scSection('sc-movements', 'v_inventory_movements_monthly', seq,
+      () => sbClient.from('v_inventory_movements_monthly')
+        .select('period_month,field,kind,changes,items,units_or_amount_up,units_or_amount_down,qty_value_change_landed')
+        .order('period_month', { ascending:false }),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">No movements since baseline yet — the ledger started 2026-10-04.</div>'; return; }
+        const months = [...new Set(data.map(r => r.period_month))].sort().reverse();
+        const COST_FIELDS = ['wholesale_price', 'ib_shipping', 'tariff'];
+        el.innerHTML = `<div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>Month</th><th class="text-right">Qty changes</th><th class="text-right">Units up</th><th class="text-right">Units down</th><th class="text-right">Value change (landed)</th><th class="text-right">Cost changes</th></tr></thead>
+          <tbody>${months.map(m => {
+            const q = data.filter(r => r.period_month === m && r.field === 'qty');
+            const c = data.filter(r => r.period_month === m && COST_FIELDS.includes(r.field));
+            const val = scSum(q, 'qty_value_change_landed');
+            return `<tr><td>${scMon(m)}</td>
+              <td class="text-right">${q.length ? num(scSum(q, 'changes')) : '—'}</td>
+              <td class="text-right">${q.length ? scNum(scSum(q, 'units_or_amount_up')) : '—'}</td>
+              <td class="text-right">${q.length ? scNum(scSum(q, 'units_or_amount_down')) : '—'}</td>
+              <td class="text-right ${val < 0 ? 'val-neg' : ''}">${q.length ? $$n(val) : '—'}</td>
+              <td class="text-right">${c.length ? num(scSum(c, 'changes')) : '—'}</td></tr>`;
+          }).join('')}</tbody>
+        </table></div>
+        <div class="sc-note" style="margin-top:8px;">Qty rows: field = qty (all kinds summed). Cost changes: wholesale_price, ib_shipping, tariff.</div>`;
+      }),
+
+    // 10 · v1.8.14 S1: write-offs by month
+    scSection('sc-writeoffs', 'v_writeoffs_monthly', seq,
+      () => sbClient.from('v_writeoffs_monthly')
+        .select('period_month,writeoffs,units,loss_at_entered_cost,recovered,qty_deducted_missing,reversed')
+        .order('period_month', { ascending:false }),
+      (el, data) => {
+        if (!data.length) { el.innerHTML = '<div class="sc-empty">No write-offs recorded.</div>'; return; }
+        const missing = data.filter(r => scN(r.qty_deducted_missing) > 0);
+        el.innerHTML = `${missing.length ? `<div class="sc-banner" style="background:rgba(245,158,11,.08);border-color:rgba(245,158,11,.35);color:#f59e0b;">${missing.length} month${missing.length === 1 ? '' : 's'} with write-offs whose quantity was NOT deducted from stock (qty_deducted_missing).</div>` : ''}
+          <div class="data-table-wrap"><table class="data-table">
+          <thead><tr><th>Month</th><th class="text-right">Write-offs</th><th class="text-right">Units</th><th class="text-right">Loss (entered cost)</th><th class="text-right">Recovered</th><th class="text-right">Qty not deducted</th><th class="text-right">Reversed</th></tr></thead>
+          <tbody>${data.map(r => `<tr><td>${scMon(r.period_month)}</td>
+            <td class="text-right">${scNum(r.writeoffs)}</td><td class="text-right">${scNum(r.units)}</td>
+            <td class="text-right">${scMoney(r.loss_at_entered_cost)}</td><td class="text-right">${scMoney(r.recovered)}</td>
+            <td class="text-right ${scN(r.qty_deducted_missing) > 0 ? 'sc-amber' : ''}" style="${scN(r.qty_deducted_missing) > 0 ? 'font-weight:700;' : ''}">${scNum(r.qty_deducted_missing)}</td>
+            <td class="text-right">${scNum(r.reversed)}</td></tr>`).join('')}</tbody>
+        </table></div>`;
+      })
+  ]);
+}
+
+// v1.8.14 S3: feed-health table - every column the view returns, status coloured, note wrapping.
+function scFeedTable(rows) {
+  const cols = [];
+  rows.forEach(r => Object.keys(r).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+  const stCls = v => {
+    const s = String(v == null ? '' : v).toUpperCase();
+    return s.startsWith('OK') ? 'val-pos' : s.startsWith('LATE') ? 'sc-amber' : s.startsWith('DEAD') ? 'val-neg' : s.startsWith('RETIRED') ? 'sc-grey' : '';
+  };
+  const isStatus = c => c === 'status' || c === 'feed_status' || c === 'health';
+  return `<div class="data-table-wrap"><table class="data-table">
+    <thead><tr>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(r => {
+      const retired = String(frFeedStatus(r)).startsWith('RETIRED');
+      return `<tr${retired ? ' style="opacity:.6;"' : ''}>${cols.map(c =>
+        isStatus(c) ? `<td class="${stCls(r[c])}" style="font-weight:700;">${scCell(r[c])}</td>`
+        : c === 'note' ? `<td style="white-space:normal;min-width:180px;">${scCell(r[c])}</td>`
+        : `<td>${scCell(r[c])}</td>`).join('')}</tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+// v1.8.14 S2: point-in-time inventory. The movement ledger starts 2026-10-04 (local midnight), so earlier
+// times are refused here rather than returning a figure the database cannot support.
+const INV_LEDGER_BASELINE = new Date('2026-10-04T11:25:16.235Z');   // v1.8.14: exact baseline install (min moved_at, kind=baseline) = 7:25:16 AM ET
+async function scInventoryAsOf() {
+  const el = document.getElementById('sc-asof');
+  const v = (document.getElementById('scAsofAt') || {}).value;
+  if (!el) return;
+  if (!v) { el.innerHTML = '<div class="sc-empty">Pick a date and time first.</div>'; return; }
+  const at = new Date(v);
+  if (isNaN(at)) { el.innerHTML = '<div class="sc-err">Not a valid date/time.</div>'; return; }
+  if (at < INV_LEDGER_BASELINE) {
+    el.innerHTML = '<div class="sc-banner">Before the 2026-10-04 baseline — the movement ledger has no history earlier than that, so no figure is shown. Use the baseline count (Master Inventory) for earlier dates.</div>';
+    return;
+  }
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const iso = at.toISOString();
+    // v1.8.14: one-row totals (inventory_value_asof) - avoids the 1,000-row API cap on the per-item function
+    const res = await sbClient.rpc('inventory_value_asof', { p_at: iso });
+    if (res.error) throw res.error;
+    const r0 = (Array.isArray(res.data) ? res.data[0] : res.data) || {};
+    const qty = scN(r0.units) || 0, landed = scN(r0.value_landed) || 0, wholesale = scN(r0.value_wholesale) || 0;
+    const rows = { length: scN(r0.items) || 0 };
+    el.innerHTML = `<div class="sc-grid">
+      ${scTile('Units', scNum(qty), `${num(rows.length)} item${rows.length === 1 ? '' : 's'} in stock · inventory_value_asof`)}
+      ${scTile('Value (landed)', $$n(landed), '')}
+      ${scTile('Value (wholesale)', $$n(wholesale), '')}
+    </div>
+    <div class="sc-note" style="margin-top:8px;">As at ${escapeHtml(at.toLocaleString('en-US'))} (${escapeHtml(iso)}). Valid only from the 2026-10-04 baseline.</div>`;
+  } catch (e) {
+    scErr(el, 'inventory_asof', e);
+  }
+}
+
 // ── DASHBOARD ──────────────────────────────────────────────────────────────
 async function loadDashboard() {
   const { from, to, priorFrom, priorTo } = getRange();
@@ -1888,7 +2787,7 @@ async function loadDashboard() {
 
   // KPIs
   document.getElementById('kpi-revenue').textContent  = $$(c.revenue);
-  document.getElementById('kpi-profit').textContent   = $$(c.profit);
+  document.getElementById('kpi-profit').textContent   = $$n(c.profit);   // v1.8.13 E-D10: signed ($$ drops the sign)
   document.getElementById('kpi-margin').textContent   = pct(c.margin);
   document.getElementById('kpi-orders').textContent   = num(c.orders);
   document.getElementById('kpi-units').textContent    = num(c.units);
@@ -1993,6 +2892,19 @@ function buildChannelPie(rows) {
   });
   const channels = Object.keys(byChannel).filter(ch => byChannel[ch] > 0);
   const profits  = channels.map(ch => byChannel[ch]);
+  // v1.8.13 E-D19: a doughnut cannot draw a negative slice - list those channels instead of dropping them silently
+  const belowZero = Object.keys(byChannel).filter(ch => byChannel[ch] < 0);
+  const cvs = document.getElementById('channelChart');
+  let bzEl = document.getElementById('channelChartBelowZero');
+  if (!bzEl && cvs && cvs.parentElement && cvs.parentElement.parentElement) {
+    bzEl = document.createElement('div');
+    bzEl.id = 'channelChartBelowZero';
+    bzEl.style.cssText = 'font-size:10px;color:var(--red);margin-top:8px;';
+    cvs.parentElement.parentElement.appendChild(bzEl);
+  }
+  if (bzEl) bzEl.innerHTML = belowZero.length
+    ? 'Below zero (not drawn): ' + belowZero.map(ch => escapeHtml(CH_LABEL[ch]||ch) + ' ' + $$n(byChannel[ch])).join(' · ')
+    : '';
   const colors   = channels.map(ch => CH_COLOR[ch] || '#8899bb');
 
   if (channelChartInst) channelChartInst.destroy();
@@ -2256,7 +3168,7 @@ function openDrill(r) {
 
     <div class="drill-section-title">Channel Fees</div>
     <div class="drill-fees-grid">
-      ${feeItem('OH Fee', r.oh_fee)}
+      ${/* v1.8.13 E-D2: oh_fee + surcharge moved to their own block below - they are not channel charges */''}
       ${feeItem('Transaction', r.transaction_fee)}
       ${feeItem('CC Fee', r.cc_fee)}
       ${feeItem('Listing Fee', r.listing_fee)}
@@ -2267,7 +3179,13 @@ function openDrill(r) {
       ${feeItem('Rent', r.rent)}
       ${feeItem('Mkt Deduction', r.marketplace_deduction)}
     </div>
-    ${dr('Total Fees', `<span class="val-dim">${$$(r.total_fees)}</span>`)}
+    ${dr('Channel charges', `<span class="val-dim">${$$((parseFloat(r.total_fees)||0) - (parseFloat(r.oh_fee)||0) - (parseFloat(r.surcharge)||0))}</span>`)}
+    <div class="drill-section-title">Internal overhead allocation (not a channel charge)</div>
+    <div class="drill-fees-grid">
+      ${feeItem('OH Fee', r.oh_fee)}
+      ${feeItem('OB Surcharge', r.surcharge)}
+    </div>
+    ${dr('Total incl. internal overhead', `<span class="val-dim">${$$(r.total_fees)}</span>`)}
 
     ${r.actual_shipping_cost != null ? `
     <div class="drill-section-title">Shipping Actuals</div>
@@ -2311,7 +3229,7 @@ async function loadDailyReport() {
 
   const data = await sbFetchAll(() => {
     let q = shFrom()
-      .select('sale_date,total_revenue,net_profit,qty_sold,actual_shipping_cost,sale_channel')
+      .select('id,order_id,sale_date,total_revenue,net_profit,qty_sold,actual_shipping_cost,sale_channel')   // v1.8.13 E-D8: + id, order_id
       .gte('sale_date', from).lte('sale_date', to).order('sale_date');
     if (chDb) q = q.eq('sale_channel', chDb);
     return q;
@@ -2321,11 +3239,11 @@ async function loadDailyReport() {
   const byDate = {};
   (data||[]).forEach(r => {
     const d = r.sale_date.substring(0,10);
-    if (!byDate[d]) byDate[d] = { date:d, revenue:0, profit:0, units:0, orders:0, shipping:0 };
+    if (!byDate[d]) byDate[d] = { date:d, revenue:0, profit:0, units:0, orders:0, shipping:0, _ok:new Set() };
     byDate[d].revenue  += parseFloat(r.total_revenue)||0;
     byDate[d].profit   += parseFloat(r.net_profit)||0;
     byDate[d].units    += parseInt(r.qty_sold)||0;
-    byDate[d].orders   += 1;
+    byDate[d]._ok.add(frOrderKey(r)); byDate[d].orders = byDate[d]._ok.size;   // v1.8.13 E-D8: distinct orders (was += 1 per row)
     byDate[d].shipping += parseFloat(r.actual_shipping_cost)||0;
   });
   const rows = Object.values(byDate).sort((a,b) => b.date.localeCompare(a.date));
@@ -2521,9 +3439,10 @@ function buildChannelMarginChart(channels, byCh) {
 
 function buildChannelFeeBreakdown(channels, byCh, allRows) {
   const el = document.getElementById('channelFeeBreakdown');
+  // v1.8.13 E-D2: oh_fee + surcharge flagged internal - listed after a "Channel charges" subtotal, not as channel fees
   const feeKeys = [
-    { key:'oh_fee', label:'OH Fee' },
-    { key:'surcharge', label:'OB Surcharge' },  // v1.8.4 — S40-FINDING-06: surcharge is part of Model A total_fees
+    { key:'oh_fee', label:'OH Fee', internal:true },
+    { key:'surcharge', label:'OB Surcharge', internal:true },  // v1.8.4 — S40-FINDING-06: surcharge is part of Model A total_fees
     { key:'transaction_fee', label:'Transaction' },
     { key:'cc_fee', label:'CC Fee' },
     { key:'listing_fee', label:'Listing Fee' },
@@ -2542,6 +3461,17 @@ function buildChannelFeeBreakdown(channels, byCh, allRows) {
     if (!feesByCh[ch]) return;
     feeKeys.forEach(f => feesByCh[ch][f.key] += parseFloat(r[f.key])||0);
   });
+  // v1.8.13 E-D2: row renderer shared by the channel-charge block and the internal-overhead block
+  const chargeKeys = feeKeys.filter(f => !f.internal);
+  const feeRowsHtml = keys => keys.map(f => {
+    const total = channels.reduce((s,ch)=>s+feesByCh[ch][f.key],0);
+    if (total === 0) return '';
+    return `<tr>
+          <td style="color:var(--dim);">${f.label}</td>
+          ${channels.map(ch=>`<td class="text-right val-dim">${feesByCh[ch][f.key]>0?$$(feesByCh[ch][f.key]):'—'}</td>`).join('')}
+          <td class="text-right">${$$(total)}</td>
+        </tr>`;
+  }).join('');
 
   el.innerHTML = `
   <div class="data-table-wrap">
@@ -2554,17 +3484,16 @@ function buildChannelFeeBreakdown(channels, byCh, allRows) {
       </tr>
     </thead>
     <tbody>
-      ${feeKeys.map(f => {
-        const total = channels.reduce((s,ch)=>s+feesByCh[ch][f.key],0);
-        if (total === 0) return '';
-        return `<tr>
-          <td style="color:var(--dim);">${f.label}</td>
-          ${channels.map(ch=>`<td class="text-right val-dim">${feesByCh[ch][f.key]>0?$$(feesByCh[ch][f.key]):'—'}</td>`).join('')}
-          <td class="text-right">${$$(total)}</td>
-        </tr>`;
-      }).join('')}
+      ${feeRowsHtml(feeKeys.filter(f => !f.internal))}
       <tr style="border-top:1px solid var(--border2);">
-        <td style="font-weight:700;">Total Fees</td>
+        <td style="font-weight:700;">Channel charges</td>
+        ${channels.map(ch=>`<td class="text-right val-dim">${$$(chargeKeys.reduce((s,f)=>s+feesByCh[ch][f.key],0))}</td>`).join('')}
+        <td class="text-right val-dim">${$$(chargeKeys.reduce((s,f)=>s+channels.reduce((cs,ch)=>cs+feesByCh[ch][f.key],0),0))}</td>
+      </tr>
+      <tr><td colspan="${channels.length+2}" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;">Internal overhead allocation (not a channel charge)</td></tr>
+      ${feeRowsHtml(feeKeys.filter(f => f.internal))}
+      <tr style="border-top:1px solid var(--border2);">
+        <td style="font-weight:700;">Total incl. internal overhead</td>
         ${channels.map(ch=>{
           const t = feeKeys.reduce((s,f)=>s+feesByCh[ch][f.key],0);
           return `<td class="text-right val-dim">${$$(t)}</td>`;
@@ -2725,7 +3654,7 @@ function renderProductTable() {
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','sales',productData,renderProductTable)">Sales ${sArr('prod','sales')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','revenue',productData,renderProductTable)">Revenue ${sArr('prod','revenue')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','cost',productData,renderProductTable)">COGS ${sArr('prod','cost')}</th>
-      <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','fees',productData,renderProductTable)">Fees ${sArr('prod','fees')}</th>
+      <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','fees',productData,renderProductTable)">Fees incl. internal OH ${sArr('prod','fees')}</th>${/* v1.8.13 E-D2 */''}
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','profit',productData,renderProductTable)">Profit ${sArr('prod','profit')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','margin',productData,renderProductTable)">Margin ${sArr('prod','margin')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('prod','avgPrice',productData,renderProductTable)">Avg Price ${sArr('prod','avgPrice')}</th>
@@ -2938,7 +3867,7 @@ async function loadShippingReport() {
   const chDb = CH_DB[channelFilter] || null;
   const sales = await sbFetchAll(() => {
     let q = shFrom()
-      .select('id,sku,product_name,sale_channel,ob_shipping,actual_shipping_cost,carrier,net_profit,sale_date')
+      .select('id,sku,product_name,sale_channel,ob_shipping,actual_shipping_cost,carrier,net_profit,total_revenue,sale_date')   // v1.8.13 E-D19: + total_revenue
       .gte('sale_date', from).lte('sale_date', to);
     if (chDb) q = q.eq('sale_channel', chDb);
     return q;
@@ -2967,7 +3896,9 @@ async function loadShippingReport() {
   transitData.unsynced = unsyncedCount || 0;
 
   // KPI summary
-  let totalEstimated = 0, totalActual = 0, reconciledCount = 0, unreconciledCount = 0;
+  // v1.8.13 E-D3: totalEstimated is summed ONLY where actual_shipping_cost > 0 (same population as totalActual);
+  // totalEstimatedAll keeps the all-orders estimate as a separate, labelled figure.
+  let totalEstimated = 0, totalEstimatedAll = 0, totalActual = 0, reconciledCount = 0, unreconciledCount = 0;
   const byCarrier = {}, byState = {}, allReconciledRows = [], unreconciledRows = [];
 
   (sales||[]).forEach(r => {
@@ -2980,9 +3911,10 @@ async function loadShippingReport() {
     const carrier = r.carrier || (shippoMap[r.id]?.carrier) || null;
     const state = shippoMap[r.id]?.recipient_state || null;
 
-    totalEstimated += est;
+    totalEstimatedAll += est;   // v1.8.13 E-D3
 
     if (act > 0) {
+      totalEstimated += est;    // v1.8.13 E-D3: like-for-like with totalActual
       totalActual += act;
       reconciledCount++;
       const variance = est - act;
@@ -3000,7 +3932,7 @@ async function loadShippingReport() {
         byState[state].cost += act;
         byState[state].estimated += est;
         byState[state].count++;
-        byState[state].revenue += parseFloat(r.net_profit)||0;
+        byState[state].revenue += parseFloat(r.total_revenue)||0;   // v1.8.13 E-D19: revenue is total_revenue (was net_profit)
       }
 
       // ALL reconciled rows for variance view (not just overpays)
@@ -3019,7 +3951,7 @@ async function loadShippingReport() {
   });
 
   shippingData = {
-    totalEstimated, totalActual,
+    totalEstimated, totalEstimatedAll, totalActual,   // v1.8.13 E-D3
     variance: totalEstimated - totalActual,
     reconciledCount, unreconciledCount,
     byCarrier: Object.values(byCarrier).sort((a,b) => b.cost - a.cost),
@@ -3032,7 +3964,7 @@ async function loadShippingReport() {
   const kpiEl = document.getElementById('shippingKpis');
   const savedLost = shippingData.variance >= 0 ? 'val-pos' : 'val-neg';
   kpiEl.innerHTML = `
-    <div class="kpi-card"><div class="kpi-label">Est. Shipping</div><div class="kpi-value">${$$(totalEstimated)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Est. Shipping (matched)</div><div class="kpi-value">${$$(totalEstimated)}</div><div class="kpi-delta neutral">Estimated, all orders: ${$$(totalEstimatedAll)}</div></div>${/* v1.8.13 E-D3 */''}
     <div class="kpi-card"><div class="kpi-label">Actual Shipping</div><div class="kpi-value">${$$(totalActual)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Variance</div><div class="kpi-value ${savedLost}">${$$(shippingData.variance)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Reconciled / Total</div><div class="kpi-value">${reconciledCount} / ${reconciledCount+unreconciledCount}</div></div>
@@ -3628,7 +4560,14 @@ async function loadWayfairReconReport() {
     const sales = await sbFetchAll(() => shFrom()
       .select('order_id,total_revenue,net_profit,sale_date')
       .in('order_id', poNumbers));
-    (sales||[]).forEach(s => { salesMap[s.order_id] = s; });
+    // v1.8.13 E-D13: expected revenue per PO = SUM over every line of that order (was the last row only)
+    (sales||[]).forEach(s => {
+      const m = salesMap[s.order_id];
+      if (!m) { salesMap[s.order_id] = { ...s, total_revenue: parseFloat(s.total_revenue)||0, net_profit: parseFloat(s.net_profit)||0 }; return; }
+      m.total_revenue += parseFloat(s.total_revenue)||0;
+      m.net_profit    += parseFloat(s.net_profit)||0;
+      if (s.sale_date && (!m.sale_date || s.sale_date < m.sale_date)) m.sale_date = s.sale_date;
+    });
   }
 
   // KPI summary
@@ -3773,8 +4712,8 @@ async function loadPnlReport() {
 
   const data = await sbFetchAll(() => {
     let q = shFrom()
-      .select('sale_date,sale_channel,total_revenue,wholesale_price,ib_shipping,tariff,ob_shipping,qty_sold,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,gross_revenue,discount_amount')
-      .gte('sale_date', from).lte('sale_date', to);
+      .select('id,order_id,sale_date,sale_channel,total_revenue,wholesale_price,ib_shipping,tariff,ob_shipping,actual_shipping_cost,qty_sold,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,gross_revenue,discount_amount')
+      .gte('sale_date', from).lte('sale_date', to);   // v1.8.13 E-D8: + id, order_id. E-D3: + actual_shipping_cost (was never selected, so the overlay's actual leg read 0)
     if (chDb) q = q.eq('sale_channel', chDb);
     return q;
   });
@@ -3784,8 +4723,8 @@ async function loadPnlReport() {
   if (compareMode && priorFrom) {
     const pd = await sbFetchAll(() => {
       let pq = shFrom()
-        .select('sale_date,sale_channel,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount,ob_shipping,actual_shipping_cost')
-        .gte('sale_date', priorFrom).lte('sale_date', priorTo);
+        .select('id,order_id,sale_date,sale_channel,total_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,gross_revenue,discount_amount,ob_shipping,actual_shipping_cost')
+        .gte('sale_date', priorFrom).lte('sale_date', priorTo);   // v1.8.13 E-D8: + id, order_id
       if (chDb) pq = pq.eq('sale_channel', chDb);
       return pq;
     });
@@ -3799,7 +4738,7 @@ async function loadPnlReport() {
     if (!byMonth[mo]) byMonth[mo] = {
       month:mo, revenue:0, grossRevenue:0, cogs:0, units:0, orders:0,
       ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0,
-      totalFees:0, netProfit:0, discounts:0,
+      totalFees:0, netProfit:0, discounts:0, _ok:new Set(),   // v1.8.13 E-D8: distinct order keys
       obShipping:0, actualShipping:0   /* @invariant ECOSYSTEM-022 (F-11 Shipping Variance overlay; populated from etsy+wix only via channel guard) */
     };
     const m = byMonth[mo];
@@ -3807,7 +4746,7 @@ async function loadPnlReport() {
     m.grossRevenue += parseFloat(r.gross_revenue || r.total_revenue)||0;
     m.cogs         += parseFloat(r.total_cost)||0;
     m.units        += parseInt(r.qty_sold)||0;
-    m.orders       += 1;
+    m._ok.add(frOrderKey(r)); m.orders = m._ok.size;   // v1.8.13 E-D8: distinct orders (was += 1 per row)
     m.ohFee        += parseFloat(r.oh_fee)||0;
     m.txnFee       += parseFloat(r.transaction_fee)||0;
     m.ccFee        += parseFloat(r.cc_fee)||0;
@@ -3827,7 +4766,8 @@ async function loadPnlReport() {
     // Wayfair drop-ships (ob_shipping = 0 by business model); TM in-person (no actual).
     // Mixing them in would dilute the variance signal; guard keeps the scope clean.
     if (r.sale_channel === 'etsy' || r.sale_channel === 'wix') {
-      m.obShipping     += parseFloat(r.ob_shipping)||0;
+      // v1.8.13 E-D3: estimate counted only where an actual exists (like-for-like with actualShipping)
+      if ((parseFloat(r.actual_shipping_cost)||0) > 0) m.obShipping += parseFloat(r.ob_shipping)||0;
       m.actualShipping += parseFloat(r.actual_shipping_cost)||0;
     }
   });
@@ -3842,6 +4782,7 @@ async function loadPnlReport() {
     if (!priorByMonth[alignedMo]) priorByMonth[alignedMo] = {
       revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0,
       rent:0, mktDeduct:0, totalFees:0, netProfit:0, orders:0, units:0,
+      commission:0, discounts:0, _ok:new Set(),   // v1.8.13 E-D9: commission + discounts initialised (commission was NaN); E-D8 order keys
       obShipping:0, actualShipping:0
     };
     const m = priorByMonth[alignedMo];
@@ -3861,11 +4802,12 @@ async function loadPnlReport() {
     m.mktDeduct  += parseFloat(r.marketplace_deduction)||0;
     m.totalFees  += parseFloat(r.total_fees)||0;
     m.netProfit  += parseFloat(r.net_profit)||0;
-    m.orders     += 1;
+    m.discounts  += parseFloat(r.discount_amount)||0;   // v1.8.13 E-D9: accumulate like the current year
+    m._ok.add(frOrderKey(r)); m.orders = m._ok.size;   // v1.8.13 E-D8: distinct orders
     m.units      += parseInt(r.qty_sold)||0;
     // F-11 prior-year shipping accumulators (ECOSYSTEM-022 channel-guard parity)
     if (r.sale_channel === 'etsy' || r.sale_channel === 'wix') {
-      m.obShipping     += parseFloat(r.ob_shipping)||0;
+      if ((parseFloat(r.actual_shipping_cost)||0) > 0) m.obShipping += parseFloat(r.ob_shipping)||0;   // v1.8.13 E-D3
       m.actualShipping += parseFloat(r.actual_shipping_cost)||0;
     }
   });
@@ -4030,12 +4972,20 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
     return;
   }
 
-  const total = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
+  // v1.8.13 E-D2: channelCharges = totalFees − ohFee − surcharge (display only; net_profit untouched)
+  const addCharges = m => { m.channelCharges = (m.totalFees||0) - (m.ohFee||0) - (m.surcharge||0); };
+  months.forEach(addCharges);
+  Object.values(priorByMonth||{}).forEach(addCharges);
+  const total = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, channelCharges:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
   months.forEach(m => { for (const k in total) total[k] += m[k]||0; });
+  // v1.8.13 E-D8: period orders = distinct keys across all months (not the sum of monthly counts)
+  const unionSize = arr => { const u = new Set(); arr.forEach(m => (m._ok||[]).forEach(k => u.add(k))); return u.size; };
+  if (months.every(m => m._ok)) total.orders = unionSize(months);
 
   const hasPrior = compareMode && Object.keys(priorByMonth||{}).length > 0;
-  const priorTotal = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
+  const priorTotal = { revenue:0, grossRevenue:0, cogs:0, ohFee:0, txnFee:0, ccFee:0, listingFee:0, surcharge:0, offsiteAds:0, wfFee:0, recoveryFee:0, commission:0, rent:0, mktDeduct:0, totalFees:0, channelCharges:0, netProfit:0, discounts:0, orders:0, units:0, obShipping:0, actualShipping:0 };
   if (hasPrior) Object.values(priorByMonth).forEach(p => { for (const k in priorTotal) priorTotal[k] += p[k]||0; });
+  if (hasPrior && Object.values(priorByMonth).every(p => p._ok)) priorTotal.orders = unionSize(Object.values(priorByMonth));   // v1.8.13 E-D8
 
   const fmtMo = mo => { const [y,m] = mo.split('-'); return new Date(+y,+m-1).toLocaleDateString('en-US',{month:'short',year:'2-digit'}); };
   const colSpan = months.length + 2 + (hasPrior ? 2 : 0);
@@ -4043,10 +4993,10 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
   function varCell(curr, prior, cls, fmtFn) {
     if (!hasPrior) return '';
     const f = fmtFn || $$;
-    const variance = prior > 0 ? ((curr - prior)/prior*100) : (curr > 0 ? 100 : null);
+    const variance = prior > 0 ? ((curr - prior)/prior*100) : null;   // v1.8.13 E-D19: prior <= 0 shows "n/a", never +100%
     const varCls = variance != null ? (variance >= 0 ? 'val-pos' : 'val-neg') : '';
     return `<td class="text-right ${cls||'val-dim'}" style="border-left:1px solid var(--border);">${f(prior)}</td>
-      <td class="text-right ${varCls}" style="font-size:11px;">${variance!=null?(variance>=0?'+':'')+variance.toFixed(1)+'%':'—'}</td>`;
+      <td class="text-right ${varCls}" style="font-size:11px;">${variance!=null?(variance>=0?'+':'')+variance.toFixed(1)+'%':'n/a'}</td>`;
   }
 
   function pnlRow(label, key, cls, indent, fmtFn) {
@@ -4090,22 +5040,30 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
       </tr>
 
       <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Channel Fees &amp; Expenses</td></tr>
-      ${pnlRow('Overhead Fee', 'ohFee', 'val-dim', true)}
+      ${/* v1.8.13 E-D2: channel charges first, then a subtotal; OH fee + OB surcharge in their own internal block */''}
       ${pnlRow('Transaction Fee', 'txnFee', 'val-dim', true)}
       ${pnlRow('Credit Card Fee', 'ccFee', 'val-dim', true)}
       ${pnlRow('Listing Fee', 'listingFee', 'val-dim', true)}
       ${pnlRow('Offsite Ads', 'offsiteAds', 'val-dim', true)}
-      ${pnlRow('OB Surcharge', 'surcharge', 'val-dim', true)}
       ${pnlRow('Wayfair Fee', 'wfFee', 'val-dim', true)}
       ${pnlRow('Recovery Fee', 'recoveryFee', 'val-dim', true)}
       ${pnlRow('Commission', 'commission', 'val-dim', true)}
       ${pnlRow('Rent', 'rent', 'val-dim', true)}
       ${pnlRow('Marketplace Deduction', 'mktDeduct', 'val-dim', true)}
-      ${pnlRow('Total Fees', 'totalFees', 'val-neg')}
+      ${pnlRow('Channel charges', 'channelCharges', 'val-neg')}
+      <tr><td colspan="${colSpan}" style="font-size:10px;color:var(--muted);padding:6px 14px;">Internal overhead allocation (not a channel charge)</td></tr>
+      ${pnlRow('Overhead Fee', 'ohFee', 'val-dim', true)}
+      ${pnlRow('OB Surcharge', 'surcharge', 'val-dim', true)}
+      ${pnlRow('Total incl. internal overhead', 'totalFees', 'val-neg')}
 
+      ${/* v1.8.13 E-D7: discounts are already inside total_revenue - a memo line, not a deduction before Net Profit */''}
       ${total.discounts > 0 ? `
-      <tr style="background:var(--bg3);"><td colspan="${colSpan}" style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;padding:8px 14px;">Discounts &amp; Promos</td></tr>
-      ${pnlRow('Discounts/Promos', 'discounts', 'val-neg', true)}
+      <tr style="opacity:.6;"><td colspan="${colSpan}" style="font-size:10px;font-style:italic;color:var(--muted);padding:6px 14px;">Memo</td></tr>
+      <tr style="opacity:.6;font-style:italic;"><td style="padding-left:24px;color:var(--muted);font-size:11px;">Discounts (memo, already deducted in revenue)</td>
+        ${months.map(m => `<td class="text-right val-dim">${$$(m.discounts||0)}</td>`).join('')}
+        <td class="text-right val-dim" style="border-left:2px solid var(--border2);">${$$(total.discounts)}</td>
+        ${hasPrior ? `<td class="text-right val-dim" style="border-left:1px solid var(--border);">${$$(priorTotal.discounts)}</td><td></td>` : ''}
+      </tr>
       ` : ''}
 
       <tr style="background:rgba(45,212,160,.08);border-top:2px solid var(--green);"><td style="font-weight:700;font-size:14px;color:var(--green);">Net Profit</td>
@@ -4117,9 +5075,10 @@ function renderPnlTable(months, priorByMonth, mktByMonth, priorMktByMonth, wfCha
         ${varCell(total.netProfit, priorTotal.netProfit, total.netProfit>=0?'val-pos':'val-neg')}
       </tr>
       <tr><td style="color:var(--muted);font-size:11px;">Net Margin %</td>
-        ${months.map(m => `<td class="text-right" style="font-size:11px;">${m.grossRevenue>0?pct((m.netProfit/m.grossRevenue)*100):'—'}</td>`).join('')}
-        <td class="text-right" style="font-size:11px;border-left:2px solid var(--border2);">${total.grossRevenue>0?pct((total.netProfit/total.grossRevenue)*100):'—'}</td>
-        ${hasPrior ? `<td class="text-right val-dim" style="font-size:11px;border-left:1px solid var(--border);">${priorTotal.grossRevenue>0?pct((priorTotal.netProfit/priorTotal.grossRevenue)*100):'—'}</td><td></td>` : ''}
+        ${/* v1.8.13 E-D7: Net Margin denominator = total_revenue (as every other page), was gross_revenue */''}
+        ${months.map(m => `<td class="text-right" style="font-size:11px;">${m.revenue>0?pct((m.netProfit/m.revenue)*100):'—'}</td>`).join('')}
+        <td class="text-right" style="font-size:11px;border-left:2px solid var(--border2);">${total.revenue>0?pct((total.netProfit/total.revenue)*100):'—'}</td>
+        ${hasPrior ? `<td class="text-right val-dim" style="font-size:11px;border-left:1px solid var(--border);">${priorTotal.revenue>0?pct((priorTotal.netProfit/priorTotal.revenue)*100):'—'}</td><td></td>` : ''}
       </tr>
       ${(() => {
         // ── MARKETING EXPENSE (Build 2) ──────────────────────────────────
@@ -4544,8 +5503,8 @@ async function runCustomReport() {
     if (source === 'sales') {
       const buildSalesQ = () => {
         let q = shFrom()
-          .select('sale_date,sale_channel,sku,product_name,brand_name,qty_sold,sale_price,total_revenue,total_cost,total_fees,net_profit,profit_margin')
-          .gte('sale_date', from).lte('sale_date', to);
+          .select('id,order_id,sale_date,sale_channel,sku,product_name,brand_name,qty_sold,sale_price,total_revenue,total_cost,total_fees,net_profit,profit_margin')
+          .gte('sale_date', from).lte('sale_date', to);   // v1.8.13 E-D8: + id, order_id
         if (chFilter) q = q.eq('sale_channel', chFilter);
         return q;
       };
@@ -4594,13 +5553,13 @@ async function runCustomReport() {
       }
       else key = r[groupBy] || 'Unknown';
 
-      if (!grouped[key]) grouped[key] = { _key:key, revenue:0, cost:0, fees:0, profit:0, units:0, orders:0 };
+      if (!grouped[key]) grouped[key] = { _key:key, revenue:0, cost:0, fees:0, profit:0, units:0, orders:0, _ok:new Set() };
       grouped[key].revenue += parseFloat(r.total_revenue)||0;
       grouped[key].cost    += parseFloat(r.total_cost)||0;
       grouped[key].fees    += parseFloat(r.total_fees)||0;
       grouped[key].profit  += parseFloat(r.net_profit)||0;
       grouped[key].units   += parseInt(r.qty_sold)||0;
-      grouped[key].orders  += 1;
+      grouped[key]._ok.add(frOrderKey(r)); grouped[key].orders = grouped[key]._ok.size;   // v1.8.13 E-D8: distinct orders
     });
 
     let rows = Object.values(grouped).map(g => ({
@@ -4638,7 +5597,7 @@ async function runCustomReport() {
       }).join('')}</tbody>
       <tfoot><tr style="background:var(--bg3);">
         <td style="padding:10px 14px;font-size:11px;color:var(--muted);">${rows.length} groups</td>
-        <td class="text-right">${num(rows.reduce((s,r)=>s+r.orders,0))}</td>
+        <td class="text-right">${num(countDistinctOrders(data))}</td>${/* v1.8.13 E-D8: distinct across all rows (an order can span groups) */''}
         <td class="text-right">${num(rows.reduce((s,r)=>s+r.units,0))}</td>
         <td class="text-right val-gold">${$$(rows.reduce((s,r)=>s+r.revenue,0))}</td>
         <td class="text-right val-dim">${$$(rows.reduce((s,r)=>s+r.cost,0))}</td>
@@ -4676,8 +5635,8 @@ async function loadGeoReport() {
   // Sales with Shippo match
   const sales = await sbFetchAll(() => {
     let q = shFrom()
-      .select('id,total_revenue,net_profit,actual_shipping_cost,ob_shipping,sale_channel')
-      .gte('sale_date', from).lte('sale_date', to).not('actual_shipping_cost','is',null);
+      .select('id,order_id,total_revenue,net_profit,actual_shipping_cost,ob_shipping,sale_channel')
+      .gte('sale_date', from).lte('sale_date', to).not('actual_shipping_cost','is',null);   // v1.8.13 E-D8: + order_id
     if (chDb) q = q.eq('sale_channel', chDb);
     return q;
   });
@@ -4694,11 +5653,11 @@ async function loadGeoReport() {
     const sp = shippoMap[r.id];
     if (!sp) return;
     const st = sp.recipient_state;
-    if (!byState[st]) byState[st] = { state:st, revenue:0, profit:0, shipCost:0, orders:0, carriers:{} };
+    if (!byState[st]) byState[st] = { state:st, revenue:0, profit:0, shipCost:0, orders:0, carriers:{}, _ok:new Set() };
     byState[st].revenue += parseFloat(r.total_revenue)||0;
     byState[st].profit += parseFloat(r.net_profit)||0;
     byState[st].shipCost += parseFloat(r.actual_shipping_cost)||0;
-    byState[st].orders++;
+    byState[st]._ok.add(frOrderKey(r)); byState[st].orders = byState[st]._ok.size;   // v1.8.13 E-D8: distinct orders
     const carrier = sp.carrier || 'Unknown';
     byState[st].carriers[carrier] = (byState[st].carriers[carrier]||0) + 1;
   });
@@ -4794,19 +5753,24 @@ async function loadCustomerReport() {
 
   const data = await sbFetchAll(() => {
     let q = shFrom()
-      .select('order_id,buyer_email,total_revenue,net_profit,sale_date,sale_channel,qty_sold')
+      .select('id,order_id,buyer_email,total_revenue,net_profit,sale_date,sale_channel,qty_sold')   // v1.8.13 E-D8: + id
       .gte('sale_date', from).lte('sale_date', to);
     if (chDb) q = q.eq('sale_channel', chDb);
     return q;
   });
 
-  // Group by buyer (use buyer_email or order_id as key)
+  // v1.8.13 E-D12: a customer is a buyer_email. Lines without one are keyed per ORDER, flagged hasEmail:false,
+  // counted as "no-email orders" and EXCLUDED from repeat-rate math (an order is not a person).
+  // v1.8.13 E-D8: orders per buyer = distinct order keys (was one per row).
   const byBuyer = {};
+  let emailLines = 0;
   (data||[]).forEach(r => {
-    const key = r.buyer_email || r.order_id || '?';
-    if (!byBuyer[key]) byBuyer[key] = { buyer:key, orders:0, revenue:0, profit:0, units:0, firstDate:r.sale_date, lastDate:r.sale_date, channels:new Set() };
+    const email = (r.buyer_email || '').trim();
+    if (email) emailLines++;
+    const key = email || ('no-email · ' + (r.order_id || ('row ' + r.id)));
+    if (!byBuyer[key]) byBuyer[key] = { buyer:key, hasEmail:!!email, orders:0, revenue:0, profit:0, units:0, firstDate:r.sale_date, lastDate:r.sale_date, channels:new Set(), _ok:new Set() };
     const b = byBuyer[key];
-    b.orders++;
+    b._ok.add(frOrderKey(r)); b.orders = b._ok.size;
     b.revenue += parseFloat(r.total_revenue)||0;
     b.profit += parseFloat(r.net_profit)||0;
     b.units += parseInt(r.qty_sold)||0;
@@ -4823,16 +5787,22 @@ async function loadCustomerReport() {
     lastDate: b.lastDate?.substring(0,10)
   })).sort((a,b) => b.revenue - a.revenue);
 
-  const total = customerData.length;
-  const repeat = customerData.filter(c => c.orders > 1).length;
-  const single = customerData.filter(c => c.orders === 1).length;
-  const avgLTV = total > 0 ? customerData.reduce((s,c)=>s+c.revenue,0)/total : 0;
+  // v1.8.13 E-D12: repeat / one-time / LTV over email-keyed customers only
+  const emailCust = customerData.filter(c => c.hasEmail);
+  const total = emailCust.length;
+  const repeat = emailCust.filter(c => c.orders > 1).length;
+  const single = emailCust.filter(c => c.orders === 1).length;
+  const avgLTV = total > 0 ? emailCust.reduce((s,c)=>s+c.revenue,0)/total : 0;
+  const noEmailOrders = customerData.filter(c => !c.hasEmail).reduce((s,c)=>s+c.orders,0);
+  const lineCount = (data||[]).length;
+  const coverage = lineCount > 0 ? (emailLines / lineCount * 100) : 0;
 
   document.getElementById('customerKpis').innerHTML = `
-    <div class="kpi-card"><div class="kpi-label">Total Customers</div><div class="kpi-value">${num(total)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Repeat Buyers</div><div class="kpi-value val-pos">${num(repeat)} (${total>0?(repeat/total*100).toFixed(0):'0'}%)</div></div>
+    <div class="kpi-card"><div class="kpi-label">Total Customers (by email)</div><div class="kpi-value">${num(total)}</div><div class="kpi-delta neutral">+ ${num(noEmailOrders)} no-email orders</div></div>
+    <div class="kpi-card"><div class="kpi-label">Repeat Buyers</div><div class="kpi-value val-pos">${num(repeat)} (${total>0?(repeat/total*100).toFixed(0):'0'}%)</div><div class="kpi-delta neutral">email-keyed customers only</div></div>
     <div class="kpi-card"><div class="kpi-label">One-Time Buyers</div><div class="kpi-value">${num(single)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Avg Lifetime Value</div><div class="kpi-value">${$$(avgLTV)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Email coverage</div><div class="kpi-value">${coverage.toFixed(0)}%</div><div class="kpi-delta neutral">Email coverage: ${coverage.toFixed(1)}% of lines have a buyer email</div></div>
   `;
   renderCustomerTable();
 }
@@ -4882,7 +5852,7 @@ async function loadTrendsReport() {
 
   // Pull ALL sales for full trend picture (not date-filtered)
   const data = await sbFetchAll(() => shFrom()
-    .select('sale_date,sale_channel,total_revenue,net_profit,qty_sold')
+    .select('id,order_id,sale_date,sale_channel,total_revenue,net_profit,qty_sold')   // v1.8.13 E-D8: + id, order_id
     .order('sale_date'));
 
   // Monthly revenue trend
@@ -4890,13 +5860,14 @@ async function loadTrendsReport() {
   const byMonthCh = {};
   const byDow = { 0:{ day:'Sun',rev:0,orders:0 }, 1:{ day:'Mon',rev:0,orders:0 }, 2:{ day:'Tue',rev:0,orders:0 },
     3:{ day:'Wed',rev:0,orders:0 }, 4:{ day:'Thu',rev:0,orders:0 }, 5:{ day:'Fri',rev:0,orders:0 }, 6:{ day:'Sat',rev:0,orders:0 } };
+  Object.values(byDow).forEach(d => { d._ok = new Set(); });   // v1.8.13 E-D8
 
   (data||[]).forEach(r => {
     const mo = r.sale_date.substring(0,7);
-    if (!byMonth[mo]) byMonth[mo] = { revenue:0, profit:0, orders:0, units:0 };
+    if (!byMonth[mo]) byMonth[mo] = { revenue:0, profit:0, orders:0, units:0, _ok:new Set() };
     byMonth[mo].revenue += parseFloat(r.total_revenue)||0;
     byMonth[mo].profit += parseFloat(r.net_profit)||0;
-    byMonth[mo].orders++;
+    byMonth[mo]._ok.add(frOrderKey(r)); byMonth[mo].orders = byMonth[mo]._ok.size;   // v1.8.13 E-D8: distinct orders
     byMonth[mo].units += parseInt(r.qty_sold)||0;
 
     // By channel per month
@@ -4909,7 +5880,7 @@ async function loadTrendsReport() {
     const d = new Date(r.sale_date.substring(0,10) + 'T12:00:00');
     const dow = d.getDay();
     byDow[dow].rev += parseFloat(r.total_revenue)||0;
-    byDow[dow].orders++;
+    byDow[dow]._ok.add(frOrderKey(r)); byDow[dow].orders = byDow[dow]._ok.size;   // v1.8.13 E-D8
   });
 
   const months = Object.keys(byMonth).sort();
@@ -6000,7 +6971,7 @@ async function loadEtsyAdsReport() {
   // Fetch PPC spend from Etsy Ledger API in parallel with sales query
   const [salesResult, adSpend] = await Promise.all([
     sbFetchAll(() => shFrom()
-      .select('sku,product_name,sale_price,total_revenue,net_profit,total_cost,transaction_fee,total_fees,qty_sold,sale_date')
+      .select('sku,product_name,sale_price,total_revenue,net_profit,total_cost,transaction_fee,etsy_offsite_ads_fee,total_fees,qty_sold,sale_date')   // v1.8.13 E-D14: + etsy_offsite_ads_fee
       .eq('sale_channel', 'etsy')
       .gte('sale_date', from).lte('sale_date', to)),
     fetchEtsyAdSpend(from, to)
@@ -6011,18 +6982,19 @@ async function loadEtsyAdsReport() {
 
   const data = salesResult;
 
-  // Etsy offsite ads charge 12% transaction fee vs 6.5% organic
-  // Detect by checking if transaction_fee / total_revenue > 0.09 (midpoint)
-  let organic = { count:0, revenue:0, profit:0, fees:0, txnFees:0 };
-  let offsite = { count:0, revenue:0, profit:0, fees:0, txnFees:0 };
+  // v1.8.13 E-D14: an offsite-ad sale is a row with etsy_offsite_ads_fee > 0, and the fee is that column's amount.
+  // Was: transaction_fee/revenue > 9% detection and a hardcoded 5.5% "extra fee" guess.
+  let organic = { count:0, revenue:0, profit:0, fees:0, txnFees:0, offsiteFees:0 };
+  let offsite = { count:0, revenue:0, profit:0, fees:0, txnFees:0, offsiteFees:0 };
   const bySku = {};
 
   (data||[]).forEach(r => {
     const rev = parseFloat(r.total_revenue)||0;
     const txn = parseFloat(r.transaction_fee)||0;
-    const txnRate = rev > 0 ? txn/rev : 0;
-    const isOffsite = txnRate > 0.09;
+    const offFee = parseFloat(r.etsy_offsite_ads_fee)||0;   // v1.8.13 E-D14
+    const isOffsite = offFee > 0;
     const bucket = isOffsite ? offsite : organic;
+    bucket.offsiteFees += offFee;
     bucket.count++;
     bucket.revenue += rev;
     bucket.profit += parseFloat(r.net_profit)||0;
@@ -6035,8 +7007,7 @@ async function loadEtsyAdsReport() {
       bySku[k].adSales++;
       bySku[k].adRev += rev;
       bySku[k].adProfit += parseFloat(r.net_profit)||0;
-      // Extra fee = (12% - 6.5%) * revenue = 5.5% penalty
-      bySku[k].adFeeExtra += rev * 0.055;
+      bySku[k].adFeeExtra += offFee;   // v1.8.13 E-D14: actual offsite ads fee (was rev * 0.055)
     } else {
       bySku[k].orgSales++;
       bySku[k].orgRev += rev;
@@ -6046,14 +7017,14 @@ async function loadEtsyAdsReport() {
 
   etsyAdsData = { organic, offsite, adSpend, bySku: Object.values(bySku).filter(s=>s.adSales>0).sort((a,b)=>b.adFeeExtra-a.adFeeExtra) };
 
-  const totalExtra = offsite.revenue * 0.055;
+  const totalExtra = offsite.offsiteFees;   // v1.8.13 E-D14: actual (was offsite.revenue * 0.055)
   const organicMargin = organic.revenue > 0 ? (organic.profit/organic.revenue*100) : 0;
   const offsiteMargin = offsite.revenue > 0 ? (offsite.profit/offsite.revenue*100) : 0;
 
   document.getElementById('etsyAdsKpis').innerHTML = `
     <div class="kpi-card"><div class="kpi-label">Organic Sales</div><div class="kpi-value">${num(organic.count)}</div><div style="font-size:10px;color:var(--muted);">Margin: ${pct(organicMargin)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Offsite Ad Sales</div><div class="kpi-value val-neg">${num(offsite.count)}</div><div style="font-size:10px;color:var(--muted);">Margin: ${pct(offsiteMargin)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Extra Fee (5.5% penalty)</div><div class="kpi-value val-neg">${$$(totalExtra)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Offsite Ads Fees (actual)</div><div class="kpi-value val-neg">${$$(totalExtra)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Ad % of Etsy Sales</div><div class="kpi-value">${(organic.count+offsite.count)>0?((offsite.count/(organic.count+offsite.count))*100).toFixed(1)+'%':'—'}</div></div>
   `;
 
@@ -6065,18 +7036,18 @@ async function loadEtsyAdsReport() {
       <div class="data-table-wrap"><table class="data-table">
         <thead><tr><th></th><th class="text-right">Sales</th><th class="text-right">Revenue</th><th class="text-right">Fees</th><th class="text-right">Profit</th><th class="text-right">Margin</th></tr></thead>
         <tbody>
-          <tr><td style="font-weight:500;color:var(--green);">Organic (6.5%)</td>
+          <tr><td style="font-weight:500;color:var(--green);">Organic</td>
             <td class="text-right">${num(organic.count)}</td><td class="text-right val-gold">${$$(organic.revenue)}</td>
             <td class="text-right val-dim">${$$(organic.fees)}</td><td class="text-right val-pos">${$$(organic.profit)}</td>
             <td class="text-right">${pct(organicMargin)}</td></tr>
-          <tr><td style="font-weight:500;color:var(--red);">Offsite Ads (12%)</td>
+          <tr><td style="font-weight:500;color:var(--red);">Offsite Ads (fee &gt; 0)</td>
             <td class="text-right">${num(offsite.count)}</td><td class="text-right val-gold">${$$(offsite.revenue)}</td>
             <td class="text-right val-dim">${$$(offsite.fees)}</td><td class="text-right ${offsite.profit>=0?'val-pos':'val-neg'}">${$$(offsite.profit)}</td>
             <td class="text-right">${pct(offsiteMargin)}</td></tr>
         </tbody>
       </table></div>
     </div>
-    <div style="font-size:12px;color:var(--text);margin-bottom:8px;font-weight:500;">SKUs with Offsite Ad Sales (sorted by extra fee impact)</div>
+    <div style="font-size:12px;color:var(--text);margin-bottom:8px;font-weight:500;">SKUs with Offsite Ad Sales (sorted by offsite ads fee)</div>
     <div class="data-table-wrap"><table class="data-table">
       <thead><tr>
         <th style="cursor:pointer;" onclick="sortTable('eads','sku',etsyAdsData.bySku,renderEtsyAdsSkuTable)">SKU ${sArr('eads','sku')}</th>
@@ -6084,7 +7055,7 @@ async function loadEtsyAdsReport() {
         <th class="text-right" style="cursor:pointer;" onclick="sortTable('eads','orgSales',etsyAdsData.bySku,renderEtsyAdsSkuTable)">Organic ${sArr('eads','orgSales')}</th>
         <th class="text-right" style="cursor:pointer;" onclick="sortTable('eads','adSales',etsyAdsData.bySku,renderEtsyAdsSkuTable)">Ad Sales ${sArr('eads','adSales')}</th>
         <th class="text-right" style="cursor:pointer;" onclick="sortTable('eads','adRev',etsyAdsData.bySku,renderEtsyAdsSkuTable)">Ad Revenue ${sArr('eads','adRev')}</th>
-        <th class="text-right" style="cursor:pointer;" onclick="sortTable('eads','adFeeExtra',etsyAdsData.bySku,renderEtsyAdsSkuTable)">Extra Fee ${sArr('eads','adFeeExtra')}</th>
+        <th class="text-right" style="cursor:pointer;" onclick="sortTable('eads','adFeeExtra',etsyAdsData.bySku,renderEtsyAdsSkuTable)">Offsite Ads Fee ${sArr('eads','adFeeExtra')}</th>
         <th class="text-right">Ad Profit</th>
       </tr></thead>
       <tbody id="etsyAdsSkuBody">${renderEtsyAdsSkuRows()}</tbody>
@@ -6273,7 +7244,7 @@ function exportEtsyAdsExcel() {
   // Offsite Ads ROI sheet
   if (d.bySku?.length) {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['SKU','Product','Organic Sales','Ad Sales','Organic Rev','Ad Rev','Extra Fee (5.5%)','Ad Profit'],
+      ['SKU','Product','Organic Sales','Ad Sales','Organic Rev','Ad Rev','Offsite Ads Fee','Ad Profit'],   // v1.8.13 E-D14 export parity
       ...d.bySku.map(s => [s.sku, s.product, s.orgSales, s.adSales, parseFloat(s.orgRev.toFixed(2)), parseFloat(s.adRev.toFixed(2)), parseFloat(s.adFeeExtra.toFixed(2)), parseFloat(s.adProfit.toFixed(2))])
     ]);
     XLSX.utils.book_append_sheet(wb, ws, 'Offsite Ads ROI');
@@ -6290,7 +7261,7 @@ function exportEtsyAdsExcel() {
     ['Organic Revenue', parseFloat((d.organic?.revenue || 0).toFixed(2))],
     ['Offsite Ad Sales', d.offsite?.count || 0],
     ['Offsite Ad Revenue', parseFloat((d.offsite?.revenue || 0).toFixed(2))],
-    ['Extra Fee (5.5% penalty)', parseFloat(((d.offsite?.revenue || 0) * 0.055).toFixed(2))]
+    ['Offsite Ads Fees (actual)', parseFloat(((d.offsite?.offsiteFees || 0)).toFixed(2))]   // v1.8.13 E-D14 export parity
   ]);
   XLSX.utils.book_append_sheet(wb, sumWs, 'Summary');
 
@@ -6411,8 +7382,8 @@ async function exportPnlExcel() {
   }
   sbFetchAll(() => {
     let exq = shFrom()
-      .select('sale_date,sale_channel,total_revenue,gross_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount,ob_shipping,actual_shipping_cost')
-      .gte('sale_date', from).lte('sale_date', to);
+      .select('id,order_id,sale_date,sale_channel,total_revenue,gross_revenue,total_cost,oh_fee,surcharge,transaction_fee,cc_fee,listing_fee,etsy_offsite_ads_fee,wayfair_fee,recovery_fee,commission,rent,marketplace_deduction,total_fees,net_profit,qty_sold,discount_amount,ob_shipping,actual_shipping_cost')
+      .gte('sale_date', from).lte('sale_date', to);   // v1.8.13 E-D8 export parity: + id, order_id
     if (chDb) exq = exq.eq('sale_channel', chDb);
     return exq;
   })
@@ -6434,10 +7405,10 @@ async function exportPnlExcel() {
         m.rent += parseFloat(r.rent)||0;
         m.mktDeduct += parseFloat(r.marketplace_deduction)||0; m.totalFees += parseFloat(r.total_fees)||0;
         m.netProfit += parseFloat(r.net_profit)||0; m.discounts += parseFloat(r.discount_amount)||0;
-        m.orders++; m.units += parseInt(r.qty_sold)||0;
+        (m._ok = m._ok || new Set()).add(frOrderKey(r)); m.orders = m._ok.size; m.units += parseInt(r.qty_sold)||0;   // v1.8.13 E-D8 export parity
         // F-11 ECOSYSTEM-022 export parity — channel-guard to etsy + wix
         if (r.sale_channel === 'etsy' || r.sale_channel === 'wix') {
-          m.obShipping     += parseFloat(r.ob_shipping)||0;
+          if ((parseFloat(r.actual_shipping_cost)||0) > 0) m.obShipping += parseFloat(r.ob_shipping)||0;   // v1.8.13 E-D3 export parity
           m.actualShipping += parseFloat(r.actual_shipping_cost)||0;
         }
       });
@@ -7021,13 +7992,14 @@ async function loadMonthlyIncome() {
     });
   });
 
+  // v1.8.13 E-D2: YTD Fees / Fee Ratio include oh_fee + surcharge (internal allocations) - labelled as such
   kpiGrid.innerHTML = `
     <div class="kpi-card"><div class="kpi-label">YTD Revenue</div><div class="kpi-value">${$$(ytdRev)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">YTD Fees</div><div class="kpi-value val-neg">${$$(ytdFees)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">YTD Fees incl. internal OH</div><div class="kpi-value val-neg">${$$(ytdFees)}</div></div>
     <div class="kpi-card"><div class="kpi-label">YTD Net Profit</div><div class="kpi-value ${ytdProfit>=0?'val-pos':'val-neg'}">${$$(ytdProfit)}</div></div>
     <div class="kpi-card"><div class="kpi-label">YTD Units</div><div class="kpi-value">${ytdUnits.toLocaleString()}</div></div>
     <div class="kpi-card"><div class="kpi-label">YTD Margin</div><div class="kpi-value">${ytdRev>0?(ytdProfit/ytdRev*100).toFixed(1)+'%':'—'}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Fee Ratio</div><div class="kpi-value">${ytdRev>0?(ytdFees/ytdRev*100).toFixed(1)+'%':'—'}</div></div>`;
+    <div class="kpi-card"><div class="kpi-label">Fee Ratio incl. internal OH</div><div class="kpi-value">${ytdRev>0?(ytdFees/ytdRev*100).toFixed(1)+'%':'—'}</div></div>`;
 
   // Monthly table
   const feeKeys = [
@@ -7190,7 +8162,7 @@ function loadTmRecon() {
     monthInput.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
   }
   // v1.8.9 TM-3b: load Truth panel + §8 readout authoritatively from tm_monthly_financials
-  loadTmTruthAndReadout();
+  return loadTmTruthAndReadout();   // v1.8.14: promise returned so refreshCurrentPageAsync can await it
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -7646,7 +8618,7 @@ function initApp() {
   // Deep-link: check URL hash for direct page navigation (e.g. #pnl, #inventory, #scenarios)
   const hash = window.location.hash?.replace('#', '');
   const validPages = ['dashboard','sales','daily','channel','products','brands','shipping','inventory',
-    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp','monthlyincome','tmrecon','returns'];
+    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp','monthlyincome','tmrecon','returns','scorecard'];   // v1.8.13 F: + scorecard
   if (hash && validPages.includes(hash)) {
     navTo(hash);
   } else {
