@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.17</title>
+    <title>CCD Sync Hub v4.6.18</title>
+<!-- v4.6.18 (2026-10-06, S113, Paul — Shared\29): the Crazy Chicks room no longer lowers the online channels after an order (cap = warehouse − TreasureMarts); an Etsy push failure keeps the proxy's full answer (Etsy's own message); a failed Etsy push of 0 is logged as ETSY_OVERSELL_RISK; an Etsy push the proxy answered with deactivated/reactivated records items.etsy_state. -->
 <!-- v4.6.17 (2026-10-04, FIX-W1): the duplicate-sale check before recording a channel order line used .maybeSingle(), which ERRORS when two rows already share (order_id, sku) — and an error was treated as 'not found', so the line was inserted AGAIN. So once two copies existed, any reprocessing of that order line added another (a possible contributor to the 152 duplicate (order_id, sku) groups; not proven). The check now reads up to one row with .limit(1); a failed check is logged. Nothing else changed. Spec: APP-FIXES-2026-10-04.md -->
 <!-- v4.6.16 (S102): the online cap after an order is warehouse − TreasureMarts − CRAZY CHICKS (it left Crazy Chicks out, so online channels could show booth stock). Display: "total" = warehouse (booth units are inside it, not on top); the Wayfair list shows both booths. -->
 <!-- v4.6.15 (S101 · P3, census claude\CCD-S101-P3-Writer-Census.md): (1) W3 — before deducting an order line, the item is RE-READ from the database (the item cache is only loaded at connect/Refresh and could be hours old), and the save writes ONLY qty + etsy/wix/wayfair qty + last_sold_date (+ a Wayfair SKU learned by the matcher), not the whole cached row; a failed re-read HOLDS the order with nothing written. (2) W1 — a Set/bundle line is sold by the family engine (ccd_sell_composite, ref per order line so a re-run cannot take pieces twice) BEFORE any other save in the order; a refusal holds the order. Its own cascade rows are skipped (the engine queues them). (3) W2 — cancelling a Set/bundle sale goes to ccd_reverse_composite_sale (pieces restored). (4) saveItemToSupabase failures now reach the Log, and an order-line save failure raises a toast instead of logging a success. On a database without the engine every item reads as 'single' and only (1) and (4) change behaviour. -->
@@ -430,7 +431,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.17 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.18 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -895,7 +896,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.17';   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.18';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4375,7 +4376,9 @@
         // at (warehouse − TM) and could show units sitting at the Crazy Chicks booth. Same formula as V2's ccdAvailOnline.
         const tmQty = parseInt(channels.treasuremarts) || 0;
         const ccQty = parseInt(channels.crazychicks) || 0;
-        const availableForOnline = Math.max(0, warehouseQty - tmQty - ccQty);
+        // v4.6.18 (S113, Paul 2026-10-06): the Crazy Chicks room NO LONGER lowers online — only TreasureMarts does.
+        // V2 2.9.90 / Mobile 4.5.9 warn instead (online + room + hold-back > warehouse); nothing is changed for them.
+        const availableForOnline = Math.max(0, warehouseQty - tmQty) + ccQty * 0;
         
         // ==========================================================================
         // VALIDATION v3.3.5.11 - Snapshot physical location allocations
@@ -8584,6 +8587,7 @@
             productId: fields.productId || null,
             wixVariantId: fields.wixVariantId || fields.variantId || null,  // v4.1.3: variant-level targeting
             etsyVariantId: fields.etsyVariantId || null,  // v4.6.14 (S101): Etsy variation targeting
+            reactivate: fields.reactivate === true,       // v4.6.18 (S113)
             wayfairSku: fields.wayfairSku || null,
             // v4.2.6: Content fields — Channel Manager sends title/description/tags for content pushes
             name: fields.title || fields.name || fields.productName || '',
@@ -8644,8 +8648,9 @@
                 
                 logActivity('sync', 'queue_push_success', channel,
                     `✅ ${fields.sku}: ${channel} push via sync_queue`,
-                    { sku: fields.sku, channel, result: result.message, queueId: row.id }
+                    { sku: fields.sku, channel, result: result.message, queueId: row.id, etsy_action: result.action || null, listing_state: result.listing_state || null }
                 );
+                if (channel === 'etsy') await shRecordEtsyState(row, fields, result);   // v4.6.18
             } else {
                 // Push failed — increment retry
                 const newRetry = (row.retry_count || 0) + 1;
@@ -8655,12 +8660,19 @@
                 // the backoff filter at ~7518 can anchor on last-attempt time.
                 // Without this, retry-pending rows have NULL processed_at →
                 // lastAt=0 → backoff bypassed (the v4.4.20 silent regression).
+                // v4.6.18 (S113): keep the proxy's FULL answer — "API error: 400" alone hid Etsy's reason (Shared\29 §3.2)
+                const _fullErr = [result?.error || 'Unknown error', result?.message, result?.details].filter(x => x && typeof x === 'string').join(' — ').slice(0, 900);
                 await sbClient.from('sync_queue').update({
                     status: newStatus,
                     retry_count: newRetry,
-                    error_message: result?.error || 'Unknown error',
+                    error_message: _fullErr,
                     processed_at: new Date().toISOString()
                 }).eq('id', row.id);
+                if (channel === 'etsy' && parseInt(fields.quantity) === 0) {   // v4.6.18: an Etsy 0 that did not land is an open oversell risk
+                    addLog(`🔴 OVERSELL RISK — Etsy still shows ${fields.sku} for sale: the push of 0 failed (${_fullErr}). Deactivate it on Etsy by hand if this does not clear.`, 'error');
+                    logActivity('error', 'ETSY_OVERSELL_RISK', 'etsy', `🔴 ${fields.sku}: Etsy push of 0 failed — the listing may still be for sale (${_fullErr.slice(0, 200)})`,
+                        { sku: fields.sku, queueId: row.id, retry: newRetry, error: _fullErr, listingId: fields.listingId || null });
+                }
                 
                 console.warn(`⚠️ [Sync Queue] ${channel} push failed for ${fields.sku}: ${result?.error} (retry ${newRetry}/${SYNC_QUEUE_MAX_RETRIES})`);
                 addLog(`⚠️ ${channel.toUpperCase()} push failed: ${fields.sku} [q${row.id}] — ${result?.error} (retry ${newRetry})`, 'warning');
@@ -8771,6 +8783,26 @@
 
     // === etsyPostRequest (line 4961) ===
     // Legacy alias
+    // v4.6.18 (S113): record what the Etsy proxy (v1.0.32+) did to the listing — the same rule as edge v1.1.5.
+    // 'deactivated' = CCD turned it off because every option reached 0 (by 'ccd'); 'reactivated' = turned back on after a
+    // person said yes; 'none' = it was already off. Never throws; a proxy before v1.0.32 answers no state and nothing is written.
+    async function shRecordEtsyState(row, fields, result) {
+        try {
+            const valid = ['active', 'inactive', 'sold_out', 'expired', 'draft', 'removed', 'unknown'];
+            const st = result && result.listing_state;
+            if (!row.item_id || !st || !valid.includes(st)) return;
+            const by = result.action === 'deactivated' ? 'ccd' : 'push';
+            const { error } = await sbClient.from('items').update({ etsy_state: st, etsy_state_at: new Date().toISOString(), etsy_state_by: by }).eq('id', row.item_id);
+            if (error) console.warn('[Etsy state] not recorded:', error.message);
+            if (result.action === 'deactivated' || result.action === 'reactivated') {
+                logActivity('sync', result.action === 'deactivated' ? 'ETSY_LISTING_DEACTIVATED' : 'ETSY_LISTING_REACTIVATED', 'etsy',
+                    `${fields.sku}: Etsy listing ${fields.listingId || ''} ${result.action} by the push (Sync Hub)`,
+                    { sku: fields.sku, queueId: row.id, listingId: fields.listingId || null, listing_state: st, quantity: fields.quantity, tool_version: SH_VERSION });
+                addLog(`${result.action === 'deactivated' ? '⏸' : '▶'} Etsy ${fields.sku}: listing ${result.action}`, 'info');
+            }
+        } catch (e) { console.warn('[Etsy state] threw:', e.message); }
+    }
+
     async function etsyPostRequest(url, data) {
         return await corsSafePost(url, data);
     }
@@ -8791,6 +8823,7 @@
         // v4.6.14 (S101): target the variation by ID when known (Etsy proxy v1.0.24+).
         const _etsyVid = product.etsyVariantId || product.etsy_variant_id || null;
         if (_etsyVid) data.product_id = String(_etsyVid);
+        if (product.reactivate === true) data.reactivate = 1;   // v4.6.18: only when the row says a person said yes
         return await etsyPostRequest(url, data);
     }
 
