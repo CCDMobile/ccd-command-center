@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.18</title>
+    <title>CCD Sync Hub v4.6.19</title>
+<!-- v4.6.19 (2026-10-07, S113): an Etsy order that brings Etsy to 0 records items.etsy_state = sold_out (by order), unless another item on the same listing still has Etsy stock. -->
 <!-- v4.6.18 (2026-10-06, S113, Paul — Shared\29): the Crazy Chicks room no longer lowers the online channels after an order (cap = warehouse − TreasureMarts); an Etsy push failure keeps the proxy's full answer (Etsy's own message); a failed Etsy push of 0 is logged as ETSY_OVERSELL_RISK; an Etsy push the proxy answered with deactivated/reactivated records items.etsy_state. -->
 <!-- v4.6.17 (2026-10-04, FIX-W1): the duplicate-sale check before recording a channel order line used .maybeSingle(), which ERRORS when two rows already share (order_id, sku) — and an error was treated as 'not found', so the line was inserted AGAIN. So once two copies existed, any reprocessing of that order line added another (a possible contributor to the 152 duplicate (order_id, sku) groups; not proven). The check now reads up to one row with .limit(1); a failed check is logged. Nothing else changed. Spec: APP-FIXES-2026-10-04.md -->
 <!-- v4.6.16 (S102): the online cap after an order is warehouse − TreasureMarts − CRAZY CHICKS (it left Crazy Chicks out, so online channels could show booth stock). Display: "total" = warehouse (booth units are inside it, not on top); the Wayfair list shows both booths. -->
@@ -431,7 +432,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.18 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.19 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -896,7 +897,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.18';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.19';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -5226,6 +5227,7 @@
                                 source: 'sync_hub_order'
                             }
                         );
+                        if (srcCh === 'etsy' && (product.channels[srcCh] || 0) === 0) await shMarkEtsySoldOut(product, orderId);   // v4.6.19
                     }
                     
                     // v2.1.0: Auto-adjust channel allocations after order
@@ -8801,6 +8803,21 @@
                 addLog(`${result.action === 'deactivated' ? '⏸' : '▶'} Etsy ${fields.sku}: listing ${result.action}`, 'info');
             }
         } catch (e) { console.warn('[Etsy state] threw:', e.message); }
+    }
+
+    // v4.6.19 (S113): Etsy sold the listing out itself — record it, since no push goes back to Etsy after its own sale.
+    // Never throws. Skipped when another item on the listing still has Etsy stock (the listing stays live for it).
+    async function shMarkEtsySoldOut(product, orderId) {
+        try {
+            const lid = product.etsyListingId || product.etsyListing;
+            if (!product.id || !lid) return;
+            const { data: others, error: oErr } = await sbClient.from('items').select('id').eq('etsy_listing_id', lid).neq('id', product.id).gt('etsy_qty', 0).limit(1);
+            if (oErr || (others && others.length)) return;
+            const { error } = await sbClient.from('items').update({ etsy_state: 'sold_out', etsy_state_at: new Date().toISOString(), etsy_state_by: 'order' }).eq('etsy_listing_id', lid);
+            if (error) { console.warn('[Etsy state] sold_out not recorded:', error.message); return; }
+            logActivity('sync', 'ETSY_LISTING_SOLD_OUT', 'etsy', `${product.sku}: Etsy listing ${lid} sold out on Etsy (order ${orderId}) — recorded`,
+                { sku: product.sku, listingId: lid, orderId, by: 'order', tool_version: SH_VERSION });
+        } catch (e) { console.warn('[Etsy state] sold_out threw:', e.message); }
     }
 
     async function etsyPostRequest(url, data) {
