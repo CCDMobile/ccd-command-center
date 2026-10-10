@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.19</title>
+    <title>CCD Sync Hub v4.6.20</title>
+<!-- v4.6.20 (2026-10-09, S114): an order's cascade sends the numbers the order saved (never a cache re-lookup a realtime echo can replace); the Etsy sold-out is recorded after the cascade; one push per queue row at a time in this tab. -->
 <!-- v4.6.19 (2026-10-07, S113): an Etsy order that brings Etsy to 0 records items.etsy_state = sold_out (by order), unless another item on the same listing still has Etsy stock. -->
 <!-- v4.6.18 (2026-10-06, S113, Paul — Shared\29): the Crazy Chicks room no longer lowers the online channels after an order (cap = warehouse − TreasureMarts); an Etsy push failure keeps the proxy's full answer (Etsy's own message); a failed Etsy push of 0 is logged as ETSY_OVERSELL_RISK; an Etsy push the proxy answered with deactivated/reactivated records items.etsy_state. -->
 <!-- v4.6.17 (2026-10-04, FIX-W1): the duplicate-sale check before recording a channel order line used .maybeSingle(), which ERRORS when two rows already share (order_id, sku) — and an error was treated as 'not found', so the line was inserted AGAIN. So once two copies existed, any reprocessing of that order line added another (a possible contributor to the 152 duplicate (order_id, sku) groups; not proven). The check now reads up to one row with .limit(1); a failed check is logged. Nothing else changed. Spec: APP-FIXES-2026-10-04.md -->
@@ -432,7 +433,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.19 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.20 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -897,7 +898,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.19';   // S113   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.20';   // S114   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -4924,6 +4925,7 @@
         
         const products = getProductsArray();
         const updates = [];
+        const _shSoldOut = [];   // v4.6.20: Etsy sold-outs, recorded after the cascade rows are written
         const changes = []; // For change log
         const ccdCompositeSales = []; // v4.6.15 (S101 · P3): Set/bundle lines, sold by the family engine
         
@@ -5119,6 +5121,7 @@
                     addLog(`⚠️ SKU ${sku} not found in Master JSON`, 'warning');
                     continue;
                 }
+                item._product = product;   // v4.6.20: this order's own object — a realtime echo may REPLACE the cache entry
                 
                 // v4.6.15 (S101 · P3, census W3): re-read THIS item from the database before
                 // touching it. The item cache is loaded at connect and on Refresh only, so it can
@@ -5227,7 +5230,7 @@
                                 source: 'sync_hub_order'
                             }
                         );
-                        if (srcCh === 'etsy' && (product.channels[srcCh] || 0) === 0) await shMarkEtsySoldOut(product, orderId);   // v4.6.19
+                        if (srcCh === 'etsy' && (product.channels[srcCh] || 0) === 0) _shSoldOut.push(product);   // v4.6.19 → v4.6.20: recorded AFTER the cascade
                     }
                     
                     // v2.1.0: Auto-adjust channel allocations after order
@@ -5253,6 +5256,7 @@
                     product.etsyQty = parseInt(product.channels?.etsy ?? 0);
                     product.wixQty = parseInt(product.channels?.wix ?? 0);
                     product.wayfairQty = parseInt(product.channels?.wayfair ?? 0);
+                    item._after = { etsy: product.etsyQty, wix: product.wixQty, wayfair: product.wayfairQty };   // v4.6.20: what the cascade sends
                     
                     // Log each channel adjustment individually for detailed tracking
                     if (adjustResult.adjusted && adjustResult.changes.length > 0) {
@@ -5299,6 +5303,7 @@
                     product.totalActual = (product.qty || product.warehouseQty || 0);   // v4.6.16: booth units are inside qty, not on top
                     
                     updates.push({
+                        product: product,   // v4.6.20: save THIS object, not a fresh cache lookup
                         sku: item.resolvedSku || sku,
                         oldQty: currentQty,
                         newQty: newQty,
@@ -5433,7 +5438,7 @@
             // No collision retry needed — Supabase handles concurrent writes.
             if (updates.length > 0 && sbConnected) {
                 for (const u of updates) {
-                    const product = products.find(p => (p.sku || p.SKU) === u.sku);
+                    const product = u.product || products.find(p => (p.sku || p.SKU) === u.sku);   // v4.6.20
                     if (product) {
                         try {
                             await shSaveOrderDeduction(product);   // v4.6.15: order columns only; throws on failure
@@ -5553,13 +5558,13 @@
                 if (sku === 'UNKNOWN') continue;
                 
                 const lookupSku = item.resolvedSku || sku;
-                const product = products.find(p => (p.sku || p.SKU) === lookupSku);
+                const product = item._product || products.find(p => (p.sku || p.SKU) === lookupSku);   // v4.6.20: the order's own object
                 if (!product) continue;
-                
+
                 if (product.itemRole === 'set' || product.itemRole === 'bundle') continue;   // v4.6.15: the engine queued its pushes
                 const sbId = product._sbId || product.id;
                 const sourceChannel = order.channel;
-                const channels = product.channels || {};
+                const channels = item._after || product.channels || {};   // v4.6.20: the numbers this order computed and saved
                 
                 // Etsy cascade
                 if ((product.etsyListingId || product.etsyListing) && sourceChannel !== 'etsy') {
@@ -5735,6 +5740,10 @@
             );
         }
         
+        // v4.6.20: the Etsy sell-out is recorded only now — writing it earlier made a realtime echo replace the cached item
+        // mid-order (530042, 2026-10-08: Wix was sent 1 with the warehouse at 0).
+        for (const _p of _shSoldOut) await shMarkEtsySoldOut(_p, orderId);
+
         // Mark order as processed
         markOrderProcessed(orderId);
         
@@ -8509,7 +8518,21 @@
         _syncQueueProcessing = false;
     }
     
+    // v4.6.20 (S114): "Process, Deduct & Push" and the poller took the same rows at the same moment (both read 'pending').
+    // A second request for a row that is being pushed waits for the first one; it never sends again.
+    const _sqInFlight = new Map();
     async function processSyncQueueRow(row, forceProcess = false) {
+        const id = row && row.id;
+        if (id != null && _sqInFlight.has(id)) {
+            console.log(`[Sync Queue] ⏭️ id=${id} is already being pushed in this tab — waiting for it, not sending again`);
+            try { await _sqInFlight.get(id); } catch (e) {}
+            return;
+        }
+        const p = processSyncQueueRowOnce(row, forceProcess);
+        if (id != null) _sqInFlight.set(id, p);
+        try { return await p; } finally { if (id != null && _sqInFlight.get(id) === p) _sqInFlight.delete(id); }
+    }
+    async function processSyncQueueRowOnce(row, forceProcess = false) {
         const fields = row.fields || {};
         const channel = row.channel;
         
