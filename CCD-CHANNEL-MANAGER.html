@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Channel Manager v2.9.5</title>
+<title>CCD Channel Manager v2.9.6</title>
+<!-- v2.9.6 (2026-10-10, S114): V2's Photographed / Description Last Updated are also filled when the Etsy draft or the hidden Wix product is created (Paul 11:37). -->
 <!-- v2.9.5 (2026-10-10, S114): a listing made live or changed from CM ticks V2's Photographed (when Images has a photo) and dates Description Last Updated (when the description went out). -->
 <!-- v2.9.4 (2026-10-10, S114): one family column list (Etsy + Wix); the Etsy create takes its numbers once at confirm; one create at a time per item. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -219,7 +220,7 @@ a.lw-btn{text-decoration:none;}
 <body>
 <div class="login-screen" id="loginScreen"><div class="login-card"><div class="login-logo">Country Charm Decor</div><div class="login-sub">Channel Manager v2.7.0</div><div class="login-field"><label>Supabase URL</label><input type="text" id="loginUrl" placeholder="https://your-project.supabase.co" autocomplete="off"></div><div class="login-field"><label>Supabase Key</label><input type="password" id="loginKey" placeholder="eyJhbGciOiJIUzI1NiIs..." autocomplete="off"></div><button class="login-btn" onclick="doConnect()">Connect</button><div class="login-status" id="loginStatus"></div><div class="login-version">v2.7.0 · 🛍 Create on Wix (hidden, reviewed, then Reveal; Country Home Decor on every listing) · 🛒 Create on Etsy (a draft, reviewed, then Go live; weight and box size from V2; sent as a supply by default) · 🗂 Drafts · Etsy-only description footer · Content Editor, Bulk Ops and the old push/create buttons taken off · 📝 Listing workspace · ⚙ Settings</div></div></div>
 <div class="app" id="appShell">
-  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.9.5</div><span class="lw-proj unknown" id="lwProjBadge">project?</span></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
+  <div class="topbar"><div class="topbar-left"><div class="topbar-brand">📡 Channel Manager</div><div class="topbar-version">v2.9.6</div><span class="lw-proj unknown" id="lwProjBadge">project?</span></div><div class="topbar-right"><button class="topbar-refresh" onclick="refreshData()" title="Reload all data from Supabase">↻ Refresh</button><div class="topbar-status"><div class="topbar-dot" id="sbDot"></div><span id="sbLabel">Connected</span></div><button class="topbar-disconnect" onclick="doDisconnect()">Disconnect</button></div></div>
   <div class="tab-bar"><button class="tab-btn active" onclick="switchTab('products',this)">📦 Products</button><button class="tab-btn" id="lwTabBtn" onclick="switchTab('listing',this)">📝 Listing</button><button class="tab-btn" onclick="switchTab('drafts',this);dvLoad();">🗂 Drafts</button><button class="tab-btn" onclick="switchTab('pricing',this)">💰 Pricing Advisor</button><button class="tab-btn" onclick="switchTab('settings',this);lwRenderSettings();">⚙ Settings</button><button class="tab-btn" id="avTabBtn" onclick="switchTab('activity',this);avLoad();">📋 Activity</button><button class="tab-btn" id="wfTabBtn" onclick="switchTab('wayfair',this);wfRender();">🟪 Wayfair</button></div>
   <div class="main">
     <div id="tabProducts" class="tab-content visible">
@@ -338,7 +339,7 @@ async function lwStampV2(why,withDesc,itemId,ch){const it=LW.item;const id=itemI
     if(done.length)logActivity('channel_manager','V2_LISTING_STAMPED',ch||'system',`${sku}: ${why} — V2: ${done.join(' · ')}`);return done;
   }catch(e){logActivity('channel_manager','V2_LISTING_STAMP_FAILED',ch||'system',`${sku}: ${why} — could not update V2's Photographed / Description Last Updated: ${String(e.message||e).slice(0,300)}`);return null;}}
 const LW_FAM_COLS='id,sku,etsy_sku,wix_sku,product_name,item_role,etsy_listing_id,etsy_variant_id,etsy_qty,etsy_price,wix_product_id,wix_variant_id,wix_qty,wix_price,shipping_weight,total_cost_basis';   /* 2.9.4: every family re-read selects Etsy AND Wix fields */
-const CM_VERSION='2.9.5',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
+const CM_VERSION='2.9.6',CM_VERSION_KEY='channelmanager',PAGE_SIZE=50,BO_PAGE_SIZE=50;
 const WORKER_URL='https://cold-field-4bb6.psmith-925.workers.dev/';
 const CHANNELS=['etsy','wix','wayfair','pinterest','instagram','facebook'];
 const CH_LABEL={etsy:'Etsy',wix:'Wix',wayfair:'Wayfair',pinterest:'Pinterest',instagram:'Instagram',facebook:'Facebook'};
@@ -1077,6 +1078,7 @@ async function lwEtsyCreate(){if(LWE.running||LWE.job)return;if(LWX.running){LWE
     if(!r.success||!r.listing_id){stage='refused';throw new Error('Etsy did not create the draft: '+lwEtsyProblem(r));}
     await lwEtsyJobSet({status:'created',remote_id:String(r.listing_id),error:null,images:{v:1,steps:{created:{at:new Date().toISOString(),sent_fields:r.sent_fields||[],description_sha256:r.description_sha256||sha,state:r.state||null,...famX}}}},'creating');
     logActivity('channel_manager','ETSY_DRAFT_CREATED','etsy',`${it.sku}: Etsy draft ${r.listing_id} created (journal ${row.id})${lwEtsyIsFam()?' for the family, '+lwEtsyFamOpts().length+' options':''}, not live`);
+    await lwStampV2('Etsy draft '+r.listing_id+' created from CM',true,null,'etsy');   /* 2.9.6 */
     LWE.running=false;await lwEtsyContinue();return;
   }catch(e){const m=String(e.message||e);
     if(LWE.job&&LWE.job.status==='creating'&&stage!=='unknown'){try{await lwEtsyJobSet({status:'failed',error:m.slice(0,1000)},'creating');}catch(e2){}LWE.lastFail=LWE.job;LWE.job=null;}
@@ -1215,6 +1217,7 @@ async function lwWixCreate(){if(lwWixIsFam())return lwWixCreateFam();if(LWX.runn
     const steps={created:{at:new Date().toISOString(),existing:!!r.existing,description_sha256:sha}};if(r.stockSet===true)steps.stock={qty:parseInt(it.wix_qty,10),at:new Date().toISOString()};
     await lwWixJobSet({status:'created',remote_id:String(r.productId),error:null,images:{v:1,steps}},'creating');
     logActivity('channel_manager','WIX_HIDDEN_CREATED','wix',`${it.sku}: hidden Wix product ${r.productId} ${r.existing?'found (already on Wix, hidden) and taken over':'created'} (journal ${row.id}), not on the site`);
+    await lwStampV2('hidden Wix product '+r.productId+' created from CM',true,null,'wix');   /* 2.9.6 */
     LWX.running=false;await lwWixContinue();return;
   }catch(e){const m=String(e.message||e);
     if(LWX.job&&LWX.job.status==='creating'&&stage!=='unknown'){try{await lwWixJobSet({status:'failed',error:m.slice(0,1000)},'creating');}catch(e2){}LWX.lastFail=LWX.job;LWX.job=null;}
@@ -2688,6 +2691,7 @@ async function lwWixCreateFam(){if(LWX.running||LWX.job)return;if(LWE.running){L
     if(r.stockSet===true)steps.stock={family:true,quantities:Object.fromEntries(os.map(o=>[o.sku,o.qty])),at:new Date().toISOString()};
     await lwWixJobSet({status:'created',remote_id:String(r.productId),error:null,images:{v:1,steps}},'creating');
     logActivity('channel_manager','WIX_HIDDEN_CREATED','wix',`${it.sku}: hidden Wix FAMILY product ${r.productId} ${r.existing?'found (already on Wix, hidden) and carried on with':'created'} with ${os.length} options (journal ${row.id}), not on the site`);
+    await lwStampV2('hidden Wix family product '+r.productId+' created from CM',true,null,'wix');   /* 2.9.6 */
     LWX.running=false;await lwWixContinue();return;
   }catch(e){const m=String(e.message||e);
     if(LWX.job&&LWX.job.status==='creating'&&stage!=='unknown'){try{await lwWixJobSet({status:'failed',error:m.slice(0,1000)},'creating');}catch(e2){}LWX.lastFail=LWX.job;LWX.job=null;}
