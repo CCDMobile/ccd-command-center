@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.22</title>
+    <title>CCD Sync Hub v4.6.23</title>
+<!-- v4.6.23 (2026-10-24, S122, KK-13): THE AUTO-PROCESSING GATE — when order_auto_apply is on, an order is processed by itself only if every item in it (and every piece of a Set) is cleared in item_auto_clearance (V2 2.9.95); any other order is held for Mary with a note; if the clearances cannot be read nothing is auto-processed. A person's Process is not gated. -->
 <!-- v4.6.22 (2026-10-23, S122, LL-6): NO ORDER DATA IN BROWSER STORAGE — the Orders list from pending_orders (pending + last 7 days, Show older), processed and cancelled from the database, the three order keys removed on load; settings saved to the database by MERGE (no longer erasing other tools' proxy URLs); the database written before the screen; Hide Processed; the Wix price push carries the SKU (II-9). -->
 <!-- v4.6.21 (2026-10-23, S121): a full browser storage can no longer stop an order half way — the localStorage save of processed order ids is caught (logged once), and the screen mark cannot stop the processed_orders write or the sale (3 orders on 10-23 were deducted and pushed but never recorded). -->
 <!-- v4.6.20 (2026-10-09, S114): an order's cascade sends the numbers the order saved (never a cache re-lookup a realtime echo can replace); the Etsy sold-out is recorded after the cascade; one push per queue row at a time in this tab. -->
@@ -435,7 +436,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.22 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.23 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -902,7 +903,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.22';   // S122 (v4.6.21: S121)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.23';   // S122 (v4.6.22: S122)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -6028,9 +6029,83 @@
     /**
      * Process all pending orders
      */
+    // v4.6.23 (S122, KK-13): THE AUTO-PROCESSING GATE. Read FRESH for every automatic batch: which items are cleared
+    // (item_auto_clearance; no row = not cleared) and the pieces of any Set / bundle in the batch (bundle_components).
+    // Returns { ok:[orders], held:[{order, why}] } — or { error } when the database cannot answer (then NOTHING is processed).
+    async function shAutoGate(orders) {
+        const lines = [];
+        for (const o of orders) for (const it of (o.items || [])) {
+            const p = getMasterJsonProduct(it.resolvedSku || it.sku);
+            lines.push({ o, it, p });
+        }
+        const ids = [...new Set(lines.filter(l => l.p && l.p.id != null).map(l => l.p.id))];
+        const setIds = [...new Set(lines.filter(l => l.p && (l.p.itemRole === 'set' || l.p.itemRole === 'bundle')).map(l => l.p.id))];
+        let pieces = {};
+        try {
+            if (setIds.length) {
+                const { data, error } = await sbClient.from('bundle_components').select('bundle_item_id, component_item_id').in('bundle_item_id', setIds);
+                if (error) throw new Error(error.message);
+                for (const r of (data || [])) (pieces[r.bundle_item_id] = pieces[r.bundle_item_id] || []).push(r.component_item_id);
+            }
+            const want = [...new Set([...ids, ...Object.values(pieces).flat()])];
+            const cleared = new Set();
+            if (want.length) {
+                const { data, error } = await sbClient.from('item_auto_clearance').select('item_id, cleared').in('item_id', want);
+                if (error) throw new Error(error.message);
+                for (const r of (data || [])) if (r.cleared === true) cleared.add(r.item_id);
+            }
+            const ok = [], held = [];
+            for (const o of orders) {
+                const why = [];
+                if (!(o.items || []).length) why.push('no items on the order');
+                for (const l of lines.filter(x => x.o === o)) {
+                    const label = (l.it.resolvedSku || l.it.sku || '?');
+                    if (!l.p) { why.push(`${label}: not found in V2`); continue; }
+                    if (l.p.itemRole === 'parent') { why.push(`${l.p.sku}: a parent is not sold`); continue; }
+                    if (!cleared.has(l.p.id)) why.push(`${l.p.sku}: not cleared`);
+                    if (l.p.itemRole === 'set' || l.p.itemRole === 'bundle') {
+                        const ps = pieces[l.p.id] || [];
+                        if (!ps.length) why.push(`${l.p.sku}: its pieces could not be found`);
+                        const notP = ps.filter(id => !cleared.has(id));
+                        if (notP.length) why.push(`${l.p.sku}: ${notP.length} of its ${ps.length} piece(s) not cleared`);
+                    }
+                }
+                if (why.length) held.push({ order: o, why: [...new Set(why)] }); else ok.push(o);
+            }
+            return { ok, held };
+        } catch (e) {
+            return { error: e.message || String(e) };
+        }
+    }
+
     async function processAllOrders(isAutoTriggered = false) {
-        const pending = state.orders.all.filter(o => !o.processed);
-        
+        let pending = state.orders.all.filter(o => !o.processed);
+
+        // v4.6.23 (S122): only an AUTOMATIC batch (order_auto_apply) is gated; a person's Process All is not.
+        if (isAutoTriggered && pending.length) {
+            const g = await shAutoGate(pending);
+            if (g.error) {
+                addLog(`⛔ Auto-processing stopped: the cleared-for-auto-processing list could not be read (${g.error}). Nothing was processed automatically — the orders wait for you.`, 'error');
+                logActivity('order', 'AUTO_PROCESS_GATE_FAILED', 'system', `Auto-processing stopped — clearances could not be read: ${g.error}`, { error: g.error, orders: pending.map(o => o.id), tool_version: SH_VERSION });
+                for (const o of pending) o.autoHold = 'Not processed automatically: the cleared list could not be read';
+                renderOrders();
+                return;
+            }
+            window.__shHeldLogged = window.__shHeldLogged || new Set();
+            for (const h of g.held) {
+                h.order.autoHold = 'Held for you — ' + h.why.join('; ');
+                if (!window.__shHeldLogged.has(h.order.id)) {
+                    window.__shHeldLogged.add(h.order.id);
+                    addLog(`✋ ${h.order.id} held for you (not auto-processed): ${h.why.join('; ')}`, 'warning');
+                    logActivity('order', 'AUTO_PROCESS_HELD', h.order.channel, `✋ ${h.order.id} held — ${h.why.join('; ')}`, { orderId: h.order.id, why: h.why, tool_version: SH_VERSION });
+                }
+            }
+            for (const o of g.ok) delete o.autoHold;
+            pending = g.ok;
+            if (g.held.length) renderOrders();
+            if (!pending.length) return;
+        }
+
         if (pending.length === 0) {
             toast('No pending orders to process', 'info');
             return;
@@ -7982,6 +8057,7 @@
                             ${_cancelled ? '<span style="color: var(--error);">🚫 Cancelled</span>' : (order.processed ? '<span style="color: var(--success);">✅ Processed</span>' : '<span style="color: var(--warning);">⏳ Pending</span>')}
                         </div>
                     </div>
+                    ${order.autoHold && !order.processed ? `<div style="font-size:0.78rem;color:var(--warning);padding:4px 12px 8px;">✋ ${esc(order.autoHold)}</div>` : ''}
                     <div class="order-items" id="orderDetail-${idx}">
                         ${itemsHtml}
                         <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border);">${stockHtml}</div>
