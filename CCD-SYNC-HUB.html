@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.21</title>
+    <title>CCD Sync Hub v4.6.22</title>
+<!-- v4.6.22 (2026-10-23, S122, LL-6): NO ORDER DATA IN BROWSER STORAGE — the Orders list from pending_orders (pending + last 7 days, Show older), processed and cancelled from the database, the three order keys removed on load; settings saved to the database by MERGE (no longer erasing other tools' proxy URLs); the database written before the screen; Hide Processed; the Wix price push carries the SKU (II-9). -->
 <!-- v4.6.21 (2026-10-23, S121): a full browser storage can no longer stop an order half way — the localStorage save of processed order ids is caught (logged once), and the screen mark cannot stop the processed_orders write or the sale (3 orders on 10-23 were deducted and pushed but never recorded). -->
 <!-- v4.6.20 (2026-10-09, S114): an order's cascade sends the numbers the order saved (never a cache re-lookup a realtime echo can replace); the Etsy sold-out is recorded after the cascade; one push per queue row at a time in this tab. -->
 <!-- v4.6.19 (2026-10-07, S113): an Etsy order that brings Etsy to 0 records items.etsy_state = sold_out (by order), unless another item on the same listing still has Etsy stock. -->
@@ -434,7 +435,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.21 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.22 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -486,7 +487,9 @@
             <div style="display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;">
                 <button class="btn btn-primary" onclick="pullOrdersFromChannels()">🔄 Pull All Orders</button>
                 <button class="btn btn-success" onclick="processAllOrders()">▶ Process All Pending</button>
-                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearProcessedOrders()" title="Remove processed orders from the list">🗑️ Clear Processed</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearProcessedOrders()" id="hideProcessedBtn" title="Hide or show processed orders on this screen — nothing is deleted anywhere">🙈 Hide Processed</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="showOlderOrders()" title="Add 30 more days of processed orders to the list (read from the database)">📅 Show older</button>
+                <span id="orderWindowLabel" style="color: var(--text-dim); font-size: 0.78rem; align-self: center;">Pending + last 7 days</span>
                 <select id="pullTimeRange" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 6px 10px; border-radius: 6px; font-size: 0.82rem;">
                     <option value="last_7days">Last 7 days</option>
                     <option value="last_24h">Last 24 hours</option>
@@ -529,10 +532,10 @@
         <div class="tab-content" id="tab-queue">
             <div style="display: flex; gap: 10px; margin-bottom: 16px; align-items: center; flex-wrap: wrap;">
                 <button class="btn btn-primary" onclick="refreshSyncQueue()">🔄 Refresh</button>
-                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('completed')" title="Delete completed rows from sync_queue">🗑️ Clear Completed</button>
-                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('failed')" title="Delete failed rows from sync_queue">🗑️ Clear Failed</button>
-                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('skipped')" title="Delete skipped rows from sync_queue">🗑️ Clear Skipped</button>
-                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--error); border: 1px solid var(--border);" onclick="clearAllSyncQueueRows()" title="Delete ALL rows from sync_queue">🗑️ Clear All</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('completed')" id="qHide_completed" title="Hide or show completed rows on this screen — nothing is deleted">🙈 Hide Completed</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('failed')" id="qHide_failed" title="Hide or show failed rows on this screen — nothing is deleted">🙈 Hide Failed</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--text-dim); border: 1px solid var(--border);" onclick="clearSyncQueueRows('skipped')" id="qHide_skipped" title="Hide or show skipped rows on this screen — nothing is deleted">🙈 Hide Skipped</button>
+                <button class="btn btn-sm" style="background: var(--bg-card); color: var(--error); border: 1px solid var(--border);" onclick="clearAllSyncQueueRows()" id="qHide_all" title="Show only rows still waiting to be pushed — nothing is deleted">🙈 Only Pending</button>
                 <span id="syncQueueStatus" style="font-size: 0.85rem; color: var(--text-dim);"></span>
             </div>
             <div id="queueContainer">
@@ -899,7 +902,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.21';   // S121 (v4.6.20: S114)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.22';   // S122 (v4.6.21: S121)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1200,28 +1203,14 @@
             // Load processed orders
             await loadProcessedOrdersFromDb();
             
-            // v4.1.5: Reconcile — stamp processed:true on any order whose ID is
-            // already in processedIds. Fixes orders reappearing after reload because
-            // loadOrdersFromStorage restores objects with stale processed:false.
-            if (state.orders.processedIds.size > 0) {
-                let reconciled = 0;
-                state.orders.all.forEach(o => {
-                    if (!o.processed && state.orders.processedIds.has(o.id)) {
-                        o.processed = true;
-                        reconciled++;
-                    }
-                });
-                if (reconciled > 0) {
-                    console.log(`[Init] Reconciled ${reconciled} orders as processed from DB`);
-                    saveOrdersToStorage();
-                }
-            }
+            // v4.6.22 (S122, LL-6): the Orders list comes from the database (pending_orders), each order marked processed from
+            // processed_orders — on every computer the same, and nothing kept in this browser.
+            await loadOrdersFromDb();
+            _updateOrderWindowLabel();
+            shCheckLegacySettings();
 
-            // v4.6.0 (ADR-013 §5.4) — heal any pending_orders row already in the
-            // processed ledger (legacy-path / cross-session applies), then populate
-            // the Review tab + badge.
-            await healPendingFromProcessed();
-            await loadPendingReview();
+            // v4.6.0 (ADR-013 §5.4) heal + Review tab: v4.6.22 runs them AFTER sbConnected is set (below) — both return early
+            // while it is false, so before v4.6.22 neither did anything at open.
             
             // Load SKU mappings from Supabase
             await loadSkuMappingsFromDb();
@@ -1233,6 +1222,9 @@
             
             sbConnected = true;
             saveSbCredentials(url, key);
+            // v4.6.22 (S122): now that the connection is marked, heal any pending row already processed and fill the Review tab
+            try { await healPendingFromProcessed(); await loadPendingReview(); }
+            catch (e) { console.warn(`[PendingReview ${SH_VERSION}] open-time load failed:`, e.message); }
             
             const itemCount = window.masterJsonData?.inventory?.length || 0;
             updateSupabaseUI(true, itemCount);
@@ -1350,6 +1342,11 @@
         if (settings.sync_settings) {
             Object.assign(state.settings, settings.sync_settings);
         }
+        // v4.6.22: which of the browser-carried settings the database holds (shCheckLegacySettings)
+        window.__shDbSettingsKeys = new Set([
+            ...((settings.proxy_urls && settings.proxy_urls.syncHub) ? ['syncHubProxyUrl'] : []),
+            ...Object.keys(settings.sync_settings || {}).filter(k => settings.sync_settings[k] !== '' && settings.sync_settings[k] !== null)
+        ]);
         
         // Apply global fees to masterJsonData (needed by processOrder)
         if (settings.surcharge) window.masterJsonData.surcharge = parseFloat(settings.surcharge);
@@ -1368,13 +1365,28 @@
     }
     
     async function loadProcessedOrdersFromDb() {
-        const { data, error } = await sbClient.from('processed_orders').select('order_id').limit(10000);
-        if (error) { console.warn('[Supabase] Processed orders load error:', error); return; }
-        
-        for (const row of (data || [])) {
-            state.orders.processedIds.add(row.order_id);
+        // v4.6.22: PAGED (PostgREST returns at most 1,000 rows a call — REG S76-01; .limit(10000) did not lift that), and the
+        // cancelled orders come from the database too: Cancel Order writes method 'cancelled_no_deduct'; Cancel & Restore sets
+        // the order's sales_history rows to 'cancelled'. (B-S86-05 kept them in the browser; the database carried them all along.)
+        const PAGE = 1000;
+        let from = 0;
+        while (true) {
+            const { data, error } = await sbClient.from('processed_orders').select('order_id, details').order('order_id').range(from, from + PAGE - 1);
+            if (error) { console.warn('[Supabase] Processed orders load error:', error); try { addLog(`❌ Could not load processed orders: ${error.message}`, 'error'); } catch (x) {} return; }
+            const batch = data || [];
+            for (const row of batch) {
+                state.orders.processedIds.add(row.order_id);
+                if (row.details && row.details.method === 'cancelled_no_deduct') state.orders.cancelledIds.add(row.order_id);
+            }
+            if (batch.length < PAGE) break;
+            from += batch.length;
         }
-        console.log(`[Supabase] Loaded ${state.orders.processedIds.size} processed order IDs`);
+        try {
+            const { data, error } = await sbClient.from('sales_history').select('order_id').eq('status', 'cancelled').limit(1000);
+            if (error) throw error;
+            for (const row of (data || [])) if (row.order_id) state.orders.cancelledIds.add(row.order_id);
+        } catch (e) { console.warn('[Supabase] Cancelled sales load error:', e.message); }
+        console.log(`[Supabase] Loaded ${state.orders.processedIds.size} processed order IDs (${state.orders.cancelledIds.size} cancelled)`);
     }
     
     async function loadSkuMappingsFromDb() {
@@ -1464,15 +1476,20 @@
     }
     
     async function persistProcessedOrderToDb(orderId, channel, details = {}) {
-        if (!sbClient || !sbConnected) return;
+        if (!sbClient || !sbConnected) return false;
         try {
-            await sbClient.from('processed_orders').upsert({
+            const { error } = await sbClient.from('processed_orders').upsert({
                 order_id: orderId,
                 channel: channel,
                 details: details
             }, { onConflict: 'order_id' });
+            if (error) throw new Error(error.message);
+            return true;
         } catch (e) {
+            // v4.6.22: said in the log (it was swallowed — an order could look processed with no database record)
             console.warn('[Supabase] Processed order save error:', e.message);
+            try { addLog(`❌ ${orderId}: the processed record was NOT saved to the database (${e.message}) — check processed_orders before processing it again`, 'error'); } catch (x) {}
+            return false;
         }
     }
     
@@ -1998,37 +2015,73 @@
     // ORDER PERSISTENCE (survives page refresh)
     // ============================================================
     
-    function saveOrdersToStorage() {
+    // v4.6.22 (S122, LL-6): NO ORDER DATA IN BROWSER STORAGE. Orders (buyer names and addresses included) lived in
+    // ccd_sync_hub_orders; processed ids in ccd_processed_orders (written, never read — it filled the storage and stopped three
+    // orders on 2026-10-23); cancels in ccd_sync_hub_cancelled_orders. The database holds all three. Removed on load.
+    const SH_LEGACY_ORDER_KEYS = ['ccd_processed_orders', 'ccd_sync_hub_orders', 'ccd_sync_hub_cancelled_orders'];
+    function removeLegacyOrderKeys() {
+        let removed = 0;
+        for (const k of SH_LEGACY_ORDER_KEYS) {
+            try { if (localStorage.getItem(k) !== null) { localStorage.removeItem(k); removed++; } } catch (e) {}
+        }
+        if (removed) console.log(`[Orders ${SH_VERSION}] removed ${removed} old order key(s) from this browser — the database is the record`);
+        return removed;
+    }
+
+    // The Orders list = every pending_orders row still pending + every row pulled in the last N days (Paul, S122: 7; "Show older"
+    // adds 30). Each row's payload is the order exactly as Sync Hub formatted it at the pull. Rejected rows are not shown.
+    // Orders already on screen that the database does not hold (none expected) are kept.
+    async function loadOrdersFromDb() {
+        if (!sbClient) return false;
+        const days = state.orders.windowDays || (state.orders.windowDays = 7);
+        const since = new Date(Date.now() - days * 86400000).toISOString();
+        const cols = 'channel, external_order_id, payload, pulled_at, status';
         try {
-            localStorage.setItem('ccd_sync_hub_orders', JSON.stringify(state.orders.all));
-        } catch (e) { console.warn('Could not save orders to storage:', e.message); }
+            const [p, r] = await Promise.all([
+                sbClient.from('pending_orders').select(cols).eq('status', 'pending').order('pulled_at', { ascending: false }).limit(2000),
+                sbClient.from('pending_orders').select(cols).gte('pulled_at', since).order('pulled_at', { ascending: false }).limit(2000)
+            ]);
+            if (p.error) throw p.error;
+            if (r.error) throw r.error;
+            const byId = new Map();
+            for (const row of [...(p.data || []), ...(r.data || [])]) {
+                if (!row || row.status === 'rejected') continue;
+                const pre = (PENDING_PREFIX[row.channel] || '') + row.external_order_id;
+                const o = JSON.parse(JSON.stringify(row.payload || {}));
+                if (!o.id) o.id = pre;
+                if (!o.channel) o.channel = row.channel;
+                if (!o.items) o.items = [];
+                o.processed = state.orders.processedIds.has(o.id);
+                byId.set(o.id, o);
+            }
+            for (const o of (state.orders.all || [])) if (!byId.has(o.id)) byId.set(o.id, o);
+            const all = [...byId.values()].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+            state.orders.all = all;
+            state.orders.etsy = all.filter(o => o.channel === 'etsy');
+            state.orders.wix = all.filter(o => o.channel === 'wix');
+            state.orders.wayfair = all.filter(o => o.channel === 'wayfair');
+            console.log(`[Orders ${SH_VERSION}] ${all.length} order(s) from the database (pending + last ${days} days)`);
+            return true;
+        } catch (e) {
+            console.warn(`[Orders ${SH_VERSION}] load from the database failed:`, e.message);
+            try { addLog(`❌ Could not load the order list from the database: ${e.message}`, 'error'); } catch (x) {}
+            return false;
+        }
+    }
+
+    async function showOlderOrders() {
+        state.orders.windowDays = (state.orders.windowDays || 7) + 30;
+        const ok = await loadOrdersFromDb();
+        renderOrders(); updateStats(); _updateOrderWindowLabel();
+        if (ok) toast(`Showing pending orders + the last ${state.orders.windowDays} days`, 'info');
+    }
+
+    function _updateOrderWindowLabel() {
+        const el = document.getElementById('orderWindowLabel');
+        if (el) el.textContent = `Pending + last ${state.orders.windowDays || 7} days`;
     }
     
-    function loadOrdersFromStorage() {
-        try {
-            const saved = localStorage.getItem('ccd_sync_hub_orders');
-            if (saved) {
-                const orders = JSON.parse(saved);
-                state.orders.all = orders;
-                state.orders.etsy = orders.filter(o => o.channel === 'etsy');
-                state.orders.wix = orders.filter(o => o.channel === 'wix');
-                state.orders.wayfair = orders.filter(o => o.channel === 'wayfair');
-                console.log(`[Orders] Restored ${orders.length} orders from storage`);
-            }
-        } catch (e) { console.warn('Could not load orders from storage:', e.message); }
-
-        // B-S86-05 (S87) — cancellation is client-side state, so unlike
-        // processedIds (rehydrated from processed_orders at ~line 1341) it must
-        // be read back from localStorage. Own try block: a bad cancelled list
-        // must never cost us the order list.
-        try {
-            const savedCancelled = localStorage.getItem('ccd_sync_hub_cancelled_orders');
-            if (savedCancelled) {
-                state.orders.cancelledIds = new Set(JSON.parse(savedCancelled));
-                console.log(`[Orders] Restored ${state.orders.cancelledIds.size} cancelled order ID(s) from storage`);
-            }
-        } catch (e) { console.warn('Could not load cancelled order IDs:', e.message); }
-    }
+    // v4.6.22: loadOrdersFromStorage is gone — cancelled orders are read from the database in loadProcessedOrdersFromDb.
     
     // ============================================================
     // SYNC QUEUE VIEWER (v4.2.0 — reads from Supabase sync_queue)
@@ -2051,11 +2104,14 @@
                 .limit(50);
             
             if (error) throw error;
-            renderSyncQueue(data || []);
+            const hidden = state.queueHidden || new Set();
+            const shown = (data || []).filter(r => r.status === 'pending' || !hidden.has(r.status));
+            renderSyncQueue(shown);
             
             const statusEl = document.getElementById('syncQueueStatus');
             const pendingCount = (data || []).filter(r => r.status === 'pending').length;
-            if (statusEl) statusEl.textContent = `${(data || []).length} rows (${pendingCount} pending) — last refreshed ${new Date().toLocaleTimeString()}`;
+            const hiddenCount = (data || []).length - shown.length;
+            if (statusEl) statusEl.textContent = `${(data || []).length} rows (${pendingCount} pending${hiddenCount ? `, ${hiddenCount} hidden` : ''}) — last refreshed ${new Date().toLocaleTimeString()}`;
         } catch (e) {
             console.error('[Sync Queue Viewer] Error:', e);
             toast('Failed to load sync queue: ' + e.message, 'error');
@@ -2125,49 +2181,31 @@
         return pending;
     }
     
-    // v4.2.4: Clear completed or failed rows from sync_queue
+    // v4.6.22 (Paul, S122): the Clear buttons HIDE rows on this screen — sync_queue rows are never deleted from Sync Hub
+    // (v4.2.4 deleted them with no undo, and Clear All deleted rows not yet pushed). Pending rows are always shown.
+    function _syncQueueHideLabels() {
+        const hidden = state.queueHidden || new Set();
+        for (const [st, lab] of [['completed', 'Completed'], ['failed', 'Failed'], ['skipped', 'Skipped']]) {
+            const b = document.getElementById('qHide_' + st);
+            if (b) b.textContent = (hidden.has(st) ? '👁 Show ' : '🙈 Hide ') + lab;
+        }
+        const all = document.getElementById('qHide_all');
+        if (all) all.textContent = ['completed', 'failed', 'skipped'].every(s => hidden.has(s)) ? '👁 Show All' : '🙈 Only Pending';
+    }
     async function clearSyncQueueRows(status) {
-        if (!sbClient || !sbConnected) {
-            toast('Connect to Supabase first', 'warning');
-            return;
-        }
-        try {
-            const { data, error } = await sbClient
-                .from('sync_queue')
-                .delete()
-                .eq('status', status)
-                .select('id');
-            if (error) throw error;
-            const count = data?.length || 0;
-            toast(`Cleared ${count} ${status} row(s)`, count > 0 ? 'success' : 'info');
-            addLog(`🗑️ Cleared ${count} ${status} sync_queue rows`, 'info');
-            await refreshSyncQueue();
-        } catch (e) {
-            toast('Failed to clear: ' + e.message, 'error');
-        }
+        const hidden = state.queueHidden || (state.queueHidden = new Set());
+        if (hidden.has(status)) hidden.delete(status); else hidden.add(status);
+        _syncQueueHideLabels();
+        await refreshSyncQueue();
     }
     
-    // v4.2.4: Clear ALL sync_queue rows (with confirmation)
+    // v4.6.22: "Only Pending" — hide every finished row on this screen (or show them all again); nothing is deleted
     async function clearAllSyncQueueRows() {
-        if (!sbClient || !sbConnected) {
-            toast('Connect to Supabase first', 'warning');
-            return;
-        }
-        if (!confirm('Delete ALL rows from the sync queue?\n\nThis includes pending rows that haven\'t been pushed yet.')) return;
-        try {
-            const { data, error } = await sbClient
-                .from('sync_queue')
-                .delete()
-                .gte('id', 0)
-                .select('id');
-            if (error) throw error;
-            const count = data?.length || 0;
-            toast(`Cleared all ${count} sync_queue row(s)`, count > 0 ? 'success' : 'info');
-            addLog(`🗑️ Cleared ALL ${count} sync_queue rows`, 'info');
-            await refreshSyncQueue();
-        } catch (e) {
-            toast('Failed to clear: ' + e.message, 'error');
-        }
+        const hidden = state.queueHidden || (state.queueHidden = new Set());
+        const allHidden = ['completed', 'failed', 'skipped'].every(s => hidden.has(s));
+        for (const s of ['completed', 'failed', 'skipped']) { if (allHidden) hidden.delete(s); else hidden.add(s); }
+        _syncQueueHideLabels();
+        await refreshSyncQueue();
     }
     
     // ============================================================
@@ -2680,8 +2718,7 @@
             console.log(`[Order Integration] Summary: ${newOrders.length} new, ${duplicateCount} duplicates, ${state.orders.all.length} total in state`);
         }
         
-        // Persist orders to localStorage so they survive page refresh
-        saveOrdersToStorage();
+        // v4.6.22: nothing is copied into the browser — every pulled order is written to pending_orders by the producer.
         
         return {
             added: newOrders.length,
@@ -2811,7 +2848,9 @@
         // applies immediately via the gate below, so no pending row is written (review queue
         // is the manual-path concept only). Wrapped so an intake-write failure can never
         // block the pull's display/finally.
-        if (getFlag('order_auto_apply') !== true && newlyPulled.length) {
+        // v4.6.22 (S122): written WHATEVER order_auto_apply says — the Orders list is read from pending_orders, and an
+        // auto-applied order is marked approved by markOrderProcessed (an order that fails its SKU check stays pending for review).
+        if (newlyPulled.length) {
             try {
                 await producePendingOrders(newlyPulled);
                 await loadPendingReview();
@@ -5745,13 +5784,10 @@
         // mid-order (530042, 2026-10-08: Wix was sent 1 with the warehouse at 0).
         for (const _p of _shSoldOut) await shMarkEtsySoldOut(_p, orderId);
 
-        // Mark order as processed (the screen) — v4.6.21: nothing in it may stop the database writes below
-        try { markOrderProcessed(orderId); }
-        catch (e) { console.warn(`[processOrder ${SH_VERSION}] screen mark failed:`, e.message); try { addLog(`⚠️ ${orderId}: the screen could not mark it processed (${e.message}) — the database record and the sale are still written`, 'warning'); } catch (x) {} }
-        
         // ====== GAP 9: PERSIST TO MASTER JSON ======
+        // v4.6.22 (S122): THE DATABASE FIRST — processed_orders, then the sale — and only then the screen.
         await persistProcessedOrder(order);
-        
+
         // ====== RECORD SALES TO DATABASE ======
         if (sbConnected) {
             for (const item of (order.items || [])) {
@@ -5761,7 +5797,14 @@
                     await recordSaleToSupabase(product, item.qty || 1, order.channel, item.price || 0, orderId, order);
                 }
             }
-            
+        }
+
+        // Mark order as processed (the screen) — after the database writes; nothing in it may stop what follows
+        try { markOrderProcessed(orderId); }
+        catch (e) { console.warn(`[processOrder ${SH_VERSION}] screen mark failed:`, e.message); try { addLog(`⚠️ ${orderId}: the screen could not mark it processed (${e.message}) — the database record and the sale are written`, 'warning'); } catch (x) {} }
+
+        if (sbConnected) {
+
             // v4.1: Auto-reconcile this order with Shippo (if transaction exists)
             try {
                 // v4.1.4: Wix order_id is WIX-{uuid} but Shippo stores WIX-{number}
@@ -6235,7 +6278,7 @@
 
                 if (fields.title || fields.name || fields.all) params.name = product.productName || product.name;
                 if (fields.description || fields.all) params.description = product.description || product.productDescription;
-                if (fields.price || fields.all) params.price = parseFloat(product.retailPrice || product.price);
+                if (fields.price || fields.all) { params.price = parseFloat(product.retailPrice || product.price); params.sku = product.sku; }   // v4.6.22 (II-9): Wix proxy v2.1.x prices the option by SKU (S115)
                 // v4.2.6: Wix SEO fields from Channel Manager
                 if (product.seoSlug) params.seo_slug = product.seoSlug;
                 if (product.seoTitle) params.seo_title = product.seoTitle;
@@ -7648,13 +7691,14 @@
             state.settings.syncHubProxyUrl = url;
         }
         
-        localStorage.setItem('ccd_sync_hub_settings', JSON.stringify(state.settings));
-        
-        console.log('[Notifications] Saved to localStorage:', {
-            emailAddresses: emailAddresses,
-            emailEnabled: emailEnabled
-        });
-        
+        // v4.6.22 (S122): saved to the DATABASE (sync_settings, merged), not to the browser
+        if (sbClient && sbConnected) {
+            try { await shSaveSettingsRow('sync_settings', shEmailSettingsPatch()); shDropLegacySettingsKey(); }
+            catch (e) { addLog(`❌ Email settings NOT saved to the database: ${e.message}`, 'error'); toast(`Email settings NOT saved: ${e.message}`, 'error'); return; }
+        }
+        if (url) { try { await shSaveSettingsRow('proxy_urls', { syncHub: url }); } catch (e) { console.warn('[Notifications] proxy URL not saved:', e.message); } }
+        console.log('[Notifications] Saved to the database:', { emailAddresses: emailAddresses, emailEnabled: emailEnabled });
+
         // If URL and API key available, also try to sync to proxy (optional)
         if (!url || !apiKey) {
             toast('Settings saved locally (Sync Hub URL not configured)', 'success');
@@ -7838,23 +7882,13 @@
     // ============================================================
     
     // v4.2.4: Clear processed orders from UI (keeps them in processed_orders DB table)
+    // v4.6.22 (Paul, S122): a SWITCH — processed orders hidden or shown on this screen; nothing is deleted anywhere.
     function clearProcessedOrders() {
-        const processedCount = state.orders.all.filter(o => o.processed).length;
-        if (processedCount === 0) {
-            toast('No processed orders to clear', 'info');
-            return;
-        }
-        if (!confirm(`Remove ${processedCount} processed order(s) from the list?\n\nThis only clears the display — processed orders remain in the database.`)) return;
-        
-        state.orders.all = state.orders.all.filter(o => !o.processed);
-        for (const ch of ['etsy', 'wix', 'wayfair']) {
-            state.orders[ch] = (state.orders[ch] || []).filter(o => !o.processed);
-        }
-        saveOrdersToStorage();
+        state.orders.hideProcessed = !state.orders.hideProcessed;
+        const btn = document.getElementById('hideProcessedBtn');
+        if (btn) btn.textContent = state.orders.hideProcessed ? '👁 Show Processed' : '🙈 Hide Processed';
         renderOrders();
         updateStats();
-        toast(`Cleared ${processedCount} processed orders`, 'success');
-        addLog(`🗑️ Cleared ${processedCount} processed orders from display`, 'info');
     }
     
     // v4.2.4: Order filter state for click-to-filter stats
@@ -7892,8 +7926,10 @@
         else if (_orderFilter === 'etsy') orders = orders.filter(o => o.channel === 'etsy');
         else if (_orderFilter === 'wix') orders = orders.filter(o => o.channel === 'wix');
         else if (_orderFilter === 'wayfair') orders = orders.filter(o => o.channel === 'wayfair');
-        
-        const filterLabel = _orderFilter ? ` (filtered: ${_orderFilter})` : '';
+        // v4.6.22: Hide Processed (a switch; the Processed filter still shows them)
+        if (state.orders.hideProcessed && _orderFilter !== 'processed') orders = orders.filter(o => !o.processed);
+
+        const filterLabel= _orderFilter ? ` (filtered: ${_orderFilter})` : '';
         
         if (orders.length === 0) {
             container.innerHTML = `<div class="empty-state"><div class="empty-state-icon">📦</div><div class="empty-state-title">No orders${filterLabel}</div><div style="color: var(--text-dim);">${_orderFilter ? 'Click the active filter again to clear' : 'Pull orders from channels to get started'}</div></div>`;
@@ -8000,6 +8036,29 @@
         if (nce) nce.checked = state.settings.notifyCancellationsEmail === true;  // default OFF
     }
     
+    // v4.6.22 (S122): a settings row is MERGED, never replaced — proxy_urls also holds wayfair_catalog / wayfair_catalog_sandbox
+    // (CM's Wayfair tab) and api_keys is shared with V2; v4.6.21's whole-row upsert would have erased what Sync Hub does not own.
+    async function shSaveSettingsRow(key, patch) {
+        const { data: cur, error: rErr } = await sbClient.from('settings').select('value').eq('key', key).maybeSingle();
+        if (rErr) throw new Error(`read ${key}: ${rErr.message}`);
+        const base = (cur && cur.value && typeof cur.value === 'object' && !Array.isArray(cur.value)) ? cur.value : {};
+        const value = Object.assign({}, base, patch);
+        const { error } = await sbClient.from('settings').upsert({ key, value, updated_at: new Date().toISOString(), updated_by: 'sync_hub' }, { onConflict: 'key' });
+        if (error) throw new Error(`save ${key}: ${error.message}`);
+        return value;
+    }
+
+    // The email settings Sync Hub keeps in the database (sync_settings) — they lived only in this browser and the Sync Hub proxy.
+    function shEmailSettingsPatch() {
+        return {
+            emailAddresses: state.settings.emailAddresses || '',
+            emailEnabled: state.settings.emailEnabled === true,
+            digestFrequency: state.settings.digestFrequency || 'daily',
+            digestHour: state.settings.digestHour ?? 8,
+            eventNotifications: state.settings.eventNotifications || {}
+        };
+    }
+
     async function saveSettings() {
         state.settings.ccdApiKey = document.getElementById('ccdApiKey').value;
         state.settings.etsyApiKey = document.getElementById('etsyApiKey').value;
@@ -8027,19 +8086,18 @@
         // Save to Supabase
         if (sbConnected && sbClient) {
             try {
-                const _now = new Date().toISOString();
-                await sbClient.from('settings').upsert({ key: 'proxy_urls', value: {
+                await shSaveSettingsRow('proxy_urls', {
                     etsy: state.settings.etsyProxyUrl,
                     wix: state.settings.wixProxyUrl,
                     wayfair: state.settings.wayfairProxyUrl,
                     syncHub: state.settings.syncHubProxyUrl,
                     shippo: state.settings.shippoProxyUrl
-                }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
-                await sbClient.from('settings').upsert({ key: 'api_keys', value: {
+                });
+                await shSaveSettingsRow('api_keys', {
                     ccdApiKey: state.settings.ccdApiKey,
                     etsyApiKey: state.settings.etsyApiKey
-                }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
-                await sbClient.from('settings').upsert({ key: 'sync_settings', value: {
+                });
+                await shSaveSettingsRow('sync_settings', Object.assign({
                     autoProcessEnabled: state.settings.autoProcessEnabled,
                     pushQueueEnabled: state.settings.pushQueueEnabled,
                     retryFailedEnabled: state.settings.retryFailedEnabled,
@@ -8049,13 +8107,21 @@
                     cancelReconEnabled: state.settings.cancelReconEnabled !== false,
                     notifyCancellationsEmail: state.settings.notifyCancellationsEmail === true,
                     shippoAutoSyncDays: state.settings.shippoAutoSyncDays || 7,
-                }, updated_at: _now, updated_by: 'sync_hub' }, { onConflict: 'key' });
-            } catch (e) { console.error('[Settings] Supabase save error:', e); }
+                }, shEmailSettingsPatch()));
+                shDropLegacySettingsKey();
+            } catch (e) {
+                console.error('[Settings] Supabase save error:', e);
+                addLog(`❌ Settings NOT saved to the database: ${e.message}`, 'error');
+                toast(`Settings NOT saved: ${e.message}`, 'error');
+                return;
+            }
+        } else {
+            toast('Connect to the database first — settings are kept in the database, not in this browser', 'warning');
+            return;
         }
-        
-        // Also save to localStorage as backup
-        localStorage.setItem('ccd_sync_hub_settings', JSON.stringify(state.settings));
-        
+
+        // v4.6.22 (S122, LL-6): no copy in the browser — the database holds the settings
+
         // v4.4.9: Order auto-pull and channel push queue are now independent.
         // autoProcessEnabled controls the 5-min order pull from Etsy/Wix/Wayfair.
         // pushQueueEnabled controls the 15-sec sync_queue poll that pushes to channels.
@@ -8071,11 +8137,41 @@
         setTimeout(() => autoTestAllConnections(), 500);
     }
     
+    // v4.6.22 (S122, LL-6): Sync Hub's settings live in the database (proxy_urls / api_keys / sync_settings, read at connect).
+    // The old browser copy (ccd_sync_hub_settings — it also held copies of the API keys) is read ONCE, for the two things only
+    // it held: this computer's Sync Hub proxy URL and the email settings. It is removed as soon as the database holds them;
+    // until then Sync Hub asks for one press of 💾 Save Settings. Nothing is written to the database by itself.
+    const SH_CARRIED_SETTINGS = ['syncHubProxyUrl', 'emailAddresses', 'emailEnabled', 'digestFrequency', 'digestHour', 'eventNotifications'];
+    let _shLegacySettings = null;
     function loadSettingsFromLocalStorage() {
         try {
             const saved = localStorage.getItem('ccd_sync_hub_settings');
-            if (saved) Object.assign(state.settings, JSON.parse(saved));
-        } catch (e) {}
+            if (!saved) return;
+            const old = JSON.parse(saved) || {};
+            _shLegacySettings = {};
+            for (const k of SH_CARRIED_SETTINGS) {
+                if (old[k] !== undefined && old[k] !== null && old[k] !== '') { _shLegacySettings[k] = old[k]; state.settings[k] = old[k]; }
+            }
+        } catch (e) { _shLegacySettings = {}; }
+    }
+    function shDropLegacySettingsKey() {
+        try { localStorage.removeItem('ccd_sync_hub_settings'); } catch (e) {}
+        _shLegacySettings = null;
+    }
+    // After connect: does the database now hold what the old browser copy carried?
+    function shCheckLegacySettings() {
+        if (_shLegacySettings === null) return 'none';
+        const missing = Object.keys(_shLegacySettings).filter(k => {
+            const v = state.settings[k];
+            if (v === undefined || v === null || v === '') return true;
+            if (k === 'eventNotifications') return !v || typeof v !== 'object' || Object.keys(v).length === 0;
+            return false;
+        });
+        const dbHas = window.__shDbSettingsKeys || new Set();
+        const notInDb = Object.keys(_shLegacySettings).filter(k => !dbHas.has(k));
+        if (!missing.length && !notInDb.length) { shDropLegacySettingsKey(); return 'removed'; }
+        try { addLog('⚠️ This computer still has settings the database does not hold yet (the Sync Hub proxy URL / email settings). Press 💾 Save Settings once to move them into the database.', 'warning'); } catch (x) {}
+        return 'kept';
     }
     
     // ============================================================
@@ -9201,27 +9297,30 @@
             `Continue?`
         )) return;
 
+        // v4.6.22 (S122): the database FIRST — the cancel is a processed_orders row (method cancelled_no_deduct), which is also
+        // how a reload knows the order was cancelled. Nothing is marked on screen if the database refuses.
+        if (!sbClient || !sbConnected) { toast('Connect to the database first — nothing was cancelled', 'warning'); return; }
+        try {
+            const { error } = await sbClient.from('processed_orders').upsert({
+                order_id: orderId,
+                channel: order.channel,
+                processed_at: new Date().toISOString(),
+                details: {
+                    device: localStorage.getItem('ccd_hostname') || 'SyncHub',
+                    method: 'cancelled_no_deduct',
+                    cancelled_via: 'sync_hub_manual',
+                    itemCount: order.items?.length || 0
+                }
+            }, { onConflict: 'order_id' });
+            if (error) throw new Error(error.message);
+        } catch (e) {
+            console.warn('[cancelPendingOrder] DB error:', e.message);
+            addLog(`❌ ${orderId}: NOT cancelled — the database refused (${e.message})`, 'error');
+            toast(`Not cancelled — the database refused: ${e.message}`, 'error');
+            return;
+        }
         markOrderProcessed(orderId);
         markOrderCancelled(orderId);   // B-S86-05 (S87)
-
-        if (sbClient && sbConnected) {
-            try {
-                const { error } = await sbClient.from('processed_orders').upsert({
-                    order_id: orderId,
-                    channel: order.channel,
-                    processed_at: new Date().toISOString(),
-                    details: {
-                        device: localStorage.getItem('ccd_hostname') || 'SyncHub',
-                        method: 'cancelled_no_deduct',
-                        cancelled_via: 'sync_hub_manual',
-                        itemCount: order.items?.length || 0
-                    }
-                }, { onConflict: 'order_id' });
-                if (error) console.warn('[cancelPendingOrder] DB error:', error.message);
-            } catch (e) {
-                console.warn('[cancelPendingOrder] DB threw:', e.message);
-            }
-        }
 
         addLog(`🚫 Order ${orderId} cancelled before processing (no deduction)`, 'warning');
         logActivity('order', 'order_cancelled_pending', order.channel,
@@ -9464,22 +9563,23 @@
             return;
         }
 
-        // Mark as processed in state + DB
-        markOrderProcessed(orderId);
-
-        // Record to processed_orders in Supabase
-        if (sbClient && sbConnected) {
-            try {
-                await sbClient.from('processed_orders').upsert({
-                    order_id: orderId,
-                    channel: order.channel,
-                    processed_at: new Date().toISOString(),
-                    details: { device: localStorage.getItem('ccd_hostname') || 'SyncHub', method: 'no_deduct', itemCount: order.items?.length || 0 }
-                }, { onConflict: 'order_id' });
-            } catch (e) {
-                console.warn('[markProcessedNoDeduct] DB error:', e.message);
-            }
+        // v4.6.22 (S122): the database FIRST — processed_orders — and the screen only once it is saved.
+        if (!sbClient || !sbConnected) { toast('Connect to the database first — nothing was marked', 'warning'); return; }
+        try {
+            const { error } = await sbClient.from('processed_orders').upsert({
+                order_id: orderId,
+                channel: order.channel,
+                processed_at: new Date().toISOString(),
+                details: { device: localStorage.getItem('ccd_hostname') || 'SyncHub', method: 'no_deduct', itemCount: order.items?.length || 0 }
+            }, { onConflict: 'order_id' });
+            if (error) throw new Error(error.message);
+        } catch (e) {
+            console.warn('[markProcessedNoDeduct] DB error:', e.message);
+            addLog(`❌ ${orderId}: NOT marked — the database refused (${e.message})`, 'error');
+            toast(`Not marked — the database refused: ${e.message}`, 'error');
+            return;
         }
+        markOrderProcessed(orderId);
 
         addLog(`🏷️ Order ${orderId} marked as processed (no deduct)`, 'info');
         logActivity('order', 'order_marked_no_deduct', order.channel,
@@ -9502,13 +9602,7 @@
     // last-write-wins upsert on the exact field REG S86-02 documents as unable
     // to answer a question like this. Mirrors processedIds instead.
     function markOrderCancelled(orderId) {
-        state.orders.cancelledIds.add(orderId);
-        try {
-            localStorage.setItem('ccd_sync_hub_cancelled_orders',
-                JSON.stringify([...state.orders.cancelledIds]));
-        } catch (e) {
-            console.warn('[markOrderCancelled] persist failed:', e.message);
-        }
+        state.orders.cancelledIds.add(orderId);   // v4.6.22: the screen only — the database records the cancel
         updateOrderStats();
         renderOrders();
     }
@@ -9535,19 +9629,9 @@
         updateOrder(state.orders.wix);
         updateOrder(state.orders.wayfair);
         
-        // Save processed IDs to localStorage — a CONVENIENCE only; the database (processed_orders) is the record.
-        // v4.6.21 (S121): a full browser storage threw here and ended processOrder BEFORE the processed_orders write and the
-        // sale (3 orders on 2026-10-23). Caught now, logged once per page, never allowed to stop an order.
-        try {
-            localStorage.setItem('ccd_processed_orders', JSON.stringify([...state.orders.processedIds]));
-        } catch (e) {
-            console.warn('[markOrderProcessed] browser storage not saved:', e.message);
-            if (!window.__shStorageFullWarned) {
-                window.__shStorageFullWarned = true;
-                try { addLog('⚠️ Browser storage is full — processed orders are still saved in the database (this warning shows once).', 'warning'); } catch (x) {}
-            }
-        }
-        
+        // v4.6.22 (S122, LL-6): nothing is written to the browser — processed_orders is the record
+        // (v4.6.20's write here filled the storage and stopped three orders on 2026-10-23; v4.6.21 caught it).
+
         updateOrderStats();
         renderOrders();
     }
@@ -10155,8 +10239,8 @@
             // Load settings from localStorage first
             loadSettingsFromLocalStorage();
             
-            // Load persisted orders
-            loadOrdersFromStorage();
+            // v4.6.22 (S122, LL-6): no order data in this browser — remove the old copies; the list is read from the database at connect
+            removeLegacyOrderKeys();
             
             // v4.2.0: No localStorage queue — sync_queue is in Supabase
             
