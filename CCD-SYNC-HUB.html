@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.20</title>
+    <title>CCD Sync Hub v4.6.21</title>
+<!-- v4.6.21 (2026-10-23, S121): a full browser storage can no longer stop an order half way — the localStorage save of processed order ids is caught (logged once), and the screen mark cannot stop the processed_orders write or the sale (3 orders on 10-23 were deducted and pushed but never recorded). -->
 <!-- v4.6.20 (2026-10-09, S114): an order's cascade sends the numbers the order saved (never a cache re-lookup a realtime echo can replace); the Etsy sold-out is recorded after the cascade; one push per queue row at a time in this tab. -->
 <!-- v4.6.19 (2026-10-07, S113): an Etsy order that brings Etsy to 0 records items.etsy_state = sold_out (by order), unless another item on the same listing still has Etsy stock. -->
 <!-- v4.6.18 (2026-10-06, S113, Paul — Shared\29): the Crazy Chicks room no longer lowers the online channels after an order (cap = warehouse − TreasureMarts); an Etsy push failure keeps the proxy's full answer (Etsy's own message); a failed Etsy push of 0 is logged as ETSY_OVERSELL_RISK; an Etsy push the proxy answered with deactivated/reactivated records items.etsy_state. -->
@@ -433,7 +434,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.20 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.21 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -898,7 +899,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.20';   // S114   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.21';   // S121 (v4.6.20: S114)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -5744,8 +5745,9 @@
         // mid-order (530042, 2026-10-08: Wix was sent 1 with the warehouse at 0).
         for (const _p of _shSoldOut) await shMarkEtsySoldOut(_p, orderId);
 
-        // Mark order as processed
-        markOrderProcessed(orderId);
+        // Mark order as processed (the screen) — v4.6.21: nothing in it may stop the database writes below
+        try { markOrderProcessed(orderId); }
+        catch (e) { console.warn(`[processOrder ${SH_VERSION}] screen mark failed:`, e.message); try { addLog(`⚠️ ${orderId}: the screen could not mark it processed (${e.message}) — the database record and the sale are still written`, 'warning'); } catch (x) {} }
         
         // ====== GAP 9: PERSIST TO MASTER JSON ======
         await persistProcessedOrder(order);
@@ -9533,8 +9535,18 @@
         updateOrder(state.orders.wix);
         updateOrder(state.orders.wayfair);
         
-        // Save processed IDs to localStorage
-        localStorage.setItem('ccd_processed_orders', JSON.stringify([...state.orders.processedIds]));
+        // Save processed IDs to localStorage — a CONVENIENCE only; the database (processed_orders) is the record.
+        // v4.6.21 (S121): a full browser storage threw here and ended processOrder BEFORE the processed_orders write and the
+        // sale (3 orders on 2026-10-23). Caught now, logged once per page, never allowed to stop an order.
+        try {
+            localStorage.setItem('ccd_processed_orders', JSON.stringify([...state.orders.processedIds]));
+        } catch (e) {
+            console.warn('[markOrderProcessed] browser storage not saved:', e.message);
+            if (!window.__shStorageFullWarned) {
+                window.__shStorageFullWarned = true;
+                try { addLog('⚠️ Browser storage is full — processed orders are still saved in the database (this warning shows once).', 'warning'); } catch (x) {}
+            }
+        }
         
         updateOrderStats();
         renderOrders();
