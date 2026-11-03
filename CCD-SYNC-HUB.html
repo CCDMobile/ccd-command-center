@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.23</title>
+    <title>CCD Sync Hub v4.6.24</title>
 <!-- v4.6.23 (2026-10-24, S122, KK-13): THE AUTO-PROCESSING GATE — when order_auto_apply is on, an order is processed by itself only if every item in it (and every piece of a Set) is cleared in item_auto_clearance (V2 2.9.95); any other order is held for Mary with a note; if the clearances cannot be read nothing is auto-processed. A person's Process is not gated. -->
 <!-- v4.6.22 (2026-10-23, S122, LL-6): NO ORDER DATA IN BROWSER STORAGE — the Orders list from pending_orders (pending + last 7 days, Show older), processed and cancelled from the database, the three order keys removed on load; settings saved to the database by MERGE (no longer erasing other tools' proxy URLs); the database written before the screen; Hide Processed; the Wix price push carries the SKU (II-9). -->
 <!-- v4.6.21 (2026-10-23, S121): a full browser storage can no longer stop an order half way — the localStorage save of processed order ids is caught (logged once), and the screen mark cannot stop the processed_orders write or the sale (3 orders on 10-23 were deducted and pushed but never recorded). -->
@@ -436,7 +436,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.23 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.24 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -903,7 +903,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.23';   // S122 (v4.6.22: S122)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.24';   // S125 — channel PAR top-up (v4.6.23: S122, v4.6.22: S122)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1775,6 +1775,11 @@
             monitorLowStock: row.monitor_low_stock || false,
             masterPar: { enabled: row.master_par_enabled || false, min: row.master_par_min || 0, max: row.master_par_max || 0 },
             channelPar: { enabled: row.channel_par_enabled || false, min: row.channel_par_min || 0, max: row.channel_par_max || 0 },
+            // v4.6.24 (S125): the V2 card's Channel PARs (min / target per channel) and hold-back — read only, for the top-up rule
+            channelTopUp: { etsy: { min: parseInt(row.par_etsy_min) || 0, target: parseInt(row.par_etsy_target) || 0 },
+                            wix: { min: parseInt(row.par_wix_min) || 0, target: parseInt(row.par_wix_target) || 0 },
+                            wayfair: { min: parseInt(row.par_wayfair_min) || 0, target: parseInt(row.par_wayfair_target) || 0 } },
+            holdBack: parseInt(row.hold_back) || 0,
             shippingWeight: row.shipping_weight != null ? parseFloat(row.shipping_weight) : 0,
             boxLength: row.box_length != null ? parseFloat(row.box_length) : 0,
             boxWidth: row.box_width != null ? parseFloat(row.box_width) : 0,
@@ -4600,6 +4605,32 @@
             adjustments.adjusted = true;
         }
         
+        // Rule 2b — v4.6.24 (S125, Paul 11-01 / 11-02): CHANNEL PAR TOP-UP.
+        // An order took Etsy / Wix / Wayfair down to the item's channel PAR minimum (V2 card → Channel PARs): raise it back to the
+        // target, as far as the warehouse can cover after TreasureMarts, Crazy Chicks and hold-back. Only when the min AND a target
+        // above it are set; only on an order that deducted stock (deductedQty > 0 — so cascade_peer_decrement=false, which suppresses
+        // the cascade, also suppresses this); never from 0 (bringing a sold-out channel back is a reactivation — a person's call, Y-4);
+        // never lowers a channel. The cascade below pushes every channel raised here, the order's own source channel included.
+        adjustments.topUps = {};
+        if (sourceChannel && deductedQty > 0 && product.channelTopUp) {
+            const _hb = parseInt(product.holdBack) || 0;
+            const _topCap = Math.max(0, warehouseQty - tmQty - ccQty - _hb);
+            const _has = { etsy: hasEtsyId, wix: hasWixId, wayfair: !!(product.wayfairSku || product.supplierPartNumber) };
+            for (const ch of ['etsy', 'wix', 'wayfair']) {
+                const p = product.channelTopUp[ch] || {};
+                const mn = parseInt(p.min) || 0, tg = parseInt(p.target) || 0;
+                if (!_has[ch] || mn <= 0 || tg <= mn) continue;
+                const cur = parseInt(channels[ch]) || 0;
+                if (cur <= 0 || cur > mn) continue;
+                const to = Math.min(tg, _topCap);
+                if (to <= cur) continue;
+                adjustments.changes.push({ channel: ch, from: cur, to, reason: `channel PAR top-up (min ${mn}, target ${tg})` });
+                adjustments.topUps[ch] = { from: cur, to, min: mn, target: tg, cap: _topCap };
+                channels[ch] = to;
+                adjustments.adjusted = true;
+            }
+        }
+
         // Rule 3: REMOVED in v4.3.9
         // The old additive formula (max(etsy,wix) + wayfair ≤ warehouse) was wrong.
         // Shared inventory model: online channels overlap, not additive.
@@ -5298,6 +5329,13 @@
                     product.wixQty = parseInt(product.channels?.wix ?? 0);
                     product.wayfairQty = parseInt(product.channels?.wayfair ?? 0);
                     item._after = { etsy: product.etsyQty, wix: product.wixQty, wayfair: product.wayfairQty };   // v4.6.20: what the cascade sends
+                    item._topUps = (adjustResult && adjustResult.topUps) || {};   // v4.6.24: the channels this order raised to their PAR target
+                    for (const [_ch, _t] of Object.entries(item._topUps)) {
+                        logActivity('inventory', 'CHANNEL_PAR_TOPUP', _ch,
+                            `⬆️ ${sku} ${_ch} topped up ${_t.from} → ${_t.to} (channel PAR min ${_t.min}, target ${_t.target})`,
+                            { sku, orderId, channel: _ch, from: _t.from, to: _t.to, min: _t.min, target: _t.target, cap: _t.cap, source: 'sync_hub_order' });
+                        addLog(`⬆️ ${sku}: ${_ch} topped up ${_t.from} → ${_t.to} (channel PAR)`, 'info');
+                    }
                     
                     // Log each channel adjustment individually for detailed tracking
                     if (adjustResult.adjusted && adjustResult.changes.length > 0) {
@@ -5608,7 +5646,7 @@
                 const channels = item._after || product.channels || {};   // v4.6.20: the numbers this order computed and saved
                 
                 // Etsy cascade
-                if ((product.etsyListingId || product.etsyListing) && sourceChannel !== 'etsy') {
+                if ((product.etsyListingId || product.etsyListing) && (sourceChannel !== 'etsy' || (item._topUps && item._topUps.etsy))) {   // v4.6.24: or topped up
                     const etsyQty = parseInt(channels.etsy) || 0;
                     
                     // v4.3.9 REACTIVATION GUARD: Don't push qty > 0 if Etsy was at 0
@@ -5639,7 +5677,7 @@
                 }
                 
                 // Wix cascade
-                if ((product.wixProductId || product.wixId) && sourceChannel !== 'wix') {
+                if ((product.wixProductId || product.wixId) && (sourceChannel !== 'wix' || (item._topUps && item._topUps.wix))) {   // v4.6.24: or topped up
                     const wixQty = parseInt(channels.wix) || 0;
                     // v4.4.0: Reactivation guard for Wix (same protection as Etsy)
                     // v4.4.4: Read from item._originalWixQty (stored during deduction loop)
@@ -5681,7 +5719,7 @@
                 // v4.4.24 (B-S50-01 diag): forensic logging for "Wayfair not
                 // updating on cross-channel sales" (G13). No behavior change.
                 console.log(`[B-S50-01 diag ${SH_VERSION}] cascade-eval(top): sku=${lookupSku} sourceChannel=${sourceChannel} wayfairSku=${product.wayfairSku || 'none'} supplierPartNumber=${product.supplierPartNumber || 'none'} channels.wayfair=${channels.wayfair} parsed=${parseInt(channels.wayfair) || 0} guard-pass=${((product.wayfairSku || product.supplierPartNumber) && sourceChannel !== 'wayfair') ? 'YES' : 'NO'}`);
-                if ((product.wayfairSku || product.supplierPartNumber) && sourceChannel !== 'wayfair') {
+                if ((product.wayfairSku || product.supplierPartNumber) && (sourceChannel !== 'wayfair' || (item._topUps && item._topUps.wayfair))) {   // v4.6.24: or topped up
                     const wayfairQty = parseInt(channels.wayfair) || 0;
                     try {
                         await sbClient.from('sync_queue').insert({
