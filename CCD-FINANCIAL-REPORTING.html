@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.14</title>
+<title>CCD Financial Intelligence v1.8.15</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -560,7 +560,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.14</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.15</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -782,6 +782,19 @@ body {
           <div class="card-body" id="sc-close"></div>
         </div>
 
+        <div class="card">
+          <div class="card-header"><div><div class="card-title">Freeze a closed month</div><div class="sc-sub">fr_frozen_records · a record of FR's figures at the close · shows when the sales behind it change later</div></div></div>
+          <div class="card-body">
+            <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:end;margin-bottom:10px;">
+              <div style="min-width:150px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Month</label><input type="month" id="frFreezeMonth" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;"></div>
+              <div style="min-width:150px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Frozen by</label><input type="text" id="frFreezeWho" placeholder="Your name" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;"></div>
+              <button class="btn-export" id="frFreezeBtn" style="background:var(--gold);color:#070c18;border:none;padding:10px 20px;font-weight:700;" onclick="frFreezeMonth()">Freeze month</button>
+            </div>
+            <div id="frFreezeMsg" style="font-size:12px;margin-bottom:8px;"></div>
+            <div id="frFreezeList"></div>
+          </div>
+        </div>
+
         <div class="chart-grid-4">
           <div class="card">
             <div class="card-header"><div><div class="card-title">Data quality</div><div class="sc-sub">v_data_quality · FR figures (counted, not fixed)</div></div></div>
@@ -942,6 +955,11 @@ body {
         <div class="card">
           <div class="card-header"><div class="card-title">Fee Breakdown by Channel</div></div>
           <div class="card-body" id="channelFeeBreakdown"><div class="loading"><div class="spinner"></div></div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><div class="card-title">Crazy Chicks: month against break-even</div></div>
+          <div class="card-body" id="ccPanelWrap"><div class="loading"><div class="spinner"></div></div></div>
         </div>
       </section>
 
@@ -1339,6 +1357,10 @@ body {
         <div class="card">
           <div class="card-body" id="vendorTableWrap"><div class="loading"><div class="spinner"></div></div></div>
         </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Vendor spend net of credit memos <span style="color:var(--muted);font-size:10px;font-weight:400;margin-left:8px;">all invoices, by the invoice's order date</span></div></div>
+          <div class="card-body" id="crmWrap"><div class="loading"><div class="spinner"></div></div></div>
+        </div>
       </section>
 
       <!-- ─── ETSY ADS ROI ─── -->
@@ -1487,7 +1509,7 @@ body {
               </div>
               <div style="flex:1;min-width:140px;">
                 <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Statement Month</label>
-                <input type="month" id="tmReconMonth" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
+                <input type="month" id="tmReconMonth" onchange="boothStmtFill()" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
               </div>
               <div style="flex:1;min-width:140px;">
                 <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Statement Gross Sales</label>
@@ -1497,9 +1519,17 @@ body {
                 <label id="tmReconCommLabel" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Commission</label>
                 <input type="number" id="tmReconCommission" step="0.01" placeholder="0.00" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
               </div>
+              <div style="flex:1;min-width:140px;" id="tmReconCardWrap">
+                <label id="tmReconCardLabel" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Card fee</label>
+                <input type="number" id="tmReconCardFee" step="0.01" placeholder="0.00" oninput="boothCardInput()" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
+              </div>
               <div style="flex:1;min-width:140px;">
                 <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Monthly Rent</label>
                 <input type="number" id="tmReconRent" step="0.01" value="240.00" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
+              </div>
+              <div style="flex:1;min-width:140px;" id="tmReconRentForWrap">
+                <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Rent is for</label>
+                <input type="month" id="tmReconRentFor" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;">
               </div>
               <div style="flex:1;min-width:140px;">
                 <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Paid to us (− if we paid them)</label>
@@ -1508,10 +1538,22 @@ body {
               <button class="btn-export" style="background:var(--gold);color:#070c18;border:none;padding:10px 20px;font-weight:700;" onclick="runTmReconciliation()">Reconcile</button>
             </div>
             <div style="font-size:10px;color:var(--muted);margin-top:8px;">Type the figures from the booth's monthly statement. The booth's rent and commission come out of sales first; if sales don't cover them, the payout is negative (we owe the difference). Reversed and cancelled sales are left out of the CCD side.</div>
+            <div id="tmReconSavedMsg" style="font-size:11px;color:var(--gold2);margin-top:6px;"></div>
           </div>
         </div>
         <div id="tmReconResults" style="display:none;">
           <div class="kpi-grid" id="tmReconKpis"></div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">Save this statement</div></div>
+            <div class="card-body">
+              <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:end;">
+                <div style="flex:2;min-width:180px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Statement or check</label><input type="text" id="tmReconDoc" placeholder="e.g. October statement, check 1106" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;"></div>
+                <div style="flex:1;min-width:140px;"><label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:4px;">Saved by</label><input type="text" id="tmReconWho" placeholder="Your name" style="width:100%;padding:8px 10px;background:var(--bg2);border:1px solid var(--border2);border-radius:var(--r);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;"></div>
+                <button class="btn-export" style="background:var(--gold);color:#070c18;border:none;padding:10px 20px;font-weight:700;" onclick="saveBoothStatement()">Save statement</button>
+              </div>
+              <div id="tmReconSaveMsg" style="font-size:12px;margin-top:8px;"></div>
+            </div>
+          </div>
           <div class="card">
             <div class="card-header"><div class="card-title">Comparison Detail</div></div>
             <div class="card-body" id="tmReconDetailWrap"></div>
@@ -1520,6 +1562,10 @@ body {
             <div class="card-header"><div class="card-title">CCD Booth Sales for Period</div></div>
             <div class="card-body" id="tmReconSalesListWrap"></div>
           </div>
+        </div>
+        <div class="card">
+          <div class="card-header"><div class="card-title">Saved booth statements</div></div>
+          <div class="card-body" id="tmReconSavedWrap"></div>
         </div>
       </section>
 
@@ -1628,7 +1674,7 @@ body {
 // v1.8.13 (2026-10-04, Scorecard + screen corrections):
 //   F      New Scorecard page (first under Reports). Every section reads ONE view - qb_monthly_summary,
 //          v_channel_contribution, v_kpi_inventory, v_kpi_sales_monthly, v_channel_reconciliation, v_close_health,
-//          v_data_quality, v_feed_health - and shows its own error in place. BREAK_EVEN_CC = 294 is the only constant.
+//          v_data_quality, v_feed_health - and shows its own error in place. the Crazy Chicks break-even comes from settings (v1.8.15).
 //          Default landing page left as Executive (making Scorecard the default is not a one-line change).
 //   E-D2   oh_fee + surcharge shown as "Internal overhead allocation (not a channel charge)" with a "Channel charges"
 //          subtotal (= total_fees − oh_fee − surcharge) beside "Total incl. internal overhead": Sales drill, Channel fee
@@ -1681,7 +1727,11 @@ body {
 //   loadTmRecon() now returns its promise (was dropped) so the auto-refresh can await it.
 //   Not changed: every loader's queries and maths, net_profit, oh_fee/surcharge, database writes (only the
 //   existing registerToolVersion), localStorage keys other than the new 'frAutoRefresh'.
-const FR_VERSION = 'v1.8.14';
+// v1.8.15 (S134, specs: Shared 74, 77, 58, 63, 64): booth statement gains the Crazy Chicks card fee (estimate until typed), the month
+//   the rent is for, and SAVE (fr_frozen_records, a new revision each time); break-even from settings, not a constant; Channels panel for
+//   Crazy Chicks; per-item contribution on Inventory; Vendor Spend report net of credit memos; Scorecard month freeze; Customers wording.
+//   Live refresh no longer writes over the booth boxes. Not changed: every other loader's queries and maths, inventory figures.
+const FR_VERSION = 'v1.8.15';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -1975,7 +2025,7 @@ function refreshCurrentPageAsync() {
   if      (currentPage === 'dashboard') return loadDashboard();
   else if (currentPage === 'sales')     return loadSalesDetail();
   else if (currentPage === 'daily')     return loadDailyReport();
-  else if (currentPage === 'channel')   return loadChannelReport();
+  else if (currentPage === 'channel')   return Promise.all([loadChannelReport(), loadCcPanel()]);
   else if (currentPage === 'products')  return loadProductReport();
   else if (currentPage === 'brands')    return loadBrandReport();
   else if (currentPage === 'shipping')  return loadShippingReport();
@@ -1988,13 +2038,13 @@ function refreshCurrentPageAsync() {
   else if (currentPage === 'trends')     return loadTrendsReport();
   else if (currentPage === 'datahealth') return loadDataHealth();
   else if (currentPage === 'scenarios') return loadScenarioPlanner();
-  else if (currentPage === 'vendorspend') return loadVendorSpend();
+  else if (currentPage === 'vendorspend') return Promise.all([loadVendorSpend(), loadCreditMemoReport()]);
   else if (currentPage === 'etsyads') return loadEtsyAdsReport();
   else if (currentPage === 'pricecomp') return loadPriceCompare();
   else if (currentPage === 'monthlyincome') return loadMonthlyIncome();
-  else if (currentPage === 'tmrecon') return Promise.all([loadTmRecon(), boothReconChannelChanged()]);
+  else if (currentPage === 'tmrecon') return Promise.all([loadTmRecon(), boothReconRefresh()]);   // v1.8.15: the boxes are filled once, then only when a person changes booth or month
   else if (currentPage === 'returns') return loadReturnsReport();   // v1.8.11
-  else if (currentPage === 'scorecard') return loadScorecard();      // v1.8.13 F
+  else if (currentPage === 'scorecard') return Promise.all([loadScorecard(), loadFreezePanel()]);      // v1.8.13 F
   return Promise.resolve();
 }
 // Unchanged contract for every existing caller (navTo, setChannel, date pills, ...): fire-and-forget.
@@ -2424,7 +2474,7 @@ function chBadge(ch) {
 // sums rows a view returns over the selected months (plus AOV / units-per-order / margin % as sum ÷ sum).
 // Each section catches its own errors and shows them in place, so one failed view never blanks the page.
 // ASSUMPTION: *_pct columns are already percentages (17.44 = 17.44%), rendered as-is.
-const BREAK_EVEN_CC = 294;   // Crazy Chicks monthly break-even gross: 15% commission, 250/month rent (250 / 0.85 ≈ 294)
+// v1.8.15: BREAK_EVEN_CC removed. See frCcBreakEven(), read from settings.
 const SC_VERDICTS = ['MATCH','WITHIN 2%','VARIANCE','NO ACTIVITY','QB NOT LOADED','NOT_COMPARABLE','INTERNAL','UNMAPPED'];
 let scLoadSeq = 0;
 
@@ -2478,6 +2528,7 @@ async function scSection(elId, view, seq, fetchFn, renderFn) {
 
 async function loadScorecard() {
   const seq = ++scLoadSeq;
+  await frFeesPromise;   // v1.8.15: the break-even reads the settings
   const { fromMonth, toMonth } = scMonthBounds();
   const lbl = document.getElementById('sc-period-label');
   if (lbl) lbl.textContent = `${periodLabel()} · months ${scMon(fromMonth)} – ${scMon(toMonth)} · every figure from a database view`;
@@ -2538,12 +2589,14 @@ async function loadScorecard() {
         if (!data.length) { el.innerHTML = '<div class="sc-empty">No Crazy Chicks month in v_channel_contribution yet.</div>'; return; }
         const r = data[0];
         const rev = scN(r.qb_revenue_net) || 0;
-        const w = Math.max(0, Math.min(100, rev / BREAK_EVEN_CC * 100));
-        const short = BREAK_EVEN_CC - rev;
-        el.innerHTML = `<div style="font-size:12px;">${scMon(r.period_month)}: revenue <b>${$$n(rev)}</b> vs break-even <b>${$$(BREAK_EVEN_CC)}</b>
+        const be = frCcBreakEven(frMonthEnd(String(r.period_month).slice(0, 10)));
+        if (be.value == null) { el.innerHTML = `<div class="sc-empty">${escapeHtml(be.formula)}</div>`; return; }
+        const w = Math.max(0, Math.min(100, rev / be.value * 100));
+        const short = be.value - rev;
+        el.innerHTML = `<div style="font-size:12px;">${scMon(r.period_month)}: revenue <b>${$$n(rev)}</b> vs break-even <b>${$$(be.value)}</b>
             <span class="${short > 0 ? 'val-neg' : 'val-pos'}">${short > 0 ? '— ' + $$(short) + ' short' : '— above break-even by ' + $$(-short)}</span></div>
           <div class="sc-bar"><div style="width:${w.toFixed(1)}%;background:${short > 0 ? 'var(--red)' : 'var(--green)'};"></div></div>
-          <div class="sc-note">${w.toFixed(0)}% of break-even · cash contribution ${scMoney(r.cash_contribution)} · economic ${scMoney(r.economic_contribution)} · break-even = 250 rent ÷ (1 − 15% commission)</div>`;
+          <div class="sc-note">${w.toFixed(0)}% of break-even · cash contribution ${scMoney(r.cash_contribution)} · economic ${scMoney(r.economic_contribution)} · ${escapeHtml(be.formula)}</div>`;
       }),
 
     // 4 · Inventory (landed cost)
@@ -2554,13 +2607,11 @@ async function loadScorecard() {
       (el, data) => {
         if (!data.length) { el.innerHTML = '<div class="sc-empty">v_kpi_inventory returned no row.</div>'; return; }
         const r = data[0];
-        const status = r.count_status == null ? '—' : String(r.count_status);
-        const statusOk = status.toUpperCase().startsWith('OK');
         el.innerHTML = `<div class="sc-grid">
           ${scTile('Value (landed)', scMoney(r.value_landed), `as of ${escapeHtml(r.as_of || '—')} · wholesale ${scMoney(r.value_wholesale)}`)}
           ${scTile('Units on hand', scNum(r.units_on_hand), `${scNum(r.skus_in_stock)} SKUs in stock`)}
           ${scTile('Crazy Chicks booth', scNum(r.cc_booth_units) + ' units', `value ${scMoney(r.cc_booth_value)} · TM booth ${scNum(r.tm_booth_units)} units`)}
-          ${scTile('Last count', escapeHtml(r.last_count_date || '—'), `value ${scMoney(r.last_count_value)} · ${scNum(r.days_since_count)} days ago<br>FR vs count: ${scMoney(r.fr_vs_count_amount)} (${scPct(r.fr_vs_count_pct)})<br><span class="${statusOk ? 'val-pos' : 'val-neg'}">${escapeHtml(status)}</span>`)}
+          ${scTile('Last spreadsheet figure', escapeHtml(r.last_count_date || '—'), `value ${scMoney(r.last_count_value)} · ${scNum(r.days_since_count)} days ago`)}
           ${scTile('Dead stock 90d', scMoney(r.dead_stock_value_90d), `180d: ${scMoney(r.dead_stock_value_180d)}`)}
           ${scTile('Unsold 365d', scMoney(r.value_no_sale_365d), `${scNum(r.skus_no_sale_365d)} SKUs`)}
           ${scTile('Sell-through 90d', scPct(r.sell_through_90d_pct), '')}
@@ -4385,9 +4436,10 @@ function setInventoryView(v) {
 }
 
 async function loadInventoryReport() {
+  await frFeesPromise;   // v1.8.15: the Crazy Chicks column reads the fee settings
   // Items from DB (limit: Supabase defaults to 1000, bump for safety)
   const items = await sbFetchAll(() => sbClient.from('items')
-    .select('id,sku,product_name,brand_name,qty,treasuremarts_qty,crazychicks_qty,wholesale_price,ob_shipping,ib_shipping,tariff,is_bundle,item_role'));
+    .select('id,sku,product_name,brand_name,qty,treasuremarts_qty,crazychicks_qty,crazychicks_price,wholesale_price,ob_shipping,ib_shipping,tariff,is_bundle,item_role'));
 
   // Recent sales for velocity (last 90 days) — must override 1000-row default
   const d90 = new Date(); d90.setDate(d90.getDate()-90);
@@ -4436,6 +4488,7 @@ async function loadInventoryReport() {
       sku: item.sku, product: item.product_name||'', brand: item.brand_name||'',
       wQty: wqty, tQty: tqty, totalQty, wholesale: ws,
       costBasis: Math.round(costBasis*100)/100,
+      ccContr: (parseInt(item.crazychicks_qty)||0) > 0 ? frCcContribution(item.crazychicks_price, costBasis, todayStr) : null,   // v1.8.15: an estimate (note 74 §3)
       invValue: Math.round(invValue*100)/100,
       lastSold: lastSale, daysSince,
       velocity30: vel.units30, velocity90: vel.units90,
@@ -4503,6 +4556,7 @@ function renderInventoryTable() {
       <th style="cursor:pointer;" onclick="sortTable('inv','daysSince',inventoryData,renderInventoryTable)">Last Sold ${sArr('inv','daysSince')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('inv','velocity30',inventoryData,renderInventoryTable)">30d Sales ${sArr('inv','velocity30')}</th>
       <th class="text-right" style="cursor:pointer;" onclick="sortTable('inv','daysOfStock',inventoryData,renderInventoryTable)">Days of Stock ${sArr('inv','daysOfStock')}</th>
+      <th class="text-right" title="Estimate for items in the Crazy Chicks room: price less commission and card fee, less cost. No share of the rent.">C Chicks contribution (est.)</th>
     </tr></thead>
     <tbody>${rows.map(r => {
       const deadCls = r.daysSince >= 90 ? 'val-neg' : '';
@@ -4522,6 +4576,7 @@ function renderInventoryTable() {
         <td class="${deadCls}">${r.lastSold || 'Never'}</td>
         <td class="text-right">${r.velocity30 > 0 ? r.velocity30 : '—'}</td>
         <td class="text-right ${dosCls}">${r.daysOfStock < 9999 ? r.daysOfStock+'d' : '∞'}</td>
+        <td class="text-right ${r.ccContr != null && r.ccContr < 0 ? 'val-neg' : ''}">${r.ccContr == null ? '—' : $$n(r.ccContr)}</td>
       </tr>`;
     }).join('')}</tbody>
     <tfoot><tr style="background:var(--bg3);">
@@ -4531,7 +4586,7 @@ function renderInventoryTable() {
       <td class="text-right" style="font-weight:500;">${num(rows.filter(r=>!r.isBundle).reduce((s,r)=>s+r.totalQty,0))}</td>
       <td></td><td></td>
       <td class="text-right val-gold">${$$(rows.filter(r=>!r.isBundle).reduce((s,r)=>s+r.invValue,0))}</td>
-      <td colspan="3"></td>
+      <td colspan="4"></td>
     </tr></tfoot>
   </table></div>`;
 }
@@ -5814,7 +5869,7 @@ function renderCustomerTable() {
   if (customerView === 'repeat') rows = rows.filter(c => c.orders > 1);
   else if (customerView === 'single') rows = rows.filter(c => c.orders === 1);
 
-  if (!rows.length) { wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-msg">No customer data for this period</div><div style="font-size:11px;color:var(--muted);margin-top:8px;">Customer insights require buyer_email on sales records.<br>Sync Hub must write buyer_email when processing Etsy/Wix orders.<br>Backfilled sales do not have this field.</div></div>'; return; }
+  if (!rows.length) { wrap.innerHTML = '<div class="empty-state"><div class="empty-icon">◈</div><div class="empty-msg">No customer data for this period</div><div style="font-size:11px;color:var(--muted);margin-top:8px;">Customer insights use the buyer field on each sale: an email for Wix, the buyer\'s name for Etsy and Wayfair. Crazy Chicks sales have none.</div></div>'; return; }
 
   wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table">
     <thead><tr>
@@ -8152,6 +8207,342 @@ function exportMonthlyIncomeExcel() {
   XLSX.writeFile(wb, `CCD-Monthly-Income-${fmt(new Date())}.xlsx`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// v1.8.15 — Crazy Chicks card fee, break-even from settings, saved booth statements, month freeze,
+// Crazy Chicks panels, credit memo report. Specs: Shared notes 74, 77 (and addendum), 58, 63, 64.
+// fr_frozen_records is a record of a document, never a source of truth for money; rows are only ever added.
+// ─────────────────────────────────────────────────────────────────────────────
+let frFeesPromise = null, frFeesLoaded = false, frCcRentFlat = null, frCcCardShare = null;
+const FR_CC_RENT_AHEAD_FROM = '2026-10';   // from this statement month the settlement carries NEXT month's rent (note 77 addendum)
+const FR_CC_FIRST_MONTH = '2026-09';       // the first month of the Crazy Chicks room
+const frR2 = n => Math.round((parseFloat(n) || 0) * 100) / 100;
+const frSum = (a, f) => a.reduce((s, r) => s + (parseFloat(f(r)) || 0), 0);
+
+function frCcRent() {
+  const v = parseFloat((frFees.cc || {}).rent_monthly);
+  if (!isNaN(v) && v > 0) return v;
+  return frCcRentFlat;   // null = unknown; never a typed-in default
+}
+function frCcCardFrom() { return (frFees.cc || {}).card_from || null; }
+function frCcCardPct() { return parseFloat((frFees.cc || {}).card_pct) || 0; }
+function frCcCardApplies(dateStr) { const f = frCcCardFrom(); return !!f && frCcCardPct() > 0 && dateStr >= f; }
+function frMonthEnd(dateStr) {
+  const y = parseInt(dateStr.slice(0, 4), 10), m = parseInt(dateStr.slice(5, 7), 10);
+  return dateStr.slice(0, 7) + '-' + String(new Date(y, m, 0).getDate()).padStart(2, '0');
+}
+// Note 74 §2: rent ÷ (1 − commission) before the fee; rent ÷ (1 − commission − card) after, every sale on a card, until
+// three full statements give a card share. Unknown settings give an honest unknown, not a remembered number.
+function frCcBreakEven(dateStr) {
+  const rent = frCcRent();
+  if (!frFeesLoaded || rent == null) return { value: null, formula: 'break-even unknown: the Crazy Chicks settings could not be read' };
+  const comm = (parseFloat((frFees.cc || {}).commission_pct) || 0) / 100;
+  const card = frCcCardApplies(dateStr) ? frCcCardPct() / 100 : 0;
+  const share = card > 0 && frCcCardShare != null ? frCcCardShare : 1;
+  const value = rent / (1 - comm - card * share);
+  const pct = n => (n * 100).toFixed(0) + '%';
+  const formula = 'break-even = ' + rent.toFixed(0) + ' rent ÷ (1 − ' + pct(comm) + ' commission' +
+    (card > 0 ? ' − ' + pct(card) + ' card' + (frCcCardShare != null ? ' × ' + (share * 100).toFixed(0) + '% card share' : ', every sale on a card') : '') + ')';
+  return { value: frR2(value), formula };
+}
+function frCcContribution(price, unitCost, dateStr) {
+  const p = parseFloat(price);
+  if (!p || p <= 0) return null;
+  const comm = (parseFloat((frFees.cc || {}).commission_pct) || 0) / 100;
+  const card = frCcCardApplies(dateStr) ? frCcCardPct() / 100 : 0;
+  return frR2(p * (1 - comm - card) - (parseFloat(unitCost) || 0));
+}
+// Full months only: November 2026 is a split month, so its statement would understate the share.
+function frCardShareFrom(rows) {
+  const from = frCcCardFrom(), pct = frCcCardPct() / 100;
+  if (!from || !pct) return null;
+  const good = rows.filter(r => r.channel === 'crazychicks' && String(r.period_month) >= from && r.figures && r.figures.card_fee_source === 'typed' && parseFloat(r.figures.sales) > 0);
+  if (good.length < 3) return null;
+  return good.reduce((s, r) => s + Math.min(1, Math.max(0, parseFloat(r.figures.card_fee) / (pct * parseFloat(r.figures.sales)))), 0) / good.length;
+}
+async function frLoadCcExtras() {
+  try {
+    const { data } = await sbClient.from('settings').select('value').eq('key', 'crazychicks_rent_flat').limit(1);
+    const v = data && data.length ? parseFloat(typeof data[0].value === 'string' ? data[0].value : JSON.stringify(data[0].value)) : NaN;
+    frCcRentFlat = isNaN(v) ? null : v;
+  } catch (e) { console.log('rent read skipped:', e.message); }
+  try {
+    const { data, error } = await sbClient.from('v_fr_frozen_current').select('channel,period_month,figures').eq('kind', 'booth_statement');
+    if (!error) frCcCardShare = frCardShareFrom(data || []);
+  } catch (e) { console.log('card share skipped:', e.message); }
+}
+
+// ── Booth statement: the boxes ───────────────────────────────────────────────
+let boothOpened = false, boothFillSeq = 0, boothFromSaved = false, boothCardTyped = false, boothLast = null;
+function boothMonth(monthVal) {
+  const [y, m] = monthVal.split('-').map(Number);
+  const first = monthVal + '-01';
+  return { first, last: frMonthEnd(first), next: new Date(y, m, 1).getFullYear() + '-' + String(new Date(y, m, 1).getMonth() + 1).padStart(2, '0') };
+}
+function boothEl(id) { return document.getElementById(id); }
+function boothDefaultRentFor(ch, monthVal) {
+  return ch === 'crazychicks' && monthVal >= FR_CC_RENT_AHEAD_FROM ? boothMonth(monthVal).next : monthVal;
+}
+function boothCardLabel(applies) {
+  const lbl = boothEl('tmReconCardLabel');
+  if (!lbl) return;
+  if (!frFeesLoaded) lbl.textContent = 'Card fee (settings not read)';
+  else if (!applies) lbl.textContent = 'Card fee (none this month)';
+  else lbl.textContent = 'Card fee (' + frCcCardPct() + '%) ' + (boothCardTyped ? 'actual' : 'estimate: overwrite from statement');
+}
+function boothCardInput() { boothCardTyped = true; boothCardLabel(true); }
+async function boothEstimateCard(ch, first, last) {
+  if (ch !== 'crazychicks' || !frCcCardApplies(last)) return 0;
+  const from = frCcCardFrom() > first ? frCcCardFrom() : first;
+  const rows = await sbFetchAll(() => shFrom().select('id,sale_date,cc_fee').eq('sale_channel', ch).gte('sale_date', from).lte('sale_date', last));
+  return frR2(frSum(rows, r => r.cc_fee));
+}
+// Fills the card fee, the rent month and any saved statement. Runs when a person changes the booth or month, and once on
+// opening the page. Never on a live refresh: that would write over figures being typed.
+async function boothStmtFill() {
+  const seq = ++boothFillSeq;
+  await frFeesPromise;
+  const ch = boothEl('tmReconChannel').value, monthVal = boothEl('tmReconMonth').value;
+  const msg = boothEl('tmReconSavedMsg');
+  boothEl('tmReconCardWrap').style.display = ch === 'crazychicks' ? '' : 'none';
+  boothEl('tmReconRentForWrap').style.display = ch === 'crazychicks' ? '' : 'none';
+  if (!monthVal) return;
+  const { first, last } = boothMonth(monthVal);
+  const applies = ch === 'crazychicks' && frCcCardApplies(last);
+  let saved = null, estimate = 0;
+  try {
+    estimate = await boothEstimateCard(ch, first, last);
+    const { data, error } = await sbClient.from('v_fr_frozen_current').select('*').eq('kind', 'booth_statement').eq('period_month', first).eq('channel', ch).limit(1);
+    if (!error && data && data.length) saved = data[0];
+  } catch (e) { console.log('booth fill:', e.message); }
+  if (seq !== boothFillSeq) return;
+  const card = boothEl('tmReconCardFee');
+  card.readOnly = frFeesLoaded && !applies;
+  if (saved) {
+    const f = saved.figures || {};
+    boothEl('tmReconSales').value = f.sales != null ? frR2(f.sales).toFixed(2) : '';
+    boothEl('tmReconCommission').value = f.commission != null ? frR2(f.commission).toFixed(2) : '';
+    boothEl('tmReconRent').value = f.rent != null ? frR2(f.rent).toFixed(2) : '';
+    boothEl('tmReconEft').value = f.paid_to_us != null ? frR2(f.paid_to_us).toFixed(2) : '';
+    card.value = f.card_fee != null ? frR2(f.card_fee).toFixed(2) : '0.00';
+    boothCardTyped = f.card_fee_source === 'typed';
+    boothEl('tmReconRentFor').value = f.rent_for_month ? String(f.rent_for_month).slice(0, 7) : boothDefaultRentFor(ch, monthVal);
+    boothFromSaved = true;
+    if (msg) msg.textContent = 'Saved ' + String(saved.created_at).slice(0, 10) + ' by ' + saved.created_by + ' (revision ' + saved.revision + '). The boxes show what was saved; a new save becomes the next revision.';
+  } else {
+    if (boothFromSaved) {
+      boothEl('tmReconSales').value = ''; boothEl('tmReconCommission').value = ''; boothEl('tmReconEft').value = '';
+      if (ch === 'crazychicks' && frCcRent() != null) boothEl('tmReconRent').value = frCcRent().toFixed(2);
+    }
+    boothFromSaved = false;
+    boothCardTyped = false;
+    card.value = frFeesLoaded ? estimate.toFixed(2) : '';
+    boothEl('tmReconRentFor').value = boothDefaultRentFor(ch, monthVal);
+    if (msg) msg.textContent = '';
+  }
+  boothCardLabel(applies);
+  boothEl('tmReconResults').style.display = 'none';
+  boothLast = null;
+}
+async function boothReconRefresh() {
+  if (!boothOpened) { boothOpened = true; await boothReconChannelChanged(); }
+  await loadBoothSaved();
+}
+function boothCurrentBoxes() {
+  const n = id => parseFloat(boothEl(id).value) || 0;
+  return { ch: boothEl('tmReconChannel').value, month: boothEl('tmReconMonth').value, sales: n('tmReconSales'), commission: n('tmReconCommission'),
+    card: boothEl('tmReconChannel').value === 'crazychicks' ? n('tmReconCardFee') : 0, rent: n('tmReconRent'), eft: n('tmReconEft'), rentFor: boothEl('tmReconRentFor').value };
+}
+async function saveBoothStatement() {
+  const msg = boothEl('tmReconSaveMsg'), who = (boothEl('tmReconWho').value || '').trim();
+  const say = (t, bad) => { msg.textContent = t; msg.style.color = bad ? 'var(--red)' : 'var(--green)'; };
+  const b = boothLast;
+  if (!b) return say('Press Reconcile first.', true);
+  const now = boothCurrentBoxes();
+  if (['ch', 'month', 'sales', 'commission', 'card', 'rent', 'eft', 'rentFor'].some(k => now[k] !== b.boxes[k])) return say('The boxes changed after Reconcile. Press Reconcile again, then save.', true);
+  if (!who) return say('Type who is saving this statement.', true);
+  try { localStorage.setItem('frSavedBy', who); } catch (e) { /* a convenience only */ }
+  const { first, last } = boothMonth(b.boxes.month);
+  const { data: top, error: e1 } = await sbClient.from('fr_frozen_records').select('revision').eq('kind', 'booth_statement').eq('period_month', first).eq('channel', b.boxes.ch).order('revision', { ascending: false }).limit(1);
+  if (e1) return say('Not saved: ' + e1.message, true);
+  const revision = (top && top.length ? top[0].revision : 0) + 1;
+  const applies = b.boxes.ch === 'crazychicks' && frCcCardApplies(last);
+  const row = {
+    kind: 'booth_statement', period_month: first, channel: b.boxes.ch, revision, created_by: who,
+    source_document: (boothEl('tmReconDoc').value || '').trim() || null,
+    figures: { sales: b.boxes.sales, commission: b.boxes.commission, card_fee: b.boxes.card, card_fee_source: !applies ? 'not_charged' : (boothCardTyped ? 'typed' : 'estimate_not_changed'),
+      rent: b.boxes.rent, rent_for_month: (b.boxes.rentFor || b.boxes.month) + '-01', net_payout: b.net, paid_to_us: b.boxes.eft },
+    estimates: b.estimates
+  };
+  const { data, error } = await sbClient.from('fr_frozen_records').insert(row).select('id,revision');
+  if (error) return say('Not saved: ' + error.message, true);
+  if (!data || !data.length) return say('Not saved: the database did not confirm the row.', true);
+  boothFromSaved = true;
+  say('Saved as revision ' + data[0].revision + '.' + (applies && !boothCardTyped ? ' The card fee is still the estimate, so it will not count as an actual.' : ''), false);
+  await frLoadCcExtras();
+  await loadBoothSaved();
+}
+async function loadBoothSaved() {
+  const wrap = boothEl('tmReconSavedWrap');
+  if (!wrap) return;
+  const { data, error } = await sbClient.from('v_fr_frozen_current').select('*').eq('kind', 'booth_statement').order('period_month', { ascending: false });
+  if (error) { wrap.innerHTML = '<div style="color:var(--red);font-size:12px;">Saved statements could not be read: ' + escapeHtml(error.message) + '</div>'; return; }
+  if (!data.length) { wrap.innerHTML = '<div class="empty-msg" style="font-size:12px;color:var(--muted);">No statement saved yet.</div>'; return; }
+  wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Month</th><th>Booth</th><th class="text-right">Sales</th><th class="text-right">Commission</th><th class="text-right">Card fee</th><th class="text-right">Estimate − actual</th><th class="text-right">Rent</th><th>Rent is for</th><th class="text-right">Net payout</th><th class="text-right">Paid to us</th><th>Saved</th><th>Document</th></tr></thead><tbody>${data.map(r => {
+    const f = r.figures || {}, e = r.estimates || {};
+    const est = e.card_fee != null && f.card_fee != null ? $$s(parseFloat(e.card_fee) - parseFloat(f.card_fee)) : '—';
+    const src = f.card_fee_source === 'estimate_not_changed' ? ' <span style="color:var(--muted);font-size:10px;">estimate</span>' : '';
+    return `<tr><td>${escapeHtml(String(r.period_month).slice(0, 7))}</td><td>${escapeHtml(CH_LABEL[r.channel] || r.channel)}</td><td class="text-right">${$$n(f.sales)}</td><td class="text-right">${$$n(f.commission)}</td><td class="text-right">${$$n(f.card_fee)}${src}</td><td class="text-right">${est}</td><td class="text-right">${$$n(f.rent)}</td><td>${escapeHtml(String(f.rent_for_month || '').slice(0, 7))}</td><td class="text-right">${$$n(f.net_payout)}</td><td class="text-right">${$$n(f.paid_to_us)}</td><td style="font-size:11px;">${escapeHtml(String(r.created_at).slice(0, 10))} · ${escapeHtml(r.created_by)} · rev ${r.revision}</td><td style="font-size:11px;">${escapeHtml(r.source_document || '—')}</td></tr>`;
+  }).join('')}</tbody></table></div>`;
+}
+
+// ── Channels → Crazy Chicks ──────────────────────────────────────────────────
+async function loadCcPanel() {
+  const wrap = boothEl('ccPanelWrap');
+  if (!wrap) return;
+  await frFeesPromise;
+  try {
+    const [sales, st, qb] = await Promise.all([
+      sbFetchAll(() => shFrom().select('id,sale_date,total_revenue,commission,cc_fee').eq('sale_channel', 'crazychicks').gte('sale_date', FR_CC_FIRST_MONTH + '-01')),
+      sbClient.from('v_fr_frozen_current').select('*').eq('kind', 'booth_statement').eq('channel', 'crazychicks'),
+      sbClient.from('qb_monthly_actuals').select('period_month,measure,amount').eq('channel', 'crazychicks').eq('measure', 'revenue')
+    ]);
+    const stByM = {}; ((st && st.data) || []).forEach(r => { stByM[String(r.period_month).slice(0, 7)] = r; });
+    const qbByM = {}; ((qb && qb.data) || []).forEach(r => { qbByM[String(r.period_month).slice(0, 7)] = parseFloat(r.amount) || 0; });
+    const months = [];
+    const now = new Date();
+    for (let d = new Date(now.getFullYear(), now.getMonth(), 1); fmt(d).slice(0, 7) >= FR_CC_FIRST_MONTH; d = new Date(d.getFullYear(), d.getMonth() - 1, 1)) months.push(fmt(d).slice(0, 7));
+    const rent = frCcRent();
+    wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Month</th><th>Basis</th><th class="text-right">Sales</th><th class="text-right">Break-even</th><th class="text-right">Against it</th><th class="text-right">Commission</th><th class="text-right">Card fee</th><th class="text-right">Rent</th><th class="text-right">Contribution</th><th class="text-right" title="QuickBooks is cash basis: this is what was received in the month, which settles the month before.">QuickBooks cash in month</th></tr></thead><tbody>${months.map(m => {
+      const s = stByM[m], f = s ? (s.figures || {}) : null, end = frMonthEnd(m + '-01');
+      const rows = sales.filter(r => String(r.sale_date).slice(0, 7) === m);
+      const salesAmt = f ? parseFloat(f.sales) || 0 : frSum(rows, r => r.total_revenue);
+      const comm = f ? parseFloat(f.commission) || 0 : frSum(rows, r => r.commission);
+      const card = f ? parseFloat(f.card_fee) || 0 : frSum(rows.filter(r => frCcCardApplies(String(r.sale_date).slice(0, 10))), r => r.cc_fee);
+      const rentAmt = f ? parseFloat(f.rent) || 0 : rent;
+      const isActual = !!f && (f.card_fee_source !== 'estimate_not_changed');
+      const be = frCcBreakEven(end);
+      const gap = be.value == null ? null : salesAmt - be.value;
+      const contrib = rentAmt == null ? null : salesAmt - comm - card - rentAmt;
+      return `<tr><td>${m}</td><td>${isActual ? '<span style="color:var(--green);font-weight:600;">actual</span>' : '<span style="color:var(--muted);">estimate</span>'}</td><td class="text-right">${$$(salesAmt)}</td><td class="text-right">${be.value == null ? '—' : $$(be.value)}</td><td class="text-right ${gap != null && gap < 0 ? 'val-neg' : 'val-pos'}">${gap == null ? '—' : $$s(gap)}</td><td class="text-right val-dim">${$$(comm)}</td><td class="text-right val-dim">${$$(card)}</td><td class="text-right val-dim">${rentAmt == null ? '—' : $$(rentAmt)}</td><td class="text-right ${contrib != null && contrib < 0 ? 'val-neg' : 'val-pos'}">${contrib == null ? '—' : $$n(contrib)}</td><td class="text-right val-dim">${qbByM[m] != null ? $$(qbByM[m]) : 'not loaded'}</td></tr>`;
+    }).join('')}</tbody></table></div>
+    <div style="font-size:11px;color:var(--muted);margin-top:8px;">Actual = a booth statement was saved for that month, with the card fee typed from it. Estimate = V2's sales, commission and card fee, with the rent from settings. Contribution = Sales − Commission − Card fee − Rent. ${escapeHtml(frCcBreakEven(fmt(now)).formula)}.</div>`;
+  } catch (e) { wrap.innerHTML = '<div style="color:var(--red);font-size:12px;">The Crazy Chicks panel could not load: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+// ── Scorecard: freeze a month ────────────────────────────────────────────────
+let frFreezeArmed = null;
+async function loadFreezePanel() {
+  const wrap = boothEl('frFreezeList');
+  if (!wrap) return;
+  const m = boothEl('frFreezeMonth');
+  if (m && !m.value) { const d = new Date(); d.setMonth(d.getMonth() - 1, 1); m.value = fmt(d).slice(0, 7); }
+  const who = boothEl('frFreezeWho');
+  if (who && !who.value) { try { who.value = localStorage.getItem('frSavedBy') || ''; } catch (e) { /* a convenience only */ } }
+  const { data, error } = await sbClient.from('v_fr_close_changes').select('*').order('period_month', { ascending: false });
+  if (error) { wrap.innerHTML = '<div style="color:var(--red);font-size:12px;">Frozen months could not be read: ' + escapeHtml(error.message) + '</div>'; return; }
+  if (!data.length) { wrap.innerHTML = '<div style="font-size:12px;color:var(--muted);">No month has been frozen yet.</div>'; return; }
+  wrap.innerHTML = `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Month</th><th>Channel</th><th>Revision</th><th>Frozen</th><th class="text-right">Rows then</th><th class="text-right">Rows now</th><th>Since the freeze</th></tr></thead><tbody>${data.map(r => `<tr><td>${escapeHtml(String(r.period_month).slice(0, 7))}</td><td>${escapeHtml(CH_LABEL[r.channel] || r.channel)}</td><td>${r.revision}</td><td style="font-size:11px;">${escapeHtml(String(r.frozen_at).slice(0, 10))} · ${escapeHtml(r.created_by)}</td><td class="text-right">${num(r.frozen_rows)}</td><td class="text-right">${num(r.rows_now)}</td><td>${r.changed_since_frozen ? '<span style="color:var(--red);font-weight:600;">Sales changed</span>' : '<span style="color:var(--green);">Unchanged</span>'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+async function frFreezeMonth() {
+  const msg = boothEl('frFreezeMsg'), monthVal = boothEl('frFreezeMonth').value, who = (boothEl('frFreezeWho').value || '').trim(), btn = boothEl('frFreezeBtn');
+  const say = (t, bad) => { msg.textContent = t; msg.style.color = bad ? 'var(--red)' : 'var(--muted)'; };
+  if (!monthVal) return say('Choose a month.', true);
+  if (!who) return say('Type who is freezing it.', true);
+  if (frFreezeArmed !== monthVal) { frFreezeArmed = monthVal; btn.textContent = 'Press again to freeze ' + monthVal; return say('A freeze cannot be removed. Pressing it again later adds a new revision.', false); }
+  frFreezeArmed = null; btn.textContent = 'Freeze month';
+  const { data, error } = await sbClient.rpc('ccd_fr_freeze_month', { p_month: monthVal + '-01', p_actor: who });
+  if (error) return say('Not frozen: ' + error.message, true);
+  try { localStorage.setItem('frSavedBy', who); } catch (e) { /* a convenience only */ }
+  say('Frozen as revision ' + data.revision + '.' + (data.book_lines ? '' : ' QuickBooks book totals are not loaded, so the book row is empty.'), false);
+  await loadFreezePanel();
+}
+
+// ── Vendor Spend: invoices net of vendor credits ─────────────────────────────
+let crmData = null;
+function frCreditReport(invoices, lines, memos, memoLines) {
+  const goodsBy = {}, linesBy = {};
+  lines.forEach(l => { goodsBy[l.invoice_id] = (goodsBy[l.invoice_id] || 0) + (parseFloat(l.qty_ordered) || 0) * (parseFloat(l.unit_wholesale_price) || 0); linesBy[l.invoice_id] = true; });
+  const mlBy = {};
+  memoLines.forEach(l => { (mlBy[l.memo_id] = mlBy[l.memo_id] || []).push(l); });
+  const invById = {};
+  invoices.forEach(i => { invById[i.id] = i; });
+  const live = memos.filter(m => m.status !== 'void');
+  const memoCalc = m => {
+    const ls = mlBy[m.id] || [];
+    const excluded = frSum(ls.filter(l => l.already_corrected), l => (parseFloat(l.item_credit) || 0) + (parseFloat(l.adjustment_share) || 0));
+    return { goods: frR2((parseFloat(m.item_credit) || 0) + (parseFloat(m.adjustment) || 0) - excluded), freight: frR2(m.freight_credit), corrected: ls.filter(l => l.already_corrected).length };
+  };
+  const creditBy = {};
+  const unattached = [];
+  live.forEach(m => { if (m.invoice_id != null && invById[m.invoice_id]) (creditBy[m.invoice_id] = creditBy[m.invoice_id] || []).push(m); else unattached.push(m); });
+  const groups = {};
+  const group = (vendor, month) => { const k = vendor + '\u0000' + month; return groups[k] = groups[k] || { vendor, month, invoices: 0, goods: 0, freight: 0, freightKnown: 0, goodsCredit: 0, freightCredit: 0 }; };
+  let blank = 0, noMonth = 0, freightRec = 0;
+  const exceptions = [];
+  invoices.forEach(i => {
+    const vendor = (i.vendor || '').trim() || '(no vendor)';
+    const month = i.order_date ? String(i.order_date).slice(0, 7) : 'no month';
+    if (vendor === '(no vendor)') blank++;
+    if (month === 'no month') noMonth++;
+    const g = group(vendor, month), goods = frR2(goodsBy[i.id]), fr = (parseFloat(i.shipping_cost) || 0) + (parseFloat(i.fuel_surcharge) || 0);
+    g.invoices++; g.goods += goods;
+    if (fr > 0) { g.freight += fr; g.freightKnown++; freightRec++; }
+    (creditBy[i.id] || []).forEach(m => { const c = memoCalc(m); g.goodsCredit += c.goods; g.freightCredit += c.freight; });
+    const sub = parseFloat(i.invoice_subtotal);
+    if (sub > 0 && linesBy[i.id] && Math.abs(sub - goods) > sub * 0.01) exceptions.push({ invoice: i.invoice_number, vendor, subtotal: sub, lines: goods, diff: frR2(goods - sub) });
+  });
+  unattached.forEach(m => { const g = group((m.vendor || '').trim() || '(no vendor)', 'memo with no invoice'); const c = memoCalc(m); g.goodsCredit += c.goods; g.freightCredit += c.freight; });
+  const rows = Object.values(groups).sort((a, b) => a.vendor.localeCompare(b.vendor) || (a.month > b.month ? -1 : 1));
+  rows.forEach(r => { r.net = frR2(r.goods + r.freight - r.goodsCredit - r.freightCredit); });
+  const memoRows = live.map(m => ({ m, inv: invById[m.invoice_id] || null, c: memoCalc(m) })).sort((a, b) => String(b.m.memo_date).localeCompare(String(a.m.memo_date)));
+  const byVendor = pick => { const o = {}; live.filter(pick).forEach(m => { const v = (m.vendor || '').trim() || '(no vendor)'; o[v] = frR2((o[v] || 0) + (parseFloat(m.total) || 0)); }); return o; };
+  return { rows, memoRows, exceptions, total: invoices.length, blank, noMonth, freightRec,
+    accountCredits: byVendor(m => m.settlement === 'account_credit'), awaiting: byVendor(m => m.status === 'awaiting_refund'), voided: memos.length - live.length };
+}
+async function loadCreditMemoReport() {
+  const wrap = boothEl('crmWrap');
+  if (!wrap) return;
+  try {
+    const [invoices, lines, memos, memoLines] = await Promise.all([
+      sbFetchAll(() => sbClient.from('invoices').select('id,vendor,invoice_number,order_date,invoice_subtotal,shipping_cost,fuel_surcharge')),
+      sbFetchAll(() => sbClient.from('invoice_items').select('id,invoice_id,qty_ordered,unit_wholesale_price')),
+      sbFetchAll(() => sbClient.from('credit_memos').select('id,vendor,memo_number,memo_date,invoice_id,settlement,item_credit,freight_credit,adjustment,total,status')),
+      sbFetchAll(() => sbClient.from('credit_memo_lines').select('id,memo_id,item_credit,adjustment_share,already_corrected'))
+    ]);
+    crmData = frCreditReport(invoices, lines, memos, memoLines);
+    renderCreditMemoReport();
+  } catch (e) { wrap.innerHTML = '<div style="color:var(--red);font-size:12px;">The credit memo report could not load: ' + escapeHtml(e.message) + '</div>'; }
+}
+function renderCreditMemoReport() {
+  const wrap = boothEl('crmWrap'), d = crmData;
+  if (!wrap || !d) return;
+  const sel = boothEl('crmVendor') ? boothEl('crmVendor').value : 'all';
+  const vendors = [...new Set(d.rows.map(r => r.vendor))];
+  const rows = sel === 'all' || !vendors.includes(sel) ? d.rows : d.rows.filter(r => r.vendor === sel);
+  const frTxt = r => r.freightKnown === 0 ? '<span class="val-dim">not recorded</span>' : $$(r.freight) + (r.freightKnown < r.invoices ? ` <span class="val-dim" style="font-size:10px;">${r.freightKnown} of ${r.invoices}</span>` : '');
+  const tot = k => rows.reduce((s, r) => s + r[k], 0);
+  const kv = (o, empty) => Object.keys(o).length ? Object.entries(o).map(([v, a]) => `${escapeHtml(v)}: <b>${$$(a)}</b>`).join(' · ') : empty;
+  wrap.innerHTML = `
+    <div style="font-size:12px;line-height:1.7;background:var(--bg3);border-left:3px solid var(--gold);padding:10px 14px;margin-bottom:12px;">
+      <b>${d.blank} of ${d.total} invoices have no vendor</b>, so the vendor lines cover ${d.total - d.blank} of ${d.total}.<br>
+      <b>${d.noMonth} of ${d.total} invoices have no order date</b> and sit on the "no month" lines, so the monthly totals are not complete.<br>
+      Freight paid is recorded on ${d.freightRec} of ${d.total} invoices. The rest show "not recorded": never $0, never a modelled figure.<br>
+      Goods are computed from the invoice lines. These books are cash basis: money awaiting refund and account credits not yet used have no QuickBooks entry, and FR is the only place they appear.
+    </div>
+    <div style="margin-bottom:10px;"><select id="crmVendor" onchange="renderCreditMemoReport()" style="padding:6px 10px;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:6px;font-size:12px;"><option value="all">All vendors</option>${vendors.map(v => `<option value="${escapeHtml(v)}"${v === sel ? ' selected' : ''}>${escapeHtml(v)}</option>`).join('')}</select></div>
+    <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Vendor</th><th>Month</th><th class="text-right">Invoices</th><th class="text-right">Goods</th><th class="text-right">Freight paid</th><th class="text-right">Item credits</th><th class="text-right">Freight credits</th><th class="text-right">Net spend</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td>${escapeHtml(r.vendor)}</td><td>${escapeHtml(r.month)}</td><td class="text-right">${r.invoices}</td><td class="text-right">${$$(r.goods)}</td><td class="text-right">${frTxt(r)}</td><td class="text-right val-dim">${r.goodsCredit ? $$n(r.goodsCredit) : '—'}</td><td class="text-right val-dim">${r.freightCredit ? $$(r.freightCredit) : '—'}</td><td class="text-right val-gold">${$$n(r.net)}</td></tr>`).join('')}
+      <tr style="background:var(--bg3);font-weight:600;"><td colspan="2">Total shown</td><td class="text-right">${num(tot('invoices'))}</td><td class="text-right">${$$(tot('goods'))}</td><td class="text-right">${$$(tot('freight'))}</td><td class="text-right">${$$n(tot('goodsCredit'))}</td><td class="text-right">${$$(tot('freightCredit'))}</td><td class="text-right val-gold">${$$n(tot('net'))}</td></tr>
+    </tbody></table></div>
+    <div style="margin-top:14px;font-size:12px;"><b>Account credits not yet used:</b> ${kv(d.accountCredits, 'none')}</div>
+    <div style="margin-top:4px;font-size:12px;"><b>Returns awaiting refund:</b> ${kv(d.awaiting, 'none')}</div>
+    <div style="margin-top:14px;font-size:12px;font-weight:600;">Credit memos, by invoice${d.voided ? ` <span class="val-dim" style="font-weight:400;">(${d.voided} void left out)</span>` : ''}</div>
+    ${d.memoRows.length ? `<div class="data-table-wrap"><table class="data-table"><thead><tr><th>Invoice</th><th>Vendor</th><th>Memo</th><th>Date</th><th>Settlement</th><th>Status</th><th class="text-right">Item credit</th><th class="text-right">Freight credit</th><th>Note</th></tr></thead><tbody>${d.memoRows.map(x => `<tr><td>${escapeHtml(x.inv ? x.inv.invoice_number : 'no invoice')}</td><td>${escapeHtml(x.m.vendor || '')}</td><td>${escapeHtml(x.m.memo_number || '')}</td><td>${escapeHtml(x.m.memo_date || '')}</td><td>${escapeHtml(x.m.settlement || '')}</td><td>${escapeHtml(x.m.status || '')}</td><td class="text-right">${$$n(x.c.goods)}</td><td class="text-right">${$$(x.c.freight)}</td><td style="font-size:11px;">${x.c.corrected ? x.c.corrected + ' line(s) already corrected by hand: item credit left out' : ''}${x.c.freight && x.inv && !((parseFloat(x.inv.shipping_cost) || 0) + (parseFloat(x.inv.fuel_surcharge) || 0) > 0) ? (x.c.corrected ? ' · ' : '') + 'freight credit on an invoice with no freight recorded' : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div style="font-size:12px;color:var(--muted);margin-top:4px;">No credit memo recorded yet. Memos are entered in V2, going forward only.</div>'}
+    <details style="margin-top:14px;font-size:12px;"><summary style="cursor:pointer;">${d.exceptions.length} invoice${d.exceptions.length === 1 ? '' : 's'} where the subtotal differs from the lines by more than 1% (for Mary)</summary>
+      <div class="data-table-wrap"><table class="data-table"><thead><tr><th>Invoice</th><th>Vendor</th><th class="text-right">Subtotal on invoice</th><th class="text-right">Sum of lines</th><th class="text-right">Lines − subtotal</th></tr></thead><tbody>${d.exceptions.map(x => `<tr><td>${escapeHtml(x.invoice)}</td><td>${escapeHtml(x.vendor)}</td><td class="text-right">${$$(x.subtotal)}</td><td class="text-right">${$$(x.lines)}</td><td class="text-right">${$$s(x.diff)}</td></tr>`).join('')}</tbody></table></div>
+    </details>`;
+}
+
 // ── TM STATEMENT RECONCILIATION ──────────────────────────────────────────
 function loadTmRecon() {
   // Set default month to last month
@@ -8405,6 +8796,7 @@ async function boothReconChannelChanged() {
     const v = data && data.length ? parseFloat(typeof data[0].value === 'string' ? data[0].value : JSON.stringify(data[0].value)) : NaN;
     if (!isNaN(v)) document.getElementById('tmReconRent').value = v.toFixed(2);
   } catch (e) { console.log('rent default skipped:', e.message); }
+  await boothStmtFill();   // v1.8.15
 }
 
 async function runTmReconciliation() {
@@ -8418,6 +8810,8 @@ async function runTmReconciliation() {
   const stmtCommission = parseFloat(document.getElementById('tmReconCommission').value) || 0;
   const stmtRent       = parseFloat(document.getElementById('tmReconRent').value) || 0;
   const stmtEft        = parseFloat(document.getElementById('tmReconEft').value) || 0;
+  const isCc           = boothCh === 'crazychicks';   // v1.8.15
+  const stmtCard       = isCc ? (parseFloat(document.getElementById('tmReconCardFee').value) || 0) : 0;
 
   // Parse month to date range
   const [yr, mo] = monthVal.split('-').map(Number);
@@ -8427,7 +8821,7 @@ async function runTmReconciliation() {
 
   // Fetch CCD TM sales for this period
   const data = await sbFetchAll(() => shFrom()
-    .select('sale_date,sku,product_name,sale_price,total_revenue,total_cost,net_profit,total_fees,commission,rent,qty_sold,oh_fee')
+    .select('sale_date,sku,product_name,sale_price,total_revenue,total_cost,net_profit,total_fees,commission,rent,qty_sold,oh_fee,cc_fee')
     .eq('sale_channel', boothCh)
     .gte('sale_date', fromDate)
     .lte('sale_date', toDate)
@@ -8451,7 +8845,10 @@ async function runTmReconciliation() {
   const revDiff = ccdRevenue - stmtSales;
   const commDiff = ccdCommission - stmtCommission;
   const rentDiff = ccdRent - stmtRent;
-  const stmtNet = stmtSales - stmtCommission - stmtRent;
+  const ccdCard = isCc ? frR2(frSum(sales.filter(r => frCcCardApplies(String(r.sale_date).slice(0, 10))), r => r.cc_fee)) : 0;   // v1.8.15: by sale date
+  const stmtNet = stmtSales - stmtCommission - stmtCard - stmtRent;
+  const ccdNet  = ccdRevenue - ccdCommission - ccdCard - ccdRent;
+  const rentForVal = isCc ? document.getElementById('tmReconRentFor').value : monthVal;
 
   // Expected commission at configured rate
   const expectedComm = stmtSales * (((frFees[boothKey] || {}).commission_pct || 0) / 100);
@@ -8474,12 +8871,19 @@ async function runTmReconciliation() {
       <tbody>
         ${_reconRow('Gross Sales', stmtSales, ccdRevenue)}
         ${_reconRow('Commission ('+((frFees[boothKey] || {}).commission_pct ?? '?')+'%)', stmtCommission, ccdCommission)}
-        ${_reconRow('Monthly Rent (expected: the Rent box)', stmtRent, ccdRent)}
+        ${isCc ? `<tr>
+          <td>Card fee (statement against V2's estimate)</td>
+          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$(stmtCard)}</td>
+          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$(ccdCard)}</td>
+          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$s(ccdCard - stmtCard)}</td>
+          <td style="font-size:10px;color:var(--muted);">estimate − actual: the cash sales</td>
+        </tr>` : ''}
+        ${_reconRow('Monthly Rent (expected: the Rent box)' + (isCc && rentForVal ? ' · for ' + rentForVal : ''), stmtRent, ccdRent)}
         <tr style="background:var(--bg3);">
-          <td style="font-weight:600;">Net Payout (Sales − Comm − Rent)${stmtNet < 0 ? ' <span style="color:var(--red);font-size:10px;">negative: we owe the booth</span>' : ''}</td>
+          <td style="font-weight:600;">Net Payout (Sales − Comm${isCc ? ' − Card fee' : ''} − Rent)${stmtNet < 0 ? ' <span style="color:var(--red);font-size:10px;">negative: we owe the booth</span>' : ''}</td>
           <td class="text-right" style="font-family:'DM Mono',monospace;">${$$n(stmtNet)}</td>
-          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$n(ccdRevenue - ccdCommission - ccdRent)}</td>
-          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$s((ccdRevenue - ccdCommission - ccdRent) - stmtNet)}</td>
+          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$n(ccdNet)}</td>
+          <td class="text-right" style="font-family:'DM Mono',monospace;">${$$s(ccdNet - stmtNet)}</td>
           <td></td>
         </tr>
         <tr>
@@ -8505,6 +8909,12 @@ async function runTmReconciliation() {
         </tr>
       </tbody>
     </table>`;
+
+  // v1.8.15: what Save will store; the estimate as it stands now (note 77 §4)
+  boothLast = { boxes: boothCurrentBoxes(), net: frR2(stmtNet), estimates: { sales: frR2(ccdRevenue), commission: frR2(ccdCommission), card_fee: ccdCard, rent: frR2(ccdRent), net_payout: frR2(ccdNet), lines: sales.length, as_of: fmt(new Date()) } };
+  const saveMsg = document.getElementById('tmReconSaveMsg'); if (saveMsg) saveMsg.textContent = '';
+  const whoBox = document.getElementById('tmReconWho');
+  if (whoBox && !whoBox.value) { try { whoBox.value = localStorage.getItem('frSavedBy') || ''; } catch (e) { /* a convenience only */ } }
 
   // Sales list
   if (sales.length) {
@@ -8596,10 +9006,12 @@ async function loadChannelFees() {
       for (const ch of Object.keys(DEFAULT_FEES)) {
         if (val[ch]) frFees[ch] = { ...DEFAULT_FEES[ch], ...val[ch] };
       }
+      frFeesLoaded = true;   // v1.8.15
       console.log('Channel fees loaded from settings');
     } else {
       console.log('No channel_fees in settings — using defaults');
     }
+    await frLoadCcExtras();   // v1.8.15
   } catch(e) {
     console.log('Fee load skipped:', e.message);
   }
@@ -8608,7 +9020,7 @@ async function loadChannelFees() {
 // ── INIT ───────────────────────────────────────────────────────────────────
 function initApp() {
   // Load channel fees from settings (shared source with V2)
-  loadChannelFees();
+  frFeesPromise = loadChannelFees();   // v1.8.15: kept so pages that need the fees can wait for them
 
   const today = fmt(new Date());
   document.getElementById('dr-from').value = today;
