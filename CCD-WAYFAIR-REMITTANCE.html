@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Remittance Import v1.3.5</title>
+<title>CCD Wayfair Remittance Import v1.3.6</title>
 <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
     
@@ -409,7 +409,7 @@
         <span class="logo">W</span>
         Wayfair Remittance Import
     </h1>
-    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.5</span>
+    <span class="version">CCD-WAYFAIR-REMITTANCE v1.3.6</span>
 </div>
 
 <!-- Supabase Connection Bar -->
@@ -586,6 +586,11 @@
                     </table>
                 </div>
             </div>
+            <div id="returnsRecordOnlyNote" style="margin-bottom:12px;padding:10px 14px;border-radius:var(--radius);border-left:4px solid var(--yellow);background:rgba(234,179,8,0.10);font-size:13px;line-height:1.5;">
+                <b>This tab records only — it does not change stock or any channel (v1.3.6).</b><br>
+                A <b>return</b> is saved to the returns list. To put the unit back in stock, open the item in Inventory V2 → Sales History → <b>Reverse</b> (or write it off if it came back damaged).<br>
+                A <b>cancellation</b> is reversed in Inventory V2 → 📥 Orders → <b>Cancelled on the channel</b> → ↩ Reverse, or the item card's Sales History → Reverse.
+            </div>
             <div class="action-bar">
                 <button class="btn btn-primary" id="btnProcessReturns" onclick="processReturns()">⚡ Process</button>
                 <button class="btn btn-ghost" onclick="clearReturnsParsed()">🗑️ Clear</button>
@@ -622,7 +627,12 @@
 // ═══════════════════════════════════════════════════════════
 // VERSION REGISTRATION
 // ═══════════════════════════════════════════════════════════
-const REM_VERSION = 'v1.3.5';
+// v1.3.6 (S136, Paul "B is good", 11-10): Returns & Cancellations RECORDS ONLY. It no longer changes stock, marks a sale
+//   cancelled or writes sync_queue (its rows carried no _source, so only Sync Hub would ever have pushed them; Sync Hub is being
+//   retired). Stock goes back in Inventory V2, whose reversals follow the online cap, hold-back and Etsy rules:
+//   a cancellation -> V2 > Orders > "Cancelled on the channel" > Reverse (the server's ccd_reverse_order), or the item card's
+//   Sales History > Reverse; a return -> the item card's Sales History > Reverse (or a write-off if it came back damaged).
+const REM_VERSION = 'v1.3.6';
 const REM_VERSION_KEY = 'remittance';
 
 async function registerToolVersion(client, toolKey, toolVersion) {
@@ -2491,7 +2501,7 @@ async function lookupMatchesInDB(parsed) {
     // Store all sales on parsed for reference
     parsed.allSalesForOrder = saleRows || [];
 
-    // SECONDARY: Look up items by wayfair_sku — needed for qty restore + sync_queue only
+    // SECONDARY: Look up items by wayfair_sku — shows the V2 SKU match (v1.3.6: nothing is restocked or pushed from here)
     const skus = parsed.items.map(i => i.wayfairSku).filter(Boolean);
     let itemMap = {};
     if (skus.length) {
@@ -2643,34 +2653,12 @@ async function processCancellation(parsed, today) {
             continue;
         }
 
-        // 1. Mark sale as cancelled
-        const { error: sErr } = await sbClient
-            .from('sales_history')
-            .update({ status: 'cancelled', cancellation_date: today })
-            .eq('id', sm.id);
-        if (sErr) {
-            returnsLog(`❌ Failed to cancel sale #${sm.id}: ${sErr.message}`, 'error');
+        if (sm.status === 'reversed') {
+            returnsLog(`⛔ ${item.wayfairSku}: Sale #${sm.id} is already reversed in Inventory V2 — nothing to do`, 'warning');
             continue;
         }
-        returnsLog(`✅ Sale #${sm.id} (${sm.sku}) marked cancelled`, 'success');
-
-        // SECONDARY: Qty restore + sync_queue — only if item found in DB
-        if (!im) {
-            returnsLog(`ℹ️ ${item.wayfairSku}: Item not in inventory DB — sale cancelled but qty not restored`, 'info');
-            continue;
-        }
-
-        // 2. Restore qty to warehouse
-        const newQty = (im.qty || 0) + item.qty;
-        const { error: qErr } = await sbClient
-            .from('items')
-            .update({ qty: newQty, updated_at: new Date().toISOString() })
-            .eq('id', im.id);
-        if (qErr) { returnsLog(`❌ Failed to restore qty for ${im.sku}: ${qErr.message}`, 'error'); }
-        else { returnsLog(`✅ ${im.sku}: Restored ${item.qty} unit(s) to warehouse (now ${newQty})`, 'success'); }
-
-        // 3. Write sync_queue rows for active channels
-        await writeReturnSyncQueueRows(im, item.qty, 'cancellation');
+        // v1.3.6: records only. The sale, the stock and the channels are changed in Inventory V2, not here.
+        returnsLog(`➡️ ${item.wayfairSku}: Sale #${sm.id} (${sm.sku}) found — NOT changed here. Reverse it in Inventory V2: 📥 Orders → Cancelled on the channel → ↩ Reverse, or ${im ? im.sku : 'the item'} → Sales History → Reverse.`, 'info');
     }
 }
 
@@ -2713,7 +2701,7 @@ async function processReturn(parsed, today) {
             ra_number:     item.raNumber || null,
             return_date:   today,
             qty_returned:  item.qty,
-            qty_restocked: im ? item.qty : 0,
+            qty_restocked: 0,   // v1.3.6: restocked in Inventory V2 (Sales History → Reverse), not here
             reason:        item.reason || null,
             notes:         item.raNumber ? `RA# ${item.raNumber}` : null,
             created_by:    `WayfairRemittance-${REM_VERSION}`
@@ -2725,69 +2713,19 @@ async function processReturn(parsed, today) {
             .select('id')
             .single();
         if (rErr) {
-            returnsLog(`❌ Failed to insert return for ${item.wayfairSku}: ${rErr.message} — skipping qty restore`, 'error');
+            returnsLog(`❌ Failed to insert return for ${item.wayfairSku}: ${rErr.message}`, 'error');
             continue;
         }
         returnsLog(`✅ Return #${returnData.id} created for ${item.wayfairSku} (RA# ${item.raNumber || 'N/A'})`, 'success');
 
-        // SECONDARY: Qty restore + sync_queue — only if item found in DB
-        if (!im) {
-            returnsLog(`ℹ️ ${item.wayfairSku}: Item not in inventory DB — return recorded but qty not restored`, 'info');
-            continue;
-        }
-
-        // 2. Restore qty to warehouse
-        const newQty = (im.qty || 0) + item.qty;
-        const { error: qErr } = await sbClient
-            .from('items')
-            .update({ qty: newQty, updated_at: new Date().toISOString() })
-            .eq('id', im.id);
-        if (qErr) { returnsLog(`❌ Failed to restore qty for ${im.sku}: ${qErr.message}`, 'error'); }
-        else { returnsLog(`✅ ${im.sku}: Restored ${item.qty} unit(s) to warehouse (now ${newQty})`, 'success'); }
-
-        // 3. Write sync_queue rows for active channels
-        await writeReturnSyncQueueRows(im, item.qty, 'return');
+        // v1.3.6: records only — no stock change, no channel push.
+        returnsLog(im
+            ? `➡️ ${im.sku}: stock NOT changed here. To put it back: Inventory V2 → ${im.sku} → Sales History → Reverse (or write it off if it came back damaged).`
+            : `ℹ️ ${item.wayfairSku}: not in Inventory V2 — return recorded only`, 'info');
     }
 }
 
-async function writeReturnSyncQueueRows(item, restoredQty, sourceType) {
-    const channelConfigs = [
-        { channel: 'etsy',    qtyField: 'etsy_qty',    listingField: 'listingId',   listingVal: item.etsy_listing_id,  condition: item.etsy_listing_id },
-        { channel: 'wix',     qtyField: 'wix_qty',     listingField: 'productId',   listingVal: item.wix_product_id,   condition: item.wix_product_id },
-        { channel: 'wayfair', qtyField: 'wayfair_qty', listingField: 'wayfairSku',  listingVal: item.wayfair_sku,      condition: item.wayfair_sku },
-    ];
-
-    for (const cfg of channelConfigs) {
-        if (!cfg.condition) continue;
-
-        const currentChannelQty = item[cfg.qtyField] || 0;
-        const newChannelQty = currentChannelQty + restoredQty;
-
-        const fields = {
-            sku:            item.sku,
-            quantity:       newChannelQty,
-            fieldTypes:     ['quantity']
-        };
-        fields[cfg.listingField] = cfg.listingVal;
-        if (cfg.channel === 'wix' && item.wix_variant_id) {
-            fields.wixVariantId = item.wix_variant_id;
-        }
-
-        const { error } = await sbClient.from('sync_queue').insert({
-            item_id:   item.id,
-            channel:   cfg.channel,
-            operation: 'update',
-            fields:    fields,
-            status:    'pending'
-        });
-
-        if (error) {
-            returnsLog(`⚠️ sync_queue write failed for ${cfg.channel}: ${error.message}`, 'warning');
-        } else {
-            returnsLog(`📤 Queued ${cfg.channel} qty update → ${newChannelQty} (${sourceType})`, 'info');
-        }
-    }
-}
+// v1.3.6: writeReturnSyncQueueRows removed — this tool no longer writes sync_queue (its rows had no _source; only Sync Hub read them).
 
 async function loadReturnsHistory() {
     const container = document.getElementById('returnsHistoryContent');

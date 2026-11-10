@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.22</title>
+<title>CCD Financial Intelligence v1.8.23</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -566,7 +566,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.22</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.23</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1791,7 +1791,9 @@ body {
 // v1.8.22 (S135, QB/FR 116): Year over Year's open month compares the same days in every year (Nov 1-10 against Nov 1-10), with the
 //   whole month in its own row; a read that hits the database's statement timeout is tried again, once or twice, after a pause
 //   (the Scorecard's sections and the health pre-check); the Scorecard's dead-stock tile loads after the other sections.
-const FR_VERSION = 'v1.8.22';
+// v1.8.23 (S136, S135 F-1): the Scorecard no longer opens every view at once. It waits for the health pre-check to finish
+//   (up to 8 s), then reads at most 4 sections at a time; each section still shows as soon as its own read returns.
+const FR_VERSION = 'v1.8.23';
 const FR_DEAD_DAYS = 365;
 const FR_VERSION_KEY = 'financial';
 
@@ -2378,7 +2380,14 @@ function frFeedStatus(r) {
   if (FR_RETIRED_FEEDS[String(frFeedName(r))]) return 'RETIRED';   // v1.8.16
   return String(r.status ?? r.feed_status ?? r.health ?? '').trim().toUpperCase();
 }
-async function frHealthPrecheck() {
+let frPrecheckP = null;   // v1.8.23: set while the health pre-check is reading
+function frHealthPrecheck() {
+  const p = frHealthPrecheckRun();
+  frPrecheckP = p;
+  p.then(() => { if (frPrecheckP === p) frPrecheckP = null; }, () => { if (frPrecheckP === p) frPrecheckP = null; });
+  return p;
+}
+async function frHealthPrecheckRun() {
   const [feeds, dq, stamp] = await Promise.allSettled([
     frRetryTimeout(() => sbClient.from('v_feed_health').select('*')),   // v1.8.22
     frRetryTimeout(() => sbClient.from('v_data_quality').select('sort,defect,rows_affected')),
@@ -2589,13 +2598,24 @@ async function frRetryTimeout(fn, tries = 2) {
     await new Promise(r => setTimeout(r, 1200 + i * 1500 + Math.random() * 800));
   }
 }
+// v1.8.23: the Scorecard reads at most FR_SC_SLOTS sections at once. The browser key stops a statement at 3 s; ~15 views
+//   opened together on fresh connections passed it (S135 F-1).
+const FR_SC_SLOTS = 4;
+let frScActive = 0;
+const frScWaiting = [];
+async function frScSlot(fn) {
+  if (frScActive >= FR_SC_SLOTS) await new Promise(r => frScWaiting.push(r));
+  else frScActive++;
+  try { return await fn(); }
+  finally { const next = frScWaiting.shift(); if (next) next(); else frScActive--; }
+}
 // Runs one section: fetch → (still current?) → render. Errors land in that section only.
 async function scSection(elId, view, seq, fetchFn, renderFn) {
   const el = document.getElementById(elId);
   if (!el) return;
   el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
-    const { data, error } = await frRetryTimeout(fetchFn);   // v1.8.22
+    const { data, error } = await frScSlot(() => frRetryTimeout(fetchFn));   // v1.8.22 retry; v1.8.23 at most 4 at once
     if (seq !== scLoadSeq) return;
     if (error) { scErr(el, view, error); return; }
     renderFn(el, data || []);
@@ -2608,6 +2628,8 @@ let scOrderCount = null;   // v1.8.17: the same order rule as Executive and Chan
 async function loadScorecard() {
   const seq = ++scLoadSeq;
   await frFeesPromise;   // v1.8.15: the break-even reads the settings
+  if (frPrecheckP) { try { await Promise.race([frPrecheckP, lsSleep(8000)]); } catch (e) { /* the banner shows its own trouble */ } }   // v1.8.23
+  if (seq !== scLoadSeq) return;
   const { fromMonth, toMonth } = scMonthBounds();
   const lbl = document.getElementById('sc-period-label');
   if (lbl) lbl.textContent = `${periodLabel()} · months ${scMon(fromMonth)} – ${scMon(toMonth)} `;
