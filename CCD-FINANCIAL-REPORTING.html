@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.17</title>
+<title>CCD Financial Intelligence v1.8.18</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -566,7 +566,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.17</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.18</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -652,6 +652,9 @@ body {
 
       <button class="nav-item" data-page="wayfairrecon" onclick="navTo('wayfairrecon')">
         <span class="nav-icon">≋</span> Wayfair Recon
+      </button>
+      <button class="nav-item" data-page="recon" onclick="navTo('recon')">
+        <span class="nav-icon">⇄</span> Reconciliation
       </button>
       <button class="nav-item" data-page="pnl" onclick="navTo('pnl')">
         <span class="nav-icon">◪</span> P&amp;L
@@ -1091,6 +1094,22 @@ body {
 
         <div class="card">
           <div class="card-body" id="wayfairReconTableWrap"><div class="loading"><div class="spinner"></div></div></div>
+        </div>
+      </section>
+
+      <!-- ─── RECONCILIATION (v1.8.18, RC-01) ─── -->
+      <section class="page-section" id="page-recon">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Reconciliation</div>
+            <div class="page-subtitle">Etsy statements and Wayfair remittances against the sales records</div>
+          </div>
+          <div class="export-btns">
+            <button class="btn-export" onclick="exportReconExcel()">↓ Excel</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-body" id="reconWrap"><div class="loading"><div class="spinner"></div></div></div>
         </div>
       </section>
 
@@ -1742,7 +1761,10 @@ body {
 //   "Contribution after real channel costs"; the bridge splits sales, cost of goods and other income; sales added to a closed month after the QuickBooks load
 //   are flagged; Crazy Chicks rent from the rent schedule month by month; the Scorecard break-even and spreadsheet tile removed; one order count; the
 //   Channels fee table foots to the stored totals; Etsy Advertising drops the retired ledger; data-quality notes and booth labels in plain words.
-const FR_VERSION = 'v1.8.17';
+// v1.8.18 (S135, RC-01; QB/FR notes 105-107): a read-only Reconciliation page (Etsy statements and Wayfair remittances against the sales records,
+//   the Wayfair remittance control against QuickBooks first, the open list on top, each month's orders on a click); the P&L overhead memo
+//   subtracts every channel direct cost, commissions and processing included (Shared 106 §1).
+const FR_VERSION = 'v1.8.18';
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -2055,6 +2077,7 @@ function refreshCurrentPageAsync() {
   else if (currentPage === 'monthlyincome') return loadMonthlyIncome();
   else if (currentPage === 'tmrecon') return Promise.all([loadTmRecon(), boothReconRefresh()]);   // v1.8.15: the boxes are filled once, then only when a person changes booth or month
   else if (currentPage === 'returns') return loadReturnsReport();   // v1.8.11
+  else if (currentPage === 'recon') return loadReconPage();          // v1.8.18
   else if (currentPage === 'scorecard') return loadScorecard();      // v1.8.13 F
   return Promise.resolve();
 }
@@ -2114,7 +2137,8 @@ const PAGE_DEPENDS = {
   pricecomp:     ['items'],
   monthlyincome: [...LS_SALES, 'settings'],
   tmrecon:       [...LS_SALES, 'tm_monthly_financials', 'settings'],
-  returns:       LS_SALES                        // reads raw sales_history (sees reversed/cancelled)
+  returns:       LS_SALES,                       // reads raw sales_history (sees reversed/cancelled)
+  recon:         [...LS_SALES, 'wayfair_remittance_lines', 'wayfair_remittances', 'qb_monthly_actuals']   // v1.8.18; the statement table reloads on opening the page
 };
 
 let frRegisterPromise = Promise.resolve();   // set by initConnect to registerToolVersion's promise
@@ -4763,6 +4787,149 @@ function renderWayfairReconTable() {
       }).join('')}</tbody>
     </table></div>`;
   }
+}
+
+// ── v1.8.18 (S135, RC-01; QB/FR notes 97, 105, 106, 107): Reconciliation — Etsy statements and Wayfair remittances against the sales records ──
+// Read-only. Reads the RC-01 views; writes nothing (decisions are recorded in recon_decisions by QB/FR or Paul, not from this page).
+const RC_CLASS_WORDS = {
+  MATCH: 'Matches', AMOUNT_DIFF: 'Amounts differ', MONTH_BOUNDARY: 'Month boundary', REFUNDED_IN_FULL: 'Refunded in full',
+  PARTIAL_REFUND: 'Partial refund', FR_ONLY: 'In FR, not on the statement', DOCUMENT_ONLY: 'On the document, not in FR', DUPLICATE: 'On the document twice',
+  NO_DOCUMENT_YET: 'Statement not loaded yet', NOT_YET_PAID: 'Not paid yet (expected)', NOT_YET_PAID_OVERDUE: 'Not paid after 45 days',
+  OTHER_CHARGES: 'Shipping, other or tax on the remittance'
+};
+const RC_STATUS_CLS = { OPEN: 'val-neg', WAITING: 'sc-amber', EXPLAINED: 'val-dim', DECIDED: 'val-dim', MATCH: 'val-pos', CLEAN: 'val-pos', 'NO DOCUMENT': 'val-dim' };
+const RC_STATUS_WORDS = { OPEN: 'Open', WAITING: 'Waiting', EXPLAINED: 'Explained', DECIDED: 'Decided', MATCH: 'Matches', CLEAN: 'Clean', 'NO DOCUMENT': 'No document yet' };
+let rcSeq = 0, rcData = null, rcPick = null;
+const rcCh = c => c === 'etsy' ? 'Etsy' : c === 'wayfair' ? 'Wayfair' : escapeHtml(String(c || ''));
+const rcMon = d => d ? escapeHtml(String(d).slice(0, 7)) : '—';
+const rcBadge = s => `<span class="${RC_STATUS_CLS[s] || ''}" style="font-weight:600;">${escapeHtml(RC_STATUS_WORDS[s] || s || '—')}</span>`;
+const rcM = v => v == null ? '—' : scMoney(v);
+function rcWhy(r) {
+  const c = r.recon_class;
+  if (c === 'REFUNDED_IN_FULL' && r.fr_amount != null) return 'Refunded in full on the statement (' + scMoney(Math.abs(scN(r.doc_refund) || 0)) + ') and still a sale in FR';
+  if (c === 'REFUNDED_IN_FULL') return 'Refunded in full; not a sale' + (r.fr_other_status ? ' (FR: ' + r.fr_other_status + ')' : '');
+  if (c === 'PARTIAL_REFUND') return 'Partial refund of ' + scMoney(Math.abs(scN(r.doc_refund) || 0)) + ', shown, not netted';
+  if (c === 'MONTH_BOUNDARY' && r.doc_net == null && r.doc_product == null) return "Waiting for next month's statement";
+  if (c === 'MONTH_BOUNDARY') return 'Etsy dated it ' + rcMon(r.doc_month) + ', FR ' + rcMon(r.fr_month);
+  if (c === 'DOCUMENT_ONLY') return r.fr_other_status ? 'FR has it as ' + r.fr_other_status : 'Not in FR';
+  if (c === 'NOT_YET_PAID') return (r.days_since_sale != null ? r.days_since_sale + ' days since the sale' : '') + '; Wayfair pays about four weeks after the invoice';
+  if (c === 'NOT_YET_PAID_OVERDUE') return 'No remittance line ' + (r.days_since_sale != null ? r.days_since_sale + ' days' : '') + ' after the sale';
+  if (c === 'OTHER_CHARGES') return 'Shipping ' + scMoney(r.doc_shipping) + ' · other ' + scMoney(r.doc_other) + ' · tax ' + scMoney(r.doc_tax_vat) + ': not part of the comparison';
+  if (c === 'FR_ONLY') return 'The statement for that month does not carry it';
+  return '';
+}
+function rcNorm(r, ch) {
+  return ch === 'etsy'
+    ? Object.assign({}, r, { channel: 'etsy', ref: r.order_no, month: r.fr_month || r.doc_month, doc: r.doc_net })
+    : Object.assign({}, r, { channel: 'wayfair', ref: r.po, month: r.recon_month, doc: r.doc_product });
+}
+function rcOrderTable(rows, withMonth) {
+  if (!rows.length) return '<div class="sc-empty">None.</div>';
+  return `<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Channel</th>${withMonth ? '<th>Month</th>' : ''}<th>Order</th><th>What it is</th><th class="text-right">FR</th><th class="text-right">Document</th><th class="text-right">Difference</th><th>Status</th><th>Why / decision</th></tr></thead><tbody>`
+    + rows.map(r => `<tr><td>${rcCh(r.channel)}</td>${withMonth ? `<td>${rcMon(r.month)}</td>` : ''}<td class="mono">${escapeHtml(String(r.ref || ''))}</td><td>${escapeHtml(RC_CLASS_WORDS[r.recon_class] || r.recon_class || '')}</td>`
+      + `<td class="text-right">${rcM(r.fr_amount)}</td><td class="text-right">${rcM(r.doc)}</td><td class="text-right">${rcM(r.difference)}</td><td>${rcBadge(r.recon_status)}</td>`
+      + `<td style="white-space:normal;font-size:11px;">${escapeHtml(rcWhy(r))}${r.decision ? `<div class="val-dim">Decided: ${escapeHtml(r.decision)} (${escapeHtml(r.decided_by || '')}, ${escapeHtml(String(r.decided_at || '').slice(0, 10))})</div>` : ''}</td></tr>`).join('')
+    + '</tbody></table></div>';
+}
+async function loadReconPage() {
+  const wrap = document.getElementById('reconWrap');
+  if (!wrap) return;
+  const seq = ++rcSeq;
+  const exc = ['OPEN', 'WAITING', 'DECIDED', 'EXPLAINED'];
+  try {
+    const [ctl, mon, eo, wo] = await Promise.all([
+      sbClient.from('v_recon_wayfair_remit_vs_qb').select('*').order('period_month'),
+      sbClient.from('v_recon_channel_month').select('*').order('period_month'),
+      sbFetchAll(() => sbClient.from('v_recon_etsy_order').select('*').in('recon_status', exc)),
+      sbFetchAll(() => sbClient.from('v_recon_wayfair_order').select('*').in('recon_status', exc))
+    ]);
+    if (seq !== rcSeq) return;
+    if (ctl.error || mon.error) throw (ctl.error || mon.error);
+    rcData = { ctl: ctl.data || [], mon: mon.data || [], exc: (eo || []).map(r => rcNorm(r, 'etsy')).concat((wo || []).map(r => rcNorm(r, 'wayfair'))) };
+  } catch (e) {
+    if (seq !== rcSeq) return;
+    const msg = String((e && e.message) || e);
+    wrap.innerHTML = /v_recon_|does not exist|schema cache|relation/i.test(msg)
+      ? '<div class="sc-empty">The reconciliation is not in this database yet (RC-01).</div>'
+      : `<div class="sc-err">Could not read the reconciliation: ${escapeHtml(msg)}</div>`;
+    return;
+  }
+  rcRender();
+}
+function rcRender() {
+  const wrap = document.getElementById('reconWrap');
+  if (!wrap || !rcData) return;
+  const { ctl, mon, exc } = rcData;
+  const byMonth = (a, b) => String(a.month).localeCompare(String(b.month)) || String(a.channel).localeCompare(String(b.channel)) || String(a.ref).localeCompare(String(b.ref));
+  const open = exc.filter(r => r.recon_status === 'OPEN').sort(byMonth);
+  const waiting = exc.filter(r => r.recon_status === 'WAITING').sort(byMonth);
+  const ctlBad = ctl.filter(r => r.verdict === 'DIFFERENCE');
+  let html = `<div style="font-size:11px;color:var(--muted);margin-bottom:10px;">Each Etsy order is compared with Etsy's monthly statement (sale less the buyer's sales tax and delivery fee) and each Wayfair order with its remittance line (the product amount, before Wayfair's deductions). A cent per Etsy order and two per Wayfair order is rounding. A month is clean when nothing is unexplained, open or waiting. From January 2026, every month; the date and channel buttons do not filter this page. Read-only: a decision on an exception is recorded by QuickBooks & FR or Paul.</div>`;
+
+  html += `<div class="card-title" style="margin:6px 0;">Open (${open.length})</div>` + rcOrderTable(open, true);
+  if (waiting.length) html += `<details style="margin-top:14px;"><summary class="card-title" style="cursor:pointer;">Waiting (${waiting.length}): not paid yet, or the next statement is due</summary><div style="margin-top:6px;">` + rcOrderTable(waiting, true) + '</div></details>';
+
+  html += `<div class="card-title" style="margin:18px 0 4px;">Wayfair remittances against QuickBooks</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">FR's remittance lines (product amount) by remittance month against QuickBooks WayFair Sales. Every month must read 0.00 before the order check below means anything: an order cannot match a remittance FR does not hold.${ctlBad.length ? ` <span class="val-neg" style="font-weight:600;">${ctlBad.length} month${ctlBad.length > 1 ? 's' : ''} differ.</span>` : ''}</div>`;
+  html += ctl.length ? `<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Month</th><th class="text-right">Remittances</th><th class="text-right">FR remittances</th><th class="text-right">QuickBooks</th><th class="text-right">Difference</th><th>Result</th></tr></thead><tbody>`
+    + ctl.map(r => `<tr><td>${rcMon(r.period_month)}</td><td class="text-right">${scNum(r.remittances)}</td><td class="text-right">${rcM(r.fr_remittance_product)}</td><td class="text-right">${rcM(r.qb_wayfair_sales)}</td><td class="text-right ${r.verdict === 'DIFFERENCE' ? 'val-neg' : ''}">${rcM(r.difference)}</td>`
+      + `<td>${r.verdict === 'MATCH' ? '<span class="val-pos" style="font-weight:600;">Matches</span>' : r.verdict === 'DIFFERENCE' ? '<span class="val-neg" style="font-weight:600;">Differs</span>' : '<span class="val-dim">QuickBooks not loaded</span>'}</td></tr>`).join('')
+    + '</tbody></table></div>' : '<div class="sc-empty">No remittances or QuickBooks months.</div>';
+
+  ['etsy', 'wayfair'].forEach(ch => {
+    const rows = mon.filter(r => r.channel === ch);
+    html += `<div class="card-title" style="margin:18px 0 4px;">${rcCh(ch)}: month by month</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">${ch === 'etsy' ? 'By the month of the sale (FR) and of the statement line (Etsy).' : "By FR's order month."} Difference = rounding + named + decided + waiting + not yet documented + unexplained. Click a month for its orders.</div>`;
+    html += rows.length ? `<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Month</th><th class="text-right">Orders</th><th class="text-right">FR</th><th class="text-right">Document</th><th class="text-right">Difference</th><th class="text-right">Rounding</th><th class="text-right">Named</th><th class="text-right">Decided</th><th class="text-right">Waiting</th><th class="text-right">No document</th><th class="text-right">Unexplained</th><th>Status</th></tr></thead><tbody>`
+      + rows.map(r => `<tr class="rc-month" data-ch="${ch}" data-m="${escapeHtml(String(r.period_month).slice(0, 10))}" style="cursor:pointer;${rcPick && rcPick.ch === ch && rcPick.m === String(r.period_month).slice(0, 10) ? 'background:var(--bg3);' : ''}" onclick="rcPickMonth(this.dataset.ch, this.dataset.m)">`
+        + `<td>${rcMon(r.period_month)}</td><td class="text-right">${scNum(r.orders)}</td><td class="text-right">${rcM(r.fr_revenue)}</td><td class="text-right">${rcM(r.document_amount)}</td><td class="text-right">${rcM(r.difference)}</td>`
+        + `<td class="text-right">${rcM(r.amount_rounding)}</td><td class="text-right">${rcM(r.amount_explained)}</td><td class="text-right">${rcM(r.amount_decided)}</td><td class="text-right">${rcM(r.amount_waiting)}</td><td class="text-right">${rcM(r.amount_no_document)}</td>`
+        + `<td class="text-right ${scN(r.unexplained) ? 'val-neg' : ''}" style="font-weight:600;">${rcM(r.unexplained)}</td><td>${rcBadge(r.month_status)}${scN(r.open_items) ? ` <span class="val-dim">(${scNum(r.open_items)} open)</span>` : ''}</td></tr>`).join('')
+      + '</tbody></table></div>' : `<div class="sc-empty">${ch === 'etsy' ? 'No Etsy statement or sale.' : 'No Wayfair sale or remittance.'}</div>`;
+    if (rcPick && rcPick.ch === ch) html += `<div id="rcOrders-${ch}" style="margin-top:8px;"><div class="loading"><div class="spinner"></div></div></div>`;
+  });
+  wrap.innerHTML = html;
+  if (rcPick) rcLoadOrders(rcPick.ch, rcPick.m);
+}
+function rcPickMonth(ch, m) {
+  rcPick = rcPick && rcPick.ch === ch && rcPick.m === m ? null : { ch, m };
+  rcRender();
+}
+async function rcLoadOrders(ch, m) {
+  const seq = rcSeq;
+  let rows = [];
+  try {
+    if (ch === 'etsy') {
+      const [a, b] = await Promise.all([
+        sbFetchAll(() => sbClient.from('v_recon_etsy_order').select('*').eq('fr_month', m)),
+        sbFetchAll(() => sbClient.from('v_recon_etsy_order').select('*').eq('doc_month', m))
+      ]);
+      const seen = new Set();
+      rows = (a || []).concat(b || []).filter(r => !seen.has(r.order_no) && seen.add(r.order_no)).map(r => rcNorm(r, 'etsy'));
+    } else {
+      rows = ((await sbFetchAll(() => sbClient.from('v_recon_wayfair_order').select('*').eq('recon_month', m))) || []).map(r => rcNorm(r, 'wayfair'));
+    }
+  } catch (e) {
+    const el = document.getElementById('rcOrders-' + ch);
+    if (el) el.innerHTML = `<div class="sc-err">Could not read the orders: ${escapeHtml(String((e && e.message) || e))}</div>`;
+    return;
+  }
+  if (seq !== rcSeq || !rcPick || rcPick.ch !== ch || rcPick.m !== m) return;
+  const rank = { OPEN: 0, WAITING: 1, DECIDED: 2, EXPLAINED: 3, 'NO DOCUMENT': 4, MATCH: 5 };
+  rows.sort((x, y) => (rank[x.recon_status] ?? 9) - (rank[y.recon_status] ?? 9) || String(x.ref).localeCompare(String(y.ref)));
+  const el = document.getElementById('rcOrders-' + ch);
+  if (el) el.innerHTML = `<div style="font-size:11px;font-weight:600;margin-bottom:4px;">${rcCh(ch)} orders, ${rcMon(m)} (${rows.length})</div>` + rcOrderTable(rows, false);
+}
+function exportReconExcel() {
+  if (!rcData || typeof XLSX === 'undefined') return;
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Month', 'Remittances', 'FR remittances', 'QuickBooks WayFair Sales', 'Difference', 'Result']]
+    .concat(rcData.ctl.map(r => [String(r.period_month).slice(0, 7), r.remittances, r.fr_remittance_product, r.qb_wayfair_sales, r.difference, r.verdict]))), 'Wayfair control');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Channel', 'Month', 'Orders', 'FR', 'Document', 'Difference', 'Rounding', 'Named', 'Decided', 'Waiting', 'No document', 'Unexplained', 'Status']]
+    .concat(rcData.mon.map(r => [r.channel, String(r.period_month).slice(0, 7), r.orders, r.fr_revenue, r.document_amount, r.difference, r.amount_rounding, r.amount_explained, r.amount_decided, r.amount_waiting, r.amount_no_document, r.unexplained, r.month_status]))), 'Months');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Channel', 'Month', 'Order', 'What it is', 'FR', 'Document', 'Difference', 'Status', 'Why', 'Decision']]
+    .concat(rcData.exc.map(r => [r.channel, String(r.month || '').slice(0, 7), r.ref, RC_CLASS_WORDS[r.recon_class] || r.recon_class, r.fr_amount, r.doc, r.difference, r.recon_status, rcWhy(r), r.decision || '']))), 'Exceptions');
+  XLSX.writeFile(wb, 'CCD-Reconciliation-' + new Date().toISOString().slice(0, 10) + '.xlsx');
 }
 
 // ── MONTHLY P&L (Phase 4) ─────────────────────────────────────────────────
@@ -8473,7 +8640,8 @@ const FR_BASIS_LABELS = {
   pnl: 'Estimates per sale. Actual QuickBooks costs are in the panel below', scorecard: 'QuickBooks actuals and FR records: each card says which', datahealth: 'Checks on the sales records and items, not money', pricecomp: 'Prices held in V2 for each channel', custom: 'Estimates per sale, from the sales records', geo: 'Estimates per sale, from the sales records',
   customers: 'From the sales records', trends: 'Estimates per sale, from the sales records', scenarios: 'What-if figures built on estimates per sale',
   vendorspend: 'Actual invoices and credit memos', etsyads: 'QuickBooks actuals and estimates per sale, each labelled', monthlyincome: 'Estimates per sale, from the sales records',
-  tmrecon: 'Typed statements (actual) against the sales records (estimate)', returns: 'From the sales records'
+  tmrecon: 'Typed statements (actual) against the sales records (estimate)', returns: 'From the sales records',
+  recon: 'Channel documents (actual) against the sales records'
 };
 function frApplyBasisLabels() {
   Object.entries(FR_BASIS_LABELS).forEach(([page, text]) => {
@@ -8552,8 +8720,9 @@ async function frLoadPnlReal(months, from, to) {
       const frEtsyModel = hasEtsy ? frR2((m.listingFee || 0) + (m.offsiteAds || 0)) : 0;
       const rent = q(m.month, 'booth_rent'), platform = q(m.month, 'listing', ['wayfair', 'wix']), adsDirect = hasEtsy ? q(m.month, 'ads_direct') : 0;
       const etsyListing = hasEtsy ? q(m.month, 'listing', ['etsy']) : 0, offsite = hasEtsy ? q(m.month, 'ads_offsite') : 0;
+      const commissions = q(m.month, 'commissions'), processing = q(m.month, 'payment_processing');   // v1.8.18: for the overhead memo only (already in the profit per sale)
       const contrib = frR2(m.netProfit + overhead + frEtsyModel - rent - platform - adsDirect - etsyListing - offsite);
-      return { m, overhead, frEtsyModel, rent, platform, adsDirect, etsyListing, offsite, contrib };
+      return { m, overhead, frEtsyModel, rent, platform, adsDirect, etsyListing, offsite, commissions, processing, contrib };
     });
     const heads = closed.map(m => { const [y, mm] = m.month.split('-'); return new Date(+y, +mm - 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }); }).concat('Total');
     const col = fn => { const v = rows.map(fn); return v.concat(frR2(v.reduce((s, x) => s + x, 0))); };
@@ -8596,7 +8765,7 @@ async function frLoadPnlReal(months, from, to) {
     html += `<div style="font-size:11px;font-weight:600;margin:14px 0 4px;">Overhead: allocated against spent</div>` + frPnlTable(heads, [
       frPnlLine('Overhead allocated by the percentages' + tag('estimate, memo'), col(r => r.overhead), { memo: true }),
       frPnlLine('QuickBooks total expenses' + tag('actual; includes the channel costs booked as expenses'), hasExp ? col(r => book[r.m.month].total_expenses) : heads.map(() => null), { memo: true }),
-      frPnlLine('QuickBooks expenses less the channel costs above' + tag('actual; the overhead the percentages stand in for'), hasExp ? col(r => frR2(book[r.m.month].total_expenses - (chDb ? 0 : (r.rent + r.platform + r.adsDirect + r.etsyListing + r.offsite)))) : heads.map(() => null), { memo: true })
+      frPnlLine('QuickBooks expenses less every channel direct cost' + tag('actual: rent, platform, listing, ads, commissions and processing taken out; the overhead the percentages stand in for'), hasExp && !chDb ? col(r => frR2(book[r.m.month].total_expenses - (r.rent + r.platform + r.adsDirect + r.etsyListing + r.offsite + r.commissions + r.processing))) : heads.map(() => null), { memo: true })
     ]);
     if (!hasExp) html += `<div style="font-size:11px;color:var(--muted);margin-top:4px;">Waiting for the QuickBooks book totals to be loaded.</div>`;
 
@@ -9396,7 +9565,7 @@ function initApp() {
   // Deep-link: check URL hash for direct page navigation (e.g. #pnl, #inventory, #scenarios)
   const hash = window.location.hash?.replace('#', '');
   const validPages = ['dashboard','sales','daily','channel','products','brands','shipping','inventory',
-    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp','monthlyincome','tmrecon','returns','scorecard'];   // v1.8.13 F: + scorecard
+    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp','monthlyincome','tmrecon','returns','scorecard','recon'];   // v1.8.13 F: + scorecard; v1.8.18: + recon
   if (hash && validPages.includes(hash)) {
     navTo(hash);
   } else {
