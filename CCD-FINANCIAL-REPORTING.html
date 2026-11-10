@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.18</title>
+<title>CCD Financial Intelligence v1.8.21</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -566,7 +566,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.18</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.21</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -617,6 +617,9 @@ body {
       <!-- v1.8.13 F: Scorecard (database views only) -->
       <button class="nav-item" data-page="scorecard" onclick="navTo('scorecard')">
         <span class="nav-icon">◎</span> Scorecard
+      </button>
+      <button class="nav-item" data-page="yoy" onclick="navTo('yoy')">
+        <span class="nav-icon">↗</span> Year over Year
       </button>
       <button class="nav-item active" data-page="dashboard" onclick="navTo('dashboard')">
         <span class="nav-icon">◈</span> Executive
@@ -1061,7 +1064,7 @@ body {
 
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px;">
           <button class="dr-pill active" data-iview="all" onclick="setInventoryView('all')">All Items</button>
-          <button class="dr-pill" data-iview="dead" onclick="setInventoryView('dead')">Dead Stock (90d)</button>
+          <button class="dr-pill" data-iview="dead" onclick="setInventoryView('dead')">Dead Stock (1 yr)</button>
           <button class="dr-pill" data-iview="high" onclick="setInventoryView('high')">High Velocity</button>
           <button class="dr-pill" data-iview="low" onclick="setInventoryView('low')">Low Stock</button>
         </div>
@@ -1095,6 +1098,20 @@ body {
         <div class="card">
           <div class="card-body" id="wayfairReconTableWrap"><div class="loading"><div class="spinner"></div></div></div>
         </div>
+      </section>
+
+      <!-- ─── YEAR OVER YEAR (v1.8.20) ─── -->
+      <section class="page-section" id="page-yoy">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Year over Year</div>
+            <div class="page-subtitle">This year against the three before it, to the same day</div>
+          </div>
+          <div class="export-btns">
+            <button class="btn-export" onclick="exportYoyExcel()">↓ Excel</button>
+          </div>
+        </div>
+        <div id="yoyWrap"><div class="loading"><div class="spinner"></div></div></div>
       </section>
 
       <!-- ─── RECONCILIATION (v1.8.18, RC-01) ─── -->
@@ -1764,7 +1781,15 @@ body {
 // v1.8.18 (S135, RC-01; QB/FR notes 105-107): a read-only Reconciliation page (Etsy statements and Wayfair remittances against the sales records,
 //   the Wayfair remittance control against QuickBooks first, the open list on top, each month's orders on a click); the P&L overhead memo
 //   subtracts every channel direct cost, commissions and processing included (Shared 106 §1).
-const FR_VERSION = 'v1.8.18';
+// v1.8.19 (S135, Paul 11-10): Inventory's dead stock is one year, not 90 days: not sold in a year, or never sold and bought more than a year ago
+//   (the last invoice for the item, else V2's order date, else the date it was added). Its wholesale value is shown beside the count.
+// v1.8.20 (S135, Paul 11-10): Year over Year (this year against the three before it, to the same day; revenue, profit, orders, units;
+//   month by month or running); the "vs Prior Year" toggle greyed where it does nothing, Executive says what it compares; the booth
+//   contribution card says it settles in arrears (QB/FR 113 §5); a decision on a Wayfair control month is shown (113 §2).
+// v1.8.21 (S135, Paul 11-10): dead stock is one year everywhere — Inventory, the Scorecard and Scenarios share one rule (frIsDead);
+//   the Scorecard's 90-day and 365-day tiles become one "Dead stock (1 yr)" tile at wholesale.
+const FR_VERSION = 'v1.8.21';
+const FR_DEAD_DAYS = 365;
 const FR_VERSION_KEY = 'financial';
 
 // ── CHANNEL FEES (shared source with V2 — loaded from settings table) ─────
@@ -2019,6 +2044,7 @@ function navTo(page) {
   // Update URL hash for deep-linking (Command Center quick actions)
   try { history.replaceState(null, '', '#' + page); } catch(e) {}
   updateBackButton();
+  frCompareSync();   // v1.8.20
   refreshCurrentPage();
 }
 
@@ -2029,6 +2055,7 @@ function navBack() {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === prev));
   document.querySelectorAll('.page-section').forEach(el => el.classList.toggle('active', el.id === 'page-'+prev));
   updateBackButton();
+  frCompareSync();   // v1.8.20
   refreshCurrentPage();
 }
 
@@ -2078,6 +2105,7 @@ function refreshCurrentPageAsync() {
   else if (currentPage === 'tmrecon') return Promise.all([loadTmRecon(), boothReconRefresh()]);   // v1.8.15: the boxes are filled once, then only when a person changes booth or month
   else if (currentPage === 'returns') return loadReturnsReport();   // v1.8.11
   else if (currentPage === 'recon') return loadReconPage();          // v1.8.18
+  else if (currentPage === 'yoy') return loadYoyReport();            // v1.8.20
   else if (currentPage === 'scorecard') return loadScorecard();      // v1.8.13 F
   return Promise.resolve();
 }
@@ -2138,7 +2166,8 @@ const PAGE_DEPENDS = {
   monthlyincome: [...LS_SALES, 'settings'],
   tmrecon:       [...LS_SALES, 'tm_monthly_financials', 'settings'],
   returns:       LS_SALES,                       // reads raw sales_history (sees reversed/cancelled)
-  recon:         [...LS_SALES, 'wayfair_remittance_lines', 'wayfair_remittances', 'qb_monthly_actuals']   // v1.8.18; the statement table reloads on opening the page
+  recon:         [...LS_SALES, 'wayfair_remittance_lines', 'wayfair_remittances', 'qb_monthly_actuals'],
+  yoy:           LS_SALES   // v1.8.18; the statement table reloads on opening the page
 };
 
 let frRegisterPromise = Promise.resolve();   // set by initConnect to registerToolVersion's promise
@@ -2610,11 +2639,21 @@ async function loadScorecard() {
           return `<div class="kpi-card">
             <div class="kpi-label">${escapeHtml(CH_LABEL[ch] || ch)}</div>
             <div class="kpi-value ${econ < 0 ? 'negative' : ''}">${$$n(econ)}</div>
-            <div class="sc-note">Economic contribution${rs.length > 1 ? ` (${rs.length} months)` : ''}</div>
+            <div class="sc-note">${Math.abs(econ - cash) < 0.005 ? 'Contribution (the same as cash)' : 'Economic contribution'}${rs.length > 1 ? ` (${rs.length} months)` : ''}</div>
+            ${BOOTH_ORDER_CHANNELS.includes(ch) ? `<div class="sc-note sc-amber">Settles in arrears: a month's cash is the month before's sales less that month's rent. <span data-sc-pending="${escapeHtml(ch)}"></span></div>` : ''}
             <div class="sc-note">Cash: <span class="${cash < 0 ? 'val-neg' : ''}">${$$n(cash)}</span> · Revenue: ${$$n(scSum(rs, 'qb_revenue_net'))}</div>
             <div class="sc-note">Economic cost: ${scN(last.economic_cost_pct) != null && scN(last.economic_cost_pct) < 0 ? '— (a credit that month)' : scPct(last.economic_cost_pct)} <span class="val-dim">(${scMon(last.period_month)})</span></div>
           </div>`;
         }).join('')}</div>`;
+        // v1.8.20: the latest month's booth sales are still to settle; show them beside the cash figure
+        el.querySelectorAll('[data-sc-pending]').forEach(async span => {
+          const ch = span.dataset.scPending;
+          try {
+            const rs = await sbFetchAll(() => shFrom().select('total_revenue,sale_date').eq('sale_channel', ch).gte('sale_date', toMonth).lte('sale_date', frMonthEnd(toMonth)));
+            const s = frSum(rs || [], r => r.total_revenue);
+            if (s > 0) span.textContent = `${scMon(toMonth)} sales waiting to settle: ${$$(s)} (in next month's statement).`;
+          } catch (e) { /* the note stands without the figure */ }
+        });
       }),
 
     // 4 · Inventory (landed cost)
@@ -2629,16 +2668,16 @@ async function loadScorecard() {
           ${scTile('Value (wholesale)', scMoney(r.value_wholesale), `as of ${escapeHtml(r.as_of || '—')}`)}
           ${scTile('Units on hand', scNum(r.units_on_hand), `${scNum(r.skus_in_stock)} SKUs in stock`)}
           ${scTile('Crazy Chicks booth', scNum(r.cc_booth_units) + ' units', `value ${scMoney(r.cc_booth_value)} · TM booth ${scNum(r.tm_booth_units)} units`)}
+          <div class="kpi-card" id="scDeadTile"><div class="kpi-label">Dead stock (1 yr)</div><div class="kpi-value"><div class="spinner"></div></div></div>
         </div>
         <div class="sc-note" style="margin:12px 0 6px;font-weight:600;">At landed cost: wholesale plus inbound freight and tariff. Compare these with each other, not with the wholesale value above.</div>
         <div class="sc-grid">
           ${scTile('Value (landed)', scMoney(r.value_landed), 'all stock on hand')}
-          ${scTile('Dead stock 90d', scMoney(r.dead_stock_value_90d), `${scN(r.value_landed) > 0 ? (scN(r.dead_stock_value_90d) / scN(r.value_landed) * 100).toFixed(0) + '% of landed stock · ' : ''}180d: ${scMoney(r.dead_stock_value_180d)}`)}
-          ${scTile('Unsold 365d', scMoney(r.value_no_sale_365d), `${scNum(r.skus_no_sale_365d)} SKUs`)}
           ${scTile('Sell-through 90d', scPct(r.sell_through_90d_pct), '')}
           ${scTile('Stock turns', scNum(r.stock_turns_annualised), 'annualised')}
         </div>
         <div class="sc-note" style="margin-top:10px;">Data quality: ${scNum(r.dq_stocked_no_cost)} stocked with no cost · ${scNum(r.dq_negative_qty)} negative qty · ${scNum(r.dq_future_dated_invoices)} future-dated invoices · ${scNum(r.dq_receipts_without_date)} receipts without date</div>`;
+        scDeadTile(seq);   // v1.8.21
       }),
 
     // 5 · Sales KPIs — channel 'all', summed over the selected months
@@ -2852,7 +2891,7 @@ async function scInventoryAsOf() {
 // ── DASHBOARD ──────────────────────────────────────────────────────────────
 async function loadDashboard() {
   const { from, to, priorFrom, priorTo } = getRange();
-  document.getElementById('dash-period-label').textContent = periodLabel();
+  document.getElementById('dash-period-label').textContent = periodLabel() + (compareMode && priorFrom ? ' · compared with ' + new Date(priorFrom + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ' – ' + new Date(priorTo + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '');
 
   const chDb = CH_DB[channelFilter] || null;
   const [curr, prior] = await Promise.all([
@@ -4470,7 +4509,7 @@ async function loadInventoryReport() {
   await frFeesPromise;   // v1.8.15: the Crazy Chicks column reads the fee settings
   // Items from DB (limit: Supabase defaults to 1000, bump for safety)
   const items = await sbFetchAll(() => sbClient.from('items')
-    .select('id,sku,product_name,brand_name,qty,treasuremarts_qty,crazychicks_qty,crazychicks_price,wholesale_price,ob_shipping,ib_shipping,tariff,is_bundle,item_role'));
+    .select('id,sku,product_name,brand_name,qty,treasuremarts_qty,crazychicks_qty,crazychicks_price,wholesale_price,ob_shipping,ib_shipping,tariff,is_bundle,item_role,order_date,date_added'));
 
   // Recent sales for velocity (last 90 days) — must override 1000-row default
   const d90 = new Date(); d90.setDate(d90.getDate()-90);
@@ -4483,11 +4522,14 @@ async function loadInventoryReport() {
     .select('sku,sale_date')
     .order('sale_date', { ascending:false }));
 
-  // Build last-sold map (first occurrence = most recent due to desc sort)
-  const lastSoldMap = {};
-  (lastSold||[]).forEach(r => {
-    if (r.sku && !lastSoldMap[r.sku]) lastSoldMap[r.sku] = r.sale_date.substring(0,10);
-  });
+  const lastSoldMap = frLastSoldMap(lastSold);   // v1.8.21: the shared rule
+
+  // v1.8.19: when an item has never sold, its age counts from when it was last bought (the newest invoice for it)
+  const [invRows, invLines] = await Promise.all([
+    sbFetchAll(() => sbClient.from('invoices').select('id,order_date')).catch(() => []),
+    sbFetchAll(() => sbClient.from('invoice_items').select('item_id,invoice_id')).catch(() => [])
+  ]);
+  const lastBoughtMap = frLastBoughtMap(invRows, invLines);   // v1.8.21
 
   // Build velocity map (units in last 30 days)
   const d30 = new Date(); d30.setDate(d30.getDate()-30);
@@ -4514,6 +4556,8 @@ async function loadInventoryReport() {
     const lastSale = lastSoldMap[item.sku] || null;
     const daysSince = lastSale ? Math.floor((new Date(todayStr) - new Date(lastSale))/(1000*60*60*24)) : 9999;
     const daysOfStock = vel.units30 > 0 ? Math.round(totalQty / (vel.units30/30)) : 9999;
+    const boughtOn = frBoughtOn(item, lastBoughtMap);
+    const isDead = frIsDead(lastSale, boughtOn, todayStr);   // v1.8.21: one rule for Inventory, the Scorecard and Scenarios
 
     return {
       sku: item.sku, product: item.product_name||'', brand: item.brand_name||'',
@@ -4521,7 +4565,7 @@ async function loadInventoryReport() {
       costBasis: Math.round(costBasis*100)/100,
       ccContr: (parseInt(item.crazychicks_qty)||0) > 0 ? frCcContribution(item.crazychicks_price, costBasis, todayStr) : null,   // v1.8.15: an estimate (note 74 §3)
       invValue: Math.round(invValue*100)/100,
-      lastSold: lastSale, daysSince,
+      lastSold: lastSale, daysSince, boughtOn, isDead,
       velocity30: vel.units30, velocity90: vel.units90,
       daysOfStock,
       isBundle: !!item.is_bundle || item.item_role === 'set' || item.item_role === 'bundle',   // v1.8.11: a Set's qty is "can make"
@@ -4535,14 +4579,16 @@ async function loadInventoryReport() {
   const bundleCount = inventoryData.length - physicalItems.length;
   const totalValue = physicalItems.reduce((s,i) => s+i.invValue, 0);
   const totalUnits = physicalItems.reduce((s,i) => s+i.totalQty, 0);
-  const deadCount = physicalItems.filter(i => i.daysSince >= 90).length;
+  const deadItems = physicalItems.filter(i => i.isDead);
+  const deadCount = deadItems.length;
+  const deadValue = deadItems.reduce((s, i) => s + i.totalQty * i.wholesale, 0);   // wholesale (AAA-12)
   const skuCount = physicalItems.length;
 
   kpiEl.innerHTML = `
     <div class="kpi-card"><div class="kpi-label">Total SKUs (in stock)</div><div class="kpi-value">${num(skuCount)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Total Units</div><div class="kpi-value">${num(totalUnits)}</div></div>
     <div class="kpi-card"><div class="kpi-label">Inventory Value</div><div class="kpi-value">${$$(totalValue)}</div></div>
-    <div class="kpi-card"><div class="kpi-label">Dead Stock (90d)</div><div class="kpi-value ${deadCount>0?'val-neg':''}">${num(deadCount)}</div></div>
+    <div class="kpi-card"><div class="kpi-label">Dead Stock (1 yr)</div><div class="kpi-value ${deadCount>0?'val-neg':''}">${num(deadCount)}</div><div class="sc-note">${$$(deadValue)} at wholesale · not sold in a year, or bought over a year ago and never sold</div></div>
     ${bundleCount > 0 ? `<div class="kpi-card"><div class="kpi-label">Bundles (excluded)</div><div class="kpi-value" style="color:var(--dim);">${num(bundleCount)}</div></div>` : ''}
   `;
 
@@ -4553,7 +4599,7 @@ function renderInventoryTable() {
   const wrap = document.getElementById('inventoryTableWrap');
   let rows = [...inventoryData];
 
-  if (inventoryView === 'dead') rows = rows.filter(i => i.daysSince >= 90);
+  if (inventoryView === 'dead') rows = rows.filter(i => i.isDead);
   else if (inventoryView === 'high') rows = rows.filter(i => i.velocity30 > 0);
   else if (inventoryView === 'low') rows = rows.filter(i => i.totalQty > 0 && i.totalQty <= 2 && i.velocity30 > 0);
 
@@ -4590,7 +4636,7 @@ function renderInventoryTable() {
       <th class="text-right" title="Estimate for items in the Crazy Chicks room: price less commission and card fee, less cost. No share of the rent.">C Chicks contribution (est.)</th>
     </tr></thead>
     <tbody>${rows.map(r => {
-      const deadCls = r.daysSince >= 90 ? 'val-neg' : '';
+      const deadCls = r.isDead ? 'val-neg' : '';
       const dosCls = r.daysOfStock < 14 && r.velocity30 > 0 ? 'val-neg' : r.daysOfStock > 365 ? 'val-dim' : '';
       const bundleBadge = r.isBundle ? ` <span style="background:#854d0e;color:#eab308;padding:1px 4px;border-radius:3px;font-size:10px;font-weight:600;">${r.role === 'set' ? 'SET' : 'BUNDLE'}</span>` : '';
       const bundleDim = r.isBundle ? 'opacity:0.5;' : '';
@@ -4604,7 +4650,7 @@ function renderInventoryTable() {
         <td class="text-right">${$$(r.wholesale)}</td>
         <td class="text-right val-dim">${$$(r.costBasis)}</td>
         <td class="text-right val-gold">${$$(r.invValue)}</td>
-        <td class="${deadCls}">${r.lastSold || 'Never'}</td>
+        <td class="${deadCls}">${r.lastSold || ('Never' + (r.boughtOn ? ` <span class="val-dim" style="font-size:10px;">· bought ${escapeHtml(r.boughtOn)}</span>` : ''))}</td>
         <td class="text-right">${r.velocity30 > 0 ? r.velocity30 : '—'}</td>
         <td class="text-right ${dosCls}">${r.daysOfStock < 9999 ? r.daysOfStock+'d' : '∞'}</td>
         <td class="text-right ${r.ccContr != null && r.ccContr < 0 ? 'val-neg' : ''}">${r.ccContr == null ? '—' : $$n(r.ccContr)}</td>
@@ -4837,15 +4883,17 @@ async function loadReconPage() {
   const seq = ++rcSeq;
   const exc = ['OPEN', 'WAITING', 'DECIDED', 'EXPLAINED'];
   try {
-    const [ctl, mon, eo, wo] = await Promise.all([
+    const [ctl, mon, eo, wo, cd] = await Promise.all([
       sbClient.from('v_recon_wayfair_remit_vs_qb').select('*').order('period_month'),
       sbClient.from('v_recon_channel_month').select('*').order('period_month'),
       sbFetchAll(() => sbClient.from('v_recon_etsy_order').select('*').in('recon_status', exc)),
-      sbFetchAll(() => sbClient.from('v_recon_wayfair_order').select('*').in('recon_status', exc))
+      sbFetchAll(() => sbClient.from('v_recon_wayfair_order').select('*').in('recon_status', exc)),
+      sbClient.from('recon_decisions').select('order_ref,decision,decided_by,decided_at').eq('channel', 'wayfair').eq('recon_class', 'REMIT_VS_QB').order('decided_at')
     ]);
     if (seq !== rcSeq) return;
     if (ctl.error || mon.error) throw (ctl.error || mon.error);
-    rcData = { ctl: ctl.data || [], mon: mon.data || [], exc: (eo || []).map(r => rcNorm(r, 'etsy')).concat((wo || []).map(r => rcNorm(r, 'wayfair'))) };
+    const ctlDec = {}; ((cd && !cd.error && cd.data) || []).forEach(d => { ctlDec[String(d.order_ref)] = d; });   // v1.8.20: latest per month
+    rcData = { ctlDec, ctl: ctl.data || [], mon: mon.data || [], exc: (eo || []).map(r => rcNorm(r, 'etsy')).concat((wo || []).map(r => rcNorm(r, 'wayfair'))) };
   } catch (e) {
     if (seq !== rcSeq) return;
     const msg = String((e && e.message) || e);
@@ -4859,7 +4907,7 @@ async function loadReconPage() {
 function rcRender() {
   const wrap = document.getElementById('reconWrap');
   if (!wrap || !rcData) return;
-  const { ctl, mon, exc } = rcData;
+  const { ctl, mon, exc, ctlDec } = rcData;
   const byMonth = (a, b) => String(a.month).localeCompare(String(b.month)) || String(a.channel).localeCompare(String(b.channel)) || String(a.ref).localeCompare(String(b.ref));
   const open = exc.filter(r => r.recon_status === 'OPEN').sort(byMonth);
   const waiting = exc.filter(r => r.recon_status === 'WAITING').sort(byMonth);
@@ -4873,7 +4921,7 @@ function rcRender() {
     <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">FR's remittance lines (product amount) by remittance month against QuickBooks WayFair Sales. Every month must read 0.00 before the order check below means anything: an order cannot match a remittance FR does not hold.${ctlBad.length ? ` <span class="val-neg" style="font-weight:600;">${ctlBad.length} month${ctlBad.length > 1 ? 's' : ''} differ.</span>` : ''}</div>`;
   html += ctl.length ? `<div style="overflow-x:auto;"><table class="data-table"><thead><tr><th>Month</th><th class="text-right">Remittances</th><th class="text-right">FR remittances</th><th class="text-right">QuickBooks</th><th class="text-right">Difference</th><th>Result</th></tr></thead><tbody>`
     + ctl.map(r => `<tr><td>${rcMon(r.period_month)}</td><td class="text-right">${scNum(r.remittances)}</td><td class="text-right">${rcM(r.fr_remittance_product)}</td><td class="text-right">${rcM(r.qb_wayfair_sales)}</td><td class="text-right ${r.verdict === 'DIFFERENCE' ? 'val-neg' : ''}">${rcM(r.difference)}</td>`
-      + `<td>${r.verdict === 'MATCH' ? '<span class="val-pos" style="font-weight:600;">Matches</span>' : r.verdict === 'DIFFERENCE' ? '<span class="val-neg" style="font-weight:600;">Differs</span>' : '<span class="val-dim">QuickBooks not loaded</span>'}</td></tr>`).join('')
+      + `<td>${r.verdict === 'MATCH' ? '<span class="val-pos" style="font-weight:600;">Matches</span>' : r.verdict === 'DIFFERENCE' ? '<span class="val-neg" style="font-weight:600;">Differs</span>' : '<span class="val-dim">QuickBooks not loaded</span>'}${(() => { const d = r.verdict === 'DIFFERENCE' && (ctlDec || {})[String(r.period_month).slice(0, 7)]; return d ? `<div class="val-dim" style="font-size:11px;">Decided: ${escapeHtml(d.decision)} (${escapeHtml(d.decided_by || '')}, ${escapeHtml(String(d.decided_at || '').slice(0, 10))})</div>` : ''; })()}</td></tr>`).join('')
     + '</tbody></table></div>' : '<div class="sc-empty">No remittances or QuickBooks months.</div>';
 
   ['etsy', 'wayfair'].forEach(ch => {
@@ -4930,6 +4978,174 @@ function exportReconExcel() {
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([['Channel', 'Month', 'Order', 'What it is', 'FR', 'Document', 'Difference', 'Status', 'Why', 'Decision']]
     .concat(rcData.exc.map(r => [r.channel, String(r.month || '').slice(0, 7), r.ref, RC_CLASS_WORDS[r.recon_class] || r.recon_class, r.fr_amount, r.doc, r.difference, r.recon_status, rcWhy(r), r.decision || '']))), 'Exceptions');
   XLSX.writeFile(wb, 'CCD-Reconciliation-' + new Date().toISOString().slice(0, 10) + '.xlsx');
+}
+
+// ── v1.8.20 (S135, Paul 11-10): Year over Year — this year against the three before it, from the sales records ──
+// Reads v_sales_active only (through shFrom). The channel buttons filter it; the date buttons do not (it is always whole calendar years).
+const YOY_MEASURES = { revenue: 'Revenue', profit: 'Profit', orders: 'Orders', units: 'Units' };
+const YOY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+let yoySeq = 0, yoyChartInst = null, yoyData = null;
+let yoyMeasure = 'revenue', yoyView = 'monthly';
+try { yoyMeasure = localStorage.getItem('frYoyMeasure') || 'revenue'; yoyView = localStorage.getItem('frYoyView') || 'monthly'; } catch (e) { /* a convenience only */ }
+if (!YOY_MEASURES[yoyMeasure]) yoyMeasure = 'revenue';
+if (yoyView !== 'monthly' && yoyView !== 'running') yoyView = 'monthly';
+const yoyFmt = (m, v) => v == null ? '—' : (m === 'orders' || m === 'units') ? num(Math.round(v)) : $$n(v);
+const yoyPct = (a, b) => (b == null || b === 0 || a == null) ? null : (a - b) / Math.abs(b) * 100;
+const yoyPctHtml = p => p == null ? '<span class="val-dim">—</span>' : `<span class="${p >= 0 ? 'val-pos' : 'val-neg'}">${p >= 0 ? '↑' : '↓'} ${Math.abs(p).toFixed(1)}%</span>`;
+function yoySet(kind, v) {
+  if (kind === 'measure') yoyMeasure = v; else yoyView = v;
+  try { localStorage.setItem(kind === 'measure' ? 'frYoyMeasure' : 'frYoyView', v); } catch (e) { /* a convenience only */ }
+  yoyRender();
+}
+async function loadYoyReport() {
+  const wrap = document.getElementById('yoyWrap');
+  if (!wrap) return;
+  const seq = ++yoySeq;
+  const today = new Date(), cur = today.getFullYear(), todayStr = fmt(today);
+  const years = [cur, cur - 1, cur - 2, cur - 3];
+  const chDb = CH_DB[channelFilter] || null;
+  let rows;
+  try {
+    rows = await sbFetchAll(() => {
+      let q = shFrom().select('id,order_id,sale_channel,sale_date,total_revenue,net_profit,qty_sold').gte('sale_date', (cur - 3) + '-01-01').lte('sale_date', todayStr);
+      if (chDb) q = q.eq('sale_channel', chDb);
+      return q;
+    });
+  } catch (e) {
+    if (seq !== yoySeq) return;
+    wrap.innerHTML = `<div class="sc-err">Could not read the sales records: ${escapeHtml(String((e && e.message) || e))}</div>`;
+    return;
+  }
+  if (seq !== yoySeq) return;
+  const md = todayStr.slice(5);   // MM-DD: "to the same day" in each year
+  const by = {}, ytd = {};
+  years.forEach(y => { by[y] = YOY_MONTHS.map(() => []); ytd[y] = []; });
+  (rows || []).forEach(r => {
+    const d = String(r.sale_date || '').slice(0, 10), y = +d.slice(0, 4), m = +d.slice(5, 7) - 1;
+    if (!by[y] || m < 0 || m > 11) return;
+    by[y][m].push(r);
+    if (d.slice(5) <= md) ytd[y].push(r);
+  });
+  const agg = {}, ytdAgg = {};
+  years.forEach(y => { agg[y] = by[y].map(rs => aggregate(rs)); ytdAgg[y] = aggregate(ytd[y]); });
+  const firstSale = (rows || []).reduce((a, r) => (!a || String(r.sale_date) < a) ? String(r.sale_date).slice(0, 10) : a, null);
+  yoyData = { years, agg, ytdAgg, curMonth: today.getMonth(), todayStr, chLabel: chDb ? (CH_LABEL[chDb] || chDb) : 'All channels', firstSale };
+  yoyRender();
+}
+function yoyRender() {
+  const wrap = document.getElementById('yoyWrap');
+  if (!wrap || !yoyData) return;
+  const { years, agg, ytdAgg, curMonth, todayStr, chLabel, firstSale } = yoyData;
+  const m = yoyMeasure, cur = years[0];
+  const val = (y, i) => (y === cur && i > curMonth) ? null : agg[y][i][m];
+  const series = y => {
+    let run = 0;
+    return YOY_MONTHS.map((_, i) => { const v = val(y, i); if (v == null) return null; if (yoyView === 'running') { run += v; return run; } return v; });
+  };
+  const dayLabel = new Date(todayStr + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const pill = (kind, k, label, on) => `<button class="dr-pill ${on ? 'active' : ''}" data-yoy-${kind}="${k}" onclick="yoySet('${kind}','${k}')">${label}</button>`;
+  let html = `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${Object.entries(YOY_MEASURES).map(([k, l]) => pill('measure', k, l, k === m)).join('')}
+      <span style="width:12px;"></span>${pill('view', 'monthly', 'Month by month', yoyView === 'monthly')}${pill('view', 'running', 'Running total (year to date)', yoyView === 'running')}</div>`;
+  html += `<div style="font-size:11px;color:var(--muted);margin-bottom:10px;">${escapeHtml(chLabel)} · Jan 1 to ${escapeHtml(dayLabel)} in each year, so every year is compared to the same day. Whole calendar years; the date buttons do not change this page.${m === 'profit' ? ' Profit is the estimate per sale; for the older years it is only as good as the cost data recorded then.' : ''}${firstSale && firstSale > (years[3] + '-01-01') ? ` The sales records start ${escapeHtml(firstSale)}.` : ''}</div>`;
+  html += `<div class="kpi-grid" style="grid-template-columns:repeat(4,1fr);">${years.map(y => {
+    const v = ytdAgg[y][m], p = y === cur ? null : yoyPct(ytdAgg[cur][m], v);
+    return `<div class="kpi-card" data-yoy-year="${y}"><div class="kpi-label">${y} · to ${escapeHtml(dayLabel)}</div><div class="kpi-value" style="${y === cur ? '' : 'color:var(--dim);'}">${yoyFmt(m, v)}</div>`
+      + `<div class="sc-note">${y === cur ? 'this year' : `${cur} is ${p == null ? '—' : (p >= 0 ? 'up ' : 'down ') + Math.abs(p).toFixed(1) + '%'} on ${y}`}</div></div>`;
+  }).join('')}</div>`;
+  html += `<div class="card" style="margin-top:12px;"><div class="card-body"><div style="height:300px;"><canvas id="yoyChart"></canvas></div><div class="sc-note" style="margin-top:6px;">${YOY_MONTHS[curMonth]} ${cur} is to date only (to ${escapeHtml(dayLabel)})${yoyView === 'monthly' ? '; the other years show the whole month' : ''}.</div></div></div>`;
+  const tot = y => ({ full: agg[y].reduce((s, a, i) => s + ((y === cur && i > curMonth) ? 0 : a[m]), 0) });
+  html += `<div style="overflow-x:auto;margin-top:12px;"><table class="data-table" id="yoyTable"><thead><tr><th>Month</th>${years.map(y => `<th class="text-right">${y}</th>`).join('')}<th class="text-right">${cur} vs ${cur - 1}</th></tr></thead><tbody>`
+    + YOY_MONTHS.map((mn, i) => {
+      const s = years.map(y => series(y)[i]);
+      return `<tr><td>${mn}${i === curMonth ? ' <span class="val-dim" style="font-size:10px;">(to date)</span>' : ''}</td>${s.map((v, j) => `<td class="text-right" style="${j ? 'color:var(--dim);' : ''}">${yoyFmt(m, v)}</td>`).join('')}<td class="text-right">${i > curMonth ? '' : yoyPctHtml(yoyPct(s[0], s[1]))}</td></tr>`;
+    }).join('')
+    + `</tbody><tfoot><tr style="background:var(--bg3);font-weight:600;"><td>Year to ${escapeHtml(dayLabel)}</td>${years.map(y => `<td class="text-right">${yoyFmt(m, ytdAgg[y][m])}</td>`).join('')}<td class="text-right">${yoyPctHtml(yoyPct(ytdAgg[cur][m], ytdAgg[cur - 1][m]))}</td></tr>`
+    + `<tr style="background:var(--bg3);"><td>Whole year</td>${years.map(y => `<td class="text-right" style="color:var(--dim);">${y === cur ? '<span class="val-dim">in progress</span>' : yoyFmt(m, tot(y).full)}</td>`).join('')}<td></td></tr></tfoot></table></div>`;
+  wrap.innerHTML = html;
+  const cv = document.getElementById('yoyChart');
+  if (yoyChartInst) { try { yoyChartInst.destroy(); } catch (e) { /* old chart already gone */ } }
+  const colors = ['rgba(212,168,83,1)', 'rgba(96,165,250,.85)', 'rgba(45,212,160,.7)', 'rgba(167,139,250,.6)'];
+  if (cv && typeof Chart !== 'undefined') {
+    yoyChartInst = new Chart(cv, {
+      type: 'line',
+      data: { labels: YOY_MONTHS, datasets: years.map((y, j) => ({ label: String(y), data: series(y), borderColor: colors[j], backgroundColor: 'transparent', borderWidth: j ? 1.5 : 3, borderDash: j ? [4, 3] : [], pointRadius: j ? 0 : 3, tension: .3, spanGaps: false })) },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: true, labels: { color: '#8a9bbd' } } },
+        scales: { x: { ticks: { color: '#5a6e94' } }, y: { ticks: { color: '#5a6e94', callback: v => (m === 'orders' || m === 'units') ? v : '$' + Number(v).toLocaleString() } } } }
+    });
+  }
+}
+function exportYoyExcel() {
+  if (!yoyData || typeof XLSX === 'undefined') return;
+  const { years, agg, ytdAgg, curMonth } = yoyData, cur = years[0];
+  const wb = XLSX.utils.book_new();
+  Object.entries(YOY_MEASURES).forEach(([k, label]) => {
+    const aoa = [['Month', ...years]].concat(YOY_MONTHS.map((mn, i) => [mn, ...years.map(y => (y === cur && i > curMonth) ? null : frR2(agg[y][i][k]))]));
+    aoa.push(['Year to date (same day)', ...years.map(y => frR2(ytdAgg[y][k]))]);
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), label);
+  });
+  XLSX.writeFile(wb, 'CCD-Year-over-Year-' + new Date().toISOString().slice(0, 10) + '.xlsx');
+}
+// The "vs Prior Year" toggle works on Executive, Channel Performance and P&L only: say so on every other page.
+const FR_COMPARE_PAGES = ['dashboard', 'channel', 'pnl'];
+function frCompareSync() {
+  const b = document.getElementById('compareToggle');
+  if (!b) return;
+  const on = FR_COMPARE_PAGES.includes(currentPage);
+  b.disabled = !on;
+  b.style.opacity = on ? '' : '.4';
+  b.title = on ? 'Compare with the same dates last year' : 'Not used on this page. It works on Executive, Channel Performance and P&L; Year over Year compares four years.';
+}
+
+// ── v1.8.21 (S135, Paul 11-10: "I want the dead stock at 1 year"): ONE dead-stock rule for Inventory, the Scorecard and Scenarios ──
+// Dead = in stock and not sold in FR_DEAD_DAYS; or never sold and bought more than FR_DEAD_DAYS ago (the newest invoice for the item,
+// else V2's order date, else the date it was added; no date at all = dead). Sets and bundles are left out (they hold no stock of their own).
+function frLastSoldMap(rows) {
+  const m = {};
+  (rows || []).forEach(r => { const d = String(r.sale_date || '').slice(0, 10); if (r.sku && d && (!m[r.sku] || d > m[r.sku])) m[r.sku] = d; });
+  return m;
+}
+function frLastBoughtMap(invRows, invLines) {
+  const invDate = {}, m = {};
+  (invRows || []).forEach(v => { if (v.order_date) invDate[v.id] = String(v.order_date).slice(0, 10); });
+  (invLines || []).forEach(l => { const d = invDate[l.invoice_id]; if (l.item_id && d && (!m[l.item_id] || d > m[l.item_id])) m[l.item_id] = d; });
+  return m;
+}
+function frBoughtOn(item, lastBoughtMap) {
+  return lastBoughtMap[item.id] || (item.order_date ? String(item.order_date).slice(0, 10) : null) || (item.date_added ? String(item.date_added).slice(0, 10) : null);
+}
+function frIsDead(lastSale, boughtOn, todayStr) {
+  const days = d => Math.floor((new Date(todayStr) - new Date(d)) / 86400000);
+  if (lastSale) return days(lastSale) >= FR_DEAD_DAYS;
+  return boughtOn ? days(boughtOn) >= FR_DEAD_DAYS : true;
+}
+const frIsComposite = i => !!i.is_bundle || i.item_role === 'set' || i.item_role === 'bundle';
+// For the Scorecard and Scenarios: every in-stock physical item, marked dead or not, valued at wholesale (AAA-12)
+async function frDeadStockLoad() {
+  const [items, sold, invRows, invLines] = await Promise.all([
+    sbFetchAll(() => sbClient.from('items').select('id,sku,qty,wholesale_price,is_bundle,item_role,order_date,date_added').gt('qty', 0)),
+    sbFetchAll(() => shFrom().select('sku,sale_date').order('sale_date', { ascending: false })),
+    sbFetchAll(() => sbClient.from('invoices').select('id,order_date')).catch(() => []),
+    sbFetchAll(() => sbClient.from('invoice_items').select('item_id,invoice_id')).catch(() => [])
+  ]);
+  const lastSoldMap = frLastSoldMap(sold), lastBoughtMap = frLastBoughtMap(invRows, invLines), todayStr = fmt(new Date());
+  const rows = (items || []).filter(i => !frIsComposite(i) && (parseInt(i.qty) || 0) > 0).map(i => {
+    const qty = parseInt(i.qty) || 0, ws = parseFloat(i.wholesale_price) || 0;
+    return { id: i.id, sku: i.sku, qty, value: qty * ws, dead: frIsDead(lastSoldMap[i.sku] || null, frBoughtOn(i, lastBoughtMap), todayStr) };
+  });
+  const dead = rows.filter(r => r.dead);
+  return { rows, deadIds: new Set(dead.map(r => r.id)), deadCount: dead.length, deadValue: dead.reduce((s, r) => s + r.value, 0), totalValue: rows.reduce((s, r) => s + r.value, 0) };
+}
+async function scDeadTile(seq) {
+  const el = document.getElementById('scDeadTile');
+  if (!el) return;
+  try {
+    const d = await frDeadStockLoad();
+    if (seq !== scLoadSeq) return;
+    const pct = d.totalValue > 0 ? (d.deadValue / d.totalValue * 100).toFixed(0) + '% of wholesale stock · ' : '';
+    el.outerHTML = scTile('Dead stock (1 yr)', scMoney(d.deadValue), `${pct}${scNum(d.deadCount)} items · not sold in a year, or bought over a year ago and never sold`);
+  } catch (e) {
+    if (seq === scLoadSeq) el.outerHTML = scTile('Dead stock (1 yr)', '—', 'could not read: ' + escapeHtml(String((e && e.message) || e)));
+  }
 }
 
 // ── MONTHLY P&L (Phase 4) ─────────────────────────────────────────────────
@@ -6545,7 +6761,7 @@ function renderScenarioControls() {
         ${_scenInput('sc_markdown_pct','Dead Stock Markdown',30,10,70,5,'%')}
         <button class="btn-export" style="background:var(--gold);color:#070c18;border:none;padding:10px 20px;font-weight:700;" onclick="runInventoryScenario()">Run Scenario</button>
       </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:8px;">Reorder: estimates investment + projected revenue for top-velocity SKUs. Markdown: estimates recovery from dead stock.</div>`;
+      <div style="font-size:11px;color:var(--muted);margin-top:8px;">Reorder: estimates investment + projected revenue for top-velocity SKUs. Markdown: estimates recovery from dead stock (not sold in a year, or bought over a year ago and never sold — the same rule as Inventory).</div>`;
   }
 }
 
@@ -6751,7 +6967,7 @@ async function runInventoryScenario() {
 
   // Need inventory + velocity data
   let invItems = await sbFetchAll(() => sbClient.from('items')
-    .select('sku,product_name,brand_name,qty,wholesale_price,ib_shipping,ob_shipping,tariff,is_bundle,item_role,etsy_price,wix_price,crazychicks_price,retail_price')
+    .select('id,sku,product_name,brand_name,qty,wholesale_price,ib_shipping,ob_shipping,tariff,is_bundle,item_role,etsy_price,wix_price,crazychicks_price,retail_price')
     .gt('qty', 0));
 
   // v1.8.2: Exclude bundles from scenario analysis (they hold no independent inventory)
@@ -6775,11 +6991,8 @@ async function runInventoryScenario() {
     avgPrice[r.sku].push(parseFloat(r.sale_price)||0);
   });
 
-  // Dead stock (no sales in 90 days from base data)
-  const d90 = new Date(); d90.setDate(d90.getDate()-90);
-  const recent90 = await sbFetchAll(() => shFrom()
-    .select('sku').gte('sale_date', fmt(d90)));
-  const soldRecently = new Set((recent90||[]).map(r=>r.sku).filter(Boolean));
+  // v1.8.21: dead stock = the one-year rule shared with Inventory and the Scorecard
+  const deadStock = await frDeadStockLoad();
 
   // Reorder analysis — top velocity SKUs
   const reorderCandidates = invItems
@@ -6803,7 +7016,7 @@ async function runInventoryScenario() {
 
   // Dead stock markdown
   const deadItems = invItems
-    .filter(i => !soldRecently.has(i.sku) && (parseInt(i.qty)||0) > 0)
+    .filter(i => deadStock.deadIds.has(i.id) && (parseInt(i.qty)||0) > 0)
     .map(i => {
       const ws = parseFloat(i.wholesale_price)||0;
       const qty = parseInt(i.qty)||0;
@@ -6849,7 +7062,7 @@ async function runInventoryScenario() {
     </table></div>
 
     ${deadItems.length > 0 ? `
-    <div style="font-size:13px;color:var(--text);margin:20px 0 12px;font-weight:600;">Dead Stock Markdown — ${(markdownPct*100).toFixed(0)}% off estimated retail</div>
+    <div style="font-size:13px;color:var(--text);margin:20px 0 12px;font-weight:600;">Dead Stock (1 yr) Markdown — ${(markdownPct*100).toFixed(0)}% off estimated retail</div>
     <div class="data-table-wrap"><table class="data-table">
       <thead><tr><th>SKU</th><th>Product</th><th class="text-right">Qty</th><th class="text-right">Cost Basis</th><th class="text-right">Markdown Rev</th><th class="text-right">Recovery</th></tr></thead>
       <tbody>${deadItems.slice(0,30).map(d => `<tr>
@@ -8641,7 +8854,7 @@ const FR_BASIS_LABELS = {
   customers: 'From the sales records', trends: 'Estimates per sale, from the sales records', scenarios: 'What-if figures built on estimates per sale',
   vendorspend: 'Actual invoices and credit memos', etsyads: 'QuickBooks actuals and estimates per sale, each labelled', monthlyincome: 'Estimates per sale, from the sales records',
   tmrecon: 'Typed statements (actual) against the sales records (estimate)', returns: 'From the sales records',
-  recon: 'Channel documents (actual) against the sales records'
+  recon: 'Channel documents (actual) against the sales records', yoy: 'From the sales records: revenue, orders and units actual; profit an estimate per sale'
 };
 function frApplyBasisLabels() {
   Object.entries(FR_BASIS_LABELS).forEach(([page, text]) => {
@@ -9565,10 +9778,11 @@ function initApp() {
   // Deep-link: check URL hash for direct page navigation (e.g. #pnl, #inventory, #scenarios)
   const hash = window.location.hash?.replace('#', '');
   const validPages = ['dashboard','sales','daily','channel','products','brands','shipping','inventory',
-    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp','monthlyincome','tmrecon','returns','scorecard','recon'];   // v1.8.13 F: + scorecard; v1.8.18: + recon
+    'wayfairrecon','pnl','custom','geo','customers','trends','datahealth','scenarios','vendorspend','etsyads','pricecomp','monthlyincome','tmrecon','returns','scorecard','recon','yoy'];   // v1.8.13 F: + scorecard; v1.8.18: + recon
   if (hash && validPages.includes(hash)) {
     navTo(hash);
   } else {
+    frCompareSync();
     loadDashboard();
   }
 }
