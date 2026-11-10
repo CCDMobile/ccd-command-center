@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Financial Intelligence v1.8.21</title>
+<title>CCD Financial Intelligence v1.8.22</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -566,7 +566,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.21</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.22</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1788,7 +1788,10 @@ body {
 //   contribution card says it settles in arrears (QB/FR 113 §5); a decision on a Wayfair control month is shown (113 §2).
 // v1.8.21 (S135, Paul 11-10): dead stock is one year everywhere — Inventory, the Scorecard and Scenarios share one rule (frIsDead);
 //   the Scorecard's 90-day and 365-day tiles become one "Dead stock (1 yr)" tile at wholesale.
-const FR_VERSION = 'v1.8.21';
+// v1.8.22 (S135, QB/FR 116): Year over Year's open month compares the same days in every year (Nov 1-10 against Nov 1-10), with the
+//   whole month in its own row; a read that hits the database's statement timeout is tried again, once or twice, after a pause
+//   (the Scorecard's sections and the health pre-check); the Scorecard's dead-stock tile loads after the other sections.
+const FR_VERSION = 'v1.8.22';
 const FR_DEAD_DAYS = 365;
 const FR_VERSION_KEY = 'financial';
 
@@ -2377,8 +2380,8 @@ function frFeedStatus(r) {
 }
 async function frHealthPrecheck() {
   const [feeds, dq, stamp] = await Promise.allSettled([
-    sbClient.from('v_feed_health').select('*'),
-    sbClient.from('v_data_quality').select('sort,defect,rows_affected'),
+    frRetryTimeout(() => sbClient.from('v_feed_health').select('*')),   // v1.8.22
+    frRetryTimeout(() => sbClient.from('v_data_quality').select('sort,defect,rows_affected')),
     lsReadStamp()
   ]);
   // baseline
@@ -2576,13 +2579,23 @@ function scGenericTable(rows) {
     <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${scCell(r[c])}</td>`).join('')}</tr>`).join('')}</tbody>
   </table></div>`;
 }
+// v1.8.22: a read cancelled by the database's statement timeout (57014) is tried again after a pause, up to twice.
+const frIsTimeout = e => !!e && (String(e.code || '') === '57014' || /statement timeout/i.test(String(e.message || e)));
+async function frRetryTimeout(fn, tries = 2) {
+  let res;
+  for (let i = 0; ; i++) {
+    try { res = await fn(); } catch (e) { if (i < tries && frIsTimeout(e)) { await new Promise(r => setTimeout(r, 1200 + i * 1500 + Math.random() * 800)); continue; } throw e; }
+    if (!(res && res.error && frIsTimeout(res.error)) || i >= tries) return res;
+    await new Promise(r => setTimeout(r, 1200 + i * 1500 + Math.random() * 800));
+  }
+}
 // Runs one section: fetch → (still current?) → render. Errors land in that section only.
 async function scSection(elId, view, seq, fetchFn, renderFn) {
   const el = document.getElementById(elId);
   if (!el) return;
   el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
   try {
-    const { data, error } = await fetchFn();
+    const { data, error } = await frRetryTimeout(fetchFn);   // v1.8.22
     if (seq !== scLoadSeq) return;
     if (error) { scErr(el, view, error); return; }
     renderFn(el, data || []);
@@ -2677,7 +2690,6 @@ async function loadScorecard() {
           ${scTile('Stock turns', scNum(r.stock_turns_annualised), 'annualised')}
         </div>
         <div class="sc-note" style="margin-top:10px;">Data quality: ${scNum(r.dq_stocked_no_cost)} stocked with no cost · ${scNum(r.dq_negative_qty)} negative qty · ${scNum(r.dq_future_dated_invoices)} future-dated invoices · ${scNum(r.dq_receipts_without_date)} receipts without date</div>`;
-        scDeadTile(seq);   // v1.8.21
       }),
 
     // 5 · Sales KPIs — channel 'all', summed over the selected months
@@ -2831,6 +2843,7 @@ async function loadScorecard() {
         </table></div>`;
       })
   ]);
+  scDeadTile(seq);   // v1.8.21; v1.8.22: after the other sections, so its reads do not crowd theirs
 }
 
 // v1.8.14 S3: feed-health table - every column the view returns, status coloured, note wrapping.
@@ -5019,23 +5032,25 @@ async function loadYoyReport() {
   if (seq !== yoySeq) return;
   const md = todayStr.slice(5);   // MM-DD: "to the same day" in each year
   const by = {}, ytd = {};
-  years.forEach(y => { by[y] = YOY_MONTHS.map(() => []); ytd[y] = []; });
+  const mtd = {};   // v1.8.22: the open month to the same day, in every year
+  years.forEach(y => { by[y] = YOY_MONTHS.map(() => []); ytd[y] = []; mtd[y] = []; });
   (rows || []).forEach(r => {
     const d = String(r.sale_date || '').slice(0, 10), y = +d.slice(0, 4), m = +d.slice(5, 7) - 1;
     if (!by[y] || m < 0 || m > 11) return;
     by[y][m].push(r);
     if (d.slice(5) <= md) ytd[y].push(r);
+    if (m === today.getMonth() && d.slice(5) <= md) mtd[y].push(r);
   });
-  const agg = {}, ytdAgg = {};
-  years.forEach(y => { agg[y] = by[y].map(rs => aggregate(rs)); ytdAgg[y] = aggregate(ytd[y]); });
+  const agg = {}, ytdAgg = {}, mtdAgg = {};
+  years.forEach(y => { agg[y] = by[y].map(rs => aggregate(rs)); ytdAgg[y] = aggregate(ytd[y]); mtdAgg[y] = aggregate(mtd[y]); });
   const firstSale = (rows || []).reduce((a, r) => (!a || String(r.sale_date) < a) ? String(r.sale_date).slice(0, 10) : a, null);
-  yoyData = { years, agg, ytdAgg, curMonth: today.getMonth(), todayStr, chLabel: chDb ? (CH_LABEL[chDb] || chDb) : 'All channels', firstSale };
+  yoyData = { years, agg, ytdAgg, mtdAgg, dayNum: today.getDate(), curMonth: today.getMonth(), todayStr, chLabel: chDb ? (CH_LABEL[chDb] || chDb) : 'All channels', firstSale };
   yoyRender();
 }
 function yoyRender() {
   const wrap = document.getElementById('yoyWrap');
   if (!wrap || !yoyData) return;
-  const { years, agg, ytdAgg, curMonth, todayStr, chLabel, firstSale } = yoyData;
+  const { years, agg, ytdAgg, mtdAgg, dayNum, curMonth, todayStr, chLabel, firstSale } = yoyData;
   const m = yoyMeasure, cur = years[0];
   const val = (y, i) => (y === cur && i > curMonth) ? null : agg[y][i][m];
   const series = y => {
@@ -5052,12 +5067,18 @@ function yoyRender() {
     return `<div class="kpi-card" data-yoy-year="${y}"><div class="kpi-label">${y} · to ${escapeHtml(dayLabel)}</div><div class="kpi-value" style="${y === cur ? '' : 'color:var(--dim);'}">${yoyFmt(m, v)}</div>`
       + `<div class="sc-note">${y === cur ? 'this year' : `${cur} is ${p == null ? '—' : (p >= 0 ? 'up ' : 'down ') + Math.abs(p).toFixed(1) + '%'} on ${y}`}</div></div>`;
   }).join('')}</div>`;
-  html += `<div class="card" style="margin-top:12px;"><div class="card-body"><div style="height:300px;"><canvas id="yoyChart"></canvas></div><div class="sc-note" style="margin-top:6px;">${YOY_MONTHS[curMonth]} ${cur} is to date only (to ${escapeHtml(dayLabel)})${yoyView === 'monthly' ? '; the other years show the whole month' : ''}.</div></div></div>`;
+  html += `<div class="card" style="margin-top:12px;"><div class="card-body"><div style="height:300px;"><canvas id="yoyChart"></canvas></div><div class="sc-note" style="margin-top:6px;">${YOY_MONTHS[curMonth]} ${cur} is to date only (to ${escapeHtml(dayLabel)})${yoyView === 'monthly' ? '; on the chart the other years show the whole month' : ''}. The table compares ${YOY_MONTHS[curMonth]} 1–${dayNum} in every year.</div></div></div>`;
   const tot = y => ({ full: agg[y].reduce((s, a, i) => s + ((y === cur && i > curMonth) ? 0 : a[m]), 0) });
   html += `<div style="overflow-x:auto;margin-top:12px;"><table class="data-table" id="yoyTable"><thead><tr><th>Month</th>${years.map(y => `<th class="text-right">${y}</th>`).join('')}<th class="text-right">${cur} vs ${cur - 1}</th></tr></thead><tbody>`
     + YOY_MONTHS.map((mn, i) => {
+      if (i === curMonth) {   // v1.8.22: the open month like for like (1st to today's day in every year), then each year's whole month
+        const same = years.map(y => yoyView === 'running' ? ytdAgg[y][m] : mtdAgg[y][m]);
+        const whole = years.map(y => y === cur ? null : series(y)[i]);
+        return `<tr data-yoy-open="1"><td>${mn} 1–${dayNum} <span class="val-dim" style="font-size:10px;">(the same days)</span></td>${same.map((v, j) => `<td class="text-right" style="${j ? 'color:var(--dim);' : ''}">${yoyFmt(m, v)}</td>`).join('')}<td class="text-right">${yoyPctHtml(yoyPct(same[0], same[1]))}</td></tr>`
+          + `<tr data-yoy-whole="1"><td class="val-dim">${mn}, whole month</td>${whole.map((v, j) => `<td class="text-right" style="color:var(--dim);">${j === 0 ? '<span class="val-dim">in progress</span>' : yoyFmt(m, v)}</td>`).join('')}<td></td></tr>`;
+      }
       const s = years.map(y => series(y)[i]);
-      return `<tr><td>${mn}${i === curMonth ? ' <span class="val-dim" style="font-size:10px;">(to date)</span>' : ''}</td>${s.map((v, j) => `<td class="text-right" style="${j ? 'color:var(--dim);' : ''}">${yoyFmt(m, v)}</td>`).join('')}<td class="text-right">${i > curMonth ? '' : yoyPctHtml(yoyPct(s[0], s[1]))}</td></tr>`;
+      return `<tr><td>${mn}</td>${s.map((v, j) => `<td class="text-right" style="${j ? 'color:var(--dim);' : ''}">${yoyFmt(m, v)}</td>`).join('')}<td class="text-right">${i > curMonth ? '' : yoyPctHtml(yoyPct(s[0], s[1]))}</td></tr>`;
     }).join('')
     + `</tbody><tfoot><tr style="background:var(--bg3);font-weight:600;"><td>Year to ${escapeHtml(dayLabel)}</td>${years.map(y => `<td class="text-right">${yoyFmt(m, ytdAgg[y][m])}</td>`).join('')}<td class="text-right">${yoyPctHtml(yoyPct(ytdAgg[cur][m], ytdAgg[cur - 1][m]))}</td></tr>`
     + `<tr style="background:var(--bg3);"><td>Whole year</td>${years.map(y => `<td class="text-right" style="color:var(--dim);">${y === cur ? '<span class="val-dim">in progress</span>' : yoyFmt(m, tot(y).full)}</td>`).join('')}<td></td></tr></tfoot></table></div>`;
@@ -5076,10 +5097,11 @@ function yoyRender() {
 }
 function exportYoyExcel() {
   if (!yoyData || typeof XLSX === 'undefined') return;
-  const { years, agg, ytdAgg, curMonth } = yoyData, cur = years[0];
+  const { years, agg, ytdAgg, mtdAgg, dayNum, curMonth } = yoyData, cur = years[0];
   const wb = XLSX.utils.book_new();
   Object.entries(YOY_MEASURES).forEach(([k, label]) => {
     const aoa = [['Month', ...years]].concat(YOY_MONTHS.map((mn, i) => [mn, ...years.map(y => (y === cur && i > curMonth) ? null : frR2(agg[y][i][k]))]));
+    aoa.push([YOY_MONTHS[curMonth] + ' 1-' + dayNum + ' (the same days)', ...years.map(y => frR2(mtdAgg[y][k]))]);
     aoa.push(['Year to date (same day)', ...years.map(y => frR2(ytdAgg[y][k]))]);
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), label);
   });
