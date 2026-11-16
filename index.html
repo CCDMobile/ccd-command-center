@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.4.0</title>
+<title>CCD Command Center v3.4.1</title>
+<!-- v3.4.1 (S137): Paul 2026-11-16 "Option 2" — an invitation or reset link opens "Set your password" / "Set a new password" (the link is read in <head> before supabase-js uses it; the PASSWORD_RECOVERY event fired before Command Center listened, so v3.4.0 never showed the box); the Sync queue tile and the health card count PENDING rows only (they counted every row ever made). -->
 <!-- v3.4.0 (S137): Paul 2026-11-15 "Build approved" — SIGN-IN behind the flag settings.service_flags.sign_in (off by default = as before; offered; required), Command Center the one sign-in screen (?return= to our own pages only), the account box (change password, sign out, sign out everywhere, forgot password via Supabase), and a PIN on Settings shared by every tool (settings.settings_pin {salt, hash}, asked once an hour). Design: Claude Doc "CCD Sign-in — Design for Approval". -->
 <!-- v3.3.4 (S122): Paul 2026-10-26 — removed Channel SKU Audit (file gone, 404), Wayfair Workbench (retired; CM's Wayfair tab), TM Reconciliation and Market Intelligence tiles, and the quick-action buttons (Pull Orders, New Invoice, View P&L, Check Inventory, Run Scenarios); Wayfair Remittance moved to the Wayfair row beside the Order Manager; Etsy Image Pull moved to Channel Tools; Image Studio added (CCD-IMAGE-STUDIO.html); Financial Intelligence moved into Core Operations and the empty Financial & Reporting section and filter removed. -->
 <!-- v3.3.3 (S106): the Channel Manager tile pointed at CCD-CHANNEL-MANAGER-V2.html, a file that has never existed in the repo (404). It now opens CCD-CHANNEL-MANAGER.html, the file V2's 📝 Listing button also opens. -->
@@ -890,7 +892,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.0</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.1</span>
         </div>
     </div>
 
@@ -1643,7 +1645,7 @@ async function loadKPIs() {
 
         // Sync queue
         const { count: queueCount } = await sb.from('sync_queue')
-            .select('*', { count: 'exact', head: true });
+            .select('*', { count: 'exact', head: true }).eq('status', 'pending');
         animateValue('kpiQueue', queueCount || 0);
 
         // Active SKUs
@@ -1979,7 +1981,7 @@ async function checkDatabase() {
     try {
         const { count: itemCount } = await sb.from('items').select('*', { count: 'exact', head: true });
         const { count: salesCount } = await sb.from('sales_history').select('*', { count: 'exact', head: true });
-        const { count: queueCount } = await sb.from('sync_queue').select('*', { count: 'exact', head: true });
+        const { count: queueCount } = await sb.from('sync_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending');
 
         el.textContent = 'Connected'; el.className = 'value ok';
         dot.className = 'status-dot ok'; chip.className = 'status-chip ok';
@@ -2367,7 +2369,7 @@ document.getElementById('settingsOverlay').addEventListener('click', (e) => {
    - The Settings tab asks for the shared PIN (settings.settings_pin = {salt, hash}; never the digits), once an hour.
    - No browser pop-ups (CC-1): every box is our own.
    ═══════════════════════════════════════════ */
-const CCD_AUTH_VERSION = 'v3.4.0';
+const CCD_AUTH_VERSION = 'v3.4.1';
 const ccdAuth = (() => {
     let client = null, mode = 'off', session = null;
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -2543,9 +2545,9 @@ const ccdAuth = (() => {
         if (error) { msg('ccdSiMsg', error.message || 'Could not send the email.', 'err'); return; }
         msg('ccdSiMsg', 'If that address has an account, a reset link is on its way. Open it on this computer.', 'ok');
     }
-    function showReset() {
+    function showReset(kind) {
         ensureUi();
-        document.getElementById('ccdSiTitle').textContent = 'Set a new password';
+        document.getElementById('ccdSiTitle').textContent = kind === 'invite' ? 'Set your password' : 'Set a new password';
         document.getElementById('ccdSiForm').style.display = 'none';
         document.getElementById('ccdSiReset').style.display = '';
         document.getElementById('ccdSignInOverlay').classList.add('visible', 'locked');
@@ -2555,7 +2557,11 @@ const ccdAuth = (() => {
         const a = document.getElementById('ccdRsNew').value, b = document.getElementById('ccdRsNew2').value;
         if (!a || a !== b) { msg('ccdSiMsg', 'The two passwords do not match.', 'err'); return; }
         const { error } = await client.auth.updateUser({ password: a });
-        if (error) { msg('ccdSiMsg', error.message || 'Not saved.', 'err'); return; }
+        if (error) {
+            const t = error.message || 'Not saved.';
+            msg('ccdSiMsg', /current.?password/i.test(t) ? t + ' — Supabase is asking for a current password this account does not have yet. Tell Paul: the "Require current password" setting blocks first-time setup.' : t, 'err');
+            return;
+        }
         document.getElementById('ccdRsNew').value = ''; document.getElementById('ccdRsNew2').value = '';
         msg('ccdSiMsg', 'Saved. You are signed in with the new password.', 'ok');
         setTimeout(() => { document.getElementById('ccdSignInOverlay').classList.remove('visible', 'locked'); renderChip(); }, 1200);
@@ -2583,7 +2589,7 @@ const ccdAuth = (() => {
         if (!client || !client.auth) return { mode: 'off', signedIn: false };
         try {
             client.auth.onAuthStateChange((event, s) => {
-                if (event === 'PASSWORD_RECOVERY') { session = s; showReset(); return; }
+                if (event === 'PASSWORD_RECOVERY') { session = s; showReset('recovery'); return; }
                 if (event === 'SIGNED_OUT') { session = null; renderChip(); }
             });
         } catch (e) { console.warn('[sign-in] no auth events', e && e.message); }
@@ -2591,7 +2597,11 @@ const ccdAuth = (() => {
         try { const { data } = await client.auth.getSession(); session = data && data.session; } catch { session = null; }
         ensureUi();
         renderChip();
-        if (session && session.user && safeReturn(params().get('return'))) { afterSignIn(); }
+        // v3.4.1: an invitation or reset link signs the person in before this code listens (supabase-js reads the
+        // link while the client is made), so the link's type is caught in <head> and the password box opened here.
+        const linkType = (typeof window !== 'undefined' && window.__ccdAuthLinkType) || null;
+        if (linkType && session && session.user) { try { window.__ccdAuthLinkType = null; } catch { /* ignore */ } showReset(linkType === 'invite' ? 'invite' : 'recovery'); }
+        else if (session && session.user && safeReturn(params().get('return'))) { afterSignIn(); }
         else if (mode === 'required' && !(session && session.user)) openSignIn(true);
         return { mode, signedIn: !!(session && session.user) };
     }
