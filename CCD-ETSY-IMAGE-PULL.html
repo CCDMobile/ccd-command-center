@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.3.1: copied from Command Center v3.4.1 -->
-<title>CCD Etsy Image Pull v1.3.1</title>
+<title>CCD Etsy Image Pull v1.3.2</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -251,7 +251,7 @@
 <div class="ccdAuthBlock" id="ccdAuthBlock"><div style="font-size:18px;font-weight:700;color:#d4a853;">Sign in to use the CCD tools</div><div style="font-size:13px;opacity:.75;max-width:420px;">Etsy Image Pull is opened through Command Center. You are being taken there to sign in, and back here afterwards.</div><button id="ccdAuthGo" type="button" style="padding:8px 18px;cursor:pointer;" onclick="ccdToolNavigate(ccdToolSignInUrl())">Sign in at Command Center</button></div><!-- S139 -->
 <div class="container">
 
-  <h1 style="display:flex;align-items:center;gap:10px;">CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.3.1</span><span style="flex:1"></span><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.3.1: sign-in --></h1>
+  <h1 style="display:flex;align-items:center;gap:10px;">CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.3.2</span><span style="flex:1"></span><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.3.1: sign-in --></h1>
   <div class="subtitle">Etsy listing images → <b>item_images</b> (the image record the Channel Manager uses) and items.image_urls. v1.3.0 (S106): an item that already has rows in item_images — uploads included — is never changed. v1.2.1 (S105): the proxy address and key come from the database; nothing is typed into this page except the Supabase login.</div>
 
   <div class="config-grid">
@@ -345,7 +345,30 @@
 // v1.3.1 (S139, Paul 11-16): SIGN-IN (flag settings.service_flags.sign_in; absent / off = exactly as before), the module copied
 //   by script from Command Center v3.4.1; offered / required send you to Command Center with ?return=. No Settings tab, so no
 //   PIN. The pull's log line names the signed-in person (else 'Paul', as before).
-const VERSION = '1.3.1';
+// v1.3.2 (S139, Paul 11-16 19:45): registers its version in settings.tool_versions ('etsyimages', the key Command Center's tile
+//   reads) when it connects — it never did, so the tile showed nothing. registerToolVersion copied by script from FR v1.8.24.
+const VERSION = '1.3.2';
+async function registerToolVersion(client, toolKey, toolVersion) {
+    if (!client) return;
+    try {
+        const { data } = await client.from('settings').select('value').eq('key', 'tool_versions').limit(1);
+        let versions = {};
+        const exists = data && data.length > 0;
+        if (exists && data[0].value) {
+            versions = typeof data[0].value === 'string' ? JSON.parse(data[0].value) : data[0].value;
+        }
+        if (versions[toolKey] === toolVersion) return;
+        versions[toolKey] = toolVersion;
+        const now = new Date().toISOString();
+        if (exists) {
+            await client.from('settings').update({ value: versions, updated_at: now, updated_by: toolKey }).eq('key', 'tool_versions');
+        } else {
+            await client.from('settings').insert({ key: 'tool_versions', value: versions, updated_at: now, updated_by: toolKey });
+        }
+        console.log(`Registered ${toolKey} ${toolVersion}`);
+    } catch(e) { console.log('Version register skipped:', e.message); }
+}
+
 const BATCH = 25;
 const PAUSE_MS = (typeof window.__pullPauseMs === 'number') ? window.__pullPauseMs : 65000;
 const RETRY_MS = (typeof window.__pullRetryMs === 'number') ? window.__pullRetryMs : 70000;
@@ -377,6 +400,7 @@ async function connect() {
     const by = {}; (st || []).forEach(r => { by[r.key] = typeof r.value === 'string' ? JSON.parse(r.value) : r.value; });
     PROXY = { url: (by.proxy_urls || {}).etsy || '', key: (by.api_keys || {}).ccdApiKey || '' };
     sb = client;
+    registerToolVersion(client, 'etsyimages', 'v' + VERSION);   // v1.3.2: Command Center's tile
     ccdToolAuthStart();   // v1.3.1: sign-in (flag off = nothing changes)
     try { localStorage.setItem('ccdSupabaseUrl', url); localStorage.setItem('ccdSupabaseKey', key); } catch (e) {}
     if (!PROXY.url || !PROXY.key) { es.innerHTML = '<span class="dot dot-off"></span>This project has no Etsy proxy address or key in settings — nothing can be pulled here.'; return false; }

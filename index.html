@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.4.1</title>
+<title>CCD Command Center v3.4.2</title>
+<!-- v3.4.2 (S139): THE ACCOUNTS PANEL (sign-in design decision 5) — 👥 Accounts in the account box: every account with its last sign-in, and Send reset email / Sign out everywhere / Disable · Enable, each asked Yes / No on its row, done by the edge function accounts-admin with your own sign-in (the service key stays on the server). -->
 <!-- v3.4.1 (S137): Paul 2026-11-16 "Option 2" — an invitation or reset link opens "Set your password" / "Set a new password" (the link is read in <head> before supabase-js uses it; the PASSWORD_RECOVERY event fired before Command Center listened, so v3.4.0 never showed the box); the Sync queue tile and the health card count PENDING rows only (they counted every row ever made). -->
 <!-- v3.4.0 (S137): Paul 2026-11-15 "Build approved" — SIGN-IN behind the flag settings.service_flags.sign_in (off by default = as before; offered; required), Command Center the one sign-in screen (?return= to our own pages only), the account box (change password, sign out, sign out everywhere, forgot password via Supabase), and a PIN on Settings shared by every tool (settings.settings_pin {salt, hash}, asked once an hour). Design: Claude Doc "CCD Sign-in — Design for Approval". -->
 <!-- v3.3.4 (S122): Paul 2026-10-26 — removed Channel SKU Audit (file gone, 404), Wayfair Workbench (retired; CM's Wayfair tab), TM Reconciliation and Market Intelligence tiles, and the quick-action buttons (Pull Orders, New Invoice, View P&L, Check Inventory, Run Scenarios); Wayfair Remittance moved to the Wayfair row beside the Order Manager; Etsy Image Pull moved to Channel Tools; Image Studio added (CCD-IMAGE-STUDIO.html); Financial Intelligence moved into Core Operations and the empty Financial & Reporting section and filter removed. -->
@@ -892,7 +893,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.1</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.2</span>
         </div>
     </div>
 
@@ -2459,6 +2460,7 @@ const ccdAuth = (() => {
     <label class="form-label" for="ccdAcNew2" style="margin-top:10px;">New password again</label><input type="password" class="form-input" id="ccdAcNew2" autocomplete="new-password">
     <div class="ccd-auth-row"><button class="btn-gold" id="ccdAcChange">Change password</button></div>
     <div class="ccd-auth-row" style="margin-top:18px;"><button class="btn-ghost" id="ccdAcOut">Sign out of this browser</button><button class="btn-ghost" id="ccdAcOutAll">Sign out everywhere</button></div>
+    <div class="ccd-auth-row" id="ccdAcAdminRow" style="margin-top:14px;display:none;"><button class="btn-ghost" id="ccdAcAccounts">👥 Accounts</button><span class="ccd-auth-note" style="align-self:center;margin:0;">Paul and Mary: reset emails, sign-outs, disable</span></div>
     <div class="ccd-auth-msg" id="ccdAcMsg"></div>
   </div></div></div>
 <div class="overlay" id="ccdPinOverlay"><div class="modal" style="max-width:340px;">
@@ -2514,6 +2516,9 @@ const ccdAuth = (() => {
         document.getElementById('ccdAcWho').textContent = u ? `Signed in as ${knownName(u)} (${u.email})` : '';
         ['ccdAcCur', 'ccdAcNew', 'ccdAcNew2'].forEach(id => { document.getElementById(id).value = ''; });
         msg('ccdAcMsg', '');
+        { const row = document.getElementById('ccdAcAdminRow'), nm = u ? knownName(u) : '';   // v3.4.2: the Accounts panel, for Paul and Mary
+          if (row) row.style.display = (nm === 'Paul' || nm === 'Mary') ? '' : 'none';
+          const btn = document.getElementById('ccdAcAccounts'); if (btn) btn.onclick = () => { if (typeof window.ccdAccountsOpen === 'function') window.ccdAccountsOpen(); }; }
         document.getElementById('ccdAccountOverlay').classList.add('visible');
     }
     function afterSignIn() {
@@ -2698,6 +2703,102 @@ function ccdPinNotice(state) {
 }
 /* the ⚙ button: the PIN first, then the Settings box as before */
 function openSettings() { ccdPin.open(); }
+
+/* ═══════════════════════════════════════════
+   v3.4.2 (S139) — THE ACCOUNTS PANEL (sign-in design decision 5). Talks only to the edge function accounts-admin, with the
+   signed-in person's own token; the function checks it is Paul or Mary, acts, and logs ACCOUNT_* in activity_log.
+   ═══════════════════════════════════════════ */
+const CCD_ACCOUNTS = { busy: false, users: [], ask: null, msg: '', kind: '' };
+function ccdAccountsUrl() { const u = (resolveKey('ccdSupabaseUrl') || '').replace(/\/+$/, ''); return u ? u + '/functions/v1/accounts-admin' : ''; }
+async function ccdAccountsCall(body) {
+    const s = ccdAuth.session, url = ccdAccountsUrl(), key = resolveKey('ccdSupabaseKey') || '';
+    if (!s || !s.access_token) return { ok: false, error: 'Sign in first.' };
+    if (!url) return { ok: false, error: 'No database address saved in Settings.' };
+    try {
+        const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + s.access_token, 'apikey': key }, body: JSON.stringify(body) });
+        let j = null; try { j = await r.json(); } catch (e) { j = null; }
+        if (!j) return { ok: false, error: 'The accounts service gave no answer (' + r.status + ').' };
+        return j;
+    } catch (e) { return { ok: false, error: 'The accounts service could not be reached: ' + ((e && e.message) || e) }; }
+}
+function ccdAccountsEnsure() {
+    if (document.getElementById('ccdAccountsOverlay')) return;
+    const st = document.createElement('style'); st.textContent = `
+#ccdAccountsOverlay{display:none;position:fixed;inset:0;z-index:10060;background:rgba(0,0,0,.6);align-items:center;justify-content:center;}
+#ccdAccountsOverlay.visible{display:flex;}
+#ccdAccountsOverlay .ccd-acc-box{width:min(760px,94vw);max-height:88vh;overflow:auto;background:var(--bg2);border:1px solid var(--border,#1e2d45);border-radius:10px;color:var(--text);box-shadow:0 12px 40px rgba(0,0,0,.5);}
+#ccdAccountsOverlay table{width:100%;border-collapse:collapse;font-size:13px;}
+#ccdAccountsOverlay th,#ccdAccountsOverlay td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border,#1e2d45);vertical-align:top;}
+#ccdAccountsOverlay th{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;}
+#ccdAccountsOverlay .ccd-acc-btn{background:transparent;border:1px solid var(--border,#1e2d45);color:var(--text);border-radius:6px;padding:4px 9px;font-size:12px;cursor:pointer;margin:2px 4px 2px 0;}
+#ccdAccountsOverlay .ccd-acc-btn:disabled{opacity:.45;cursor:default;}
+#ccdAccountsOverlay .ccd-acc-ask{margin-top:6px;padding:8px;border:1px solid var(--gold);border-radius:6px;font-size:12px;}
+#ccdAccountsOverlay .on{color:#4ade80}#ccdAccountsOverlay .off{color:#f87171}#ccdAccountsOverlay .inv{color:#fbbf24}`;
+    document.head.appendChild(st);
+    const d = document.createElement('div'); d.className = 'overlay'; d.id = 'ccdAccountsOverlay';
+    d.innerHTML = `<div class="ccd-acc-box"><div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border,#1e2d45);"><h2 style="font-size:16px;margin:0;color:var(--gold);">👥 Accounts</h2><button class="modal-close" id="ccdAccClose" style="background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;">✕</button></div>
+      <div style="padding:14px 18px;"><div class="ccd-auth-note" style="margin:0 0 10px;">Reset emails go from alerts@countrycharmdecor.com. Signing someone out ends every browser and phone they use, within the hour. A disabled account cannot sign in until enabled. Adding or deleting a person is done in the Supabase dashboard.</div>
+      <div id="ccdAccBody">Loading…</div><div class="ccd-auth-msg" id="ccdAccMsg"></div>
+      <div style="margin-top:10px;"><button class="ccd-acc-btn" id="ccdAccReload" type="button">⟳ Refresh</button></div></div></div>`;
+    document.body.appendChild(d);
+    document.getElementById('ccdAccClose').onclick = () => d.classList.remove('visible');
+    document.getElementById('ccdAccReload').onclick = () => ccdAccountsLoad();
+}
+const ccdAccEsc = t => String(t == null ? '' : t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function ccdAccWhen(t) { if (!t) return 'never'; try { return new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); } catch (e) { return String(t).slice(0, 16); } }
+const CCD_ACC_WORDS = {
+    reset: ['✉ Send reset email', u => `Send ${u.name} a password reset email at ${u.email}?`],
+    signout_all: ['⎋ Sign out everywhere', u => u.me ? 'Sign YOURSELF out of every browser and phone (this one too)?' : `Sign ${u.name} out of every browser and phone?`],
+    disable: ['⛔ Disable', u => `Disable ${u.name}'s account? ${u.name} is signed out and cannot sign in until it is enabled.`],
+    enable: ['✅ Enable', u => `Enable ${u.name}'s account again?`] };
+function ccdAccountsRender() {
+    const body = document.getElementById('ccdAccBody'); if (!body) return;
+    const m = document.getElementById('ccdAccMsg'); if (m) { m.textContent = CCD_ACCOUNTS.msg || ''; m.className = 'ccd-auth-msg' + (CCD_ACCOUNTS.kind ? ' ' + CCD_ACCOUNTS.kind : ''); }
+    if (!CCD_ACCOUNTS.users.length) { body.textContent = CCD_ACCOUNTS.busy ? 'Loading…' : 'No accounts to show.'; return; }
+    body.innerHTML = '<table><thead><tr><th>Who</th><th>Last sign-in</th><th>State</th><th>Actions</th></tr></thead><tbody>' + CCD_ACCOUNTS.users.map(u => {
+        const state = u.disabled ? '<span class="off">Disabled</span>' : u.invited_not_set ? '<span class="inv">Invited (no password yet)</span>' : '<span class="on">Enabled</span>';
+        const acts = ['reset', 'signout_all', u.disabled ? 'enable' : 'disable'].filter(a => !(a === 'disable' && u.me));
+        const btns = acts.map(a => `<button class="ccd-acc-btn" type="button" data-act="${a}" data-uid="${ccdAccEsc(u.id)}" ${CCD_ACCOUNTS.busy ? 'disabled' : ''}>${CCD_ACC_WORDS[a][0]}</button>`).join('');
+        const ask = CCD_ACCOUNTS.ask && CCD_ACCOUNTS.ask.id === u.id ? `<div class="ccd-acc-ask">${ccdAccEsc(CCD_ACC_WORDS[CCD_ACCOUNTS.ask.act][1](u))}<div style="margin-top:6px;"><button class="ccd-acc-btn" type="button" id="ccdAccYes" ${CCD_ACCOUNTS.busy ? 'disabled' : ''}>Yes</button><button class="ccd-acc-btn" type="button" id="ccdAccNo">No</button></div></div>` : '';
+        return `<tr data-row="${ccdAccEsc(u.id)}"><td><b>${ccdAccEsc(u.name)}</b>${u.me ? ' (you)' : ''}<br><span style="color:var(--muted);font-size:12px;">${ccdAccEsc(u.email)}</span></td><td>${ccdAccEsc(ccdAccWhen(u.last_sign_in_at))}</td><td>${state}</td><td>${btns}${ask}</td></tr>`;
+    }).join('') + '</tbody></table>';
+    body.querySelectorAll('button[data-act]').forEach(bt => { bt.onclick = () => { CCD_ACCOUNTS.ask = { id: bt.dataset.uid, act: bt.dataset.act }; CCD_ACCOUNTS.msg = ''; ccdAccountsRender(); }; });
+    const y = document.getElementById('ccdAccYes'), n = document.getElementById('ccdAccNo');
+    if (n) n.onclick = () => { CCD_ACCOUNTS.ask = null; ccdAccountsRender(); };
+    if (y) y.onclick = () => ccdAccountsDo();
+}
+async function ccdAccountsLoad() {
+    CCD_ACCOUNTS.busy = true; ccdAccountsRender();
+    const r = await ccdAccountsCall({ action: 'list' });
+    CCD_ACCOUNTS.busy = false;
+    if (r && r.ok) { CCD_ACCOUNTS.users = r.users || []; } else { CCD_ACCOUNTS.users = []; CCD_ACCOUNTS.msg = (r && r.error) || 'Not loaded.'; CCD_ACCOUNTS.kind = 'err'; }
+    ccdAccountsRender();
+}
+async function ccdAccountsDo() {
+    const a = CCD_ACCOUNTS.ask; if (!a || CCD_ACCOUNTS.busy) return;
+    const u = CCD_ACCOUNTS.users.find(x => x.id === a.id) || {};
+    CCD_ACCOUNTS.busy = true; ccdAccountsRender();
+    const r = await ccdAccountsCall({ action: a.act, user_id: a.id });
+    CCD_ACCOUNTS.busy = false; CCD_ACCOUNTS.ask = null;
+    if (r && r.ok) {
+        CCD_ACCOUNTS.kind = 'ok';
+        CCD_ACCOUNTS.msg = r.already ? 'Nothing to change: already ' + (a.act === 'disable' ? 'disabled.' : 'enabled.')
+            : a.act === 'reset' ? `Reset email sent to ${r.email || u.email}.`
+            : a.act === 'signout_all' ? `${u.name || 'The account'} signed out everywhere (${r.sessions || 0} session${r.sessions === 1 ? '' : 's'} ended).`
+            : a.act === 'disable' ? `${u.name || 'The account'} disabled and signed out.` : `${u.name || 'The account'} enabled.`;
+        if (a.act === 'signout_all' && u.me) { try { await sb.auth.signOut({ scope: 'local' }); } catch (e) { /* the server already ended it */ } location.reload(); return; }
+        await ccdAccountsLoad(); return;
+    }
+    CCD_ACCOUNTS.kind = 'err'; CCD_ACCOUNTS.msg = (r && r.error) || 'Not done.'; ccdAccountsRender();
+}
+window.ccdAccountsOpen = function () {
+    ccdAccountsEnsure();
+    CCD_ACCOUNTS.msg = ''; CCD_ACCOUNTS.kind = ''; CCD_ACCOUNTS.ask = null;
+    const acc = document.getElementById('ccdAccountOverlay'); if (acc) acc.classList.remove('visible');
+    document.getElementById('ccdAccountsOverlay').classList.add('visible');
+    ccdAccountsLoad();
+};
+/* ═══ end v3.4.2 Accounts panel ═══ */
 </script>
 </body>
 </html>

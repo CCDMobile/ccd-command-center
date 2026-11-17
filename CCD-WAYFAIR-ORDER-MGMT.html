@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Wayfair Order Manager v1.6.4</title>
+<script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.6.5: copied from Command Center v3.4.1 -->
+<title>CCD Wayfair Order Manager v1.6.5</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -194,14 +195,29 @@
     .modal-body { grid-template-columns: 1fr; }
     .pkg-dim-row { grid-template-columns: 1fr; }
   }
+/* v1.6.5 (Ecosystem note 125): the sign-in / account boxes copied from Command Center v3.4.1, scoped by id */
+#ccdSignInOverlay,#ccdAccountOverlay,#ccdPinOverlay{--gold:#d4a853;--muted:var(--text-dim);--bg2:var(--surface-raised);display:none;position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.6);align-items:center;justify-content:center;}
+#ccdSignInOverlay.visible,#ccdAccountOverlay.visible,#ccdPinOverlay.visible{display:flex;}
+#ccdSignInOverlay .modal,#ccdAccountOverlay .modal,#ccdPinOverlay .modal{width:100%;max-height:none;overflow:visible;display:block;background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);color:var(--text);}
+#ccdSignInOverlay .modal-header,#ccdAccountOverlay .modal-header,#ccdPinOverlay .modal-header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);}
+#ccdSignInOverlay h2,#ccdAccountOverlay h2,#ccdPinOverlay h2{font-size:16px;margin:0;color:var(--gold);}
+#ccdSignInOverlay .modal-close,#ccdAccountOverlay .modal-close,#ccdPinOverlay .modal-close{background:none;border:none;color:var(--muted);font-size:16px;cursor:pointer;}
+#ccdSignInOverlay .modal-body,#ccdAccountOverlay .modal-body,#ccdPinOverlay .modal-body{display:block;min-height:0;padding:16px 18px;}
+#ccdSignInOverlay .form-label,#ccdAccountOverlay .form-label,#ccdPinOverlay .form-label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px;}
+#ccdSignInOverlay .form-input,#ccdAccountOverlay .form-input,#ccdPinOverlay .form-input{width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;}
+#ccdSignInOverlay .btn-gold,#ccdAccountOverlay .btn-gold,#ccdPinOverlay .btn-gold{background:var(--gold);color:#111;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;}
+#ccdSignInOverlay .btn-ghost,#ccdAccountOverlay .btn-ghost,#ccdPinOverlay .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 14px;cursor:pointer;}
+.ccdAuthBlock{display:none;position:fixed;inset:0;z-index:10040;background:var(--bg);align-items:center;justify-content:center;flex-direction:column;gap:14px;color:var(--text);text-align:center;padding:20px;}
+.ccdAuthBlock.on{display:flex;}
 </style>
 </head>
 <body>
+<div class="ccdAuthBlock" id="ccdAuthBlock"><div style="font-size:18px;font-weight:700;color:#d4a853;">Sign in to use the CCD tools</div><div style="font-size:13px;opacity:.75;max-width:420px;">Wayfair Order Manager is opened through Command Center. You are being taken there to sign in, and back here afterwards.</div><button id="ccdAuthGo" type="button" style="padding:8px 18px;cursor:pointer;" onclick="ccdToolNavigate(ccdToolSignInUrl())">Sign in at Command Center</button></div><!-- v1.6.5 sign-in -->
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.4</span></h1>
-    <span class="env-badge" id="envBadge">⬡ SANDBOX</span>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.5</span></h1>
+    <span style="display:flex;align-items:center;gap:6px;"><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.6.5: sign-in --><span class="env-badge" id="envBadge">⬡ SANDBOX</span></span>
   </header>
 
   <div class="config-bar">
@@ -428,8 +444,8 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.4',
-      user_name: localStorage.getItem('ccdUsername') || 'Paul',
+      device: 'WF-OrderMgr-v1.6.5',
+      user_name: ccdToolWho() || localStorage.getItem('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
       sku: sku || details?.sku || null
     });
   } catch (e) {
@@ -560,6 +576,7 @@ function connectAll() {
   const sbKey = document.getElementById('sbKey').value.trim();
   if (sbUrl && sbKey) {
     sb = supabase.createClient(sbUrl, sbKey);
+    ccdToolAuthStart();   // v1.6.5: sign-in (flag off = nothing changes)
     localStorage.setItem('ccdSupabaseUrl', sbUrl);
     localStorage.setItem('ccdSupabaseKey', sbKey);
     log('Supabase connected', 'ok');
@@ -595,7 +612,7 @@ function autoConnect() {
   if (sbKey) document.getElementById('sbKey').value = sbKey;
   document.getElementById('proxyUrl').value = pxUrl;
   updateProxyUrlIndicator();
-  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); loadDbItems(); loadApiKeyFromDb(); }   // v1.6.3
+  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); ccdToolAuthStart(); loadDbItems(); loadApiKeyFromDb(); }   // v1.6.3; v1.6.5: sign-in
 
   // Keep indicator in sync if the operator edits the URL field manually
   const pxEl = document.getElementById('proxyUrl');
@@ -2399,7 +2416,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.4 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.5 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -2962,6 +2979,350 @@ async function checkProxyEnvironment() {
     // Silent fail — badge stays as default
   }
 }
+
+/* ═══ v1.6.5 (Ecosystem note 125, S139) — sign-in. Flag settings.service_flags.sign_in: absent / off = exactly as before;
+   offered / required send you to Command Center with ?return= (this page never takes a password). No Settings tab, no PIN. ═══ */
+/* ═══════════════════════════════════════════
+   v3.4.0 (S137) — SIGN-IN AND THE SETTINGS PIN (Claude Doc "CCD Sign-in — Design for Approval", approved 2026-11-15)
+   - Supabase Auth holds the accounts; Command Center is the one sign-in screen. The flag settings.service_flags.sign_in:
+     'off' (default, as before) · 'offered' (sign in if you like; your name on every save) · 'required' (no use without it).
+   - ?return=<page> sends you back to the page that asked, only if it is one of our own pages (same address, /ccd-…/).
+   - The Settings tab asks for the shared PIN (settings.settings_pin = {salt, hash}; never the digits), once an hour.
+   - No browser pop-ups (CC-1): every box is our own.
+   ═══════════════════════════════════════════ */
+const CCD_AUTH_VERSION = 'v3.4.1';   // the module's version (copied by script into Wayfair Order Manager v1.6.5 from claude\CCD-S137-cc-signin-module-v3_4_1.js)
+const ccdAuth = (() => {
+    let client = null, mode = 'off', session = null;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: ignore */ } };
+    const params = () => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(''); } };
+
+    function safeReturn(ret) {
+        if (!ret) return null;
+        try {
+            const u = new URL(ret, location.href);
+            if (u.origin !== location.origin) return null;
+            if (!/^\/ccd-[a-z0-9-]+\//i.test(u.pathname)) return null;
+            return u.href;
+        } catch { return null; }
+    }
+    function nameOf(user) {
+        if (!user) return '';
+        const m = user.user_metadata || {};
+        const n = m.full_name || m.name || '';
+        if (n) return String(n);
+        const local = String(user.email || '').split('@')[0] || '';
+        return local ? local.charAt(0).toUpperCase() + local.slice(1) : '';
+    }
+    function knownName(user) {
+        const e = String((user && user.email) || '').toLowerCase();
+        if (e.startsWith('psmith@')) return 'Paul';
+        if (e.startsWith('msmith@')) return 'Mary';
+        return nameOf(user);
+    }
+
+    async function readMode() {
+        try {
+            const { data, error } = await client.from('settings').select('value').eq('key', 'service_flags').limit(1);
+            if (error) throw error;
+            const v = data && data[0] && data[0].value;
+            const m = v && typeof v === 'object' ? String(v.sign_in || 'off').toLowerCase() : 'off';
+            mode = ['off', 'offered', 'required'].includes(m) ? m : 'off';
+            lsSet('ccdSignInMode', mode);
+        } catch (e) {
+            const last = lsGet('ccdSignInMode');               // the flag cannot be read: the last setting seen, else off
+            mode = ['off', 'offered', 'required'].includes(last) ? last : 'off';
+            console.warn('[sign-in] flag not read, using', mode, e && e.message);
+        }
+        return mode;
+    }
+
+    function ensureUi() {
+        if (document.getElementById('ccdAuthStyle')) return;
+        const st = document.createElement('style'); st.id = 'ccdAuthStyle';
+        st.textContent = `
+.ccd-auth-chip{display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border,rgba(255,255,255,.15));background:transparent;color:var(--text);font-size:12px;cursor:pointer;margin-right:6px}
+.ccd-auth-chip.on{display:inline-flex}
+.ccd-auth-msg{font-size:12px;margin-top:10px;min-height:16px}
+.ccd-auth-msg.err{color:#f87171}.ccd-auth-msg.ok{color:#4ade80}
+.ccd-auth-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.ccd-auth-link{background:none;border:none;color:var(--gold);font-size:12px;cursor:pointer;padding:0;margin-top:10px}
+.ccd-auth-note{font-size:12px;color:var(--muted);margin:6px 0 0}
+.ccd-pin-box{letter-spacing:6px;font-size:20px;text-align:center}
+#ccdSignInOverlay.locked .modal-close{display:none}`;
+        document.head.appendChild(st);
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `
+<div class="overlay" id="ccdSignInOverlay"><div class="modal" style="max-width:380px;">
+  <div class="modal-header"><h2 id="ccdSiTitle">Sign in</h2><button class="modal-close" id="ccdSiClose">✕</button></div>
+  <div class="modal-body">
+    <div id="ccdSiForm">
+      <label class="form-label" for="ccdSiEmail">Email</label><input type="email" class="form-input" id="ccdSiEmail" autocomplete="username">
+      <label class="form-label" for="ccdSiPass" style="margin-top:10px;">Password</label><input type="password" class="form-input" id="ccdSiPass" autocomplete="current-password">
+      <div class="ccd-auth-row"><button class="btn-gold" id="ccdSiGo">Sign in</button></div>
+      <button class="ccd-auth-link" id="ccdSiForgot">Forgot password?</button>
+    </div>
+    <div id="ccdSiReset" style="display:none;">
+      <p class="ccd-auth-note">Choose a new password (at least 12 characters, with upper and lower case letters, a digit and a symbol).</p>
+      <label class="form-label" for="ccdRsNew">New password</label><input type="password" class="form-input" id="ccdRsNew" autocomplete="new-password">
+      <label class="form-label" for="ccdRsNew2" style="margin-top:10px;">New password again</label><input type="password" class="form-input" id="ccdRsNew2" autocomplete="new-password">
+      <div class="ccd-auth-row"><button class="btn-gold" id="ccdRsGo">Save the new password</button></div>
+    </div>
+    <div class="ccd-auth-msg" id="ccdSiMsg"></div>
+  </div></div></div>
+<div class="overlay" id="ccdAccountOverlay"><div class="modal" style="max-width:420px;">
+  <div class="modal-header"><h2>Your account</h2><button class="modal-close" id="ccdAcClose">✕</button></div>
+  <div class="modal-body">
+    <p class="ccd-auth-note" id="ccdAcWho"></p>
+    <label class="form-label" for="ccdAcCur" style="margin-top:12px;">Current password</label><input type="password" class="form-input" id="ccdAcCur" autocomplete="current-password">
+    <label class="form-label" for="ccdAcNew" style="margin-top:10px;">New password</label><input type="password" class="form-input" id="ccdAcNew" autocomplete="new-password">
+    <label class="form-label" for="ccdAcNew2" style="margin-top:10px;">New password again</label><input type="password" class="form-input" id="ccdAcNew2" autocomplete="new-password">
+    <div class="ccd-auth-row"><button class="btn-gold" id="ccdAcChange">Change password</button></div>
+    <div class="ccd-auth-row" style="margin-top:18px;"><button class="btn-ghost" id="ccdAcOut">Sign out of this browser</button><button class="btn-ghost" id="ccdAcOutAll">Sign out everywhere</button></div>
+    <div class="ccd-auth-msg" id="ccdAcMsg"></div>
+  </div></div></div>
+<div class="overlay" id="ccdPinOverlay"><div class="modal" style="max-width:340px;">
+  <div class="modal-header"><h2 id="ccdPinTitle">Settings PIN</h2><button class="modal-close" id="ccdPinClose">✕</button></div>
+  <div class="modal-body">
+    <p class="ccd-auth-note" id="ccdPinNote">Enter the Settings PIN.</p>
+    <input type="password" inputmode="numeric" class="form-input ccd-pin-box" id="ccdPinIn" autocomplete="off" maxlength="8" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+    <input type="password" inputmode="numeric" class="form-input ccd-pin-box" id="ccdPinIn2" autocomplete="off" maxlength="8" style="display:none;margin-top:8px;" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+    <div class="ccd-auth-row"><button class="btn-gold" id="ccdPinGo">Open Settings</button></div>
+    <div class="ccd-auth-msg" id="ccdPinMsg"></div>
+  </div></div></div>`;
+        while (wrap.firstElementChild) document.body.appendChild(wrap.firstElementChild);
+        const $ = id => document.getElementById(id);
+        $('ccdSiClose').onclick = () => { if (!$('ccdSignInOverlay').classList.contains('locked')) $('ccdSignInOverlay').classList.remove('visible'); };
+        $('ccdSiGo').onclick = signIn;
+        $('ccdSiPass').addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
+        $('ccdSiForgot').onclick = forgot;
+        $('ccdRsGo').onclick = saveReset;
+        $('ccdAcClose').onclick = () => $('ccdAccountOverlay').classList.remove('visible');
+        $('ccdAcChange').onclick = changePassword;
+        $('ccdAcOut').onclick = () => signOut('local');
+        $('ccdAcOutAll').onclick = () => signOut('global');
+        $('ccdPinClose').onclick = () => $('ccdPinOverlay').classList.remove('visible');
+        $('ccdPinGo').onclick = () => ccdPin.submit();
+        $('ccdPinIn').addEventListener('keydown', e => { if (e.key === 'Enter') ccdPin.submit(); });
+        $('ccdPinIn2').addEventListener('keydown', e => { if (e.key === 'Enter') ccdPin.submit(); });
+    }
+    const msg = (id, text, kind) => { const el = document.getElementById(id); if (el) { el.textContent = text || ''; el.className = 'ccd-auth-msg' + (kind ? ' ' + kind : ''); } };
+
+    function renderChip() {
+        const chip = document.getElementById('ccdAuthChip');
+        if (!chip) return;
+        const user = session && session.user;
+        if (user) { chip.textContent = '👤 ' + (knownName(user) || 'Account'); chip.title = 'Your account'; chip.classList.add('on'); }
+        else if (mode !== 'off' || params().has('signin')) { chip.textContent = '🔑 Sign in'; chip.title = 'Sign in'; chip.classList.add('on'); }
+        else { chip.textContent = ''; chip.classList.remove('on'); }
+        chip.onclick = () => (session && session.user) ? openAccount() : openSignIn(false);
+    }
+    function openSignIn(locked) {
+        if (typeof window !== 'undefined' && typeof window.ccdAuthSignInHook === 'function') return window.ccdAuthSignInHook(!!locked);   // Wayfair Order Manager v1.6.5: sign in at Command Center
+        ensureUi();
+        const ov = document.getElementById('ccdSignInOverlay');
+        document.getElementById('ccdSiTitle').textContent = 'Sign in';
+        document.getElementById('ccdSiForm').style.display = '';
+        document.getElementById('ccdSiReset').style.display = 'none';
+        ov.classList.toggle('locked', !!locked);
+        ov.classList.add('visible');
+        msg('ccdSiMsg', locked ? 'Sign in to use the CCD tools.' : '');
+        setTimeout(() => { const e = document.getElementById('ccdSiEmail'); if (e) e.focus(); }, 30);
+    }
+    function openAccount() {
+        ensureUi();
+        const u = session && session.user;
+        document.getElementById('ccdAcWho').textContent = u ? `Signed in as ${knownName(u)} (${u.email})` : '';
+        ['ccdAcCur', 'ccdAcNew', 'ccdAcNew2'].forEach(id => { document.getElementById(id).value = ''; });
+        msg('ccdAcMsg', '');
+        document.getElementById('ccdAccountOverlay').classList.add('visible');
+    }
+    function afterSignIn() {
+        const u = session && session.user;
+        if (u) { const n = knownName(u); if (n) lsSet('ccdUserName', n); }
+        const ov = document.getElementById('ccdSignInOverlay');
+        if (ov) { ov.classList.remove('visible', 'locked'); }
+        renderChip();
+        const back = safeReturn(params().get('return'));
+        if (back) { location.href = back; return true; }
+        return false;
+    }
+    async function signIn() {
+        const email = document.getElementById('ccdSiEmail').value.trim();
+        const password = document.getElementById('ccdSiPass').value;
+        if (!email || !password) { msg('ccdSiMsg', 'Enter your email and password.', 'err'); return; }
+        msg('ccdSiMsg', 'Signing in…');
+        const { data, error } = await client.auth.signInWithPassword({ email, password });
+        if (error) { msg('ccdSiMsg', error.message || 'Sign-in refused.', 'err'); return; }
+        session = data && data.session;
+        document.getElementById('ccdSiPass').value = '';
+        afterSignIn();
+    }
+    async function forgot() {
+        const email = document.getElementById('ccdSiEmail').value.trim();
+        if (!email) { msg('ccdSiMsg', 'Type your email first, then press Forgot password.', 'err'); return; }
+        const redirectTo = location.origin + location.pathname;
+        const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+        if (error) { msg('ccdSiMsg', error.message || 'Could not send the email.', 'err'); return; }
+        msg('ccdSiMsg', 'If that address has an account, a reset link is on its way. Open it on this computer.', 'ok');
+    }
+    function showReset(kind) {
+        ensureUi();
+        document.getElementById('ccdSiTitle').textContent = kind === 'invite' ? 'Set your password' : 'Set a new password';
+        document.getElementById('ccdSiForm').style.display = 'none';
+        document.getElementById('ccdSiReset').style.display = '';
+        document.getElementById('ccdSignInOverlay').classList.add('visible', 'locked');
+        msg('ccdSiMsg', '');
+    }
+    async function saveReset() {
+        const a = document.getElementById('ccdRsNew').value, b = document.getElementById('ccdRsNew2').value;
+        if (!a || a !== b) { msg('ccdSiMsg', 'The two passwords do not match.', 'err'); return; }
+        const { error } = await client.auth.updateUser({ password: a });
+        if (error) {
+            const t = error.message || 'Not saved.';
+            msg('ccdSiMsg', /current.?password/i.test(t) ? t + ' — Supabase is asking for a current password this account does not have yet. Tell Paul: the "Require current password" setting blocks first-time setup.' : t, 'err');
+            return;
+        }
+        document.getElementById('ccdRsNew').value = ''; document.getElementById('ccdRsNew2').value = '';
+        msg('ccdSiMsg', 'Saved. You are signed in with the new password.', 'ok');
+        setTimeout(() => { document.getElementById('ccdSignInOverlay').classList.remove('visible', 'locked'); renderChip(); }, 1200);
+    }
+    async function changePassword() {
+        const cur = document.getElementById('ccdAcCur').value, a = document.getElementById('ccdAcNew').value, b = document.getElementById('ccdAcNew2').value;
+        if (!cur) { msg('ccdAcMsg', 'Enter your current password.', 'err'); return; }
+        if (!a || a !== b) { msg('ccdAcMsg', 'The two new passwords do not match.', 'err'); return; }
+        const { error } = await client.auth.updateUser({ password: a, current_password: cur });
+        if (error) { msg('ccdAcMsg', error.message || 'Not changed.', 'err'); return; }
+        ['ccdAcCur', 'ccdAcNew', 'ccdAcNew2'].forEach(id => { document.getElementById(id).value = ''; });
+        msg('ccdAcMsg', 'Password changed.', 'ok');
+    }
+    async function signOut(scope) {
+        const { error } = await client.auth.signOut({ scope });
+        if (error) { msg('ccdAcMsg', error.message || 'Not signed out.', 'err'); return; }
+        session = null;
+        document.getElementById('ccdAccountOverlay').classList.remove('visible');
+        renderChip();
+        if (mode === 'required') openSignIn(true);
+    }
+
+    async function start(sbClient) {
+        client = sbClient;
+        if (!client || !client.auth) return { mode: 'off', signedIn: false };
+        try {
+            client.auth.onAuthStateChange((event, s) => {
+                if (event === 'PASSWORD_RECOVERY') { session = s; showReset('recovery'); return; }
+                if (event === 'SIGNED_OUT') { session = null; renderChip(); }
+            });
+        } catch (e) { console.warn('[sign-in] no auth events', e && e.message); }
+        await readMode();
+        try { const { data } = await client.auth.getSession(); session = data && data.session; } catch { session = null; }
+        ensureUi();
+        renderChip();
+        // v3.4.1: an invitation or reset link signs the person in before this code listens (supabase-js reads the
+        // link while the client is made), so the link's type is caught in <head> and the password box opened here.
+        const linkType = (typeof window !== 'undefined' && window.__ccdAuthLinkType) || null;
+        if (linkType && session && session.user) { try { window.__ccdAuthLinkType = null; } catch { /* ignore */ } showReset(linkType === 'invite' ? 'invite' : 'recovery'); }
+        else if (session && session.user && safeReturn(params().get('return'))) { afterSignIn(); }
+        else if (mode === 'required' && !(session && session.user)) openSignIn(true);
+        return { mode, signedIn: !!(session && session.user) };
+    }
+    return { start, ensureUi, safeReturn, knownName, get mode() { return mode; }, get session() { return session; }, openSignIn, openAccount };
+})();
+
+/* The Settings PIN — one PIN for every tool, held as {salt, hash} in settings.settings_pin; asked once an hour per tab. */
+const ccdPin = (() => {
+    const HOUR = 3600 * 1000;
+    let stage = 'enter', pending = null, wrong = 0, waitUntil = 0;
+    async function sha(text) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    async function readPin() {
+        if (typeof sb === 'undefined' || !sb) return { ok: false };
+        try {
+            const { data, error } = await sb.from('settings').select('value').eq('key', 'settings_pin').limit(1);
+            if (error) throw error;
+            const v = data && data[0] && data[0].value;
+            return { ok: true, pin: v && v.salt && v.hash ? v : null };
+        } catch (e) { return { ok: false }; }
+    }
+    function unlockedRecently() { try { return Date.now() - Number(sessionStorage.getItem('ccdPinOkAt') || 0) < HOUR; } catch { return false; } }
+    function markUnlocked() { try { sessionStorage.setItem('ccdPinOkAt', String(Date.now())); } catch { /* ignore */ } }
+    function show(kind, note) {
+        ensurePinUi();
+        stage = kind;
+        const two = kind === 'set';
+        document.getElementById('ccdPinTitle').textContent = two ? 'Set the Settings PIN' : 'Settings PIN';
+        document.getElementById('ccdPinNote').textContent = note || (two ? 'Choose a PIN of 4 to 8 digits, then type it again. It applies to every CCD tool.' : 'Enter the Settings PIN.');
+        document.getElementById('ccdPinGo').textContent = two ? 'Save the PIN' : 'Open Settings';
+        document.getElementById('ccdPinIn').value = ''; document.getElementById('ccdPinIn2').value = '';
+        document.getElementById('ccdPinIn2').style.display = two ? '' : 'none';
+        document.getElementById('ccdPinMsg').textContent = ''; document.getElementById('ccdPinMsg').className = 'ccd-auth-msg';
+        document.getElementById('ccdPinOverlay').classList.add('visible');
+        setTimeout(() => document.getElementById('ccdPinIn').focus(), 30);
+    }
+    function ensurePinUi() { ccdAuth.ensureUi(); }
+    function say(t, k) { const el = document.getElementById('ccdPinMsg'); el.textContent = t; el.className = 'ccd-auth-msg' + (k ? ' ' + k : ''); }
+    async function open() {
+        if (unlockedRecently()) { ccdOpenSettingsNow(); ccdPinNotice(null); return; }
+        const r = await readPin();
+        if (!r.ok) { show('enter', 'The PIN could not be checked (no connection). Try again in a moment.'); return; }
+        if (!r.pin) { ccdOpenSettingsNow(); ccdPinNotice('none'); return; }
+        pending = r.pin; show('enter');
+    }
+    async function submit() {
+        const a = document.getElementById('ccdPinIn').value.trim();
+        if (stage === 'set') {
+            const b = document.getElementById('ccdPinIn2').value.trim();
+            if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
+            if (a !== b) { say('The two PINs do not match.', 'err'); return; }
+            const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.5' };
+            try {
+                const { data: ex } = await sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
+                const res = ex && ex.length ? await sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
+                                            : await sb.from('settings').insert({ key: 'settings_pin', value });
+                if (res && res.error) throw res.error;
+            } catch (e) { say('Not saved: ' + ((e && e.message) || e), 'err'); return; }
+            markUnlocked();
+            document.getElementById('ccdPinOverlay').classList.remove('visible');
+            ccdPinNotice('saved');
+            return;
+        }
+        if (Date.now() < waitUntil) { say('Too many wrong tries. Wait a minute.', 'err'); return; }
+        if (!pending) { const r = await readPin(); pending = r.pin; if (!pending) { document.getElementById('ccdPinOverlay').classList.remove('visible'); ccdOpenSettingsNow(); return; } }
+        if ((await sha(pending.salt + ':' + a)) === pending.hash) {
+            wrong = 0; markUnlocked();
+            document.getElementById('ccdPinOverlay').classList.remove('visible');
+            ccdOpenSettingsNow(); ccdPinNotice(null);
+        } else {
+            wrong++; document.getElementById('ccdPinIn').value = '';
+            if (wrong >= 5) { waitUntil = Date.now() + 60000; wrong = 0; say('Too many wrong tries. Wait a minute.', 'err'); }
+            else say('That PIN is not right.', 'err');
+        }
+    }
+    return { open, submit, setNew: () => show('set'), _sha: sha };
+})();
+
+function ccdToolSignInUrl() { const u = new URL('./', location.href); u.searchParams.set('return', location.href); return u.href; }
+function ccdToolNavigate(href) { location.href = href; }
+window.ccdAuthSignInHook = function (locked) {
+    if (locked) { const blk = document.getElementById('ccdAuthBlock'); if (blk) blk.classList.add('on'); }
+    ccdToolNavigate(ccdToolSignInUrl());
+    return true;
+};
+function ccdToolWho() { try { const ss = ccdAuth.session; const u = ss && ss.user; return u ? (ccdAuth.knownName(u) || '') : ''; } catch (e) { return ''; } }
+async function ccdToolAuthStart() {
+    let r = { mode: 'off', signedIn: false };
+    await null;   // Order Manager connects while its script is still running: let the module's const declarations finish first
+    try { r = await ccdAuth.start(sb); } catch (e) { console.warn('[sign-in] start failed', e && e.message); }
+    if (r.signedIn) { try { localStorage.setItem('ccdUserName', ccdToolWho()); } catch (e) { /* ignore */ } }
+    return r;
+}
+function ccdOpenSettingsNow() { /* no Settings tab in this tool */ }
+function ccdPinNotice() { /* no Settings tab in this tool */ }
+/* ═══ end v1.6.5 sign-in ═══ */
 </script>
 </body>
 </html>
