@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.6.5: copied from Command Center v3.4.1 -->
-<title>CCD Wayfair Order Manager v1.6.5</title>
+<title>CCD Wayfair Order Manager v1.6.6</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -195,6 +195,24 @@
     .modal-body { grid-template-columns: 1fr; }
     .pkg-dim-row { grid-template-columns: 1fr; }
   }
+/* v1.6.6: the in-page Yes / No box that replaces confirm() and prompt() (WF-069) */
+#omAskOverlay{display:none;position:fixed;inset:0;z-index:10060;background:rgba(0,0,0,.65);align-items:center;justify-content:center;padding:20px;}
+#omAskOverlay.visible{display:flex;}
+#omAskOverlay .om-ask-box{width:100%;max-width:440px;background:var(--surface-raised);border:1px solid var(--border-focus);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);color:var(--text);}
+#omAskOverlay .om-ask-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);}
+#omAskOverlay .om-ask-title{font-size:15px;font-weight:600;}
+#omAskOverlay .om-ask-x{background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;line-height:1;}
+#omAskOverlay .om-ask-body{padding:14px 18px;font-size:13px;color:var(--text-dim);}
+#omAskOverlay .om-ask-reason{margin-top:12px;}
+#omAskOverlay .om-ask-reason label{display:block;font-size:11px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:.4px;}
+#omAskOverlay .om-ask-reason textarea{width:100%;min-height:64px;resize:vertical;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-family:inherit;font-size:13px;}
+#omAskOverlay .om-ask-quick{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;}
+#omAskOverlay .om-ask-quick button{background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:999px;padding:2px 10px;font-size:11px;cursor:pointer;}
+#omAskOverlay .om-ask-foot{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--border);}
+#omAskOverlay .om-ask-foot button{border-radius:6px;padding:7px 16px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text);}
+#omAskOverlay .om-ask-foot .om-ask-yes{background:var(--accent);border-color:var(--accent);color:#fff;}
+#omAskOverlay .om-ask-foot .om-ask-yes.danger{background:var(--fail);border-color:var(--fail);}
+#omAskOverlay .om-ask-foot .om-ask-yes:disabled{opacity:.4;cursor:not-allowed;}
 /* v1.6.5 (Ecosystem note 125): the sign-in / account boxes copied from Command Center v3.4.1, scoped by id */
 #ccdSignInOverlay,#ccdAccountOverlay,#ccdPinOverlay{--gold:#d4a853;--muted:var(--text-dim);--bg2:var(--surface-raised);display:none;position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.6);align-items:center;justify-content:center;}
 #ccdSignInOverlay.visible,#ccdAccountOverlay.visible,#ccdPinOverlay.visible{display:flex;}
@@ -216,7 +234,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.5</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.6</span></h1>
     <span style="display:flex;align-items:center;gap:6px;"><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.6.5: sign-in --><span class="env-badge" id="envBadge">⬡ SANDBOX</span></span>
   </header>
 
@@ -444,7 +462,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.5',
+      device: 'WF-OrderMgr-v1.6.6',
       user_name: ccdToolWho() || localStorage.getItem('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
       sku: sku || details?.sku || null
     });
@@ -934,7 +952,7 @@ async function acceptCurrentOrder() {
 async function backorderCurrentOrder() {
   if (!currentOrder) return;
   if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
-  if (!confirm('Backorder this PO? This tells Wayfair items will ship later.')) return;
+  if (!(await omAsk({ title: 'Backorder this PO?', text: 'This tells Wayfair the items will ship later.', yes: 'Backorder' })).ok) return;   // v1.6.6: in-page box
 
   const o = currentOrder;
   const products = o.products || [];
@@ -974,7 +992,7 @@ async function backorderCurrentOrder() {
 async function rejectCurrentOrder() {
   if (!currentOrder) return;
   if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
-  if (!confirm('REJECT this PO? This tells Wayfair you CANNOT fulfill these items. This cannot be undone.')) return;
+  if (!(await omAsk({ title: 'REJECT this PO?', text: 'This tells Wayfair you CANNOT fulfill these items. This cannot be undone.', yes: 'Reject the PO', danger: true })).ok) return;   // v1.6.6: in-page box
 
   const o = currentOrder;
   const products = o.products || [];
@@ -1061,7 +1079,7 @@ async function checkCancellations() {
 
 async function handleConfirmCancellation(requestId) {
   if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
-  if (!confirm('Confirm this cancellation? The item will not be shipped.')) return;
+  if (!(await omAsk({ title: 'Confirm this cancellation?', text: 'The item will not be shipped.', yes: 'Confirm the cancellation', danger: true })).ok) return;   // v1.6.6: in-page box
 
   log(`Confirming cancellation ${requestId}`, 'info');
   const r = await proxyPost('confirmCancellation', { requestId: requestId });
@@ -1082,8 +1100,11 @@ async function handleConfirmCancellation(requestId) {
 
 async function handleRejectCancellation(requestId) {
   if (isLogOnly()) { toast('Log-only mode', 'err'); return; }
-  const reason = prompt('Reason for rejecting cancellation:', 'Already shipped');
-  if (!reason) return;
+  // v1.6.6: the reason is typed in a box on the page (the desktop browser pane has no prompt(), WF-069)
+  const ans = await omAsk({ title: 'Reject this cancellation?', text: 'Wayfair is told the cancellation is refused. Give the reason.', yes: 'Reject the cancellation', danger: true,
+                            reason: { label: 'Reason for rejecting the cancellation', quick: ['Already shipped'] } });
+  if (!ans.ok) return;
+  const reason = ans.reason;
 
   log(`Rejecting cancellation ${requestId} — reason: ${reason}`, 'info');
   const r = await proxyPost('rejectCancellation', { requestId: requestId, reason: reason });
@@ -1702,14 +1723,14 @@ function addPackage() {
   renderPackageModal();
 }
 
-function deletePackage(pkgIdx) {
+async function deletePackage(pkgIdx) {   // v1.6.6: async for the in-page box
   const po = currentOrder.poNumber;
   const pkgs = currentPackages[po];
   if (!pkgs || pkgs.length <= 1) {
     toast('Cannot delete the last package — at least one required', 'err');
     return;
   }
-  if (!confirm(`Delete Package ${pkgIdx + 1}? Its ${pkgs[pkgIdx].units.length} unit(s) will return to unassigned.`)) return;
+  if (!(await omAsk({ title: `Delete Package ${pkgIdx + 1}?`, text: `Its ${pkgs[pkgIdx].units.length} unit(s) will return to unassigned.`, yes: 'Delete the package', danger: true })).ok) return;   // v1.6.6: in-page box
   pkgs.splice(pkgIdx, 1);
   renderPackageModal();
 }
@@ -1838,8 +1859,8 @@ async function registerWithPackages() {
   if (!pickupDate) { toast('Select a pickup date first', 'err'); return; }
 
   const payload = buildPackagePayload();
-  const msg = `Register PO ${currentOrder.poNumber} with ${pkgs.length} package(s) for pickup on ${pickupDate}?\n\nThis cannot be undone — Wayfair will generate labels immediately.`;
-  if (!confirm(msg)) return;
+  // v1.6.6: in-page box
+  if (!(await omAsk({ title: `Register PO ${currentOrder.poNumber}?`, text: `${pkgs.length} package(s) for pickup on ${pickupDate}. This cannot be undone — Wayfair will generate labels immediately.`, yes: 'Register', danger: true })).ok) return;
 
   closePackageModal();
   await registerCurrentOrder(payload);
@@ -2416,7 +2437,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.5 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.6 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -2980,6 +3001,60 @@ async function checkProxyEnvironment() {
   }
 }
 
+
+/* ═══ v1.6.6 (Ecosystem note 128, Paul "Yes" 11-16) — the in-page box that replaces every confirm() / prompt() ═══
+   omAsk({ title, text, yes, no, danger, reason: { label, quick: [..] } }) -> Promise<{ ok, reason }>
+   No and Esc and ✕ answer No. With a reason, the Yes button stays off until something is typed. Built with DOM nodes only. */
+let omAskResolve = null;
+function omAskClose(ok) {
+  const ov = document.getElementById('omAskOverlay'); if (!ov) return;
+  const ta = document.getElementById('omAskReason');
+  const reason = ta ? ta.value.trim() : '';
+  ov.classList.remove('visible');
+  const r = omAskResolve; omAskResolve = null;
+  if (r) r({ ok: !!ok && (!ta || !!reason), reason: ta ? reason : null });
+}
+function omAsk(opts) {
+  opts = opts || {};
+  if (omAskResolve) omAskClose(false);            // only one box at a time: an older one answers No
+  let ov = document.getElementById('omAskOverlay');
+  if (!ov) {
+    ov = document.createElement('div'); ov.id = 'omAskOverlay'; ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+    document.body.appendChild(ov);
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && omAskResolve) omAskClose(false); });
+  }
+  ov.textContent = '';
+  const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+  const box = el('div', 'om-ask-box');
+  const head = el('div', 'om-ask-head'); head.appendChild(el('div', 'om-ask-title', opts.title || 'Are you sure?'));
+  const x = el('button', 'om-ask-x', '✕'); x.type = 'button'; x.id = 'omAskX'; x.onclick = () => omAskClose(false); head.appendChild(x);
+  const body = el('div', 'om-ask-body'); if (opts.text) body.appendChild(el('div', '', opts.text));
+  const foot = el('div', 'om-ask-foot');
+  const no = el('button', 'om-ask-no', opts.no || 'Cancel'); no.type = 'button'; no.id = 'omAskNo'; no.onclick = () => omAskClose(false);
+  const yes = el('button', 'om-ask-yes' + (opts.danger ? ' danger' : ''), opts.yes || 'Yes'); yes.type = 'button'; yes.id = 'omAskYes'; yes.onclick = () => omAskClose(true);
+  if (opts.reason) {
+    const wrap = el('div', 'om-ask-reason');
+    const lab = el('label', '', opts.reason.label || 'Reason'); lab.htmlFor = 'omAskReason';
+    const ta = document.createElement('textarea'); ta.id = 'omAskReason'; ta.maxLength = 500;
+    const sync = () => { yes.disabled = !ta.value.trim(); };
+    ta.addEventListener('input', sync);
+    wrap.appendChild(lab); wrap.appendChild(ta);
+    if (Array.isArray(opts.reason.quick) && opts.reason.quick.length) {
+      const q = el('div', 'om-ask-quick');
+      opts.reason.quick.forEach(t => { const qb = el('button', '', t); qb.type = 'button'; qb.onclick = () => { ta.value = t; sync(); ta.focus(); }; q.appendChild(qb); });
+      wrap.appendChild(q);
+    }
+    body.appendChild(wrap);
+    sync();
+  }
+  foot.appendChild(no); foot.appendChild(yes);
+  box.appendChild(head); box.appendChild(body); box.appendChild(foot); ov.appendChild(box);
+  ov.classList.add('visible');
+  setTimeout(() => { const f = document.getElementById('omAskReason') || no; if (f) f.focus(); }, 30);
+  return new Promise(res => { omAskResolve = res; });
+}
+/* ═══ end v1.6.6 in-page box ═══ */
+
 /* ═══ v1.6.5 (Ecosystem note 125, S139) — sign-in. Flag settings.service_flags.sign_in: absent / off = exactly as before;
    offered / required send you to Command Center with ?return= (this page never takes a password). No Settings tab, no PIN. ═══ */
 /* ═══════════════════════════════════════════
@@ -3278,7 +3353,7 @@ const ccdPin = (() => {
             if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
             if (a !== b) { say('The two PINs do not match.', 'err'); return; }
             const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
-            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.5' };
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.6' };
             try {
                 const { data: ex } = await sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
                 const res = ex && ex.length ? await sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
