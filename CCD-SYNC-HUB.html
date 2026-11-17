@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CCD Sync Hub v4.6.24</title>
+<script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v4.6.25: copied from Command Center v3.4.2 -->
+    <title>CCD Sync Hub v4.6.25</title>
+<!-- v4.6.25 (2026-11-17, S140): SIGN-IN (settings.service_flags.sign_in) and the SETTINGS PIN, the module copied by script from Command Center v3.4.1 (as FR v1.8.24). Signed in, activity_log user_name = the signed-in person. Order processing unchanged. -->
 <!-- v4.6.23 (2026-10-24, S122, KK-13): THE AUTO-PROCESSING GATE — when order_auto_apply is on, an order is processed by itself only if every item in it (and every piece of a Set) is cleared in item_auto_clearance (V2 2.9.95); any other order is held for Mary with a note; if the clearances cannot be read nothing is auto-processed. A person's Process is not gated. -->
 <!-- v4.6.22 (2026-10-23, S122, LL-6): NO ORDER DATA IN BROWSER STORAGE — the Orders list from pending_orders (pending + last 7 days, Show older), processed and cancelled from the database, the three order keys removed on load; settings saved to the database by MERGE (no longer erasing other tools' proxy URLs); the database written before the screen; Hide Processed; the Wix price push carries the SKU (II-9). -->
 <!-- v4.6.21 (2026-10-23, S121): a full browser storage can no longer stop an order half way — the localStorage save of processed order ids is caught (logged once), and the screen mark cannot stop the processed_orders write or the sale (3 orders on 10-23 were deducted and pushed but never recorded). -->
@@ -425,9 +427,24 @@
             .conn-grid { grid-template-columns: 1fr 1fr; }
             .header { flex-wrap: wrap; gap: 8px; }
         }
+        /* v4.6.25 (S140): the sign-in / account / PIN boxes copied from Command Center v3.4.1 */
+        #ccdSignInOverlay,#ccdAccountOverlay,#ccdPinOverlay{display:none;position:fixed;inset:0;z-index:10050;background:rgba(0,0,0,.6);align-items:center;justify-content:center;}
+        #ccdSignInOverlay.visible,#ccdAccountOverlay.visible,#ccdPinOverlay.visible{display:flex;}
+        #ccdSignInOverlay .modal,#ccdAccountOverlay .modal,#ccdPinOverlay .modal{width:100%;background:var(--bg-card);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);color:var(--text);font-family:'DM Sans',sans-serif;}
+        #ccdSignInOverlay .modal-header,#ccdAccountOverlay .modal-header,#ccdPinOverlay .modal-header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);}
+        #ccdSignInOverlay h2,#ccdAccountOverlay h2,#ccdPinOverlay h2{font-size:16px;margin:0;color:var(--text);}
+        #ccdSignInOverlay .modal-close,#ccdAccountOverlay .modal-close,#ccdPinOverlay .modal-close{background:none;border:none;color:var(--text-dim);font-size:16px;cursor:pointer;}
+        #ccdSignInOverlay .modal-body,#ccdAccountOverlay .modal-body,#ccdPinOverlay .modal-body{padding:16px 18px;}
+        #ccdSignInOverlay .form-label,#ccdAccountOverlay .form-label,#ccdPinOverlay .form-label{display:block;font-size:12px;color:var(--text-dim);margin-bottom:4px;}
+        #ccdSignInOverlay .form-input,#ccdAccountOverlay .form-input,#ccdPinOverlay .form-input{width:100%;box-sizing:border-box;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;}
+        #ccdSignInOverlay .btn-gold,#ccdAccountOverlay .btn-gold,#ccdPinOverlay .btn-gold{background:var(--primary);color:#fff;border:none;border-radius:6px;padding:8px 16px;font-weight:700;cursor:pointer;}
+        #ccdSignInOverlay .btn-ghost,#ccdAccountOverlay .btn-ghost,#ccdPinOverlay .btn-ghost,#ccdPinLine .btn-ghost{background:transparent;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 14px;cursor:pointer;}
+        #shAuthBlock{display:none;position:fixed;inset:0;z-index:10040;background:var(--bg-dark);align-items:center;justify-content:center;flex-direction:column;gap:14px;color:var(--text);font-family:'DM Sans',sans-serif;text-align:center;padding:20px;}
+        #shAuthBlock.on{display:flex;}
     </style>
 </head>
 <body>
+<div id="shAuthBlock"><div style="font-size:18px;font-weight:700;">Sign in to use the CCD tools</div><div style="font-size:13px;color:var(--text-dim);max-width:420px;">Sync Hub is opened through Command Center. You are being taken there to sign in, and back here afterwards. Orders are not processed here until you are back.</div><button class="btn btn-primary" id="shAuthGo" type="button" style="padding:8px 18px;" onclick="ccdShNavigate(ccdShSignInUrl())">Sign in at Command Center</button></div><!-- v4.6.25 -->
     <!-- TOAST CONTAINER -->
     <div class="toast-container" id="toastContainer"></div>
     
@@ -436,7 +453,7 @@
         <div class="header-left">
             <div>
                 <div class="header-title">CCD Sync Hub</div>
-                <div class="header-version">v4.6.24 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
+                <div class="header-version">v4.6.25 • <span id="keepAliveDot" title="Keep-alive: starting…">⚪</span> Keep-Alive • <span id="sbStatusHeader">⚪ Disconnected</span></div>
             </div>
         </div>
         <div class="header-right">
@@ -449,6 +466,7 @@
             <span id="channelIdStatusBadge" class="channel-id-status"></span>
             <span id="autoProcessIndicator" style="font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; font-weight: 600; display: none;">⚡ AUTO</span>
             <span id="inventoryCount" style="font-size: 0.8rem; color: var(--text-dim);">0 items</span>
+            <button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v4.6.25: sign-in -->
             <button class="btn btn-sm btn-secondary" onclick="refreshData()">🔄 Refresh</button>
         </div>
     </div>
@@ -903,7 +921,7 @@
     // Supabase-first, no file dependencies
     // ============================================================
     
-    const SH_VERSION = 'v4.6.24';   // S125 — channel PAR top-up (v4.6.23: S122, v4.6.22: S122)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
+    const SH_VERSION = 'v4.6.25';   // S140 — sign-in + the Settings PIN (v4.6.24: S125 — channel PAR top-up) (v4.6.23: S122, v4.6.22: S122)   // FIX-W0 2026-10-04: version bump (registered as settings.tool_versions.synchub)
     const SH_VERSION_KEY = 'synchub';
 
     // ============================================================
@@ -1191,6 +1209,7 @@
             
             // Register version
             registerToolVersion(sbClient, SH_VERSION_KEY, SH_VERSION);
+            shAuthStart();   // v4.6.25: sign-in (flag off = nothing changes)
             
             // Load inventory
             await loadFromSupabase();
@@ -1458,7 +1477,7 @@
                 category, action, channel, summary,
                 details: typeof details === 'object' ? details : {},
                 device: localStorage.getItem('ccd_hostname') || 'SyncHub',
-                user_name: localStorage.getItem('ccdUsername') || 'Unknown',
+                user_name: (typeof shWho === 'function' && shWho()) || localStorage.getItem('ccdUsername') || 'Unknown',   // v4.6.25: the signed-in person first
                 sku: sku || details?.sku || null
             });
         } catch (e) {
@@ -7876,6 +7895,7 @@
     // ============================================================
     
     function switchTab(tabName) {
+        if (tabName === 'settings' && !_shPinOk && typeof ccdPin !== 'undefined') { ccdPin.open(); return; }   // v4.6.25: the Settings PIN first
         document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
         document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
         
@@ -10438,5 +10458,368 @@
     window.addEventListener('DOMContentLoaded', init);
 
     </script>
+<script>
+/* ═══════════════════════════════════════════
+   v3.4.0 (S137) — SIGN-IN AND THE SETTINGS PIN (Claude Doc "CCD Sign-in — Design for Approval", approved 2026-11-15)
+   - Supabase Auth holds the accounts; Command Center is the one sign-in screen. The flag settings.service_flags.sign_in:
+     'off' (default, as before) · 'offered' (sign in if you like; your name on every save) · 'required' (no use without it).
+   - ?return=<page> sends you back to the page that asked, only if it is one of our own pages (same address, /ccd-…/).
+   - The Settings tab asks for the shared PIN (settings.settings_pin = {salt, hash}; never the digits), once an hour.
+   - No browser pop-ups (CC-1): every box is our own.
+   ═══════════════════════════════════════════ */
+const CCD_AUTH_VERSION = 'v3.4.1';   // the module's version (copied by script into Sync Hub v4.6.25 from claude\CCD-S137-cc-signin-module-v3_4_1.js)
+const ccdAuth = (() => {
+    let client = null, mode = 'off', session = null;
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+    const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: ignore */ } };
+    const params = () => { try { return new URLSearchParams(location.search); } catch { return new URLSearchParams(''); } };
+
+    function safeReturn(ret) {
+        if (!ret) return null;
+        try {
+            const u = new URL(ret, location.href);
+            if (u.origin !== location.origin) return null;
+            if (!/^\/ccd-[a-z0-9-]+\//i.test(u.pathname)) return null;
+            return u.href;
+        } catch { return null; }
+    }
+    function nameOf(user) {
+        if (!user) return '';
+        const m = user.user_metadata || {};
+        const n = m.full_name || m.name || '';
+        if (n) return String(n);
+        const local = String(user.email || '').split('@')[0] || '';
+        return local ? local.charAt(0).toUpperCase() + local.slice(1) : '';
+    }
+    function knownName(user) {
+        const e = String((user && user.email) || '').toLowerCase();
+        if (e.startsWith('psmith@')) return 'Paul';
+        if (e.startsWith('msmith@')) return 'Mary';
+        return nameOf(user);
+    }
+
+    async function readMode() {
+        try {
+            const { data, error } = await client.from('settings').select('value').eq('key', 'service_flags').limit(1);
+            if (error) throw error;
+            const v = data && data[0] && data[0].value;
+            const m = v && typeof v === 'object' ? String(v.sign_in || 'off').toLowerCase() : 'off';
+            mode = ['off', 'offered', 'required'].includes(m) ? m : 'off';
+            lsSet('ccdSignInMode', mode);
+        } catch (e) {
+            const last = lsGet('ccdSignInMode');               // the flag cannot be read: the last setting seen, else off
+            mode = ['off', 'offered', 'required'].includes(last) ? last : 'off';
+            console.warn('[sign-in] flag not read, using', mode, e && e.message);
+        }
+        return mode;
+    }
+
+    function ensureUi() {
+        if (document.getElementById('ccdAuthStyle')) return;
+        const st = document.createElement('style'); st.id = 'ccdAuthStyle';
+        st.textContent = `
+.ccd-auth-chip{display:none;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;border:1px solid var(--border,rgba(255,255,255,.15));background:transparent;color:var(--text);font-size:12px;cursor:pointer;margin-right:6px}
+.ccd-auth-chip.on{display:inline-flex}
+.ccd-auth-msg{font-size:12px;margin-top:10px;min-height:16px}
+.ccd-auth-msg.err{color:#f87171}.ccd-auth-msg.ok{color:#4ade80}
+.ccd-auth-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.ccd-auth-link{background:none;border:none;color:var(--gold);font-size:12px;cursor:pointer;padding:0;margin-top:10px}
+.ccd-auth-note{font-size:12px;color:var(--muted);margin:6px 0 0}
+.ccd-pin-box{letter-spacing:6px;font-size:20px;text-align:center}
+#ccdSignInOverlay.locked .modal-close{display:none}`;
+        document.head.appendChild(st);
+        const wrap = document.createElement('div');
+        wrap.innerHTML = `
+<div class="overlay" id="ccdSignInOverlay"><div class="modal" style="max-width:380px;">
+  <div class="modal-header"><h2 id="ccdSiTitle">Sign in</h2><button class="modal-close" id="ccdSiClose">✕</button></div>
+  <div class="modal-body">
+    <div id="ccdSiForm">
+      <label class="form-label" for="ccdSiEmail">Email</label><input type="email" class="form-input" id="ccdSiEmail" autocomplete="username">
+      <label class="form-label" for="ccdSiPass" style="margin-top:10px;">Password</label><input type="password" class="form-input" id="ccdSiPass" autocomplete="current-password">
+      <div class="ccd-auth-row"><button class="btn-gold" id="ccdSiGo">Sign in</button></div>
+      <button class="ccd-auth-link" id="ccdSiForgot">Forgot password?</button>
+    </div>
+    <div id="ccdSiReset" style="display:none;">
+      <p class="ccd-auth-note">Choose a new password (at least 12 characters, with upper and lower case letters, a digit and a symbol).</p>
+      <label class="form-label" for="ccdRsNew">New password</label><input type="password" class="form-input" id="ccdRsNew" autocomplete="new-password">
+      <label class="form-label" for="ccdRsNew2" style="margin-top:10px;">New password again</label><input type="password" class="form-input" id="ccdRsNew2" autocomplete="new-password">
+      <div class="ccd-auth-row"><button class="btn-gold" id="ccdRsGo">Save the new password</button></div>
+    </div>
+    <div class="ccd-auth-msg" id="ccdSiMsg"></div>
+  </div></div></div>
+<div class="overlay" id="ccdAccountOverlay"><div class="modal" style="max-width:420px;">
+  <div class="modal-header"><h2>Your account</h2><button class="modal-close" id="ccdAcClose">✕</button></div>
+  <div class="modal-body">
+    <p class="ccd-auth-note" id="ccdAcWho"></p>
+    <label class="form-label" for="ccdAcCur" style="margin-top:12px;">Current password</label><input type="password" class="form-input" id="ccdAcCur" autocomplete="current-password">
+    <label class="form-label" for="ccdAcNew" style="margin-top:10px;">New password</label><input type="password" class="form-input" id="ccdAcNew" autocomplete="new-password">
+    <label class="form-label" for="ccdAcNew2" style="margin-top:10px;">New password again</label><input type="password" class="form-input" id="ccdAcNew2" autocomplete="new-password">
+    <div class="ccd-auth-row"><button class="btn-gold" id="ccdAcChange">Change password</button></div>
+    <div class="ccd-auth-row" style="margin-top:18px;"><button class="btn-ghost" id="ccdAcOut">Sign out of this browser</button><button class="btn-ghost" id="ccdAcOutAll">Sign out everywhere</button></div>
+    <div class="ccd-auth-msg" id="ccdAcMsg"></div>
+  </div></div></div>
+<div class="overlay" id="ccdPinOverlay"><div class="modal" style="max-width:340px;">
+  <div class="modal-header"><h2 id="ccdPinTitle">Settings PIN</h2><button class="modal-close" id="ccdPinClose">✕</button></div>
+  <div class="modal-body">
+    <p class="ccd-auth-note" id="ccdPinNote">Enter the Settings PIN.</p>
+    <input type="password" inputmode="numeric" class="form-input ccd-pin-box" id="ccdPinIn" autocomplete="off" maxlength="8" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+    <input type="password" inputmode="numeric" class="form-input ccd-pin-box" id="ccdPinIn2" autocomplete="off" maxlength="8" style="display:none;margin-top:8px;" data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+    <div class="ccd-auth-row"><button class="btn-gold" id="ccdPinGo">Open Settings</button></div>
+    <div class="ccd-auth-msg" id="ccdPinMsg"></div>
+  </div></div></div>`;
+        while (wrap.firstElementChild) document.body.appendChild(wrap.firstElementChild);
+        const $ = id => document.getElementById(id);
+        $('ccdSiClose').onclick = () => { if (!$('ccdSignInOverlay').classList.contains('locked')) $('ccdSignInOverlay').classList.remove('visible'); };
+        $('ccdSiGo').onclick = signIn;
+        $('ccdSiPass').addEventListener('keydown', e => { if (e.key === 'Enter') signIn(); });
+        $('ccdSiForgot').onclick = forgot;
+        $('ccdRsGo').onclick = saveReset;
+        $('ccdAcClose').onclick = () => $('ccdAccountOverlay').classList.remove('visible');
+        $('ccdAcChange').onclick = changePassword;
+        $('ccdAcOut').onclick = () => signOut('local');
+        $('ccdAcOutAll').onclick = () => signOut('global');
+        $('ccdPinClose').onclick = () => $('ccdPinOverlay').classList.remove('visible');
+        $('ccdPinGo').onclick = () => ccdPin.submit();
+        $('ccdPinIn').addEventListener('keydown', e => { if (e.key === 'Enter') ccdPin.submit(); });
+        $('ccdPinIn2').addEventListener('keydown', e => { if (e.key === 'Enter') ccdPin.submit(); });
+    }
+    const msg = (id, text, kind) => { const el = document.getElementById(id); if (el) { el.textContent = text || ''; el.className = 'ccd-auth-msg' + (kind ? ' ' + kind : ''); } };
+
+    function renderChip() {
+        const chip = document.getElementById('ccdAuthChip');
+        if (!chip) return;
+        const user = session && session.user;
+        if (user) { chip.textContent = '👤 ' + (knownName(user) || 'Account'); chip.title = 'Your account'; chip.classList.add('on'); }
+        else if (mode !== 'off' || params().has('signin')) { chip.textContent = '🔑 Sign in'; chip.title = 'Sign in'; chip.classList.add('on'); }
+        else { chip.textContent = ''; chip.classList.remove('on'); }
+        chip.onclick = () => (session && session.user) ? openAccount() : openSignIn(false);
+    }
+    function openSignIn(locked) {
+        if (typeof window !== 'undefined' && typeof window.ccdAuthSignInHook === 'function') return window.ccdAuthSignInHook(!!locked);   // Sync Hub v4.6.25: sign in at Command Center
+        ensureUi();
+        const ov = document.getElementById('ccdSignInOverlay');
+        document.getElementById('ccdSiTitle').textContent = 'Sign in';
+        document.getElementById('ccdSiForm').style.display = '';
+        document.getElementById('ccdSiReset').style.display = 'none';
+        ov.classList.toggle('locked', !!locked);
+        ov.classList.add('visible');
+        msg('ccdSiMsg', locked ? 'Sign in to use the CCD tools.' : '');
+        setTimeout(() => { const e = document.getElementById('ccdSiEmail'); if (e) e.focus(); }, 30);
+    }
+    function openAccount() {
+        ensureUi();
+        const u = session && session.user;
+        document.getElementById('ccdAcWho').textContent = u ? `Signed in as ${knownName(u)} (${u.email})` : '';
+        ['ccdAcCur', 'ccdAcNew', 'ccdAcNew2'].forEach(id => { document.getElementById(id).value = ''; });
+        msg('ccdAcMsg', '');
+        document.getElementById('ccdAccountOverlay').classList.add('visible');
+    }
+    function afterSignIn() {
+        const u = session && session.user;
+        if (u) { const n = knownName(u); if (n) lsSet('ccdUserName', n); }
+        const ov = document.getElementById('ccdSignInOverlay');
+        if (ov) { ov.classList.remove('visible', 'locked'); }
+        renderChip();
+        const back = safeReturn(params().get('return'));
+        if (back) { location.href = back; return true; }
+        return false;
+    }
+    async function signIn() {
+        const email = document.getElementById('ccdSiEmail').value.trim();
+        const password = document.getElementById('ccdSiPass').value;
+        if (!email || !password) { msg('ccdSiMsg', 'Enter your email and password.', 'err'); return; }
+        msg('ccdSiMsg', 'Signing in…');
+        const { data, error } = await client.auth.signInWithPassword({ email, password });
+        if (error) { msg('ccdSiMsg', error.message || 'Sign-in refused.', 'err'); return; }
+        session = data && data.session;
+        document.getElementById('ccdSiPass').value = '';
+        afterSignIn();
+    }
+    async function forgot() {
+        const email = document.getElementById('ccdSiEmail').value.trim();
+        if (!email) { msg('ccdSiMsg', 'Type your email first, then press Forgot password.', 'err'); return; }
+        const redirectTo = location.origin + location.pathname;
+        const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+        if (error) { msg('ccdSiMsg', error.message || 'Could not send the email.', 'err'); return; }
+        msg('ccdSiMsg', 'If that address has an account, a reset link is on its way. Open it on this computer.', 'ok');
+    }
+    function showReset(kind) {
+        ensureUi();
+        document.getElementById('ccdSiTitle').textContent = kind === 'invite' ? 'Set your password' : 'Set a new password';
+        document.getElementById('ccdSiForm').style.display = 'none';
+        document.getElementById('ccdSiReset').style.display = '';
+        document.getElementById('ccdSignInOverlay').classList.add('visible', 'locked');
+        msg('ccdSiMsg', '');
+    }
+    async function saveReset() {
+        const a = document.getElementById('ccdRsNew').value, b = document.getElementById('ccdRsNew2').value;
+        if (!a || a !== b) { msg('ccdSiMsg', 'The two passwords do not match.', 'err'); return; }
+        const { error } = await client.auth.updateUser({ password: a });
+        if (error) {
+            const t = error.message || 'Not saved.';
+            msg('ccdSiMsg', /current.?password/i.test(t) ? t + ' — Supabase is asking for a current password this account does not have yet. Tell Paul: the "Require current password" setting blocks first-time setup.' : t, 'err');
+            return;
+        }
+        document.getElementById('ccdRsNew').value = ''; document.getElementById('ccdRsNew2').value = '';
+        msg('ccdSiMsg', 'Saved. You are signed in with the new password.', 'ok');
+        setTimeout(() => { document.getElementById('ccdSignInOverlay').classList.remove('visible', 'locked'); renderChip(); }, 1200);
+    }
+    async function changePassword() {
+        const cur = document.getElementById('ccdAcCur').value, a = document.getElementById('ccdAcNew').value, b = document.getElementById('ccdAcNew2').value;
+        if (!cur) { msg('ccdAcMsg', 'Enter your current password.', 'err'); return; }
+        if (!a || a !== b) { msg('ccdAcMsg', 'The two new passwords do not match.', 'err'); return; }
+        const { error } = await client.auth.updateUser({ password: a, current_password: cur });
+        if (error) { msg('ccdAcMsg', error.message || 'Not changed.', 'err'); return; }
+        ['ccdAcCur', 'ccdAcNew', 'ccdAcNew2'].forEach(id => { document.getElementById(id).value = ''; });
+        msg('ccdAcMsg', 'Password changed.', 'ok');
+    }
+    async function signOut(scope) {
+        const { error } = await client.auth.signOut({ scope });
+        if (error) { msg('ccdAcMsg', error.message || 'Not signed out.', 'err'); return; }
+        session = null;
+        document.getElementById('ccdAccountOverlay').classList.remove('visible');
+        renderChip();
+        if (mode === 'required') openSignIn(true);
+    }
+
+    async function start(sbClient) {
+        client = sbClient;
+        if (!client || !client.auth) return { mode: 'off', signedIn: false };
+        try {
+            client.auth.onAuthStateChange((event, s) => {
+                if (event === 'PASSWORD_RECOVERY') { session = s; showReset('recovery'); return; }
+                if (event === 'SIGNED_OUT') { session = null; renderChip(); }
+            });
+        } catch (e) { console.warn('[sign-in] no auth events', e && e.message); }
+        await readMode();
+        try { const { data } = await client.auth.getSession(); session = data && data.session; } catch { session = null; }
+        ensureUi();
+        renderChip();
+        // v3.4.1: an invitation or reset link signs the person in before this code listens (supabase-js reads the
+        // link while the client is made), so the link's type is caught in <head> and the password box opened here.
+        const linkType = (typeof window !== 'undefined' && window.__ccdAuthLinkType) || null;
+        if (linkType && session && session.user) { try { window.__ccdAuthLinkType = null; } catch { /* ignore */ } showReset(linkType === 'invite' ? 'invite' : 'recovery'); }
+        else if (session && session.user && safeReturn(params().get('return'))) { afterSignIn(); }
+        else if (mode === 'required' && !(session && session.user)) openSignIn(true);
+        return { mode, signedIn: !!(session && session.user) };
+    }
+    return { start, ensureUi, safeReturn, knownName, get mode() { return mode; }, get session() { return session; }, openSignIn, openAccount };
+})();
+
+/* The Settings PIN — one PIN for every tool, held as {salt, hash} in settings.settings_pin; asked once an hour per tab. */
+const ccdPin = (() => {
+    const HOUR = 3600 * 1000;
+    let stage = 'enter', pending = null, wrong = 0, waitUntil = 0;
+    async function sha(text) {
+        const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+        return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    }
+    async function readPin() {
+        if (typeof sbClient === 'undefined' || !sbClient) return { ok: false };
+        try {
+            const { data, error } = await sbClient.from('settings').select('value').eq('key', 'settings_pin').limit(1);
+            if (error) throw error;
+            const v = data && data[0] && data[0].value;
+            return { ok: true, pin: v && v.salt && v.hash ? v : null };
+        } catch (e) { return { ok: false }; }
+    }
+    function unlockedRecently() { try { return Date.now() - Number(sessionStorage.getItem('ccdPinOkAt') || 0) < HOUR; } catch { return false; } }
+    function markUnlocked() { try { sessionStorage.setItem('ccdPinOkAt', String(Date.now())); } catch { /* ignore */ } }
+    function show(kind, note) {
+        ensurePinUi();
+        stage = kind;
+        const two = kind === 'set';
+        document.getElementById('ccdPinTitle').textContent = two ? 'Set the Settings PIN' : 'Settings PIN';
+        document.getElementById('ccdPinNote').textContent = note || (two ? 'Choose a PIN of 4 to 8 digits, then type it again. It applies to every CCD tool.' : 'Enter the Settings PIN.');
+        document.getElementById('ccdPinGo').textContent = two ? 'Save the PIN' : 'Open Settings';
+        document.getElementById('ccdPinIn').value = ''; document.getElementById('ccdPinIn2').value = '';
+        document.getElementById('ccdPinIn2').style.display = two ? '' : 'none';
+        document.getElementById('ccdPinMsg').textContent = ''; document.getElementById('ccdPinMsg').className = 'ccd-auth-msg';
+        document.getElementById('ccdPinOverlay').classList.add('visible');
+        setTimeout(() => document.getElementById('ccdPinIn').focus(), 30);
+    }
+    function ensurePinUi() { ccdAuth.ensureUi(); }
+    function say(t, k) { const el = document.getElementById('ccdPinMsg'); el.textContent = t; el.className = 'ccd-auth-msg' + (k ? ' ' + k : ''); }
+    async function open() {
+        if (unlockedRecently()) { ccdOpenSettingsNow(); ccdPinNotice(null); return; }
+        const r = await readPin();
+        if (!r.ok) { show('enter', 'The PIN could not be checked (no connection). Try again in a moment.'); return; }
+        if (!r.pin) { ccdOpenSettingsNow(); ccdPinNotice('none'); return; }
+        pending = r.pin; show('enter');
+    }
+    async function submit() {
+        const a = document.getElementById('ccdPinIn').value.trim();
+        if (stage === 'set') {
+            const b = document.getElementById('ccdPinIn2').value.trim();
+            if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
+            if (a !== b) { say('The two PINs do not match.', 'err'); return; }
+            const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Sync Hub ' + SH_VERSION };
+            try {
+                const { data: ex } = await sbClient.from('settings').select('key').eq('key', 'settings_pin').limit(1);
+                const res = ex && ex.length ? await sbClient.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
+                                            : await sbClient.from('settings').insert({ key: 'settings_pin', value });
+                if (res && res.error) throw res.error;
+            } catch (e) { say('Not saved: ' + ((e && e.message) || e), 'err'); return; }
+            markUnlocked();
+            document.getElementById('ccdPinOverlay').classList.remove('visible');
+            ccdPinNotice('saved');
+            return;
+        }
+        if (Date.now() < waitUntil) { say('Too many wrong tries. Wait a minute.', 'err'); return; }
+        if (!pending) { const r = await readPin(); pending = r.pin; if (!pending) { document.getElementById('ccdPinOverlay').classList.remove('visible'); ccdOpenSettingsNow(); return; } }
+        if ((await sha(pending.salt + ':' + a)) === pending.hash) {
+            wrong = 0; markUnlocked();
+            document.getElementById('ccdPinOverlay').classList.remove('visible');
+            ccdOpenSettingsNow(); ccdPinNotice(null);
+        } else {
+            wrong++; document.getElementById('ccdPinIn').value = '';
+            if (wrong >= 5) { waitUntil = Date.now() + 60000; wrong = 0; say('Too many wrong tries. Wait a minute.', 'err'); }
+            else say('That PIN is not right.', 'err');
+        }
+    }
+    return { open, submit, setNew: () => show('set'), _sha: sha };
+})();
+
+/* ═══════════════════════════════════════════
+   v4.6.25 (S140) — Sync Hub's side of sign-in and the Settings PIN (Claude Doc "CCD Sign-in — Design for Approval")
+   - settings.service_flags.sign_in: absent / 'off' = exactly as before; 'offered' = a 🔑 Sign in chip; 'required' = Sync Hub opens only
+     signed in. Signing in happens at Command Center (./ beside this page) with ?return= this page; nothing here takes a password.
+   - ⚙️ Settings asks for the shared PIN (settings.settings_pin) once an hour.
+   ═══════════════════════════════════════════ */
+function ccdShSignInUrl() { const u = new URL('./', location.href); u.searchParams.set('return', location.href); return u.href; }
+function ccdShNavigate(href) { location.href = href; }
+window.ccdAuthSignInHook = function (locked) {
+  if (locked) { const blk = document.getElementById('shAuthBlock'); if (blk) blk.classList.add('on'); }
+  ccdShNavigate(ccdShSignInUrl());
+  return true;
+};
+function shWho() {   // the signed-in person, else ''
+  try { const s = ccdAuth.session; const u = s && s.user; return u ? (ccdAuth.knownName(u) || '') : ''; } catch (e) { return ''; }
+}
+let _shAuthStarted = false;
+async function shAuthStart() {
+  if (_shAuthStarted) return; _shAuthStarted = true;
+  await null;   // the module's const declarations sit after this script
+  try { const r = await ccdAuth.start(sbClient); if (r && r.signedIn) { try { localStorage.setItem('ccdUserName', shWho()); } catch (e) {} } } catch (e) { console.warn('[sign-in] start failed', e && e.message); }
+}
+let _shPinOk = false;
+function ccdOpenSettingsNow() { _shPinOk = true; switchTab('settings'); }
+/* the PIN line at the top of Settings */
+function ccdPinNotice(state) {
+  const tab = document.getElementById('tab-settings'); if (!tab) return;
+  let el = document.getElementById('ccdPinLine');
+  if (!el) { el = document.createElement('div'); el.id = 'ccdPinLine'; el.style.cssText = 'font-size:12px;margin:0 0 12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;'; tab.insertBefore(el, tab.firstChild); }
+  const text = state === 'none' ? '🔓 No Settings PIN is set yet, so Settings opens for anyone.' : state === 'saved' ? '🔒 Settings PIN saved. Every CCD tool will ask for it.' : '🔒 Settings PIN on.';
+  el.innerHTML = '';
+  const t = document.createElement('span'); t.textContent = text; t.style.color = state === 'none' ? 'var(--warning)' : 'var(--text-dim)';
+  const bt = document.createElement('button'); bt.className = 'btn-ghost'; bt.type = 'button'; bt.style.cssText = 'padding:3px 10px;font-size:12px;'; bt.textContent = state === 'none' ? 'Set a PIN' : 'Change the PIN';
+  bt.onclick = () => ccdPin.setNew();
+  el.appendChild(t); el.appendChild(bt);
+  if (state === 'saved') ccdOpenSettingsNow();
+}
+/* ═══ end v4.6.25 sign-in ═══ */
+</script>
 </body>
 </html>
