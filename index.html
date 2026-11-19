@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.4.3</title>
+<title>CCD Command Center v3.4.4</title>
+<!-- v3.4.4 (S142 CG-01): the connection test before sign-in counts items by ONE column (sku) — the signed-out key may no longer read whole item rows, so select('*') was refused and the page fell back to the setup screen. -->
 <!-- v3.4.3 (S142): WITH SIGN-IN REQUIRED, NOTHING IS READ BEFORE YOU SIGN IN — the dashboard waits for the sign-in before loading any tile, and the 60-second refresh and the health-check timer skip while signed out (S142 F-1: an iPhone read the key settings before signing in). Off / offered: as before. -->
 <!-- v3.4.2 (S139): THE ACCOUNTS PANEL (sign-in design decision 5) — 👥 Accounts in the account box: every account with its last sign-in, and Send reset email / Sign out everywhere / Disable · Enable, each asked Yes / No on its row, done by the edge function accounts-admin with your own sign-in (the service key stays on the server). -->
 <!-- v3.4.1 (S137): Paul 2026-11-16 "Option 2" — an invitation or reset link opens "Set your password" / "Set a new password" (the link is read in <head> before supabase-js uses it; the PASSWORD_RECOVERY event fired before Command Center listened, so v3.4.0 never showed the box); the Sync queue tile and the health card count PENDING rows only (they counted every row ever made). -->
@@ -894,7 +895,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.3</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.4</span>
         </div>
     </div>
 
@@ -1424,8 +1425,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initSupabase(url, key) {
     try {
         sb = supabase.createClient(url, key);
-        // Test connection
-        const { count, error } = await sb.from('items').select('*', { count: 'exact', head: true });
+        // Test connection — v3.4.4 (S142 CG-01): one column the signed-out key may read, not select('*')
+        const { count, error } = await sb.from('items').select('sku', { count: 'exact', head: true });
         if (error) throw error;
 
         document.getElementById('setupWizard').style.display = 'none';
@@ -2375,7 +2376,7 @@ document.getElementById('settingsOverlay').addEventListener('click', (e) => {
    - The Settings tab asks for the shared PIN (settings.settings_pin = {salt, hash}; never the digits), once an hour.
    - No browser pop-ups (CC-1): every box is our own.
    ═══════════════════════════════════════════ */
-const CCD_AUTH_VERSION = 'v3.4.3';
+const CCD_AUTH_VERSION = 'v3.4.4';
 const ccdAuth = (() => {
     let client = null, mode = 'off', session = null;
     let waiters = [];                                   // v3.4.3: callers waiting for a sign-in
