@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.4.2</title>
+<title>CCD Command Center v3.4.3</title>
+<!-- v3.4.3 (S142): WITH SIGN-IN REQUIRED, NOTHING IS READ BEFORE YOU SIGN IN — the dashboard waits for the sign-in before loading any tile, and the 60-second refresh and the health-check timer skip while signed out (S142 F-1: an iPhone read the key settings before signing in). Off / offered: as before. -->
 <!-- v3.4.2 (S139): THE ACCOUNTS PANEL (sign-in design decision 5) — 👥 Accounts in the account box: every account with its last sign-in, and Send reset email / Sign out everywhere / Disable · Enable, each asked Yes / No on its row, done by the edge function accounts-admin with your own sign-in (the service key stays on the server). -->
 <!-- v3.4.1 (S137): Paul 2026-11-16 "Option 2" — an invitation or reset link opens "Set your password" / "Set a new password" (the link is read in <head> before supabase-js uses it; the PASSWORD_RECOVERY event fired before Command Center listened, so v3.4.0 never showed the box); the Sync queue tile and the health card count PENDING rows only (they counted every row ever made). -->
 <!-- v3.4.0 (S137): Paul 2026-11-15 "Build approved" — SIGN-IN behind the flag settings.service_flags.sign_in (off by default = as before; offered; required), Command Center the one sign-in screen (?return= to our own pages only), the account box (change password, sign out, sign out everywhere, forgot password via Supabase), and a PIN on Settings shared by every tool (settings.settings_pin {salt, hash}, asked once an hour). Design: Claude Doc "CCD Sign-in — Design for Approval". -->
@@ -893,7 +894,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.2</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.3</span>
         </div>
     </div>
 
@@ -1433,6 +1434,8 @@ async function initSupabase(url, key) {
 
         // v3.4.0: sign-in (does nothing visible while the flag is off)
         try { await ccdAuth.start(sb); } catch (e) { console.warn('[sign-in] start failed', e); }
+        // v3.4.3 (S142 F-1): with sign-in required, nothing is read until someone signs in.
+        if (ccdAuth.mustWait) { console.log('[sign-in] required — waiting for the sign-in before loading'); await ccdAuth.whenSignedIn(); }
 
         updateGreeting();
         buildFilterPills();
@@ -1452,6 +1455,7 @@ async function initSupabase(url, key) {
 
         // Auto-refresh: KPIs + activity every 60 seconds
         setInterval(async () => {
+            if (ccdAuth.mustWait) return;   // v3.4.3: signed out — read nothing
             try {
                 await loadKPIs();
                 await loadActivity();
@@ -1955,6 +1959,7 @@ function renderFavorites() {
    HEALTH CHECKS
    ═══════════════════════════════════════════ */
 async function runHealthChecks() {
+    if (typeof ccdAuth !== 'undefined' && ccdAuth.mustWait) return;   // v3.4.3: signed out — read nothing
     // Set all to checking state
     ['dotDb', 'dotProxies', 'dotSync'].forEach(id => {
         document.getElementById(id).className = 'status-dot checking';
@@ -2370,9 +2375,13 @@ document.getElementById('settingsOverlay').addEventListener('click', (e) => {
    - The Settings tab asks for the shared PIN (settings.settings_pin = {salt, hash}; never the digits), once an hour.
    - No browser pop-ups (CC-1): every box is our own.
    ═══════════════════════════════════════════ */
-const CCD_AUTH_VERSION = 'v3.4.1';
+const CCD_AUTH_VERSION = 'v3.4.3';
 const ccdAuth = (() => {
     let client = null, mode = 'off', session = null;
+    let waiters = [];                                   // v3.4.3: callers waiting for a sign-in
+    const signedInNow = () => !!(session && session.user);
+    function release() { if (!signedInNow()) return; const w = waiters; waiters = []; w.forEach(f => { try { f(true); } catch { /* ignore */ } }); }
+    function whenSignedIn() { return signedInNow() ? Promise.resolve(true) : new Promise(r => waiters.push(r)); }
     const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     const lsGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
     const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked: ignore */ } };
@@ -2527,6 +2536,7 @@ const ccdAuth = (() => {
         const ov = document.getElementById('ccdSignInOverlay');
         if (ov) { ov.classList.remove('visible', 'locked'); }
         renderChip();
+        release();
         const back = safeReturn(params().get('return'));
         if (back) { location.href = back; return true; }
         return false;
@@ -2569,6 +2579,8 @@ const ccdAuth = (() => {
         }
         document.getElementById('ccdRsNew').value = ''; document.getElementById('ccdRsNew2').value = '';
         msg('ccdSiMsg', 'Saved. You are signed in with the new password.', 'ok');
+        try { const { data } = await client.auth.getSession(); session = (data && data.session) || session; } catch { /* keep */ }
+        release();
         setTimeout(() => { document.getElementById('ccdSignInOverlay').classList.remove('visible', 'locked'); renderChip(); }, 1200);
     }
     async function changePassword() {
@@ -2596,6 +2608,7 @@ const ccdAuth = (() => {
             client.auth.onAuthStateChange((event, s) => {
                 if (event === 'PASSWORD_RECOVERY') { session = s; showReset('recovery'); return; }
                 if (event === 'SIGNED_OUT') { session = null; renderChip(); }
+                if (event === 'SIGNED_IN' && s && s.user) { session = s; release(); }
             });
         } catch (e) { console.warn('[sign-in] no auth events', e && e.message); }
         await readMode();
@@ -2610,7 +2623,8 @@ const ccdAuth = (() => {
         else if (mode === 'required' && !(session && session.user)) openSignIn(true);
         return { mode, signedIn: !!(session && session.user) };
     }
-    return { start, ensureUi, safeReturn, get mode() { return mode; }, get session() { return session; }, openSignIn, openAccount };
+    return { start, ensureUi, safeReturn, get mode() { return mode; }, get session() { return session; }, openSignIn, openAccount,
+             whenSignedIn, get mustWait() { return mode === 'required' && !signedInNow(); } };
 })();
 
 /* The Settings PIN — one PIN for every tool, held as {salt, hash} in settings.settings_pin; asked once an hour per tab. */
