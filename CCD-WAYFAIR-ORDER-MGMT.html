@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.6.5: copied from Command Center v3.4.1 -->
-<title>CCD Wayfair Order Manager v1.6.7</title>
+<title>CCD Wayfair Order Manager v1.6.8</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -357,7 +357,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.7</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.8</span></h1>
     <span style="display:flex;align-items:center;gap:6px;"><button class="om-conn-toggle" id="omConnToggle" type="button" onclick="omToggleConn()">⚙ Connection</button><!-- v1.6.7: phone --><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.6.5: sign-in --><span class="env-badge" id="envBadge">⬡ SANDBOX</span></span>
   </header>
 
@@ -585,8 +585,8 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.7',
-      user_name: ccdToolWho() || localStorage.getItem('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
+      device: 'WF-OrderMgr-v1.6.8',
+      user_name: ccdToolWho() || omLS.get('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
       sku: sku || details?.sku || null
     });
   } catch (e) {
@@ -621,6 +621,17 @@ function updateSafetyBar() {
 // of the existing one — that's rare), update DEFAULT_ORDER_PROXY_URL below and
 // redeploy this HTML. Operators can also type an override into the URL field
 // and click Connect to save it to localStorage for that browser only.
+// v1.6.8 (Paul 11-19): the production database address and its PUBLIC key are built in, so a phone never has to
+// type them (phones were losing them). A value saved on the device still wins. A publishable key is meant for
+// browsers; every table requires sign-in (Ecosystem RL-04..RL-09), so signed out it reads only the sign-in flag.
+const DEFAULT_SUPABASE_URL = 'https://ivytuqqofmwwrnkcykwh.supabase.co';
+const DEFAULT_SUPABASE_KEY = 'sb_publishable_5c7GGPkOfMpDHNwNz5huNg_iQfTE9os';
+// v1.6.8: storage that may be blocked (private tabs, "block website data") must not stop the page loading
+const omLS = {
+  get: k => { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set: (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
+  del: k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
+};
 const DEFAULT_ORDER_PROXY_URL = 'https://script.google.com/macros/s/AKfycbwvHpuvuCDjTCApLZOw3-58ew4T1dl3bQW2k-57BfCfRDphPEjDL5HMbQlLBQx_uCfJ7w/exec';
 
 function proxyUrl() { return document.getElementById('proxyUrl').value.trim(); }
@@ -634,7 +645,7 @@ function updateProxyUrlIndicator() {
   const reset = document.getElementById('proxyUrlReset');
   if (!ind || !reset) return;
   const current = proxyUrl();
-  const override = localStorage.getItem('ccdWayfairOrderProxy');
+  const override = omLS.get('ccdWayfairOrderProxy');
   if (!current) {
     ind.textContent = '';
     reset.style.display = 'none';
@@ -657,7 +668,7 @@ function updateProxyUrlIndicator() {
 // One-click recovery if an operator accidentally typed a bad URL or a stale
 // sandbox URL crept in.
 function resetProxyUrl() {
-  localStorage.removeItem('ccdWayfairOrderProxy');
+  omLS.del('ccdWayfairOrderProxy');
   document.getElementById('proxyUrl').value = DEFAULT_ORDER_PROXY_URL;
   updateProxyUrlIndicator();
   log('Order Proxy URL reset to default', 'ok');
@@ -718,8 +729,8 @@ function connectAll() {
   if (sbUrl && sbKey) {
     sb = supabase.createClient(sbUrl, sbKey);
     ccdToolAuthStart();   // v1.6.5: sign-in (flag off = nothing changes)
-    localStorage.setItem('ccdSupabaseUrl', sbUrl);
-    localStorage.setItem('ccdSupabaseKey', sbKey);
+    omLS.set('ccdSupabaseUrl', sbUrl);   // v1.6.8: omLS (blocked storage no longer throws)
+    omLS.set('ccdSupabaseKey', sbKey);
     log('Supabase connected', 'ok');
     loadDbItems();
     loadApiKeyFromDb();   // v1.6.3
@@ -730,10 +741,10 @@ function connectAll() {
     // default. Storing the default would create a stale override that
     // outlives future URL changes.
     if (px !== DEFAULT_ORDER_PROXY_URL) {
-      localStorage.setItem('ccdWayfairOrderProxy', px);
+      omLS.set('ccdWayfairOrderProxy', px);
       log('Order Proxy URL saved as local override', 'info');
     } else {
-      localStorage.removeItem('ccdWayfairOrderProxy');
+      omLS.del('ccdWayfairOrderProxy');
     }
   }
   updateProxyUrlIndicator();
@@ -742,12 +753,13 @@ function connectAll() {
 }
 
 function autoConnect() {
-  const sbUrl = localStorage.getItem('ccdSupabaseUrl');
-  const sbKey = localStorage.getItem('ccdSupabaseKey');
+  // v1.6.8: saved value wins, else the built-in production address and public key
+  const sbUrl = omLS.get('ccdSupabaseUrl') || DEFAULT_SUPABASE_URL;
+  const sbKey = omLS.get('ccdSupabaseKey') || DEFAULT_SUPABASE_KEY;
   // v1.6.1: Order Proxy URL resolution — localStorage override wins, else
   // hardcoded default. Fresh browsers on any device auto-populate the correct
   // URL without requiring setup.
-  const pxOverride = localStorage.getItem('ccdWayfairOrderProxy');
+  const pxOverride = omLS.get('ccdWayfairOrderProxy');   // v1.6.8: omLS
   const pxUrl = pxOverride || DEFAULT_ORDER_PROXY_URL;
   if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
   if (sbKey) document.getElementById('sbKey').value = sbKey;
@@ -764,11 +776,11 @@ function autoConnect() {
   // blank field and accidentally fetch the 100-PO legacy queue.
   const glEl = document.getElementById('goLiveDate');
   if (glEl) {
-    const stored = localStorage.getItem('ccdWayfairGoLiveDate');
+    const stored = omLS.get('ccdWayfairGoLiveDate');
     glEl.value = stored || '2026-04-22';
     glEl.addEventListener('change', () => {
       if (glEl.value) {
-        localStorage.setItem('ccdWayfairGoLiveDate', glEl.value);
+        omLS.set('ccdWayfairGoLiveDate', glEl.value);
         log(`Go-live date saved: ${glEl.value}`, 'info');
       }
     });
@@ -2560,7 +2572,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.7 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.8 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -3186,7 +3198,8 @@ function omToggleConn(force) {
   document.body.classList.toggle('om-conn-open', on);
 }
 // The connection box starts open only when there are no saved keys (nothing to connect with).
-(function () { try { if (!(localStorage.getItem('ccdSupabaseUrl') && localStorage.getItem('ccdSupabaseKey'))) omToggleConn(true); } catch (e) { omToggleConn(true); } })();
+// v1.6.8: the built-in address and key connect, so the box stays folded; it opens if the connection is missing.
+(function () { if (!(typeof DEFAULT_SUPABASE_URL === 'string' && DEFAULT_SUPABASE_URL && DEFAULT_SUPABASE_KEY)) omToggleConn(true); })();
 // On a phone, a new tab starts at the top of the page.
 (function () {
   const orig = switchTab;
@@ -3507,7 +3520,7 @@ const ccdPin = (() => {
             if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
             if (a !== b) { say('The two PINs do not match.', 'err'); return; }
             const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
-            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.7' };
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.8' };
             try {
                 const { data: ex } = await sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
                 const res = ex && ex.length ? await sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
