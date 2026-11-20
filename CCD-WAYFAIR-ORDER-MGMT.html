@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.6.5: copied from Command Center v3.4.1 -->
-<title>CCD Wayfair Order Manager v1.6.8</title>
+<title>CCD Wayfair Order Manager v1.6.9</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -357,7 +357,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.8</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.9</span></h1>
     <span style="display:flex;align-items:center;gap:6px;"><button class="om-conn-toggle" id="omConnToggle" type="button" onclick="omToggleConn()">⚙ Connection</button><!-- v1.6.7: phone --><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.6.5: sign-in --><span class="env-badge" id="envBadge">⬡ SANDBOX</span></span>
   </header>
 
@@ -585,7 +585,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.8',
+      device: 'WF-OrderMgr-v1.6.9',
       user_name: ccdToolWho() || omLS.get('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
       sku: sku || details?.sku || null
     });
@@ -633,6 +633,46 @@ const omLS = {
   del: k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
 };
 const DEFAULT_ORDER_PROXY_URL = 'https://script.google.com/macros/s/AKfycbwvHpuvuCDjTCApLZOw3-58ew4T1dl3bQW2k-57BfCfRDphPEjDL5HMbQlLBQx_uCfJ7w/exec';
+// v1.6.9 (Ecosystem 161-165, Wayfair 162 Q4): the Order Proxy address comes from settings.proxy_urls.wayfair_orders, so the
+// move to the Supabase function is one settings row. Order: a saved device override (never the old Apps Script address)
+// -> the settings row -> the built-in address above. Only https on script.google.com or the PROD Supabase host is used:
+// the CCD key is sent to this address.
+const OLD_ORDER_PROXY_URLS = [DEFAULT_ORDER_PROXY_URL];   // the Apps Script Order Proxy v1.1.8
+let omProxySource = 'built-in';                           // 'override' | 'settings' | 'built-in'
+let omSettingsProxyUrl = null;
+function omProxyAllowed(u) {
+  try {
+    const x = new URL(String(u || '').trim());
+    return x.protocol === 'https:' && !x.username && !x.password && (!x.port || x.port === '443') &&
+      (x.hostname === 'script.google.com' || x.hostname === 'ivytuqqofmwwrnkcykwh.supabase.co');
+  } catch (e) { return false; }
+}
+// The saved override, if it may win: the old Apps Script address or a refused address is removed and never wins.
+function omOverride() {
+  const o = String(omLS.get('ccdWayfairOrderProxy') || '').trim();
+  if (!o) return null;
+  if (OLD_ORDER_PROXY_URLS.includes(o) || !omProxyAllowed(o)) { omLS.del('ccdWayfairOrderProxy'); return null; }
+  return o;
+}
+function omBaseProxyUrl() { return omSettingsProxyUrl || DEFAULT_ORDER_PROXY_URL; }
+async function loadProxyUrlFromDb() {
+  if (!sb) return;
+  try {
+    const { data, error } = await sb.from('settings').select('value').eq('key', 'proxy_urls').single();
+    if (error) { log('Order Proxy address: settings read failed (' + error.message + ') - using the built-in address', 'err'); return; }
+    const u = (data && data.value && typeof data.value.wayfair_orders === 'string') ? data.value.wayfair_orders.trim() : '';
+    if (!u) { log('Order Proxy address: settings.proxy_urls.wayfair_orders is empty - using the built-in address', 'info'); return; }
+    if (!omProxyAllowed(u)) { log('Order Proxy address in settings refused (not https on Apps Script or Supabase) - using the built-in address', 'err'); return; }
+    omSettingsProxyUrl = u;
+    if (omProxySource === 'override') { updateProxyUrlIndicator(); return; }
+    const el = document.getElementById('proxyUrl');
+    const changed = el.value.trim() !== u;
+    el.value = u; omProxySource = 'settings';
+    updateProxyUrlIndicator();
+    log('Order Proxy address from settings' + (OLD_ORDER_PROXY_URLS.includes(u) ? ' (the Apps Script)' : ' (the Supabase function)'), 'ok');
+    if (changed && typeof checkProxyEnvironment === 'function') checkProxyEnvironment();
+  } catch (e) { log('Order Proxy address load failed: ' + e.message, 'err'); }
+}
 
 function proxyUrl() { return document.getElementById('proxyUrl').value.trim(); }
 function apiKey() { return document.getElementById('apiKey').value.trim(); }
@@ -645,16 +685,20 @@ function updateProxyUrlIndicator() {
   const reset = document.getElementById('proxyUrlReset');
   if (!ind || !reset) return;
   const current = proxyUrl();
-  const override = omLS.get('ccdWayfairOrderProxy');
+  const override = omOverride();   // v1.6.9: never the old Apps Script address
   if (!current) {
     ind.textContent = '';
     reset.style.display = 'none';
-  } else if (override && override === current && current !== DEFAULT_ORDER_PROXY_URL) {
+  } else if (override && override === current) {
     ind.textContent = '(local override)';
     ind.style.color = 'var(--warn)';
     reset.style.display = 'block';
+  } else if (omSettingsProxyUrl && current === omSettingsProxyUrl) {   // v1.6.9
+    ind.textContent = '(from settings)';
+    ind.style.color = 'var(--text-muted)';
+    reset.style.display = 'none';
   } else if (current === DEFAULT_ORDER_PROXY_URL) {
-    ind.textContent = '(default)';
+    ind.textContent = '(built-in default)';
     ind.style.color = 'var(--text-muted)';
     reset.style.display = 'none';
   } else {
@@ -669,9 +713,10 @@ function updateProxyUrlIndicator() {
 // sandbox URL crept in.
 function resetProxyUrl() {
   omLS.del('ccdWayfairOrderProxy');
-  document.getElementById('proxyUrl').value = DEFAULT_ORDER_PROXY_URL;
+  document.getElementById('proxyUrl').value = omBaseProxyUrl();   // v1.6.9: the settings address, else the built-in one
+  omProxySource = omSettingsProxyUrl ? 'settings' : 'built-in';
   updateProxyUrlIndicator();
-  log('Order Proxy URL reset to default', 'ok');
+  log('Order Proxy URL reset to ' + (omSettingsProxyUrl ? 'the settings address' : 'the built-in default'), 'ok');
   toast('Proxy URL reset to default', 'ok');
   // Re-check environment against the default
   if (typeof checkProxyEnvironment === 'function') checkProxyEnvironment();
@@ -734,17 +779,26 @@ function connectAll() {
     log('Supabase connected', 'ok');
     loadDbItems();
     loadApiKeyFromDb();   // v1.6.3
+    loadProxyUrlFromDb();   // v1.6.9
   }
   const px = proxyUrl();
   if (px) {
-    // v1.6.1: Only save to localStorage if the URL differs from the hardcoded
-    // default. Storing the default would create a stale override that
-    // outlives future URL changes.
-    if (px !== DEFAULT_ORDER_PROXY_URL) {
+    // v1.6.9: an address is saved as this device's override only if it differs from the settings / built-in address,
+    // is not the old Apps Script address, and is https on Apps Script or the PROD Supabase host.
+    if (px === omBaseProxyUrl() || OLD_ORDER_PROXY_URLS.includes(px)) {
+      omLS.del('ccdWayfairOrderProxy');
+      document.getElementById('proxyUrl').value = omBaseProxyUrl();
+      omProxySource = omSettingsProxyUrl ? 'settings' : 'built-in';
+    } else if (omProxyAllowed(px)) {
       omLS.set('ccdWayfairOrderProxy', px);
+      omProxySource = 'override';
       log('Order Proxy URL saved as local override', 'info');
     } else {
       omLS.del('ccdWayfairOrderProxy');
+      document.getElementById('proxyUrl').value = omBaseProxyUrl();
+      omProxySource = omSettingsProxyUrl ? 'settings' : 'built-in';
+      log('Order Proxy URL refused (must be https on Apps Script or the CCD Supabase project) - not saved', 'err');
+      toast('Proxy URL refused - not saved', 'err');
     }
   }
   updateProxyUrlIndicator();
@@ -759,13 +813,14 @@ function autoConnect() {
   // v1.6.1: Order Proxy URL resolution — localStorage override wins, else
   // hardcoded default. Fresh browsers on any device auto-populate the correct
   // URL without requiring setup.
-  const pxOverride = omLS.get('ccdWayfairOrderProxy');   // v1.6.8: omLS
+  const pxOverride = omOverride();   // v1.6.9: never the old Apps Script address; the settings row is read after sign-in
   const pxUrl = pxOverride || DEFAULT_ORDER_PROXY_URL;
+  omProxySource = pxOverride ? 'override' : 'built-in';
   if (sbUrl) document.getElementById('sbUrl').value = sbUrl;
   if (sbKey) document.getElementById('sbKey').value = sbKey;
   document.getElementById('proxyUrl').value = pxUrl;
   updateProxyUrlIndicator();
-  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); ccdToolAuthStart(); loadDbItems(); loadApiKeyFromDb(); }   // v1.6.3; v1.6.5: sign-in
+  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); ccdToolAuthStart(); loadDbItems(); loadApiKeyFromDb(); loadProxyUrlFromDb(); }   // v1.6.3; v1.6.5: sign-in; v1.6.9: proxy address
 
   // Keep indicator in sync if the operator edits the URL field manually
   const pxEl = document.getElementById('proxyUrl');
@@ -2572,7 +2627,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.8 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.9 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -3520,7 +3575,7 @@ const ccdPin = (() => {
             if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
             if (a !== b) { say('The two PINs do not match.', 'err'); return; }
             const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
-            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.8' };
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.9' };
             try {
                 const { data: ex } = await sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
                 const res = ex && ex.length ? await sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
