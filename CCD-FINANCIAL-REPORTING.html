@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.8.24: copied from Command Center v3.4.1 -->
-<title>CCD Financial Intelligence v1.8.25</title>
+<title>CCD Financial Intelligence v1.8.26</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -582,7 +582,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.25</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.26</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1814,7 +1814,7 @@ body {
 //   SETTINGS PIN (settings.settings_pin, asked once an hour), the module copied by script from Command Center v3.4.1. FR has no
 //   sign-in screen of its own: offered / required send you to Command Center with ?return= this page. Signed in, the chip shows
 //   your name and the booth statement's "Saved by" box starts with it.
-const FR_VERSION = 'v1.8.25';
+const FR_VERSION = 'v1.8.26';
 const FR_DEAD_DAYS = 365;
 const FR_VERSION_KEY = 'financial';
 
@@ -4291,23 +4291,45 @@ function ccdKeyInHeader(url) {
   if (c && c.p) return c.p;
   if (c && (c.ok || Date.now() - c.at < 300000)) return Promise.resolve(c.ok);
   const p = (async () => {
-    let ok = false;
+    let ok = false, sig = false;
     try {
       const ctrl = new AbortController(); const t = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 8000);
-      try { const r = await fetch(base + '?action=__selfcheck', { signal: ctrl.signal }); const j = await r.json(); ok = !!(j && j.success === true && j.header_key === true); }
+      try { const r = await fetch(base + '?action=__selfcheck', { signal: ctrl.signal }); const j = await r.json(); ok = !!(j && j.success === true && j.header_key === true); sig = ok && j.signin_auth === true; }
       finally { clearTimeout(t); }
-    } catch (e) { ok = false; }
-    CCD_HDR[base] = { ok, at: Date.now() };
+    } catch (e) { ok = false; sig = false; }
+    CCD_HDR[base] = { ok, sig, at: Date.now() };
     return ok;
   })();
   CCD_HDR[base] = { ok: false, at: Date.now(), p };
   return p;
 }
+// v1.8.26 (S149) · THE SIGN-IN TO THE PROXIES — copied by script from Inventory V2 2.10.26 (client renamed sb → sbClient).
+// v2.10.26 (S149, Phase B of the Vault design EQhoCSn97QU375kLEVFJ3t): A PROXY WHOSE __selfcheck ALSO SAYS signin_auth (the S149
+// sign-in layer) gets the signed-in person's Supabase session as Authorization: Bearer — the CCD key is not sent at all. No sign-in
+// (or a session about to expire), a proxy that does not say so, or a failed check = exactly as 2.10.25 (x-ccd-key, else the address).
+// The proxy checks the session with Supabase Auth itself (Paul or Mary only). The JSONP fallback is unchanged (it cannot send a header).
+async function ccdSigninToken() {   // the live session's access token, or '' (never a token within 30 s of its expiry)
+  try {
+    if (typeof sbClient === 'undefined' || !sbClient || !sbClient.auth || typeof sbClient.auth.getSession !== 'function') return '';
+    const { data } = await sbClient.auth.getSession(); const s = data && data.session;
+    if (!s || !s.access_token) return '';
+    if (s.expires_at && s.expires_at * 1000 < Date.now() + 30000) return '';
+    return String(s.access_token);
+  } catch (e) { return ''; }
+}
+async function ccdSigninAuth(url) {   // the proxy says header_key AND signin_auth (asked by the same one __selfcheck)
+  if (!(await ccdKeyInHeader(url))) return false;
+  const c = CCD_HDR[ccdHdrBase(url)];
+  return !!(c && c.sig);
+}
 async function ccdProxyFetchArgs(url, params) {   // the fetch attempt's address and options
   const p = Object.assign({}, params || {}), init = {};
-  if (p.key !== undefined && p.key !== null && String(p.key) !== '' && await ccdKeyInHeader(url)) { init.headers = { 'x-ccd-key': String(p.key) }; delete p.key; }
+  const hasKey = p.key !== undefined && p.key !== null && String(p.key) !== '';
+  const tok = hasKey && await ccdSigninAuth(url) ? await ccdSigninToken() : '';
+  if (tok) { init.headers = { authorization: 'Bearer ' + tok }; delete p.key; }
+  else if (hasKey && await ccdKeyInHeader(url)) { init.headers = { 'x-ccd-key': String(p.key) }; delete p.key; }
   const qs = Object.entries(p).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
-  return { url: url + (url.includes('?') ? '&' : '?') + qs, init, header: !!init.headers };
+  return { url: url + (url.includes('?') ? '&' : '?') + qs, init, header: !!init.headers, signin: !!tok };
 }
 async function frProxyCall(url, params) {   // v1.8.25: header fetch when the proxy reads it, else JSONP as before
   const a = await ccdProxyFetchArgs(url, params);
