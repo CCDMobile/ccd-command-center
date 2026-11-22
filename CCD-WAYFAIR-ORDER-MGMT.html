@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.6.5: copied from Command Center v3.4.1 -->
-<title>CCD Wayfair Order Manager v1.6.10</title>
+<title>CCD Wayfair Order Manager v1.6.11</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -357,7 +357,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.10</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.11</span></h1>
     <span style="display:flex;align-items:center;gap:6px;"><button class="om-conn-toggle" id="omConnToggle" type="button" onclick="omToggleConn()">⚙ Connection</button><!-- v1.6.7: phone --><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.6.5: sign-in --><span class="env-badge" id="envBadge">⬡ SANDBOX</span></span>
   </header>
 
@@ -585,7 +585,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.10',
+      device: 'WF-OrderMgr-v1.6.11',
       user_name: ccdToolWho() || omLS.get('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
       sku: sku || details?.sku || null
     });
@@ -725,35 +725,76 @@ function resetProxyUrl() {
 // v1.6.10 (Ecosystem 187, Wayfair 188): the CCD key out of the web address. A GET sends it in an x-ccd-key header only to the
 // PROD Supabase function whose __selfcheck says header_key: true; anything else (the Apps Script rollback, a function without
 // header support, a failed self-check) keeps ?key= as v1.6.9. POSTs already carry the key in the body.
-const omHeaderKeyCache = {};   // address -> Promise<boolean>
+const omCapsCache = {};   // address -> Promise<{ header: boolean, signin: boolean }> (v1.6.11: one __selfcheck answers both)
 function omIsSupabaseFn(u) {
   try { const x = new URL(String(u || '').trim()); return x.protocol === 'https:' && x.hostname === 'ivytuqqofmwwrnkcykwh.supabase.co' && !x.username && !x.password && (!x.port || x.port === '443'); }
   catch (e) { return false; }
 }
-function omUsesHeaderKey(u) {
+function omProxyCaps(u) {
   u = String(u || '').trim();
-  if (!omIsSupabaseFn(u)) return Promise.resolve(false);
-  if (!omHeaderKeyCache[u]) {
-    omHeaderKeyCache[u] = fetch(u + '?action=__selfcheck').then(r => r.json()).then(j => !!(j && j.header_key === true))
-      .catch(() => { delete omHeaderKeyCache[u]; return false; });
+  if (!omIsSupabaseFn(u)) return Promise.resolve({ header: false, signin: false });
+  if (!omCapsCache[u]) {
+    omCapsCache[u] = fetch(u + '?action=__selfcheck').then(r => r.json())
+      .then(j => ({ header: !!(j && j.header_key === true), signin: !!(j && j.signin_auth === true) }))
+      .catch(() => { delete omCapsCache[u]; return { header: false, signin: false }; });
   }
-  return omHeaderKeyCache[u];
+  return omCapsCache[u];
 }
-// One GET to the Order Proxy: the key in the header when the function reads it, else in the address (v1.6.9).
-async function omGet(url, params) {
+function omUsesHeaderKey(u) { return omProxyCaps(u).then(c => c.header); }
+// v1.6.11 (Ecosystem 192, sign-in Phase B): the signed-in person's session token, if live (not within 30 s of expiry).
+async function omSigninToken() {
+  try {
+    if (!sb || !sb.auth || typeof sb.auth.getSession !== 'function') return '';
+    const { data } = await sb.auth.getSession();
+    const ss = data && data.session;
+    if (!ss || !ss.access_token) return '';
+    if (ss.expires_at && Number(ss.expires_at) * 1000 - Date.now() < 30000) return '';
+    return String(ss.access_token);
+  } catch (e) { return ''; }
+}
+const OM_KEY_REFUSALS = ['Missing API key.', 'Invalid API key.'];   // answered before anything is sent to Wayfair
+// The v1.6.10 GET: the key in the header when the function reads it, else in the address (v1.6.9).
+async function omGetWithKey(url, params) {
   const key = apiKey();
   if (await omUsesHeaderKey(url)) {
     return fetch(`${url}?${new URLSearchParams(params)}`, { headers: { 'x-ccd-key': key } });
   }
   return fetch(`${url}?${new URLSearchParams({ ...params, key })}`);
 }
+// One GET to the Order Proxy. v1.6.11: the sign-in token when the function takes it and someone is signed in; a key refusal
+// is sent once more as v1.6.10.
+async function omGet(url, params) {
+  const caps = await omProxyCaps(url);
+  const tok = caps.signin ? await omSigninToken() : '';
+  if (tok) {
+    const r = await fetch(`${url}?${new URLSearchParams(params)}`, { headers: { 'Authorization': 'Bearer ' + tok } });
+    try {
+      const j = await r.clone().json();
+      if (j && (j.code === 'AUTH_FAILED' || OM_KEY_REFUSALS.includes(String(j.error || '')))) return omGetWithKey(url, params);
+    } catch (e) { /* not JSON: hand it back as it is */ }
+    return r;
+  }
+  return omGetWithKey(url, params);
+}
 async function proxyGet(action, params = {}) {
   const r = await omGet(proxyUrl(), { action, ...params });
   return r.json();
 }
 async function proxyPost(action, body = {}) {
+  // v1.6.11 (Ecosystem 192): to the function with signin_auth and a live session -> the token, and no key in the body (the
+  // sign-in layer supplies it). A key refusal ("Missing / Invalid API key.") is answered before anything reaches Wayfair, so the
+  // call is sent once more exactly as v1.6.10. Anything else (including a non-JSON answer, which throws) is returned as it is.
+  const url = proxyUrl();
+  const caps = await omProxyCaps(url);
+  const tok = caps.signin ? await omSigninToken() : '';
+  if (tok) {
+    const r1 = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ action, ...body }) });
+    const j1 = await r1.json();
+    if (!(j1 && j1.success === false && OM_KEY_REFUSALS.includes(String(j1.error || '')))) return j1;
+    log('Sign-in not accepted by the Order Proxy for ' + action + ' - sent again with the CCD key', 'info');
+  }
   const payload = { action, key: apiKey(), ...body };
-  const r = await fetch(proxyUrl(), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
   return r.json();
 }
 
@@ -2651,7 +2692,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.10 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.11 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -3599,7 +3640,7 @@ const ccdPin = (() => {
             if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
             if (a !== b) { say('The two PINs do not match.', 'err'); return; }
             const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
-            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.10' };
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.11' };
             try {
                 const { data: ex } = await sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
                 const res = ex && ex.length ? await sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
