@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.8.24: copied from Command Center v3.4.1 -->
-<title>CCD Financial Intelligence v1.8.24</title>
+<title>CCD Financial Intelligence v1.8.25</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -582,7 +582,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.24</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.25</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1814,7 +1814,7 @@ body {
 //   SETTINGS PIN (settings.settings_pin, asked once an hour), the module copied by script from Command Center v3.4.1. FR has no
 //   sign-in screen of its own: offered / required send you to Command Center with ?return= this page. Signed in, the chip shows
 //   your name and the booth statement's "Saved by" box starts with it.
-const FR_VERSION = 'v1.8.24';
+const FR_VERSION = 'v1.8.25';
 const FR_DEAD_DAYS = 365;
 const FR_VERSION_KEY = 'financial';
 
@@ -4279,9 +4279,49 @@ function jsonpCall(url) {
   });
 }
 
+// v1.8.25 (S148) · THE CCD KEY IN A HEADER — V2 2.10.25's helpers, copied by script (block md5 f2842cd4f1a2f1b0793adaed63fd9f69).
+// A proxy whose __selfcheck says header_key: true gets the key as x-ccd-key on a fetch, never in the address
+// (Supabase writes the address into its function log). Any other proxy gets the old JSONP call exactly as before.
+const CCD_HDR = {};
+function ccdHdrBase(url) { return String(url || '').split('?')[0].replace(/\/+$/, ''); }
+function ccdKeyInHeader(url) {
+  const base = ccdHdrBase(url);
+  if (!/^https:\/\/[A-Za-z0-9.-]+\/functions\/v1\/[A-Za-z0-9_-]+$/.test(base)) return Promise.resolve(false);
+  const c = CCD_HDR[base];
+  if (c && c.p) return c.p;
+  if (c && (c.ok || Date.now() - c.at < 300000)) return Promise.resolve(c.ok);
+  const p = (async () => {
+    let ok = false;
+    try {
+      const ctrl = new AbortController(); const t = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 8000);
+      try { const r = await fetch(base + '?action=__selfcheck', { signal: ctrl.signal }); const j = await r.json(); ok = !!(j && j.success === true && j.header_key === true); }
+      finally { clearTimeout(t); }
+    } catch (e) { ok = false; }
+    CCD_HDR[base] = { ok, at: Date.now() };
+    return ok;
+  })();
+  CCD_HDR[base] = { ok: false, at: Date.now(), p };
+  return p;
+}
+async function ccdProxyFetchArgs(url, params) {   // the fetch attempt's address and options
+  const p = Object.assign({}, params || {}), init = {};
+  if (p.key !== undefined && p.key !== null && String(p.key) !== '' && await ccdKeyInHeader(url)) { init.headers = { 'x-ccd-key': String(p.key) }; delete p.key; }
+  const qs = Object.entries(p).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  return { url: url + (url.includes('?') ? '&' : '?') + qs, init, header: !!init.headers };
+}
+async function frProxyCall(url, params) {   // v1.8.25: header fetch when the proxy reads it, else JSONP as before
+  const a = await ccdProxyFetchArgs(url, params);
+  if (a.header) { const r = await fetch(a.url, a.init); return await r.json(); }   // no JSONP fallback on this path (it would put the key back in the address)
+  return await jsonpCall(a.url);
+}
+async function frShippoProxyUrl() {   // v1.8.25: settings.proxy_urls.shippo first (the Supabase shippo-proxy); this browser's old setting only as a fallback
+  try { const { data } = await sbClient.from('settings').select('value').eq('key', 'proxy_urls').single(); if (data && data.value && data.value.shippo) return data.value.shippo; } catch (e) { /* fall back */ }
+  return localStorage.getItem('ccdShippoProxy');
+}
+
 async function syncTransitData() {
   if (transitData.syncInProgress) return;
-  const proxyUrl = localStorage.getItem('ccdShippoProxy');
+  const proxyUrl = await frShippoProxyUrl();   // v1.8.25: proxy_urls.shippo first
   const apiKey = localStorage.getItem('ccdApiKey');
   if (!proxyUrl) { alert('Shippo proxy URL not configured. Open Command Center → Settings first.'); return; }
   if (!apiKey) { alert('API key not configured. Open Command Center → Settings first.'); return; }
@@ -4318,9 +4358,7 @@ async function syncTransitData() {
       const items = batch.map(r => ({ carrier: (r.carrier || 'usps').toLowerCase(), tracking: r.tracking_number }));
       
       try {
-        const itemsParam = encodeURIComponent(JSON.stringify(items));
-        const url = `${proxyUrl}?action=getBatchTrackingStatus&key=${apiKey}&items=${itemsParam}`;
-        const resp = await jsonpCall(url);
+        const resp = await frProxyCall(proxyUrl, { action: 'getBatchTrackingStatus', key: apiKey, items: JSON.stringify(items) });   // v1.8.25
 
         if (resp.success && resp.results) {
           for (let j = 0; j < resp.results.length; j++) {
@@ -7406,8 +7444,7 @@ async function fetchEtsyAdSpend(from, to) {
     const minTs = Math.floor(new Date(from + 'T00:00:00Z').getTime() / 1000);
     const maxTs = Math.floor(new Date(to + 'T23:59:59Z').getTime() / 1000);
 
-    const url = `${etsyProxyUrl}?action=getPaymentLedger&key=${apiKey}&min_created=${minTs}&max_created=${maxTs}&limit=5000`;
-    const data = await jsonpCall(url);
+    const data = await frProxyCall(etsyProxyUrl, { action: 'getPaymentLedger', key: apiKey, min_created: minTs, max_created: maxTs, limit: 5000 });   // v1.8.25
 
     if (!data.success) { result.error = data.error || 'Ledger API call failed'; return result; }
 

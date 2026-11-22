@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.3.1: copied from Command Center v3.4.1 -->
-<title>CCD Etsy Image Pull v1.3.2</title>
+<title>CCD Etsy Image Pull v1.3.3</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -251,7 +251,7 @@
 <div class="ccdAuthBlock" id="ccdAuthBlock"><div style="font-size:18px;font-weight:700;color:#d4a853;">Sign in to use the CCD tools</div><div style="font-size:13px;opacity:.75;max-width:420px;">Etsy Image Pull is opened through Command Center. You are being taken there to sign in, and back here afterwards.</div><button id="ccdAuthGo" type="button" style="padding:8px 18px;cursor:pointer;" onclick="ccdToolNavigate(ccdToolSignInUrl())">Sign in at Command Center</button></div><!-- S139 -->
 <div class="container">
 
-  <h1 style="display:flex;align-items:center;gap:10px;">CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.3.2</span><span style="flex:1"></span><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.3.1: sign-in --></h1>
+  <h1 style="display:flex;align-items:center;gap:10px;">CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.3.3</span><span style="flex:1"></span><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.3.1: sign-in --></h1>
   <div class="subtitle">Etsy listing images → <b>item_images</b> (the image record the Channel Manager uses) and items.image_urls. v1.3.0 (S106): an item that already has rows in item_images — uploads included — is never changed. v1.2.1 (S105): the proxy address and key come from the database; nothing is typed into this page except the Supabase login.</div>
 
   <div class="config-grid">
@@ -345,9 +345,12 @@
 // v1.3.1 (S139, Paul 11-16): SIGN-IN (flag settings.service_flags.sign_in; absent / off = exactly as before), the module copied
 //   by script from Command Center v3.4.1; offered / required send you to Command Center with ?return=. No Settings tab, so no
 //   PIN. The pull's log line names the signed-in person (else 'Paul', as before).
+// v1.3.3 (S147, 2026-11-21): the CCD key goes in an x-ccd-key header when the proxy's __selfcheck says header_key: true
+//   (etsy-proxy v0.1.2) — never in the address, which Supabase writes into its log. ccdKeyInHeader is copied by script from
+//   Inventory V2 2.10.25. Any other proxy gets the address as before.
 // v1.3.2 (S139, Paul 11-16 19:45): registers its version in settings.tool_versions ('etsyimages', the key Command Center's tile
 //   reads) when it connects — it never did, so the tile showed nothing. registerToolVersion copied by script from FR v1.8.24.
-const VERSION = '1.3.2';
+const VERSION = '1.3.3';
 async function registerToolVersion(client, toolKey, toolVersion) {
     if (!client) return;
     try {
@@ -413,9 +416,32 @@ async function connect() {
 }
 ['sbUrl', 'sbKey'].forEach(id => document.addEventListener('DOMContentLoaded', () => $(id).addEventListener('input', () => { sb = null; $('btnPull').disabled = $('btnPreview').disabled = true; $('projBadge').className = 'proj proj-unknown'; $('projBadge').textContent = 'Changed — press Connect'; })));
 
+// v1.3.3 · copied by script from Inventory V2 2.10.25:
+const CCD_HDR = {};
+function ccdHdrBase(url) { return String(url || '').split('?')[0].replace(/\/+$/, ''); }
+function ccdKeyInHeader(url) {
+  const base = ccdHdrBase(url);
+  if (!/^https:\/\/[A-Za-z0-9.-]+\/functions\/v1\/[A-Za-z0-9_-]+$/.test(base)) return Promise.resolve(false);
+  const c = CCD_HDR[base];
+  if (c && c.p) return c.p;
+  if (c && (c.ok || Date.now() - c.at < 300000)) return Promise.resolve(c.ok);
+  const p = (async () => {
+    let ok = false;
+    try {
+      const ctrl = new AbortController(); const t = setTimeout(() => { try { ctrl.abort(); } catch (_) {} }, 8000);
+      try { const r = await fetch(base + '?action=__selfcheck', { signal: ctrl.signal }); const j = await r.json(); ok = !!(j && j.success === true && j.header_key === true); }
+      finally { clearTimeout(t); }
+    } catch (e) { ok = false; }
+    CCD_HDR[base] = { ok, at: Date.now() };
+    return ok;
+  })();
+  CCD_HDR[base] = { ok: false, at: Date.now(), p };
+  return p;
+}
 async function proxyCall(params) {
-  const qs = Object.entries({ ...params, key: PROXY.key }).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
-  const resp = await fetch(PROXY.url + (PROXY.url.includes('?') ? '&' : '?') + qs);
+  const hdr = await ccdKeyInHeader(PROXY.url);   // v1.3.3: the key in a header when the proxy reads it
+  const qs = Object.entries(hdr ? { ...params } : { ...params, key: PROXY.key }).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+  const resp = await fetch(PROXY.url + (PROXY.url.includes('?') ? '&' : '?') + qs, hdr ? { headers: { 'x-ccd-key': PROXY.key } } : undefined);
   return resp.json();
 }
 
