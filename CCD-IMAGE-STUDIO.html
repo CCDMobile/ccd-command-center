@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Image Studio v0.7.1</title>
+<title>CCD Image Studio v0.7.2</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Amatic+SC:wght@400;700&family=Caveat:wght@400;700&family=Great+Vibes&family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Montserrat:ital,wght@0,400;0,700;1,400;1,700&family=Oswald:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap">
 <style>
@@ -340,7 +340,7 @@ a.btn { text-decoration:none; color:inherit; display:inline-block; }
 
   <!-- ═══ Top bar ═══ -->
   <header class="topbar">
-    <div class="brand">CCD <b>Image Studio</b> <span class="ver" id="verLabel">v0.7.1</span></div>
+    <div class="brand">CCD <b>Image Studio</b> <span class="ver" id="verLabel">v0.7.2</span></div>
     <div class="listing-head" id="listingHead"><span class="muted">No listing selected</span></div>
     <div class="top-actions">
       <button class="btn sm ghost" id="toolsBtn" title="Storage purge report · Etsy unedited-photo audit">🧰 Tools</button>
@@ -613,13 +613,12 @@ a.btn { text-decoration:none; color:inherit; display:inline-block; }
 <div class="modal-overlay" id="connModal" hidden>
   <div class="modal-card">
     <h3>Connection</h3>
-    <div class="modal-sub">Saved on this computer only. Ping saves the Worker URL to settings for other machines.</div>
+    <div class="modal-sub">Saved on this computer only. Ping saves the Worker URL to settings for other machines. The image service uses your Command Center sign-in — there is no key to enter.</div>
     <div class="field"><label>Supabase URL</label><input type="text" id="sbUrl" placeholder="https://xxx.supabase.co"></div>
     <div class="field"><label>Anon key</label><input type="password" id="sbKey" placeholder="eyJ…"></div>
     <div class="field"><label>Worker URL</label><input type="text" id="workerUrl" placeholder="https://…workers.dev"></div>
-    <div class="field"><label>CCD API key</label><input type="password" id="ccdKey" placeholder="ccd_…"></div>
     <div class="row gap end">
-      <button class="btn ghost" id="autofillBtn">⚡ Auto-fill from settings</button>
+      <button class="btn ghost" id="autofillBtn">⚡ Auto-fill Worker URL</button>
       <button class="btn" id="pingBtn">🔌 Ping Worker</button>
       <button class="btn primary" id="connCloseBtn">Done</button>
     </div>
@@ -930,7 +929,7 @@ const ccdPin = (() => {
             if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
             if (a !== b) { say('The two PINs do not match.', 'err'); return; }
             const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
-            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Image Studio v0.7.1' };
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Image Studio v0.7.2' };
             try {
                 const { data: ex } = await S.sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
                 const res = ex && ex.length ? await S.sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
@@ -958,7 +957,7 @@ const ccdPin = (() => {
 })();
 
 /* ═══ v0.7.1 — the Image Studio glue for the sign-in module ═══ */
-function ccdToolSignInUrl() { const u = new URL('./', location.href); u.searchParams.set('return', location.href); return u.href; }
+function ccdToolSignInUrl() { const here = new URL(location.href); here.search = ''; here.hash = ''; const u = new URL('./', here.href); u.searchParams.set('return', here.href); return u.href; }   // v0.7.2: this page, no query / hash
 function ccdToolNavigate(href) { location.href = href; }
 window.ccdAuthSignInHook = function (locked) {   // this page never takes a password: Command Center does (DDD-10)
     if (locked) { const blk = document.getElementById('ccdAuthBlock'); if (blk) blk.classList.add('on'); }
@@ -995,6 +994,66 @@ function ccdPinNotice(state) {   // the PIN line at the top of the Connection bo
     if (state === 'saved') openConnectionNow();
 }
 /* ═══ end v0.7.1 sign-in ═══ */
+
+/* ═══ v0.7.2 (Ecosystem notes 195/199, S150) — the CCD key is out of the browser. Every Worker call carries the
+   signed-in person's session (Authorization: Bearer), checked by Worker v1.3.x itself; no key is read, kept or sent. ═══ */
+(function ccdToolWipeKeys() {   // the wipe at load: every browser copy of the CCD / Etsy keys, Image Studio's own included
+    try {
+        ['ccdApiKey', 'ccd_api_key', 'etsyApiKey'].forEach(k => localStorage.removeItem(k));
+        const raw = localStorage.getItem('ccd_is_creds_v1');
+        if (raw) { const o = JSON.parse(raw); if (o && typeof o === 'object' && 'ccd_key' in o) { delete o.ccd_key; localStorage.setItem('ccd_is_creds_v1', JSON.stringify(o)); } }
+    } catch (e) { /* storage blocked: nothing to wipe */ }
+})();
+async function ccdToolToken(refresh) {   // the session's access token; refresh = ask Supabase for a new one (once per call)
+    if (typeof S === 'undefined' || !S.sb || !S.sb.auth) return null;
+    try {
+        if (!refresh) {
+            const { data } = await S.sb.auth.getSession();
+            const ss = data && data.session;
+            if (ss && ss.access_token && (!ss.expires_at || ss.expires_at * 1000 - Date.now() > 30000)) return ss.access_token;
+            return null;
+        }
+        if (typeof S.sb.auth.refreshSession !== 'function') return null;
+        const { data } = await S.sb.auth.refreshSession();
+        return (data && data.session && data.session.access_token) || null;
+    } catch (e) { return null; }
+}
+function ccdToolSignInAgain() {   // the sign-in module's wording, with the return link to this page
+    let el = document.getElementById('ccdSignAgain');
+    if (!el) {
+        el = document.createElement('div'); el.id = 'ccdSignAgain'; el.setAttribute('role', 'alert');
+        el.style.cssText = 'position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:10045;background:#3a2a10;border:1px solid #d4a853;color:#f3e3c0;border-radius:8px;padding:10px 16px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;gap:12px;align-items:center;';
+        const t = document.createElement('span'); t.textContent = 'Your sign-in has run out. Sign in again at Command Center.';
+        const a = document.createElement('a'); a.id = 'ccdSignAgainLink'; a.textContent = 'Sign in again'; a.style.cssText = 'color:#d4a853;font-weight:700;';
+        el.appendChild(t); el.appendChild(a); document.body.appendChild(el);
+    }
+    document.getElementById('ccdSignAgainLink').href = ccdToolSignInUrl();
+    el.hidden = false;
+    try { log('🔑 Your sign-in has run out. Sign in again at Command Center.', 'warn'); } catch (e) { /* log not ready */ }
+}
+async function workerFetch(path, init) {   // every call to the image service goes through here
+    init = init || {};
+    const { url } = workerConf();
+    if (!url) throw new Error('Worker URL not set');
+    let refreshed = false;
+    let token = await ccdToolToken(false);
+    if (!token) { token = await ccdToolToken(true); refreshed = true; }
+    if (!token) { ccdToolSignInAgain(); throw new Error('Your sign-in has run out. Sign in again at Command Center.'); }
+    const send = t => fetch(url + path, { method: 'POST', ...init, headers: { 'Content-Type': 'application/json', ...(init.headers || {}), 'Authorization': 'Bearer ' + t } });
+    let res = await send(token);
+    if (res.status === 401) {
+        let err = null; try { err = (await res.clone().json()).error; } catch (e) { /* not JSON */ }
+        if (err === 'session_invalid' && !refreshed) {   // the Worker refused before doing anything: safe to send once more
+            const t2 = await ccdToolToken(true); refreshed = true;
+            if (t2) { res = await send(t2); try { err = res.status === 401 ? (await res.clone().json()).error : null; } catch (e) { err = null; } }
+        }
+        if (res.status === 401 && err === 'session_invalid') ccdToolSignInAgain();
+        if (res.status === 401 && err === 'missing_auth_header') { try { log('❌ The image service is older than Worker v1.3.0 and does not take the sign-in yet. Deploy Worker v1.3.0.', 'fail'); } catch (e) { /* ignore */ } }
+    }
+    const banner = document.getElementById('ccdSignAgain'); if (banner && res.ok) banner.hidden = true;
+    return res;
+}
+/* ═══ end v0.7.2 ═══ */
 </script>
 
 <script>
@@ -1012,7 +1071,7 @@ function ccdPinNotice(state) {   // the PIN line at the top of the Connection bo
 // and the un-mirrored blob/customBox carry-over by construction).
 // ════════════════════════════════════════════════════════════════════════════
 
-const TOOL_VERSION = 'v0.7.1';
+const TOOL_VERSION = 'v0.7.2';
 const CREATED_BY   = 'is-desktop-' + TOOL_VERSION;
 const BUCKET       = 'product-images';
 const PREVIEW_SIZE = 900;          // internal px of the canvas-pane preview
@@ -1174,7 +1233,7 @@ function sanitizeSkuForPath(sku) {
 // ─── Supabase + Worker connection ─────────────────────────────────────────
 function connVal(id) { return (document.getElementById(id)?.value || '').trim(); }
 function workerConf() {
-  return { url: connVal('workerUrl').replace(/\/+$/, ''), key: connVal('ccdKey') };
+  return { url: connVal('workerUrl').replace(/\/+$/, '') };   // v0.7.2: no key — workerFetch() sends the sign-in
 }
 
 function ensureSupabase(quiet = false) {
@@ -1199,14 +1258,13 @@ function ensureSupabase(quiet = false) {
 async function loadFromSupabaseSettings() {
   if (!ensureSupabase()) return;
   try {
-    const { data, error } = await S.sb.from('settings').select('key, value').in('key', ['proxy_urls', 'api_keys']);
+    const { data, error } = await S.sb.from('settings').select('key, value').in('key', ['proxy_urls']);   // v0.7.2: never settings.api_keys
     if (error) throw new Error(error.message);
     const map = {};
     (data || []).forEach(r => { map[r.key] = r.value; });
     let filled = 0;
     if (map.proxy_urls?.imagestudio) { document.getElementById('workerUrl').value = map.proxy_urls.imagestudio; filled++; }
-    if (map.api_keys?.ccdApiKey)     { document.getElementById('ccdKey').value = map.api_keys.ccdApiKey; filled++; }
-    if (filled === 0) log('⚠️ settings has no proxy_urls.imagestudio / api_keys.ccdApiKey — enter the Worker URL by hand, then Ping (Ping saves it)', 'warn');
+    if (filled === 0) log('⚠️ settings has no proxy_urls.imagestudio — enter the Worker URL by hand, then Ping (Ping saves it)', 'warn');
     else { log(`✅ Settings loaded — ${filled} field(s) filled`, 'success'); saveCredentialsToLocal(); }
     refreshConnectionDot();
   } catch (err) {
@@ -1215,12 +1273,17 @@ async function loadFromSupabaseSettings() {
 }
 
 async function testWorker() {
-  const { url, key } = workerConf();
-  if (!url || !key) { log('⚠️ Set Worker URL + CCD API key first', 'warn'); openConnection(); return false; }
+  const { url } = workerConf();
+  if (!url) { log('⚠️ Set the Worker URL first', 'warn'); openConnection(); return false; }
   log('🔌 Pinging Worker…', 'info');
   try {
-    const res = await fetch(url + '/ping', { method: 'POST', headers: { 'X-CCD-Key': key, 'Content-Type': 'application/json' } });
-    const data = await res.json();
+    const res = await workerFetch('/ping', {});   // v0.7.2: the sign-in, not the key
+    let data = null; try { data = await res.json(); } catch (e) { /* not JSON */ }
+    if (!res.ok || !data) {
+      S.workerOk = false; refreshConnectionDot();
+      log('❌ Worker refused the ping: ' + (data ? (data.error || 'HTTP ' + res.status) + (data.detail ? ' — ' + data.detail : '') : 'HTTP ' + res.status), 'fail');
+      return false;
+    }
     const env = data.env_status || {};
     if (!data.ok || !env.fal_key) {
       S.workerOk = false; refreshConnectionDot();
@@ -1228,7 +1291,7 @@ async function testWorker() {
       return false;
     }
     S.workerOk = true; refreshConnectionDot();
-    log(`✅ Worker ${data.version} alive · fal key present`, 'success');
+    log(`✅ Worker ${data.version} alive · fal key present${data.auth_via === 'session' ? ' · signed in' + (data.who ? ' (' + data.who + ')' : '') : ''}`, 'success');
     saveCredentialsToLocal();
     persistWorkerUrlToSettings(url).catch(e => log('⚠️ Could not persist Worker URL to settings: ' + e.message, 'warn'));
     refreshCostMeter(); startCostMeterTimer();
@@ -1258,7 +1321,7 @@ function saveCredentialsToLocal() {
     localStorage.setItem(LS_CREDS_KEY, JSON.stringify({
       version: 1, saved_at: new Date().toISOString(),
       sb_url: connVal('sbUrl'), sb_key: connVal('sbKey'),
-      worker_url: connVal('workerUrl'), ccd_key: connVal('ccdKey')
+      worker_url: connVal('workerUrl')   // v0.7.2: no ccd_key
     }));
   } catch (e) { /* storage unavailable — non-fatal */ }
 }
@@ -1267,7 +1330,7 @@ function loadCredentialsFromLocal() {
     const obj = JSON.parse(localStorage.getItem(LS_CREDS_KEY) || 'null');
     if (!obj) return false;
     const set = (id, v) => { if (typeof v === 'string' && v) document.getElementById(id).value = v; };
-    set('sbUrl', obj.sb_url); set('sbKey', obj.sb_key); set('workerUrl', obj.worker_url); set('ccdKey', obj.ccd_key);
+    set('sbUrl', obj.sb_url); set('sbKey', obj.sb_key); set('workerUrl', obj.worker_url);
     return !!(obj.sb_url || obj.sb_key);
   } catch (e) { return false; }
 }
@@ -1572,14 +1635,12 @@ async function runCutoutFor(item, { force = false } = {}) {
   const variant = S.variant;
   if (item.kind !== 'raw') throw new Error('adjust-only items have no raw to cut');
   if (!force && item.cutouts[variant]) { await applyCutout(item, item.cutouts[variant], variant); return; }
-  const { url: workerUrl, key } = workerConf();
-  if (!workerUrl || !key) throw new Error('Worker URL / CCD key not set');
+  const { url: workerUrl } = workerConf();
+  if (!workerUrl) throw new Error('Worker URL not set');
   await ensureRawUploaded(item);
   item.status = 'cutting'; item.errorMsg = null; queueChanged(item);
   try {
-    const res = await fetch(workerUrl + '/bg-remove', {
-      method: 'POST',
-      headers: { 'X-CCD-Key': key, 'Content-Type': 'application/json' },
+    const res = await workerFetch('/bg-remove', {   // v0.7.2: the sign-in, not the key
       body: JSON.stringify({ image_url: item.sourceUrl, variant, sku: item.sku })
     });
     const data = await res.json();
@@ -3076,9 +3137,9 @@ async function bumpSceneUsage(id) {
 
 // ─── Worker calls ─────────────────────────────────────────────────────────
 async function workerPost(path, body) {
-  const { url, key } = workerConf();
-  if (!url || !key) throw new Error('Worker URL / CCD key not set');
-  const res = await fetch(url + path, { method: 'POST', headers: { 'X-CCD-Key': key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const { url } = workerConf();
+  if (!url) throw new Error('Worker URL not set');
+  const res = await workerFetch(path, { body: JSON.stringify(body) });   // v0.7.2: the sign-in, not the key
   let data = null; try { data = await res.json(); } catch (e) {}
   if (!data) throw new Error(`Worker ${path}: HTTP ${res.status}`);
   if (!res.ok && !(data.jobs && data.jobs.length)) throw new Error(`${data.error || 'HTTP ' + res.status}${data.detail ? ': ' + data.detail : ''}`);
@@ -3585,8 +3646,7 @@ async function fetchListingBlob(url) {
   if (/supabase\.(co|in)$/.test(host)) {
     const r = await fetch(url); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob();
   }
-  const { url: w, key } = workerConf();
-  const r = await fetch(w + '/fetch-image', { method: 'POST', headers: { 'X-CCD-Key': key, 'Content-Type': 'application/json' }, body: JSON.stringify({ url }) });
+  const r = await workerFetch('/fetch-image', { body: JSON.stringify({ url }) });   // v0.7.2: the sign-in, not the key
   if (!r.ok) { let d = null; try { d = await r.json(); } catch (e) {} throw new Error(d?.detail || `HTTP ${r.status}`); }
   return r.blob();
 }
@@ -3731,7 +3791,7 @@ function closeConnection() {
 function refreshConnectionDot() {
   const dot = $('connDot');
   const hasSb = !!(connVal('sbUrl') && connVal('sbKey'));
-  const hasW = !!(connVal('workerUrl') && connVal('ccdKey'));
+  const hasW = !!connVal('workerUrl');   // v0.7.2: no key
   dot.classList.remove('ok', 'partial', 'bad');
   let lbl = 'Connect';
   if (hasSb && hasW && S.workerOk) { dot.classList.add('ok'); lbl = 'Connected'; }
@@ -4821,8 +4881,8 @@ function startReCutFromAdjust() {
 }
 
 async function verifyExisting(rawRow, url, rank) {
-  const { url: wu, key } = workerConf();
-  if (!wu || !key) { openConnection(); return; }
+  const { url: wu } = workerConf();
+  if (!wu) { openConnection(); return; }
   const ok = await confirmDialog({ title: `Verify rank ${rank}?`, body: `Re-runs BiRefNet (Standard) on the original raw and checks IMAGE-STUDIO-001.<br><span class="mono">Cost ~${money(variantCost('standard'), 4)}</span>`, okText: 'Verify · $0.005' });
   if (!ok) return;
   const m = showModal(`<h3>Verifying rank ${rank}</h3><div class="modal-sub" id="vStatus">Calling BiRefNet on the original raw…</div><div class="result-box" id="vResult">Running…</div><div class="row end" style="margin-top:12px"><button class="btn ghost" data-a="close">Close</button></div>`);
@@ -4830,7 +4890,7 @@ async function verifyExisting(rawRow, url, rank) {
   const st = t => { const e = m.card.querySelector('#vStatus'); if (e) e.textContent = t; };
   const res = (html, cls) => { const e = m.card.querySelector('#vResult'); if (e) { e.innerHTML = html; e.className = 'result-box ' + (cls || ''); } };
   try {
-    const r = await fetch(wu + '/bg-remove', { method: 'POST', headers: { 'X-CCD-Key': key, 'Content-Type': 'application/json' },
+    const r = await workerFetch('/bg-remove', {   // v0.7.2: the sign-in, not the key
       body: JSON.stringify({ image_url: rawRow.public_url, variant: 'standard', sku: S.set.sku }) });
     const data = await r.json();
     if (!r.ok || !data.ok) throw new Error(data?.error || 'HTTP ' + r.status);
@@ -5033,7 +5093,7 @@ function wire() {
   $('connModal').onclick = e => { if (e.target === $('connModal')) closeConnection(); };
   $('autofillBtn').onclick = loadFromSupabaseSettings;
   $('pingBtn').onclick = testWorker;
-  ['sbUrl', 'sbKey', 'workerUrl', 'ccdKey'].forEach(id => $(id).addEventListener('change', () => { S.workerOk = false; saveCredentialsToLocal(); refreshConnectionDot(); }));
+  ['sbUrl', 'sbKey', 'workerUrl'].forEach(id => $(id).addEventListener('change', () => { S.workerOk = false; saveCredentialsToLocal(); refreshConnectionDot(); }));
   $('helpBtn').onclick = showHelp;
   $('logToggle').onclick = () => { const d = $('logDrawer'); d.hidden = !d.hidden; $('logToggle').textContent = d.hidden ? 'Activity log ▴' : 'Activity log ▾'; };
 
@@ -5113,9 +5173,9 @@ function boot() {
   if (credsRestored && ensureSupabase(true)) {
     loadSkus();
     refreshCostMeter(); startCostMeterTimer();
-    const { url, key } = workerConf();
-    if (url && key) testWorker();
-    else loadFromSupabaseSettings().then(() => { const w = workerConf(); if (w.url && w.key) testWorker(); });
+    const { url } = workerConf();
+    if (url) testWorker();
+    else loadFromSupabaseSettings().then(() => { const w = workerConf(); if (w.url) testWorker(); });
   } else {
     openConnection();
   }
