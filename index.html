@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CCD Command Center v3.4.5</title>
+<title>CCD Command Center v3.4.6</title>
+<!-- v3.4.6 (S150, 2026-11-22): STEP 2 — the CCD key out of the browser. Reads no settings.api_keys, seeds no ccdApiKey, wipes ccdApiKey / ccd_api_key / etsyApiKey from this browser at every load, the health ping sends no key, the API Key box is gone from Settings. Save Settings MERGES into settings.proxy_urls (only the proxy boxes typed and changed; never api_key) instead of replacing the row (S150 F-1). The Sync Hub tile is removed (Sync Hub is off the site). -->
 <!-- v3.4.5 (S147, 2026-11-21): the health check's ping sends NO key to a Supabase function proxy (the key in the address was written into Supabase's function log on every load; ping needs no key). An Apps Script address is pinged as before. -->
 <!-- v3.4.4 (S142 CG-01): the connection test before sign-in counts items by ONE column (sku) — the signed-out key may no longer read whole item rows, so select('*') was refused and the page fell back to the setup screen. -->
 <!-- v3.4.3 (S142): WITH SIGN-IN REQUIRED, NOTHING IS READ BEFORE YOU SIGN IN — the dashboard waits for the sign-in before loading any tile, and the 60-second refresh and the health-check timer skip while signed out (S142 F-1: an iPhone read the key settings before signing in). Off / offered: as before. -->
@@ -896,7 +897,7 @@ body::before {
         <div class="brand">
             <div class="brand-icon">✦</div>
             Country Charm Decor
-            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.5</span>
+            <span style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);font-style:normal;letter-spacing:0;">v3.4.6</span>
         </div>
     </div>
 
@@ -1262,12 +1263,7 @@ body::before {
                 <input type="text" class="form-input" id="settingsSyncProxy">
             </div>
 
-            <div class="form-section-title">API Key</div>
-            <div class="form-group">
-                <label class="form-label">CCD API Key</label>
-                <input type="password" class="form-input" id="settingsApiKey">
-                <div class="form-hint">Shared key for all proxy endpoints</div>
-            </div>
+            <div class="form-hint">v3.4.6: the CCD key is no longer kept in this browser. The tools use your sign-in.</div>
 
             <div class="flex-gap mt-4">
                 <button class="btn-gold" onclick="saveSettings()">Save Settings</button>
@@ -1297,6 +1293,11 @@ const BASE_URL = 'https://ccdmobile.github.io/ccd-command-center/';
 const API_KEY = '';
 
 let sb = null; // Supabase client
+// v3.4.6 (S150): wipe the browser copy of the CCD key at every load (step 2).
+function ccdWipeBrowserKey() {
+    ['ccdApiKey', 'ccd_api_key', 'etsyApiKey'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+}
+ccdWipeBrowserKey();
 let healthPanelOpen = false;
 let showComingSoon = false;
 let toolVersions = {}; // loaded from Supabase settings
@@ -1319,7 +1320,6 @@ const CROSS_KEYS = {
     'ccdWayfairProxy':  ['ccdWayfairProxy', 'ccd_wayfair_proxy_url'],
     'ccdShippoProxy':   ['ccdShippoProxy', 'ccd_shippo_proxy_url'],
     'ccdSyncProxy':     ['ccdSyncProxy', 'ccd_sync_proxy_url'],
-    'ccdApiKey':        ['ccdApiKey', 'ccd_api_key'],
     'ccdUserName':      ['ccdUserName', 'ccd_user_name'],
 };
 
@@ -1342,7 +1342,7 @@ function resolveKey(key) {
 const TOOLS = [
     // CORE OPERATIONS
     { id: 'inventoryv2', name: 'Inventory V2', file: 'CCD-INVENTORY-V2.html', versionKey: 'inventory_v2', icon: '🏪', desc: 'Next-gen inventory — channel pricing, shipping, analytics', category: 'core', status: 'ok' },
-    { id: 'synchub', name: 'Sync Hub', file: 'CCD-SYNC-HUB.html', versionKey: 'synchub', icon: '🔄', desc: 'Order processing, channel sync, cascade push', category: 'core', status: 'ok' },
+    // v3.4.6 (S150): the Sync Hub tile removed — Sync Hub is off the site (decision 4a); its file stays in the folder
     { id: 'mobile', name: 'Mobile Warehouse', file: null, url: 'https://ccdmobile.github.io/CCD-Mobile/', versionKey: 'mobile', icon: '📱', desc: 'Warehouse operations, quick sell, barcode scan', category: 'core', status: 'ok' },
 
     // FINANCIAL & REPORTING
@@ -1532,16 +1532,11 @@ async function loadProxyConfig() {
             if (urls.wayfair) LS.set('ccdWayfairProxy', urls.wayfair);
             if (urls.shippo)  LS.set('ccdShippoProxy', urls.shippo);
             if (urls.syncHub || urls.synchub) LS.set('ccdSyncProxy', urls.syncHub || urls.synchub);
-            if (urls.api_key) LS.set('ccdApiKey', urls.api_key);
             console.log('Proxy config loaded from Supabase settings');
         }
 
-        // Load API key from dedicated api_keys row
-        const { data: apiData } = await sb.from('settings').select('value').eq('key', 'api_keys').limit(1);
-        if (apiData && apiData.length > 0 && apiData[0].value) {
-            const keys = typeof apiData[0].value === 'string' ? JSON.parse(apiData[0].value) : apiData[0].value;
-            if (keys.ccdApiKey) LS.set('ccdApiKey', keys.ccdApiKey);
-        }
+        // v3.4.6 (S150): the CCD key is not read (step 2); the wipe runs again in case another tab re-seeded it
+        ccdWipeBrowserKey();
     } catch (e) {
         console.log('No proxy_urls in settings, using localStorage');
     }
@@ -1551,22 +1546,33 @@ async function loadProxyConfig() {
 async function saveProxyConfigToSupabase() {
     if (!sb) return;
     const who = resolveKey('ccdUserName') || 'Command Center';
-    const urls = {
-        etsy:    LS.get('ccdEtsyProxy') || '',
-        wix:     LS.get('ccdWixProxy') || '',
-        wayfair: LS.get('ccdWayfairProxy') || '',
-        shippo:  LS.get('ccdShippoProxy') || '',
-        syncHub: LS.get('ccdSyncProxy') || '',
-        api_key: LS.get('ccdApiKey') || API_KEY,
+    // v3.4.6 (S150 F-1): MERGE, never replace. proxy_urls holds every tool's addresses and the
+    // Apps Script rollbacks; only the five boxes here that were typed AND differ are written,
+    // and the CCD key is never written into it.
+    const typed = {
+        etsy:    (LS.get('ccdEtsyProxy') || '').trim(),
+        wix:     (LS.get('ccdWixProxy') || '').trim(),
+        wayfair: (LS.get('ccdWayfairProxy') || '').trim(),
+        shippo:  (LS.get('ccdShippoProxy') || '').trim(),
+        syncHub: (LS.get('ccdSyncProxy') || '').trim(),
     };
     try {
-        const { data: existing } = await sb.from('settings').select('key').eq('key', 'proxy_urls').limit(1);
-        if (existing && existing.length > 0) {
-            await sb.from('settings').update({ value: urls, updated_at: new Date().toISOString(), updated_by: who }).eq('key', 'proxy_urls');
-        } else {
-            await sb.from('settings').insert({ key: 'proxy_urls', value: urls, updated_by: who });
+        const { data: existing, error: readErr } = await sb.from('settings').select('value').eq('key', 'proxy_urls').limit(1);
+        if (readErr) throw readErr;
+        if (!existing || existing.length === 0) {
+            console.warn('proxy_urls row missing; Command Center does not create it (nothing written)');
+            return;
         }
-        console.log('Proxy config saved to Supabase');
+        const cur = typeof existing[0].value === 'string' ? JSON.parse(existing[0].value) : (existing[0].value || {});
+        const next = Object.assign({}, cur);
+        const changed = [];
+        if (Object.prototype.hasOwnProperty.call(next, 'api_key')) { delete next.api_key; changed.push('api_key removed'); }
+        for (const k of Object.keys(typed)) {
+            if (typed[k] && typed[k] !== (cur[k] || '')) { next[k] = typed[k]; changed.push(k); }
+        }
+        if (!changed.length) { console.log('Proxy config unchanged; nothing written'); return; }
+        await sb.from('settings').update({ value: next, updated_at: new Date().toISOString(), updated_by: who }).eq('key', 'proxy_urls');
+        console.log('Proxy config saved to Supabase (merged: ' + changed.join(', ') + ')');
     } catch (e) {
         console.warn('Could not save proxy config to Supabase:', e);
     }
@@ -2033,7 +2039,7 @@ async function checkProxies() {
         }
 
         el.textContent = 'Checking...'; el.className = 'value';
-        const apiKey = resolveKey('ccdApiKey') || API_KEY;
+        const apiKey = ''; // v3.4.6 (S150): no key from the browser (step 2)
         const startTime = Date.now();
 
         try {
@@ -2113,7 +2119,7 @@ function jsonpCheck(baseUrl, apiKey, timeout) {
         // Create script tag — tries action=ping with callback
         const script = document.createElement('script');
         // v3.4.5 (S147): a Supabase function proxy answers ping without a key — none in its address (Supabase logs the address)
-        const keyPart = /^https:\/\/[A-Za-z0-9.-]+\/functions\/v1\//.test(String(baseUrl)) ? '' : `&key=${encodeURIComponent(apiKey)}`;
+        const keyPart = ''; // v3.4.6 (S150): never a key in the address
         script.src = `${baseUrl}?action=ping${keyPart}&callback=${cb}&_=${Date.now()}`;
 
         script.onload = () => {
@@ -2306,7 +2312,6 @@ function ccdOpenSettingsNow() {
     document.getElementById('settingsWayfairProxy').value = resolveKey('ccdWayfairProxy') || '';
     document.getElementById('settingsShippoProxy').value = resolveKey('ccdShippoProxy') || '';
     document.getElementById('settingsSyncProxy').value = resolveKey('ccdSyncProxy') || '';
-    document.getElementById('settingsApiKey').value = resolveKey('ccdApiKey') || API_KEY;
     document.getElementById('settingsOverlay').classList.add('visible');
 }
 
@@ -2349,7 +2354,6 @@ function saveSettings() {
     LS.set('ccdWayfairProxy', document.getElementById('settingsWayfairProxy').value.trim());
     LS.set('ccdShippoProxy', document.getElementById('settingsShippoProxy').value.trim());
     LS.set('ccdSyncProxy', document.getElementById('settingsSyncProxy').value.trim());
-    LS.set('ccdApiKey', document.getElementById('settingsApiKey').value.trim());
     LS.set('ccdUseSupabase', 'true');
 
     // Cross-write to snake_case keys so other CCD tools (SKU Audit) find them
