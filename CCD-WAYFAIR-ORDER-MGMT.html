@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.6.5: copied from Command Center v3.4.1 -->
-<title>CCD Wayfair Order Manager v1.6.11</title>
+<title>CCD Wayfair Order Manager v1.6.12</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -357,7 +357,7 @@
 <div class="container">
 
   <header>
-    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.11</span></h1>
+    <h1>Wayfair Order Manager <span style="font-size:12px;color:var(--text-muted);font-weight:500;">v1.6.12</span></h1>
     <span style="display:flex;align-items:center;gap:6px;"><button class="om-conn-toggle" id="omConnToggle" type="button" onclick="omToggleConn()">⚙ Connection</button><!-- v1.6.7: phone --><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.6.5: sign-in --><span class="env-badge" id="envBadge">⬡ SANDBOX</span></span>
   </header>
 
@@ -365,7 +365,6 @@
     <div class="cfg-field"><label>Supabase URL</label><input type="text" id="sbUrl"></div>
     <div class="cfg-field"><label>Supabase Key</label><input type="password" id="sbKey"></div>
     <div class="cfg-field"><label>Order Proxy URL <span id="proxyUrlIndicator" style="font-size:9px;font-weight:500;color:var(--text-muted);margin-left:6px;"></span></label><input type="text" id="proxyUrl"><div id="proxyUrlReset" style="display:none;font-size:9px;margin-top:2px;"><a href="#" onclick="resetProxyUrl();return false;" style="color:var(--text-muted);text-decoration:underline;cursor:pointer;">Reset to default</a></div></div>
-    <div class="cfg-field" style="max-width:240px;"><label>CCD API Key</label><input type="password" id="apiKey" value="" placeholder="loads from Supabase"></div>
     <button class="btn btn-primary btn-sm" onclick="connectAll()">Connect</button>
   </div>
 
@@ -585,7 +584,7 @@ async function auditLog(action, summary, details = {}, sku = null) {
       channel: 'wayfair',
       summary: summary,
       details: typeof details === 'object' ? details : {},
-      device: 'WF-OrderMgr-v1.6.11',
+      device: 'WF-OrderMgr-v1.6.12',
       user_name: ccdToolWho() || omLS.get('ccdUsername') || 'Paul',   // v1.6.5: the signed-in person first
       sku: sku || details?.sku || null
     });
@@ -632,12 +631,14 @@ const omLS = {
   set: (k, v) => { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } },
   del: k => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } }
 };
-const DEFAULT_ORDER_PROXY_URL = 'https://script.google.com/macros/s/AKfycbwvHpuvuCDjTCApLZOw3-58ew4T1dl3bQW2k-57BfCfRDphPEjDL5HMbQlLBQx_uCfJ7w/exec';
+// v1.6.12 (Ecosystem 196, step 2): the built-in address is the Supabase function. The Apps Script Order Proxy needs the CCD key,
+// which this version no longer has, so it can never be the default.
+const DEFAULT_ORDER_PROXY_URL = 'https://ivytuqqofmwwrnkcykwh.supabase.co/functions/v1/wayfair-orders';
 // v1.6.9 (Ecosystem 161-165, Wayfair 162 Q4): the Order Proxy address comes from settings.proxy_urls.wayfair_orders, so the
 // move to the Supabase function is one settings row. Order: a saved device override (never the old Apps Script address)
 // -> the settings row -> the built-in address above. Only https on script.google.com or the PROD Supabase host is used:
 // the CCD key is sent to this address.
-const OLD_ORDER_PROXY_URLS = [DEFAULT_ORDER_PROXY_URL];   // the Apps Script Order Proxy v1.1.8
+const OLD_ORDER_PROXY_URLS = ['https://script.google.com/macros/s/AKfycbwvHpuvuCDjTCApLZOw3-58ew4T1dl3bQW2k-57BfCfRDphPEjDL5HMbQlLBQx_uCfJ7w/exec'];   // the Apps Script Order Proxy v1.1.8 (v1.6.12: no longer the default)
 let omProxySource = 'built-in';                           // 'override' | 'settings' | 'built-in'
 let omSettingsProxyUrl = null;
 function omProxyAllowed(u) {
@@ -675,7 +676,6 @@ async function loadProxyUrlFromDb() {
 }
 
 function proxyUrl() { return document.getElementById('proxyUrl').value.trim(); }
-function apiKey() { return document.getElementById('apiKey').value.trim(); }
 
 // v1.6.1: Keep the small "(default)" / "(override)" indicator + Reset link
 // in sync with whatever URL is currently in the field. Called on page load
@@ -722,9 +722,8 @@ function resetProxyUrl() {
   if (typeof checkProxyEnvironment === 'function') checkProxyEnvironment();
 }
 
-// v1.6.10 (Ecosystem 187, Wayfair 188): the CCD key out of the web address. A GET sends it in an x-ccd-key header only to the
-// PROD Supabase function whose __selfcheck says header_key: true; anything else (the Apps Script rollback, a function without
-// header support, a failed self-check) keeps ?key= as v1.6.9. POSTs already carry the key in the body.
+// v1.6.10-v1.6.12: the function's __selfcheck (asked once per address, with no key and no token) says what it takes.
+// v1.6.12 sends only to a function that answers signin_auth: true (see omAuthPlan below).
 const omCapsCache = {};   // address -> Promise<{ header: boolean, signin: boolean }> (v1.6.11: one __selfcheck answers both)
 function omIsSupabaseFn(u) {
   try { const x = new URL(String(u || '').trim()); return x.protocol === 'https:' && x.hostname === 'ivytuqqofmwwrnkcykwh.supabase.co' && !x.username && !x.password && (!x.port || x.port === '443'); }
@@ -740,99 +739,108 @@ function omProxyCaps(u) {
   }
   return omCapsCache[u];
 }
-function omUsesHeaderKey(u) { return omProxyCaps(u).then(c => c.header); }
-// v1.6.11 (Ecosystem 192, sign-in Phase B): the signed-in person's session token, if live (not within 30 s of expiry).
-async function omSigninToken() {
+// v1.6.12 (Ecosystem 196, step 2): the CCD key is out of the browser. Every call to the Order Proxy goes with the signed-in
+// person's Supabase token, only to the PROD function whose __selfcheck says signin_auth: true. There is no key fallback.
+const OM_KEY_REFUSALS = ['Missing API key.', 'Invalid API key.'];   // answered before anything is sent to Wayfair
+const OM_SIGNIN_EXPIRED = 'Your sign-in has run out. Sign in again at Command Center.';
+const OM_NEEDS_KEY = 'This Order Proxy address is the old Apps Script, which needs the CCD key. Order Manager no longer has the key, so nothing was sent. Use the Supabase function address (Reset to default).';
+const OM_NO_SIGNIN = 'The Order Proxy did not confirm that it takes the sign-in (its self-check failed or says no). Nothing was sent - try again in a moment.';
+function omNotice(kind, text) {
   try {
-    if (!sb || !sb.auth || typeof sb.auth.getSession !== 'function') return '';
-    const { data } = await sb.auth.getSession();
-    const ss = data && data.session;
-    if (!ss || !ss.access_token) return '';
-    if (ss.expires_at && Number(ss.expires_at) * 1000 - Date.now() < 30000) return '';
-    return String(ss.access_token);
+    let el = document.getElementById('omKeyNotice');
+    if (!el) {
+      el = document.createElement('div'); el.id = 'omKeyNotice';
+      el.style.cssText = 'margin:8px 0;padding:10px 12px;border:1px solid #d4a853;border-radius:8px;color:#d4a853;font-size:13px;';
+      const hd = document.querySelector('.container header');
+      if (hd && hd.parentNode) hd.parentNode.insertBefore(el, hd.nextSibling); else document.body.prepend(el);
+    }
+    el.textContent = text;
+    if (kind === 'signin' && typeof ccdToolSignInUrl === 'function') {
+      el.appendChild(document.createTextNode(' '));
+      const a = document.createElement('a'); a.href = ccdToolSignInUrl(); a.textContent = 'Sign in again';
+      a.style.cssText = 'color:#d4a853;text-decoration:underline;font-weight:600;'; el.appendChild(a);
+    }
+    el.style.display = 'block'; el.dataset.kind = kind;
+  } catch (e) { /* the log line below still says it */ }
+  log(text, 'err');
+}
+function omNoticeClear() { try { const el = document.getElementById('omKeyNotice'); if (el) el.style.display = 'none'; } catch (e) { /* ignore */ } }
+function omLiveToken(ss) {
+  if (!ss || !ss.access_token) return '';
+  if (ss.expires_at && Number(ss.expires_at) * 1000 - Date.now() < 30000) return '';
+  return String(ss.access_token);
+}
+// One auth.refreshSession(); the new token, or '' (never the old one again).
+async function omRefreshToken(old) {
+  try {
+    if (!sb || !sb.auth || typeof sb.auth.refreshSession !== 'function') return '';
+    const { data } = await sb.auth.refreshSession();
+    const t = omLiveToken(data && data.session);
+    return t && t !== old ? t : '';
   } catch (e) { return ''; }
 }
-const OM_KEY_REFUSALS = ['Missing API key.', 'Invalid API key.'];   // answered before anything is sent to Wayfair
-// The v1.6.10 GET: the key in the header when the function reads it, else in the address (v1.6.9).
-async function omGetWithKey(url, params) {
-  const key = apiKey();
-  if (await omUsesHeaderKey(url)) {
-    return fetch(`${url}?${new URLSearchParams(params)}`, { headers: { 'x-ccd-key': key } });
-  }
-  return fetch(`${url}?${new URLSearchParams({ ...params, key })}`);
+// The live token, refreshing once if there is none. { token, refreshed }
+async function omSigninToken() {
+  try {
+    if (!sb || !sb.auth || typeof sb.auth.getSession !== 'function') return { token: '', refreshed: false };
+    const { data } = await sb.auth.getSession();
+    const t = omLiveToken(data && data.session);
+    if (t) return { token: t, refreshed: false };
+    return { token: await omRefreshToken(''), refreshed: true };
+  } catch (e) { return { token: '', refreshed: false }; }
 }
-// One GET to the Order Proxy. v1.6.11: the sign-in token when the function takes it and someone is signed in; a key refusal
-// is sent once more as v1.6.10.
-async function omGet(url, params) {
+// May this call go, and with which token? { ok, token, refreshed } or { ok:false, refusal } (nothing is sent).
+async function omAuthPlan(url) {
+  if (!omIsSupabaseFn(url)) { omNotice('key', OM_NEEDS_KEY); return { ok: false, refusal: { success: false, error: OM_NEEDS_KEY, code: 'NEEDS_KEY' } }; }
   const caps = await omProxyCaps(url);
-  const tok = caps.signin ? await omSigninToken() : '';
-  if (tok) {
-    const r = await fetch(`${url}?${new URLSearchParams(params)}`, { headers: { 'Authorization': 'Bearer ' + tok } });
-    try {
-      const j = await r.clone().json();
-      if (j && (j.code === 'AUTH_FAILED' || OM_KEY_REFUSALS.includes(String(j.error || '')))) return omGetWithKey(url, params);
-    } catch (e) { /* not JSON: hand it back as it is */ }
-    return r;
+  if (!caps.signin) { omNotice('selfcheck', OM_NO_SIGNIN); return { ok: false, refusal: { success: false, error: OM_NO_SIGNIN, code: 'SIGNIN_UNCONFIRMED' } }; }
+  const st = await omSigninToken();
+  if (!st.token) { omNotice('signin', OM_SIGNIN_EXPIRED); return { ok: false, refusal: { success: false, error: OM_SIGNIN_EXPIRED, code: 'SIGNIN_EXPIRED' } }; }
+  return { ok: true, token: st.token, refreshed: st.refreshed };
+}
+const omJsonResponse = o => new Response(JSON.stringify(o), { status: 200, headers: { 'content-type': 'application/json' } });
+function omIsKeyRefusal(j) { return !!(j && j.success === false && (j.code === 'AUTH_FAILED' || OM_KEY_REFUSALS.includes(String(j.error || '')))); }
+// One GET to the Order Proxy (health, getRequestLog): the token only.
+async function omGet(url, params) {
+  const plan = await omAuthPlan(url);
+  if (!plan.ok) return omJsonResponse(plan.refusal);
+  const send = t => fetch(`${url}?${new URLSearchParams(params)}`, { headers: { 'Authorization': 'Bearer ' + t } });
+  let r = await send(plan.token);
+  let j = null; try { j = await r.clone().json(); } catch (e) { return r; }   // not JSON: hand it back as it is
+  if (omIsKeyRefusal(j)) {
+    const t2 = plan.refreshed ? '' : await omRefreshToken(plan.token);
+    if (!t2) { omNotice('signin', OM_SIGNIN_EXPIRED); return omJsonResponse({ success: false, error: OM_SIGNIN_EXPIRED, code: 'SIGNIN_EXPIRED' }); }
+    r = await send(t2);
+    try { j = await r.clone().json(); } catch (e) { return r; }
+    if (omIsKeyRefusal(j)) { omNotice('signin', OM_SIGNIN_EXPIRED); return omJsonResponse({ success: false, error: OM_SIGNIN_EXPIRED, code: 'SIGNIN_EXPIRED' }); }
   }
-  return omGetWithKey(url, params);
+  omNoticeClear();
+  return r;
 }
 async function proxyGet(action, params = {}) {
   const r = await omGet(proxyUrl(), { action, ...params });
   return r.json();
 }
+// One POST to the Order Proxy: the token, and no key in the body. A refusal for the key happens before anything reaches Wayfair,
+// so after one refreshSession() the call may be sent once more with the new token. A non-JSON answer throws and is never resent.
 async function proxyPost(action, body = {}) {
-  // v1.6.11 (Ecosystem 192): to the function with signin_auth and a live session -> the token, and no key in the body (the
-  // sign-in layer supplies it). A key refusal ("Missing / Invalid API key.") is answered before anything reaches Wayfair, so the
-  // call is sent once more exactly as v1.6.10. Anything else (including a non-JSON answer, which throws) is returned as it is.
   const url = proxyUrl();
-  const caps = await omProxyCaps(url);
-  const tok = caps.signin ? await omSigninToken() : '';
-  if (tok) {
-    const r1 = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain', 'Authorization': 'Bearer ' + tok }, body: JSON.stringify({ action, ...body }) });
-    const j1 = await r1.json();
-    if (!(j1 && j1.success === false && OM_KEY_REFUSALS.includes(String(j1.error || '')))) return j1;
-    log('Sign-in not accepted by the Order Proxy for ' + action + ' - sent again with the CCD key', 'info');
+  const plan = await omAuthPlan(url);
+  if (!plan.ok) return plan.refusal;
+  const send = t => fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain', 'Authorization': 'Bearer ' + t }, body: JSON.stringify({ action, ...body }) });
+  let j = await (await send(plan.token)).json();
+  if (omIsKeyRefusal(j)) {
+    const t2 = plan.refreshed ? '' : await omRefreshToken(plan.token);
+    if (!t2) { omNotice('signin', OM_SIGNIN_EXPIRED); return { success: false, error: OM_SIGNIN_EXPIRED, code: 'SIGNIN_EXPIRED' }; }
+    log('Sign-in refreshed for ' + action + ' - sending once more', 'info');
+    j = await (await send(t2)).json();
+    if (omIsKeyRefusal(j)) { omNotice('signin', OM_SIGNIN_EXPIRED); return { success: false, error: OM_SIGNIN_EXPIRED, code: 'SIGNIN_EXPIRED' }; }
   }
-  const payload = { action, key: apiKey(), ...body };
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(payload) });
-  return r.json();
+  omNoticeClear();
+  return j;
 }
 
-// =========================================================================
-// v1.6.3: CCD API key is loaded from Supabase, never hardcoded.
-//
-// PRIOR BUG: the key lived in the apiKey input's value attribute. It was
-// never saved, so every reload restored whatever was baked into the HTML —
-// after the S79 rotation that was the RETIRED key, forcing a manual repaste
-// on every open. This file is also served publicly from ccdmobile.github.io,
-// so the credential was readable by anyone.
-//
-// settings.api_keys.ccdApiKey is the same source SH / V2 / CM / FR read, so
-// this tool now inherits key rotations automatically and is no longer a
-// rotation surface.
-// =========================================================================
-async function loadApiKeyFromDb() {
-  if (!sb) return;
-  const el = document.getElementById('apiKey');
-  if (!el) return;
-  try {
-    const { data, error } = await sb.from('settings')
-      .select('value').eq('key', 'api_keys').single();
-    if (error) {
-      log('CCD API key: DB read failed (' + error.message + ') — paste manually', 'err');
-      return;
-    }
-    const k = data && data.value && data.value.ccdApiKey;
-    if (!k) {
-      log('CCD API key: settings.api_keys.ccdApiKey is empty — paste manually', 'err');
-      return;
-    }
-    el.value = k;
-    log('CCD API key loaded from Supabase (' + k.length + ' chars)', 'ok');
-  } catch (e) {
-    log('CCD API key load failed: ' + e.message, 'err');
-  }
-}
+// v1.6.12 (Ecosystem 196, step 2): the CCD key is no longer loaded from settings.api_keys - the sign-in replaces it.
 function connectAll() {
   const sbUrl = document.getElementById('sbUrl').value.trim();
   const sbKey = document.getElementById('sbKey').value.trim();
@@ -843,7 +851,6 @@ function connectAll() {
     omLS.set('ccdSupabaseKey', sbKey);
     log('Supabase connected', 'ok');
     loadDbItems();
-    loadApiKeyFromDb();   // v1.6.3
     loadProxyUrlFromDb();   // v1.6.9
   }
   const px = proxyUrl();
@@ -872,6 +879,8 @@ function connectAll() {
 }
 
 function autoConnect() {
+  // v1.6.12 (Ecosystem 196): the wipe - no CCD / Etsy key stays in this browser.
+  ['ccdApiKey', 'ccd_api_key', 'etsyApiKey'].forEach(k => omLS.del(k));
   // v1.6.8: saved value wins, else the built-in production address and public key
   const sbUrl = omLS.get('ccdSupabaseUrl') || DEFAULT_SUPABASE_URL;
   const sbKey = omLS.get('ccdSupabaseKey') || DEFAULT_SUPABASE_KEY;
@@ -885,7 +894,7 @@ function autoConnect() {
   if (sbKey) document.getElementById('sbKey').value = sbKey;
   document.getElementById('proxyUrl').value = pxUrl;
   updateProxyUrlIndicator();
-  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); ccdToolAuthStart(); loadDbItems(); loadApiKeyFromDb(); loadProxyUrlFromDb(); }   // v1.6.3; v1.6.5: sign-in; v1.6.9: proxy address
+  if (sbUrl && sbKey) { sb = supabase.createClient(sbUrl, sbKey); ccdToolAuthStart(); loadDbItems(); loadProxyUrlFromDb(); }   // v1.6.5: sign-in; v1.6.9: proxy address; v1.6.12: no CCD key load
 
   // Keep indicator in sync if the operator edits the URL field manually
   const pxEl = document.getElementById('proxyUrl');
@@ -2692,7 +2701,7 @@ function renderCCDManifestPage(doc, ctx) {
   doc.setFont('helvetica', 'italic');
   doc.setFontSize(7);
   doc.setTextColor(130, 130, 130);
-  doc.text(`Generated by CCD Order Manager v1.6.11 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
+  doc.text(`Generated by CCD Order Manager v1.6.12 · ${new Date().toLocaleString()}`, marginX, pageHeight - 30);
 }
 
 let currentDocUrls = {}; // Store document URLs safely — avoids encoding issues in onclick
@@ -3236,10 +3245,9 @@ updateSafetyBar();
 
 async function checkProxyEnvironment() {
   const proxy = proxyUrl();
-  const key = apiKey();
   if (!proxy) return;
   try {
-    const r = await omGet(proxy, { action: 'health' }).then(res => res.json());   // v1.6.10: header key on the function
+    const r = await omGet(proxy, { action: 'health' }).then(res => res.json());   // v1.6.12: the sign-in token only
     const env = (r.wayfair?.environment || r.environment || '').toLowerCase();
     const badge = document.getElementById('envBadge');
     if (env === 'production') {
@@ -3640,7 +3648,7 @@ const ccdPin = (() => {
             if (!/^\d{4,8}$/.test(a)) { say('Use 4 to 8 digits.', 'err'); return; }
             if (a !== b) { say('The two PINs do not match.', 'err'); return; }
             const salt = Array.from(crypto.getRandomValues(new Uint8Array(16))).map(x => x.toString(16).padStart(2, '0')).join('');
-            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.11' };
+            const value = { salt, hash: await sha(salt + ':' + a), set_at: new Date().toISOString(), set_by: (localStorage.getItem('ccdUserName') || 'unknown') + ' · Wayfair Order Manager v1.6.12' };
             try {
                 const { data: ex } = await sb.from('settings').select('key').eq('key', 'settings_pin').limit(1);
                 const res = ex && ex.length ? await sb.from('settings').update({ value, updated_at: value.set_at }).eq('key', 'settings_pin')
