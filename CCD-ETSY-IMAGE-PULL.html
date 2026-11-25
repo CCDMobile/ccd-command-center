@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.3.1: copied from Command Center v3.4.1 -->
-<title>CCD Etsy Image Pull v1.3.4</title>
+<title>CCD Etsy Image Pull v1.3.5</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -251,7 +251,7 @@
 <div class="ccdAuthBlock" id="ccdAuthBlock"><div style="font-size:18px;font-weight:700;color:#d4a853;">Sign in to use the CCD tools</div><div style="font-size:13px;opacity:.75;max-width:420px;">Etsy Image Pull is opened through Command Center. You are being taken there to sign in, and back here afterwards.</div><button id="ccdAuthGo" type="button" style="padding:8px 18px;cursor:pointer;" onclick="ccdToolNavigate(ccdToolSignInUrl())">Sign in at Command Center</button></div><!-- S139 -->
 <div class="container">
 
-  <h1 style="display:flex;align-items:center;gap:10px;">CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.3.4</span><span style="flex:1"></span><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.3.1: sign-in --></h1>
+  <h1 style="display:flex;align-items:center;gap:10px;">CCD Etsy Image Pull <span style="font-size:12px;color:var(--text-muted);font-weight:400;">v1.3.5</span><span style="flex:1"></span><button class="ccd-auth-chip" id="ccdAuthChip" type="button"></button><!-- v1.3.1: sign-in --></h1>
   <div class="subtitle">Etsy listing images → <b>item_images</b> (the image record the Channel Manager uses) and items.image_urls. v1.3.0 (S106): an item that already has rows in item_images — uploads included — is never changed. v1.2.1 (S105): the proxy address and key come from the database; nothing is typed into this page except the Supabase login.</div>
 
   <div class="config-grid">
@@ -267,7 +267,7 @@
     <div class="config-card">
       <h3>Etsy Proxy (from the database)</h3>
       <div class="conn-status" id="etsyStatus"><span class="dot dot-off"></span>Connect to Supabase first</div>
-      <div class="conn-status" style="margin-top:6px;">Address and key are read from <b>settings.proxy_urls</b> and <b>settings.api_keys</b> — the same values Sync Hub, Channel Manager and the edge push use.</div>
+      <div class="conn-status" style="margin-top:6px;">The address is read from <b>settings.proxy_urls</b>; every call goes with your sign-in (the CCD key stays on the server).</div>
     </div>
   </div>
 
@@ -345,6 +345,8 @@
 // v1.3.1 (S139, Paul 11-16): SIGN-IN (flag settings.service_flags.sign_in; absent / off = exactly as before), the module copied
 //   by script from Command Center v3.4.1; offered / required send you to Command Center with ?return=. No Settings tab, so no
 //   PIN. The pull's log line names the signed-in person (else 'Paul', as before).
+// v1.3.5 (S150, 2026-11-23): STEP 2 — the CCD key is never read (no settings.api_keys), kept or sent: every call goes with the
+//   signed-in person's session (one refresh, then "sign in again at Command Center"); an Apps Script address is refused.
 // v1.3.4 (S149, 2026-11-22): a proxy whose __selfcheck also says signin_auth gets the signed-in person's session
 //   (Authorization: Bearer), not the CCD key. Helpers copied by script from Inventory V2 2.10.26. Not signed in = as v1.3.3.
 // v1.3.3 (S147, 2026-11-21): the CCD key goes in an x-ccd-key header when the proxy's __selfcheck says header_key: true
@@ -352,7 +354,7 @@
 //   Inventory V2 2.10.25. Any other proxy gets the address as before.
 // v1.3.2 (S139, Paul 11-16 19:45): registers its version in settings.tool_versions ('etsyimages', the key Command Center's tile
 //   reads) when it connects — it never did, so the tile showed nothing. registerToolVersion copied by script from FR v1.8.24.
-const VERSION = '1.3.4';
+const VERSION = '1.3.5';
 async function registerToolVersion(client, toolKey, toolVersion) {
     if (!client) return;
     try {
@@ -400,18 +402,18 @@ async function connect() {
     PROJ = { ref, items: count, name: ref === 'ivytuqqofmwwrnkcykwh' ? 'PROD' : ref === 'xwcrcwaolirtbamizxnz' ? 'STAGING' : 'UNKNOWN PROJECT' };
     badge.className = 'proj ' + (PROJ.name === 'PROD' ? 'proj-prod' : PROJ.name === 'STAGING' ? 'proj-staging' : 'proj-unknown');
     badge.textContent = `${PROJ.name} · ${ref} · ${count} items`;
-    const { data: st, error: e2 } = await client.from('settings').select('key,value').in('key', ['proxy_urls', 'api_keys']);
+    const { data: st, error: e2 } = await client.from('settings').select('key,value').in('key', ['proxy_urls']);
     if (e2) throw e2;
     const by = {}; (st || []).forEach(r => { by[r.key] = typeof r.value === 'string' ? JSON.parse(r.value) : r.value; });
-    PROXY = { url: (by.proxy_urls || {}).etsy || '', key: (by.api_keys || {}).ccdApiKey || '' };
+    PROXY = { url: (by.proxy_urls || {}).etsy || '' };   // v1.3.5: no key
     sb = client;
     registerToolVersion(client, 'etsyimages', 'v' + VERSION);   // v1.3.2: Command Center's tile
     ccdToolAuthStart();   // v1.3.1: sign-in (flag off = nothing changes)
     try { localStorage.setItem('ccdSupabaseUrl', url); localStorage.setItem('ccdSupabaseKey', key); } catch (e) {}
-    if (!PROXY.url || !PROXY.key) { es.innerHTML = '<span class="dot dot-off"></span>This project has no Etsy proxy address or key in settings — nothing can be pulled here.'; return false; }
-    const r = await proxyCall({ action: 'getShop' });
+    if (!PROXY.url) { es.innerHTML = '<span class="dot dot-off"></span>This project has no Etsy proxy address in settings — nothing can be pulled here.'; return false; }
+    let r; try { r = await proxyCall({ action: 'getShop' }); } catch (e) { es.innerHTML = `<span class="dot dot-off"></span>${esc(e.message)}`; return false; }
     if (!r || !r.success) { es.innerHTML = `<span class="dot dot-off"></span>Proxy refused: ${esc((r && r.error) || 'no answer')}`; return false; }
-    es.innerHTML = '<span class="dot dot-on"></span>Proxy answered with the database key ✓';
+    es.innerHTML = '<span class="dot dot-on"></span>Proxy answered with your sign-in ✓';
     $('btnPull').disabled = $('btnPreview').disabled = false;
     return true;
   } catch (e) { badge.className = 'proj proj-unknown'; badge.textContent = 'Connection failed: ' + (e.message || e); return false; }
@@ -459,11 +461,31 @@ async function ccdSigninAuth(url) {   // the proxy says header_key AND signin_au
   const c = CCD_HDR[ccdHdrBase(url)];
   return !!(c && c.sig);
 }
-async function proxyCall(params) {
-  const hdr = await ccdKeyInHeader(PROXY.url);   // v1.3.3: the key in a header when the proxy reads it
-  const tok = hdr && await ccdSigninAuth(PROXY.url) ? await ccdSigninToken() : '';   // v1.3.4: the sign-in instead, when the proxy says signin_auth
-  const qs = Object.entries(hdr ? { ...params } : { ...params, key: PROXY.key }).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
-  const resp = await fetch(PROXY.url + (PROXY.url.includes('?') ? '&' : '?') + qs, hdr ? { headers: tok ? { authorization: 'Bearer ' + tok } : { 'x-ccd-key': PROXY.key } } : undefined);
+// S150 · STEP 2: Etsy Image Pull NEVER SENDS THE CCD KEY (V2 2.10.27's rule; client sb).
+const CCD_SIGNIN_MSG = 'Your sign-in has run out. Sign in again at Command Center, then try again. Nothing was sent.';
+const CCD_FN_RE = /^https:\/\/[A-Za-z0-9.-]+\/functions\/v1\/[A-Za-z0-9_-]+$/;
+function ccdIsFnUrl(url) { return CCD_FN_RE.test(ccdHdrBase(url)); }
+function ccdKeyErr(code, msg) { const e = new Error(msg); e.code = code; e.ccdNoSend = true; return e; }
+function ccdWipeBrowserKey() { ['ccdApiKey', 'ccd_api_key', 'etsyApiKey'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} }); }
+ccdWipeBrowserKey();
+async function ccdSessionToken() {   // the live session's token; ONE refresh when it is missing or about to expire
+  let t = await ccdSigninToken();
+  if (t) return t;
+  try { if (typeof sb !== 'undefined' && sb && sb.auth && typeof sb.auth.refreshSession === 'function') await sb.auth.refreshSession(); } catch (e) {}
+  return await ccdSigninToken();
+}
+async function ccdSigninHeaders(url) {   // {authorization} or throws (nothing sent)
+  if (!ccdIsFnUrl(url)) throw ccdKeyErr('CCD_NEEDS_KEY', 'This proxy address is an Apps Script (the old way back). It needs the CCD key, which Etsy Image Pull no longer keeps in the browser. Nothing was sent.');
+  if (!(await ccdSigninAuth(url))) throw ccdKeyErr('CCD_NO_SIGNIN_LAYER', 'This proxy did not confirm that it takes the sign-in. Nothing was sent — try again in a minute.');
+  const tok = await ccdSessionToken();
+  if (!tok) throw ccdKeyErr('CCD_SIGNIN', CCD_SIGNIN_MSG);
+  return { authorization: 'Bearer ' + tok };
+}
+async function proxyCall(params) {   // v1.3.5 (S150): the sign-in only — never the key; throws (nothing sent) when it cannot sign in
+  const headers = await ccdSigninHeaders(PROXY.url);
+  const p = { ...params }; delete p.key;
+  const qs = Object.entries(p).map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&');
+  const resp = await fetch(PROXY.url + (PROXY.url.includes('?') ? '&' : '?') + qs, { headers });
   return resp.json();
 }
 
