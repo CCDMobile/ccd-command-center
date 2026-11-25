@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script>/* v3.4.1: remember what kind of sign-in link opened this page, before supabase-js reads and clears it */ try { window.__ccdAuthLinkType = ((location.hash || "").match(/[#&]type=(invite|recovery)(&|$)/) || [])[1] || null; } catch (e) { window.__ccdAuthLinkType = null; }</script><!-- v1.8.24: copied from Command Center v3.4.1 -->
-<title>CCD Financial Intelligence v1.8.26</title>
+<title>CCD Financial Intelligence v1.8.27</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -582,7 +582,7 @@ body {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.26</span></div>
+    <div class="topbar-brand">CCD Financial <span style="font-size:14px;font-weight:600;color:var(--gold2);margin-left:8px;letter-spacing:0.3px;" id="frVersionLabel">v1.8.27</span></div>
     <div class="topbar-divider"></div>
 
     <!-- Date pills -->
@@ -1814,7 +1814,7 @@ body {
 //   SETTINGS PIN (settings.settings_pin, asked once an hour), the module copied by script from Command Center v3.4.1. FR has no
 //   sign-in screen of its own: offered / required send you to Command Center with ?return= this page. Signed in, the chip shows
 //   your name and the booth statement's "Saved by" box starts with it.
-const FR_VERSION = 'v1.8.26';
+const FR_VERSION = 'v1.8.27';   // S150: step 2 — the CCD key out of the browser (v1.8.26 before it)
 const FR_DEAD_DAYS = 365;
 const FR_VERSION_KEY = 'financial';
 
@@ -4322,19 +4322,36 @@ async function ccdSigninAuth(url) {   // the proxy says header_key AND signin_au
   const c = CCD_HDR[ccdHdrBase(url)];
   return !!(c && c.sig);
 }
-async function ccdProxyFetchArgs(url, params) {   // the fetch attempt's address and options
-  const p = Object.assign({}, params || {}), init = {};
-  const hasKey = p.key !== undefined && p.key !== null && String(p.key) !== '';
-  const tok = hasKey && await ccdSigninAuth(url) ? await ccdSigninToken() : '';
-  if (tok) { init.headers = { authorization: 'Bearer ' + tok }; delete p.key; }
-  else if (hasKey && await ccdKeyInHeader(url)) { init.headers = { 'x-ccd-key': String(p.key) }; delete p.key; }
-  const qs = Object.entries(p).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
-  return { url: url + (url.includes('?') ? '&' : '?') + qs, init, header: !!init.headers, signin: !!tok };
+// S150 · STEP 2: Financial Reporting NEVER SENDS THE CCD KEY (V2 2.10.27's rule; client sbClient).
+const CCD_SIGNIN_MSG = 'Your sign-in has run out. Sign in again at Command Center, then try again. Nothing was sent.';
+const CCD_FN_RE = /^https:\/\/[A-Za-z0-9.-]+\/functions\/v1\/[A-Za-z0-9_-]+$/;
+function ccdIsFnUrl(url) { return CCD_FN_RE.test(ccdHdrBase(url)); }
+function ccdKeyErr(code, msg) { const e = new Error(msg); e.code = code; e.ccdNoSend = true; return e; }
+function ccdWipeBrowserKey() { ['ccdApiKey', 'ccd_api_key', 'etsyApiKey'].forEach(k => { try { localStorage.removeItem(k); } catch (e) {} }); }
+ccdWipeBrowserKey();
+async function ccdSessionToken() {   // the live session's token; ONE refresh when it is missing or about to expire
+  let t = await ccdSigninToken();
+  if (t) return t;
+  try { if (typeof sbClient !== 'undefined' && sbClient && sbClient.auth && typeof sbClient.auth.refreshSession === 'function') await sbClient.auth.refreshSession(); } catch (e) {}
+  return await ccdSigninToken();
 }
-async function frProxyCall(url, params) {   // v1.8.25: header fetch when the proxy reads it, else JSONP as before
+async function ccdSigninHeaders(url) {   // {authorization} or throws (nothing sent)
+  if (!ccdIsFnUrl(url)) throw ccdKeyErr('CCD_NEEDS_KEY', 'This proxy address is an Apps Script (the old way back). It needs the CCD key, which Financial Reporting no longer keeps in the browser. Nothing was sent.');
+  if (!(await ccdSigninAuth(url))) throw ccdKeyErr('CCD_NO_SIGNIN_LAYER', 'This proxy did not confirm that it takes the sign-in. Nothing was sent — try again in a minute.');
+  const tok = await ccdSessionToken();
+  if (!tok) throw ccdKeyErr('CCD_SIGNIN', CCD_SIGNIN_MSG);
+  return { authorization: 'Bearer ' + tok };
+}
+async function ccdProxyFetchArgs(url, params) {   // v1.8.27: the address and options — never a key; throws (nothing sent) when it cannot sign in
+  const p = Object.assign({}, params || {});
+  delete p.key;
+  const headers = await ccdSigninHeaders(url);
+  const qs = Object.entries(p).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  return { url: url + (url.includes('?') ? '&' : '?') + qs, init: { headers }, header: true, signin: true };
+}
+async function frProxyCall(url, params) {   // v1.8.27 (S150): the sign-in only; never JSONP (jsonpCall stays defined, unused)
   const a = await ccdProxyFetchArgs(url, params);
-  if (a.header) { const r = await fetch(a.url, a.init); return await r.json(); }   // no JSONP fallback on this path (it would put the key back in the address)
-  return await jsonpCall(a.url);
+  const r = await fetch(a.url, a.init); return await r.json();
 }
 async function frShippoProxyUrl() {   // v1.8.25: settings.proxy_urls.shippo first (the Supabase shippo-proxy); this browser's old setting only as a fallback
   try { const { data } = await sbClient.from('settings').select('value').eq('key', 'proxy_urls').single(); if (data && data.value && data.value.shippo) return data.value.shippo; } catch (e) { /* fall back */ }
@@ -4344,9 +4361,9 @@ async function frShippoProxyUrl() {   // v1.8.25: settings.proxy_urls.shippo fir
 async function syncTransitData() {
   if (transitData.syncInProgress) return;
   const proxyUrl = await frShippoProxyUrl();   // v1.8.25: proxy_urls.shippo first
-  const apiKey = localStorage.getItem('ccdApiKey');
+  const apiKey = '';   // v1.8.27 (S150): never the key — the sign-in goes instead
   if (!proxyUrl) { alert('Shippo proxy URL not configured. Open Command Center → Settings first.'); return; }
-  if (!apiKey) { alert('API key not configured. Open Command Center → Settings first.'); return; }
+  try { await ccdSigninHeaders(proxyUrl); } catch (e) { alert(e.message); return; }   // checked once, before any batch; nothing sent
 
   const btn = document.getElementById('btnSyncTransit');
   transitData.syncInProgress = true;
@@ -7458,9 +7475,9 @@ async function fetchEtsyAdSpend(from, to) {
     // Load Etsy proxy URL from Supabase settings
     const { data: settingsRow } = await sbClient.from('settings').select('value').eq('key', 'proxy_urls').single();
     const etsyProxyUrl = settingsRow?.value?.etsy;
-    const apiKey = localStorage.getItem('ccdApiKey');
+    const apiKey = '';   // v1.8.27 (S150): never the key — the sign-in goes instead
     if (!etsyProxyUrl) { result.error = 'Etsy proxy URL not configured in Settings → proxy_urls'; return result; }
-    if (!apiKey) { result.error = 'CCD API key not set in localStorage'; return result; }
+    try { await ccdSigninHeaders(etsyProxyUrl); } catch (e) { result.error = e.message; return result; }
 
     // Convert date strings to Unix timestamps for Etsy API
     const minTs = Math.floor(new Date(from + 'T00:00:00Z').getTime() / 1000);
